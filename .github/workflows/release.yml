@@ -75,6 +75,8 @@ jobs:
           ls -la "$JEFF_SMOKE_OUT" || true
       - name: 发布到 GitHub Releases
         uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           files: |
             apps/desktop/release/*.exe
