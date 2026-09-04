@@ -47,10 +47,15 @@ jobs:
           cache: npm
       - name: 安装依赖
         run: npm ci --no-audit --no-fund
-      - name: 拉取 opencode 二进制（linux-x64 + windows-x64）
+      - name: 拉取 opencode 二进制
         working-directory: apps/desktop
         shell: bash
-        run: node scripts/fetch-opencode.mjs 1.18.26
+        run: |
+          if [ "${{ matrix.platform }}" = "linux" ]; then
+            node scripts/fetch-opencode.mjs 1.18.26 linux-x64
+          else
+            node scripts/fetch-opencode.mjs 1.18.26 windows-x64
+          fi
       - name: 构建渲染/主进程
         working-directory: apps/desktop
         run: npx electron-vite build
@@ -73,14 +78,29 @@ jobs:
         run: |
           ./jeff-desktop || true
           ls -la "$JEFF_SMOKE_OUT" || true
-      - name: 发布到 GitHub Releases
+      - name: 发布 linux 产物到 GitHub Releases
+        if: matrix.platform == 'linux'
         uses: softprops/action-gh-release@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           files: |
-            apps/desktop/release/*.exe
             apps/desktop/release/*.AppImage
             apps/desktop/release/*.deb
           fail_on_unmatched_files: true
+      - name: 发布 windows 产物到 GitHub Releases
+        if: matrix.platform == 'win'
+        uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          files: apps/desktop/release/*.exe
+          fail_on_unmatched_files: true
+      - name: 生成 Release 说明
+        if: matrix.platform == 'linux'
+        uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
           generate_release_notes: true
+          fail_on_unmatched_files: false

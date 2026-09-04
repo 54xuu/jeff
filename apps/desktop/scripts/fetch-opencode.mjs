@@ -37,7 +37,8 @@ function extract(archive, dir) {
     return
   }
   if (process.platform === 'win32') {
-    execSync(`powershell -NoProfile -Command "Expand-Archive -Force -Path '${archive}' -DestinationPath '${dir}'"`, { stdio: 'inherit' })
+    // Windows 自带 bsdtar，可直接解 zip
+    execSync(`tar -xf "${archive}" -C "${dir}"`, { stdio: 'inherit' })
   } else {
     execSync(`unzip -o -q "${archive}" -d "${dir}"`, { stdio: 'inherit' })
   }
