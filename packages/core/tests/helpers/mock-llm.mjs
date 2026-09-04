@@ -1,0 +1,99 @@
+// E2E 用极简 OpenAI 兼容 mock：/v1/models + /v1/chat/completions（流式，含工具调用回环）
+import http from 'node:http'
+
+/**
+ * @param {number} port
+ * @param {object} [opts]
+ * @param {(userText: string, msgs: unknown[]) => string|null} [opts.customReply] 定制文本回复；返回 null 走默认
+ */
+export function startMockLlm(port, opts = {}) {
+  const server = http.createServer((req, res) => {
+    let body = ''
+    req.on('data', (c) => (body += c))
+    req.on('end', () => {
+      const url = new URL(req.url, `http://127.0.0.1:${port}`)
+      res.setHeader('content-type', 'application/json')
+      if (url.pathname === '/v1/models') {
+        res.end(JSON.stringify({ object: 'list', data: [{ id: 'mock-mini', object: 'model', owned_by: 'mock' }] }))
+        return
+      }
+      if (url.pathname === '/v1/chat/completions' && req.method === 'POST') {
+        const payload = JSON.parse(body || '{}')
+        const msgs = payload.messages || []
+        const tools = payload.tools || []
+        if (process.env.MOCK_LOG) {
+          console.error(`[mock] tools=${JSON.stringify(tools.map((t) => t?.function?.name))} msgs=${msgs.length}`)
+        }
+        const lastUser = [...msgs].reverse().find((m) => m.role === 'user')
+        const userText =
+          typeof lastUser?.content === 'string'
+            ? lastUser.content
+            : (lastUser?.content || []).map((p) => p.text || '').join(' ')
+        const sysText = msgs
+          .filter((m) => m.role === 'system')
+          .map((m) => (typeof m.content === 'string' ? m.content : ''))
+          .join(' | ')
+        const toolMsg = [...msgs].reverse().find((m) => m.role === 'tool')
+
+        res.setHeader('content-type', 'text/event-stream')
+        const chunk = (delta, finish = null) =>
+          `data: ${JSON.stringify({ id: 'chatcmpl-mock', object: 'chat.completion.chunk', created: 1, model: 'mock-mini', choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`
+        const finishLine = () =>
+          `data: ${JSON.stringify({ id: 'chatcmpl-mock', object: 'chat.completion.chunk', created: 1, model: 'mock-mini', choices: [{ index: 0, delta: {}, finish_reason: 'stop' }], usage: { prompt_tokens: 10, completion_tokens: 10, total_tokens: 20 } })}\n\ndata: [DONE]\n\n`
+
+        // 已有工具结果 → 总结文本
+        if (toolMsg) {
+          const out = typeof toolMsg.content === 'string' ? toolMsg.content : JSON.stringify(toolMsg.content)
+          const text = `【工具结果摘要】${String(out).slice(0, 300)}`
+          res.write(chunk({ role: 'assistant' }))
+          for (const c of text.match(/[\s\S]{1,20}/g) || []) res.write(chunk({ content: c }))
+          res.write(finishLine())
+          res.end()
+          return
+        }
+        // 可控工具调用：opts.toolCall = { trigger: 'regex 源', name: '工具名', args: {...} }
+        const tc = opts.toolCall
+        if (tc && new RegExp(tc.trigger, 'i').test(userText) && tools.some((t) => t?.function?.name === tc.name)) {
+          res.write(chunk({ role: 'assistant' }))
+          res.write(
+            chunk({
+              tool_calls: [{ index: 0, id: 'call_mock1', type: 'function', function: { name: tc.name, arguments: JSON.stringify(tc.args ?? {}) } }],
+            }),
+          )
+          res.write(
+            `data: ${JSON.stringify({ id: 'chatcmpl-mock', object: 'chat.completion.chunk', created: 1, model: 'mock-mini', choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }], usage: { prompt_tokens: 10, completion_tokens: 10, total_tokens: 20 } })}\n\ndata: [DONE]\n\n`,
+          )
+          res.end()
+          return
+        }
+        const custom = opts.customReply ? opts.customReply(userText, msgs) : null
+        const text = custom ?? `【mock 回复】收到：「${String(userText).slice(0, 120)}」`
+        res.write(chunk({ role: 'assistant' }))
+        for (const c of text.match(/[\s\S]{1,20}/g) || []) res.write(chunk({ content: c }))
+        res.write(finishLine())
+        res.end()
+        return
+      }
+      res.statusCode = 404
+      res.end('not found')
+    })
+  })
+  return new Promise((resolve) => server.listen(port, '127.0.0.1', () => resolve(server)))
+}
+
+// 作为独立进程运行时读取 MOCK_PORT 环境变量；MOCK_TOOL_CALL 可注入工具调用行为（JSON: {trigger,name,args}）
+if (process.argv[1] && process.argv[1].endsWith('mock-llm.mjs')) {
+  const port = Number(process.env.MOCK_PORT || 18081)
+  const opts = {}
+  if (process.env.MOCK_TOOL_CALL) {
+    try {
+      opts.toolCall = JSON.parse(process.env.MOCK_TOOL_CALL)
+    } catch {
+      console.error('MOCK_TOOL_CALL 不是合法 JSON')
+    }
+  }
+  if (process.env.MOCK_CUSTOM_REPLY) {
+    opts.customReply = () => process.env.MOCK_CUSTOM_REPLY
+  }
+  void startMockLlm(port, opts).then(() => console.log(`mock llm on :${port}`))
+}

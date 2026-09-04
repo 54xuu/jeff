@@ -1,0 +1,32 @@
+{
+  "name": "jeff-monorepo",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Jeff — 个人「开发 + 项目管理」agent 桌面应用",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.base.json --noEmit",
+    "test": "npm run test -w @jeff/core",
+    "smoke": "node .tmp/scripts/smoke.mjs",
+    "dev": "npm run dev -w jeff-desktop",
+    "build": "npm run build -w @jeff/core && npm run build -w jeff-desktop",
+    "package:linux": "npm run package:linux -w jeff-desktop",
+    "package:win": "npm run package:win -w jeff-desktop"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "allowScripts": {
+    "better-sqlite3@12.11.1": true,
+    "electron@39.8.10": true,
+    "electron-winstaller@5.4.0": true,
+    "esbuild@0.25.12": true,
+    "esbuild@0.28.2": true
+  }
+}

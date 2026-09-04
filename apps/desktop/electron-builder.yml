@@ -1,0 +1,29 @@
+appId: com.jeffxuu.jeff
+productName: Jeff
+directories:
+  output: release
+  buildResources: build
+files:
+  - out/**
+  - package.json
+asar: true
+asarUnpack:
+  - node_modules/better-sqlite3/**
+extraResources:
+  - from: resources/oc-bin
+    to: oc-bin
+linux:
+  target:
+    - AppImage
+    - deb
+  category: Development
+  maintainer: jeff
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  artifactName: jeff-Setup-${version}.${ext}

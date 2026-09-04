@@ -1,0 +1,12 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["node"],
+    "paths": {
+      "@jeff/core": ["../../packages/core/src/index.ts"],
+      "@/*": ["./src/renderer/src/*"]
+    },
+    "baseUrl": "."
+  },
+  "include": ["src", "electron.vite.config.ts"]
+}

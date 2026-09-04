@@ -1,0 +1,13 @@
+node_modules/
+out/
+dist/
+release/
+.tmp/
+*.log
+.DS_Store
+Thumbs.db
+*.tsbuildinfo
+.vite/
+test-results/
+playwright-report/
+apps/desktop/resources/oc-bin/
