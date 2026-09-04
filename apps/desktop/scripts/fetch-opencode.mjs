@@ -3,6 +3,7 @@
 // 供 electron-builder extraResources 打包进安装包。
 // 用法：node scripts/fetch-opencode.mjs [version] [targets...]（默认 1.18.26 全平台）
 import { execSync } from 'node:child_process'
+import zlib from 'node:zlib'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -31,16 +32,53 @@ async function downloadTo(url, dest) {
   await pipeline(Readable.fromWeb(res.body), fs.createWriteStream(dest))
 }
 
+/** 纯 Node 最小 zip 解压（store + deflate），跨平台无 shell 依赖 */
+function extractZip(archive, dir) {
+  const buf = fs.readFileSync(archive)
+  // 找 End of Central Directory（0x06054b50，从尾部向前）
+  let eocd = -1
+  for (let i = buf.length - 22; i >= Math.max(0, buf.length - 22 - 65536); i--) {
+    if (buf.readUInt32LE(i) === 0x06054b50) {
+      eocd = i
+      break
+    }
+  }
+  if (eocd < 0) throw new Error('zip: 未找到 EOCD')
+  const count = buf.readUInt16LE(eocd + 10)
+  let offset = buf.readUInt32LE(eocd + 16)
+  for (let n = 0; n < count; n++) {
+    if (buf.readUInt32LE(offset) !== 0x02014b50) throw new Error('zip: central directory 损坏')
+    const method = buf.readUInt16LE(offset + 10)
+    const compSize = buf.readUInt32LE(offset + 20)
+    const nameLen = buf.readUInt16LE(offset + 28)
+    const extraLen = buf.readUInt16LE(offset + 30)
+    const commentLen = buf.readUInt16LE(offset + 32)
+    const localOffset = buf.readUInt32LE(offset + 42)
+    const name = buf.slice(offset + 46, offset + 46 + nameLen).toString('utf8')
+    offset += 46 + nameLen + extraLen + commentLen
+    if (name.endsWith('/')) continue
+    // local file header
+    const lNameLen = buf.readUInt16LE(localOffset + 26)
+    const lExtraLen = buf.readUInt16LE(localOffset + 28)
+    const dataStart = localOffset + 30 + lNameLen + lExtraLen
+    const data = buf.slice(dataStart, dataStart + compSize)
+    const outPath = path.join(dir, name.replace(/\\/g, '/'))
+    fs.mkdirSync(path.dirname(outPath), { recursive: true })
+    if (method === 0) {
+      fs.writeFileSync(outPath, data)
+    } else if (method === 8) {
+      fs.writeFileSync(outPath, zlib.inflateRawSync(data))
+    } else {
+      throw new Error(`zip: 不支持的压缩方法 ${method}（${name}）`)
+    }
+  }
+}
+
 function extract(archive, dir) {
   if (archive.endsWith('.tar.gz')) {
     execSync(`tar -xzf "${archive}" -C "${dir}"`, { stdio: 'inherit' })
-    return
-  }
-  if (process.platform === 'win32') {
-    // Windows 自带 bsdtar，可直接解 zip
-    execSync(`tar -xf "${archive}" -C "${dir}"`, { stdio: 'inherit' })
   } else {
-    execSync(`unzip -o -q "${archive}" -d "${dir}"`, { stdio: 'inherit' })
+    extractZip(archive, dir)
   }
 }
 
