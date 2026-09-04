@@ -46,6 +46,8 @@ export const IPC = {
   modelsDefault: 'models:default',
   settingsGet: 'settings:get',
   settingsSet: 'settings:set',
+  mcpList: 'mcp:list',
+  mcpSave: 'mcp:save',
   memoryScopes: 'memory:scopes',
   memoryGet: 'memory:get',
   memorySave: 'memory:save',
@@ -171,6 +173,8 @@ export type InvokeMap = {
   [IPC.modelsDefault]: { defaultModel?: { providerID: string; modelID: string } | null }
   [IPC.settingsGet]: void
   [IPC.settingsSet]: { theme?: AppSettings['theme'] }
+  [IPC.mcpList]: void
+  [IPC.mcpSave]: { servers: Record<string, { type: 'local' | 'remote'; enabled: boolean; command?: string[]; url?: string; headers?: Record<string, string> }> }
   [IPC.memoryScopes]: void
   [IPC.memoryGet]: { kind: 'user' | 'agent' | 'project'; id: string }
   [IPC.memorySave]: { kind: 'user' | 'agent' | 'project'; id: string; content: string }

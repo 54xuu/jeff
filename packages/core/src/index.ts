@@ -19,8 +19,19 @@ import { GroupChat } from './orchestrator/group.js'
 import { Delegator } from './orchestrator/delegate.js'
 import { MemoryStore } from './memory/store.js'
 import { SessionIndex } from './memory/indexer.js'
+import { SyncEngine, type WebdavConfig, type SyncReport } from './sync/engine.js'
 
-export const APP_VERSION = '0.1.0'
+export const APP_VERSION = '1.0.0'
+
+export interface McpServerCfg {
+  type: 'local' | 'remote'
+  enabled: boolean
+  /** local: 可执行命令 */
+  command?: string[]
+  /** remote: URL */
+  url?: string
+  headers?: Record<string, string>
+}
 export { buildPaths, ensureDirs, jeffRoot } from './paths.js'
 export { openDb } from './db/db.js'
 
@@ -40,9 +51,12 @@ export class JeffCore extends EventEmitter {
   delegator!: Delegator
   memory!: MemoryStore
   indexer!: SessionIndex
+  sync!: SyncEngine
   bus = new EventEmitter()
   private started = false
   private registryDirty = false
+  lastSyncReport: SyncReport | null = null
+  private autoSyncTimer: NodeJS.Timeout | null = null
 
   constructor(home?: string) {
     super()
@@ -62,6 +76,12 @@ export class JeffCore extends EventEmitter {
     this.delegator = new Delegator(this.db, () => this.oc, this.groupChat, (projectId) => {
       this.bus.emit('group-updated', { projectId })
     })
+    this.sync = new SyncEngine(this.db, this.paths, this.memory, () => this.kv().getJSON<WebdavConfig | null>('settings:webdav', null), (r) => {
+      this.lastSyncReport = r
+      this.bus.emit('sync-report', r)
+    })
+    // 自动同步：数据变化后防抖 30s
+    this.bus.on('data-changed', () => this.scheduleAutoSync())
 
     // 工具桥（先注册工具，再启动，再渲染插件文件）
     registerAdminTools(this.bridge, {
@@ -130,8 +150,43 @@ export class JeffCore extends EventEmitter {
     this.oc.startEventStream()
     this.oc.on('event', (evt: { type?: string; properties?: Record<string, unknown> }) => this.handleOcEvent(evt))
 
+    this.writeUsageSkill()
     this.backfillIndex()
     this.started = true
+    if (this.kv().getJSON<WebdavConfig | null>('settings:webdav', null)?.autoSync) {
+      setTimeout(() => void this.syncNow().catch(() => {}), 5000)
+    }
+  }
+
+  /** 数据变化后防抖自动同步 */
+  scheduleAutoSync(): void {
+    const cfg = this.kv().getJSON<WebdavConfig | null>('settings:webdav', null)
+    if (!cfg?.autoSync || !this.started) return
+    if (this.autoSyncTimer) clearTimeout(this.autoSyncTimer)
+    this.autoSyncTimer = setTimeout(() => {
+      this.autoSyncTimer = null
+      void this.syncNow().catch(() => {})
+    }, 30000)
+    this.autoSyncTimer.unref?.()
+  }
+
+  /** 手动同步 */
+  async syncNow(): Promise<SyncReport> {
+    return this.sync.sync()
+  }
+
+  /** 配置 WebDAV（密码存本地 kv） */
+  async configureSync(cfg: WebdavConfig): Promise<void> {
+    this.kv().setJSON('settings:webdav', cfg)
+    this.sync.resetClient()
+    if (cfg.autoSync) void this.syncNow().catch(() => {})
+  }
+
+  syncConfig(): Omit<WebdavConfig, 'password'> | null {
+    const cfg = this.kv().getJSON<WebdavConfig | null>('settings:webdav', null)
+    if (!cfg?.url) return null
+    const { password: _password, ...rest } = cfg
+    return rest
   }
 
   private chatHooks() {
@@ -402,11 +457,60 @@ export class JeffCore extends EventEmitter {
     fs.writeFileSync(path.join(this.paths.ocPluginsDir, 'jeff-bridge.js'), plugin, 'utf8')
   }
 
+  /** 内置使用说明 skill（所有 agent 可调用 /jeff-usage 或被自动加载） */
+  writeUsageSkill(): void {
+    const dir = path.join(this.paths.ocSkillsDir, 'jeff-usage')
+    fs.mkdirSync(dir, { recursive: true })
+    const content = `---
+name: jeff-usage
+description: Jeff 桌面应用的完整使用说明：智能体、项目群（leader 统筹）、任务看板、记忆、WebDAV 同步。当用户问「Jeff 怎么用 / 能做什么」时加载。
+---
+
+# Jeff 使用说明
+
+Jeff 把「开发 + 项目管理」组织成三个概念（微信心智模型）：
+
+## 1. 智能体 = 聊天好友
+- 每个智能体是会话列表里的一个联系人，有自己的身份指令、默认模型、长期记忆。
+- 私聊 = 和这个智能体一对一协作（它带编码/MCP/技能工具，可以直接干活）。
+- 创建途径：\u2460 找小杰说「帮我创建一个智能体」；\u2461 「智能体」页手动新建。
+
+## 2. 项目群 = 微信群
+- 一个项目就是一个群；群里有你 + 若干智能体成员（开发/UI/测试/产品…）。
+- **只有一个群主（leader）**，所有工作由它统筹：群消息默认给 leader，@成员名 直达该成员。
+- leader 用 jeff_delegate 工具把活儿委派给成员，成员独立执行后结果自动回群，leader 再汇总。
+- 群资料面板：成员管理 + 任务看板（拖拽改状态）。
+
+## 3. 任务 = JEF-n
+- 任务归属项目群，编号 JEF-n，状态：待办/进行中/待审/完成/已取消；优先级四级。
+- 创建途径：群里对话让 leader/小杰建（自动出现任务卡片）、或群资料看板手动建。
+
+## 其他能力
+- **记忆**：每个智能体有自己的长期记忆；项目群有共享记忆；全局用户画像由小杰维护（用 jeff_memory 工具读写）。设置页可人工查看/编辑。
+- **会话搜索**：所有历史对话全文可搜（jeff_session_search）。
+- **模型提供商**：设置页配置（OpenAI/Anthropic/DeepSeek/Kimi/OpenRouter/自定义 OpenAI 兼容端点）；聊天输入框可临时切换模型。
+- **WebDAV 同步**：设置页配置；同步智能体/项目/任务/设置/记忆（不含会话数据）；实体级双向合并，多台机器交替使用不丢数据。
+- **亮/深夜模式**：左侧导航底部切换，或跟随系统。
+`
+    fs.writeFileSync(path.join(dir, 'SKILL.md'), content, 'utf8')
+  }
+
   writeSidecarConfig(): void {
     const kv = kvRepo(this.db)
     const providers = kv.getJSON<ProviderSetting[]>('settings:providers', [])
     const defaultModel = kv.getJSON<{ providerID: string; modelID: string } | null>('settings:defaultModel', null)
-    writeSidecarConfig(this.paths, providers, { defaultModel: defaultModel ?? undefined })
+    writeSidecarConfig(this.paths, providers, { defaultModel: defaultModel ?? undefined, mcp: this.listMcp() })
+  }
+
+  /** MCP 连接器配置（存 kv，写入 sidecar opencode.json 的 mcp 字段） */
+  listMcp(): Record<string, McpServerCfg> {
+    return this.kv().getJSON<Record<string, McpServerCfg>>('settings:mcp', {})
+  }
+
+  async saveMcp(cfg: Record<string, McpServerCfg>): Promise<void> {
+    this.kv().setJSON('settings:mcp', cfg)
+    this.writeSidecarConfig()
+    await this.restartSidecar()
   }
 
   /** 便捷访问器 */
@@ -453,5 +557,7 @@ export { GroupChat } from './orchestrator/group.js'
 export { Delegator } from './orchestrator/delegate.js'
 export { registerProjectTools, taskCardMessage } from './tools/projectTools.js'
 export { MemoryStore, parseEntries, matchUnique, type MemoryScope, type MemoryOp, type MemoryResult } from './memory/store.js'
+export { SyncEngine, type WebdavConfig, type SyncReport } from './sync/engine.js'
+
 export { SessionIndex, cjkSplit, buildMatchQuery } from './memory/indexer.js'
 export { MEMORY_TOOL, SEARCH_TOOL, DELEGATE_TOOL, type SessionScopeCtx, type ToolCtx } from './tools/memoryTools.js'

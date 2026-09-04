@@ -25,6 +25,7 @@ export default function App(): React.JSX.Element {
         await useStore.getState().refreshProjects()
         const ps = useStore.getState().projects
         if (smokeSelect === 'group' && ps[0]) useStore.getState().setActive({ kind: 'group', id: ps[0].id })
+        else if (smokeSelect === 'settings') useStore.getState().setTab('settings')
         else if (ps.length === 0) {
           const as = useStore.getState().agents
           if (as[0]) useStore.getState().setActive({ kind: 'agent', id: as[0].id })

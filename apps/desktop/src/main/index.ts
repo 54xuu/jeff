@@ -1,4 +1,4 @@
-import { app, BrowserWindow, shell } from 'electron'
+import { app, BrowserWindow, shell, Tray, Menu, nativeImage } from 'electron'
 import fs from 'node:fs'
 import path from 'node:path'
 import { JeffCore } from '@jeff/core'
@@ -6,6 +6,19 @@ import { registerIpc } from './ipc.js'
 
 let win: BrowserWindow | null = null
 let core: JeffCore | null = null
+let tray: Tray | null = null
+
+function iconPath(): string | null {
+  const cand = app.isPackaged
+    ? path.join(process.resourcesPath ?? '', 'icon.png')
+    : path.join(import.meta.dirname, '../../../build/icon.png')
+  try {
+    if (fs.existsSync(cand)) return cand
+  } catch {
+    /* 忽略 */
+  }
+  return null
+}
 
 const gotLock = app.requestSingleInstanceLock()
 if (!gotLock) {
@@ -33,6 +46,7 @@ if (!gotLock) {
     registerIpc(core)
 
     createWindow()
+    setupTray()
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow()
     })
@@ -44,21 +58,60 @@ if (!gotLock) {
   })
 }
 
+function setupTray(): void {
+  const icon = iconPath()
+  if (!icon) return
+  try {
+    tray = new Tray(nativeImage.createFromPath(icon).resize({ width: 24, height: 24 }))
+    tray.setToolTip('Jeff — 个人 agent 工作台')
+    tray.setContextMenu(
+      Menu.buildFromTemplate([
+        {
+          label: '显示主窗口',
+          click: () => {
+            if (win) {
+              win.show()
+              win.focus()
+            } else {
+              createWindow()
+            }
+          },
+        },
+        { type: 'separator' },
+        {
+          label: '退出',
+          click: () => app.quit(),
+        },
+      ]),
+    )
+    tray.on('double-click', () => {
+      if (win) {
+        win.show()
+        win.focus()
+      }
+    })
+  } catch (err) {
+    console.error('[jeff] 托盘创建失败:', err)
+  }
+}
+
 function broadcast(what: string, payload?: unknown): void {
   if (!win || win.isDestroyed()) return
   win.webContents.send(`jeff:push`, { what, payload })
 }
 
 function createWindow(): void {
+  const icon = iconPath()
   win = new BrowserWindow({
     width: 1440,
     height: 900,
     minWidth: 1000,
     minHeight: 680,
     title: 'Jeff',
+    ...(icon ? { icon } : {}),
     backgroundColor: '#ededed',
     webPreferences: {
-      preload: path.join(__dirname, '../preload/index.cjs'),
+      preload: path.join(import.meta.dirname, '../preload/index.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
@@ -71,7 +124,7 @@ function createWindow(): void {
   if (process.env.ELECTRON_RENDERER_URL) {
     void win.loadURL(process.env.ELECTRON_RENDERER_URL)
   } else {
-    void win.loadFile(path.join(__dirname, '../renderer/index.html'))
+    void win.loadFile(path.join(import.meta.dirname, '../renderer/index.html'))
   }
   win.on('closed', () => {
     win = null

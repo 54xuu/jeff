@@ -9,7 +9,7 @@ import type {
   AppSettings,
   AppInfo,
 } from '@jeff/core'
-import { IPC, XIAOJIE_ID, agentRepo, projectRepo, projectAgentRepo, taskRepo, taskCardMessage } from '@jeff/core'
+import { IPC, XIAOJIE_ID, agentRepo, projectRepo, projectAgentRepo, taskRepo, taskCardMessage, APP_VERSION } from '@jeff/core'
 import type { MemoryScopeInfo } from '@jeff/core'
 import type { JeffCore, TaskRow } from '@jeff/core'
 
@@ -22,7 +22,7 @@ export function registerIpc(core: JeffCore): void {
   const handlers: Record<string, Handler> = {
     [IPC.appInfo]: async (): Promise<AppInfo> => ({
       version: app.getVersion(),
-      jeffVersion: '0.1.0',
+      jeffVersion: APP_VERSION,
       sidecarStatus: core.sidecar?.status ?? 'stopped',
       opencodeBinary: core.sidecar?.resolveBinary() ?? null,
       dataDir: core.paths.root,
@@ -127,6 +127,28 @@ export function registerIpc(core: JeffCore): void {
         core.kv().setJSON('settings:theme', theme)
         nativeTheme.themeSource = theme
       }
+      return { ok: true }
+    },
+
+    // ---------- WebDAV 同步 ----------
+    [IPC.syncConfigure]: async (p): Promise<{ ok: boolean }> => {
+      const d = p as { url: string; username: string; password: string; basePath: string; autoSync: boolean }
+      if (!d.url || !d.basePath) throw new Error('url 与 basePath 必填')
+      await core.configureSync({ url: d.url.replace(/\/+$/, ''), username: d.username || '', password: d.password || '', basePath: d.basePath, autoSync: !!d.autoSync })
+      return { ok: true }
+    },
+    [IPC.syncNow]: async (): Promise<unknown> => core.syncNow(),
+    [IPC.syncStatus]: async (): Promise<{ config: unknown; report: unknown }> => ({
+      config: core.syncConfig(),
+      report: core.lastSyncReport,
+    }),
+
+    // ---------- MCP 连接器 ----------
+    [IPC.mcpList]: async (): Promise<Record<string, import('@jeff/core').McpServerCfg>> => core.listMcp(),
+    [IPC.mcpSave]: async (p): Promise<{ ok: boolean }> => {
+      const d = p as { servers: Record<string, import('@jeff/core').McpServerCfg> }
+      await core.saveMcp(d.servers)
+      core.bus.emit('data-changed', 'settings')
       return { ok: true }
     },
 

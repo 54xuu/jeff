@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useStore, applyTheme } from '../store'
 import { api } from '../api'
-import { IPC, BUILTIN_PROVIDER_PRESETS, type ProviderSetting, type MemoryScopeInfo } from '@jeff/core'
+import { IPC, BUILTIN_PROVIDER_PRESETS, type ProviderSetting, type MemoryScopeInfo, type McpServerCfg } from '@jeff/core'
 
 export default function SettingsPage(): React.JSX.Element {
   const { settings, refreshSettings, refreshCatalog, appInfo } = useStore()
@@ -71,6 +71,12 @@ export default function SettingsPage(): React.JSX.Element {
             保存{dirty ? '（未保存更改）' : ''}
           </button>
         </div>
+
+        <div className="settings-sec">MCP 连接器</div>
+        <McpManager />
+
+        <div className="settings-sec">WebDAV 同步（智能体/项目/任务/设置/记忆；不含会话数据）</div>
+        <SyncManager />
 
         <div className="settings-sec">记忆（长期记忆 · 条目以 § 分隔，每行一条）</div>
         <MemoryManager />
@@ -248,6 +254,235 @@ function MemoryManager(): React.JSX.Element {
             保存{dirty ? '（未保存）' : ''}
           </button>
           {sel && <span className="settings-tip" style={{ alignSelf: 'center' }}>{sel.file}</span>}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+
+interface WebdavCfg {
+  url: string
+  username: string
+  basePath: string
+  autoSync: boolean
+}
+
+interface SyncReportInfo {
+  ok: boolean
+  at: number
+  uploaded: number
+  downloaded: number
+  conflicts: string[]
+  error?: string
+}
+
+function SyncManager(): React.JSX.Element {
+  const [url, setUrl] = useState('')
+  const [username, setUsername] = useState('')
+  const [password, setPassword] = useState('')
+  const [basePath, setBasePath] = useState('/jeff')
+  const [autoSync, setAutoSync] = useState(true)
+  const [report, setReport] = useState<SyncReportInfo | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [loaded, setLoaded] = useState(false)
+
+  useEffect(() => {
+    void api.invoke<{ config: WebdavCfg | null; report: SyncReportInfo | null }>(IPC.syncStatus).then(({ config, report: r }) => {
+      if (config) {
+        setUrl(config.url)
+        setUsername(config.username)
+        setBasePath(config.basePath)
+        setAutoSync(config.autoSync)
+      }
+      setReport(r)
+      setLoaded(true)
+    })
+  }, [])
+
+  const save = async () => {
+    setBusy(true)
+    try {
+      await api.invoke(IPC.syncConfigure, { url, username, password, basePath, autoSync })
+      const r = await api.invoke<SyncReportInfo>(IPC.syncNow)
+      setReport(r)
+    } catch (err) {
+      setReport({ ok: false, at: Date.now(), uploaded: 0, downloaded: 0, conflicts: [], error: String((err as Error).message).slice(0, 200) })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const syncNow = async () => {
+    setBusy(true)
+    try {
+      const r = await api.invoke<SyncReportInfo>(IPC.syncNow)
+      setReport(r)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  if (!loaded) return <div className="settings-tip">加载中…</div>
+  return (
+    <div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+        <label className="field">
+          <span>服务器 URL（如 https://dav.example.com/dav）</span>
+          <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://…" />
+        </label>
+        <label className="field">
+          <span>远端基目录</span>
+          <input value={basePath} onChange={(e) => setBasePath(e.target.value)} placeholder="/jeff" />
+        </label>
+        <label className="field">
+          <span>用户名</span>
+          <input value={username} onChange={(e) => setUsername(e.target.value)} />
+        </label>
+        <label className="field">
+          <span>密码 / 应用密码</span>
+          <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="留空 = 不修改已存密码" />
+        </label>
+      </div>
+      <label className="field" style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+        <input type="checkbox" checked={autoSync} onChange={(e) => setAutoSync(e.target.checked)} style={{ width: 16 }} />
+        <span style={{ color: 'var(--text)' }}>自动同步（启动时 + 变更后 30 秒防抖）</span>
+      </label>
+      <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+        <button className="btn primary" disabled={busy || !url.trim()} onClick={() => void save()}>保存并同步</button>
+        <button className="btn" disabled={busy || !url.trim()} onClick={() => void syncNow()}>立即同步</button>
+        {busy && <span className="settings-tip">同步中…</span>}
+      </div>
+      {report && (
+        <p className="settings-tip" style={{ marginTop: 6 }}>
+          上次同步：{report.ok ? '✅' : '❌'} {new Date(report.at).toLocaleString()} · 下发 {Math.max(0, (report.uploaded ?? 0) - 4)} 项 / 拉取 {report.downloaded ?? 0} 项
+          {report.conflicts?.length ? ` · 冲突 ${report.conflicts.length} 处（按更新时间取新）` : ''}
+          {report.error ? ` · ${report.error}` : ''}
+        </p>
+      )}
+    </div>
+  )
+}
+
+
+function McpManager(): React.JSX.Element {
+  const [servers, setServers] = useState<Record<string, McpServerCfg>>({})
+  const [dirty, setDirty] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [adding, setAdding] = useState(false)
+
+  useEffect(() => {
+    void api.invoke<Record<string, McpServerCfg>>(IPC.mcpList).then(setServers)
+  }, [])
+
+  const save = async (next: Record<string, McpServerCfg>) => {
+    setServers(next)
+    setDirty(true)
+  }
+
+  return (
+    <div>
+      <p className="settings-tip">local = 本机命令行 MCP 服务；remote = HTTP/SSE 端点（支持 headers）。保存后重启引擎生效。</p>
+      {Object.entries(servers).map(([name, cfg]) => (
+        <div key={name} className="provider-row">
+          <div className="provider-main">
+            <div className="provider-name">
+              {name} <span className="tag">{cfg.type === 'local' ? 'local' : 'remote'}</span>
+              {!cfg.enabled && <span className="tag">已停用</span>}
+            </div>
+            <div className="provider-sub">{cfg.type === 'local' ? (cfg.command || []).join(' ') : cfg.url}</div>
+          </div>
+          <button className="text-btn" onClick={() => void save({ ...servers, [name]: { ...cfg, enabled: !cfg.enabled } })}>
+            {cfg.enabled ? '停用' : '启用'}
+          </button>
+          <button className="text-btn danger" onClick={() => {
+            const next = { ...servers }
+            delete next[name]
+            void save(next)
+          }}>
+            移除
+          </button>
+        </div>
+      ))}
+      <div style={{ display: 'flex', gap: 10 }}>
+        <button className="btn" onClick={() => setAdding(true)}>+ 添加 MCP</button>
+        <button className="btn primary" disabled={!dirty || busy} onClick={async () => {
+          setBusy(true)
+          try {
+            await api.invoke(IPC.mcpSave, { servers })
+            setDirty(false)
+            await useStore.getState().refreshCatalog()
+          } finally {
+            setBusy(false)
+          }
+        }}>保存{dirty ? '（重启引擎生效）' : ''}</button>
+      </div>
+      {adding && (
+        <AddMcp onClose={() => setAdding(false)} onAdd={(name, cfg) => {
+          void save({ ...servers, [name]: cfg })
+          setAdding(false)
+        }} />
+      )}
+    </div>
+  )
+}
+
+function AddMcp(props: { onClose: () => void; onAdd: (name: string, cfg: McpServerCfg) => void }): React.JSX.Element {
+  const [type, setType] = useState<'local' | 'remote'>('local')
+  const [name, setName] = useState('')
+  const [command, setCommand] = useState('npx -y @modelcontextprotocol/server-xxx')
+  const [url, setUrl] = useState('https://')
+  const [headerText, setHeaderText] = useState('')
+
+  return (
+    <div className="modal-mask" onClick={props.onClose}>
+      <div className="modal form" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-title">添加 MCP 连接器</div>
+        <div className="seg">
+          <button className={`seg-item ${type === 'local' ? 'on' : ''}`} onClick={() => setType('local')}>local（本机命令）</button>
+          <button className={`seg-item ${type === 'remote' ? 'on' : ''}`} onClick={() => setType('remote')}>remote（HTTP）</button>
+        </div>
+        <label className="field">
+          <span>名称 *</span>
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="如 context7" />
+        </label>
+        {type === 'local' ? (
+          <label className="field">
+            <span>启动命令（空格分隔）</span>
+            <input value={command} onChange={(e) => setCommand(e.target.value)} />
+          </label>
+        ) : (
+          <>
+            <label className="field">
+              <span>URL *</span>
+              <input value={url} onChange={(e) => setUrl(e.target.value)} />
+            </label>
+            <label className="field">
+              <span>Headers（每行 key: value，可选）</span>
+              <textarea rows={2} value={headerText} onChange={(e) => setHeaderText(e.target.value)} placeholder="Authorization: Bearer sk-…" />
+            </label>
+          </>
+        )}
+        <div className="modal-actions">
+          <button className="btn" onClick={props.onClose}>取消</button>
+          <button
+            className="btn primary"
+            disabled={!name.trim()}
+            onClick={() => {
+              const headers: Record<string, string> = {}
+              for (const line of headerText.split('\n')) {
+                const idx = line.indexOf(':')
+                if (idx > 0) headers[line.slice(0, idx).trim()] = line.slice(idx + 1).trim()
+              }
+              props.onAdd(name.trim(), {
+                type,
+                enabled: true,
+                ...(type === 'local' ? { command: command.trim().split(/\s+/) } : { url: url.trim(), headers }),
+              })
+            }}
+          >
+            添加
+          </button>
         </div>
       </div>
     </div>

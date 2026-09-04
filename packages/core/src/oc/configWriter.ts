@@ -21,7 +21,7 @@ export interface ProviderSetting {
 export function writeSidecarConfig(
   p: JeffPaths,
   providers: ProviderSetting[],
-  opts: { defaultModel?: { providerID: string; modelID: string } } = {},
+  opts: { defaultModel?: { providerID: string; modelID: string }; mcp?: Record<string, unknown> } = {},
 ): void {
   const configFile = path.join(p.ocConfigDir, 'opencode.json')
   let cfg: Record<string, unknown> = {}
@@ -43,6 +43,7 @@ export function writeSidecarConfig(
     // builtin provider 不写配置（models.dev 目录自动提供），只写 auth
   }
   cfg['provider'] = providerCfg
+  if (opts.mcp) cfg['mcp'] = opts.mcp
   if (opts.defaultModel?.providerID && opts.defaultModel?.modelID) {
     cfg['small_model'] = `${opts.defaultModel.providerID}/${opts.defaultModel.modelID}`
   }

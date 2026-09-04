@@ -10,6 +10,8 @@ asar: true
 extraResources:
   - from: resources/oc-bin
     to: oc-bin
+  - from: build/icon.png
+    to: icon.png
 linux:
   target:
     - AppImage

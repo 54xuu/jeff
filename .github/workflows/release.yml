@@ -1,0 +1,84 @@
+name: Test & Release
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: 安装依赖
+        run: npm ci --no-audit --no-fund
+      - name: 类型检查
+        run: |
+          npx tsc -p packages/core/tsconfig.json --noEmit
+          npx tsc -p apps/desktop/tsconfig.json --noEmit
+      - name: 单元测试（含 WebDAV mock 同步测试）
+        run: npm test -w @jeff/core
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux
+          - os: windows-latest
+            platform: win
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: 安装依赖
+        run: npm ci --no-audit --no-fund
+      - name: 拉取 opencode 二进制（linux-x64 + windows-x64）
+        working-directory: apps/desktop
+        shell: bash
+        run: node scripts/fetch-opencode.mjs 1.18.26
+      - name: 构建渲染/主进程
+        working-directory: apps/desktop
+        run: npx electron-vite build
+      - name: 打包 linux-x64（AppImage + deb）
+        if: matrix.platform == 'linux'
+        working-directory: apps/desktop
+        run: npx electron-builder --linux --x64
+      - name: 打包 win-x64（NSIS）
+        if: matrix.platform == 'win'
+        working-directory: apps/desktop
+        run: npx electron-builder --win --x64
+      - name: 冒烟（linux：启动打包产物并截图）
+        if: matrix.platform == 'linux'
+        working-directory: apps/desktop/release/linux-unpacked
+        shell: bash
+        env:
+          JEFF_SMOKE: '1'
+          JEFF_SMOKE_DELAY_MS: '6000'
+          JEFF_SMOKE_OUT: ${{ github.workspace }}/jeff-smoke.png
+        run: |
+          ./jeff-desktop || true
+          ls -la "$JEFF_SMOKE_OUT" || true
+      - name: 发布到 GitHub Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            apps/desktop/release/*.exe
+            apps/desktop/release/*.AppImage
+            apps/desktop/release/*.deb
+          fail_on_unmatched_files: true
+          generate_release_notes: true
