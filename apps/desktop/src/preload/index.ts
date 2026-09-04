@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 
 const api = {
+  env: { smokeSelect: process.env.JEFF_SMOKE_SELECT || '' },
   invoke: (channel: string, payload?: unknown): Promise<unknown> => ipcRenderer.invoke(`jeff:${channel}`, payload),
   /** 主进程推送：{what, payload} */
   onPush: (cb: (evt: { what: string; payload?: unknown }) => void): (() => void) => {

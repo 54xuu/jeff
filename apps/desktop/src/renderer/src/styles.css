@@ -854,3 +854,246 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: color-mix(in srgb, var(--text) 30%, transparent);
 }
+
+/* ===== M2：群聊 / 看板 / 任务 ===== */
+.composer-hint {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-2);
+}
+
+.msg-system {
+  align-self: center;
+  max-width: 80%;
+}
+
+.msg-system > span {
+  font-size: 11px;
+  color: var(--text-2);
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+  border-radius: 6px;
+  padding: 3px 10px;
+}
+
+.task-card {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-list);
+  border-radius: 10px;
+  padding: 8px 12px;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+}
+
+.task-card:hover {
+  border-color: var(--green);
+}
+
+.task-card-icon {
+  font-size: 16px;
+}
+
+.task-card-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tag-red {
+  color: #fff;
+  background: var(--danger);
+  border-color: var(--danger);
+}
+
+.mention-pop {
+  position: absolute;
+  bottom: 100%;
+  left: 12px;
+  margin-bottom: 6px;
+  width: 300px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  z-index: 40;
+  padding: 4px;
+}
+
+.mention-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  padding: 8px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.mention-item:hover {
+  background: color-mix(in srgb, var(--green) 10%, transparent);
+}
+
+.mention-item .mention-desc {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 140px;
+}
+
+.drawer-mask {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.3);
+  z-index: 60;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.drawer {
+  width: 720px;
+  max-width: 90%;
+  background: var(--bg-panel);
+  height: 100%;
+  overflow-y: auto;
+  padding: 14px 18px;
+  border-left: 1px solid var(--border);
+}
+
+.drawer-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.drawer-sec {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 13px;
+  font-weight: 600;
+  margin: 16px 0 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+}
+
+.member-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.member-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  border-radius: 8px;
+}
+
+.member-row:hover {
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+}
+
+.member-name {
+  flex: 1;
+  font-size: 13px;
+}
+
+.kanban {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+}
+
+.kanban-col {
+  background: var(--bg-list);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px;
+  min-height: 160px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.kanban-col.drag-over {
+  border-color: var(--green);
+  background: color-mix(in srgb, var(--green) 8%, var(--bg-list));
+}
+
+.kanban-col-title {
+  font-size: 12px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.kanban-count {
+  color: var(--text-2);
+  font-weight: 400;
+}
+
+.kanban-empty {
+  font-size: 11px;
+  color: var(--text-2);
+  text-align: center;
+  margin-top: 30px;
+}
+
+.kanban .task-card {
+  cursor: grab;
+  display: block;
+}
+
+.task-card-title {
+  font-size: 13px;
+  line-height: 1.4;
+  margin-bottom: 6px;
+  word-break: break-word;
+}
+
+.task-card-meta {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.member-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.member-chip {
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  border-radius: 999px;
+  font-size: 12px;
+  padding: 5px 12px;
+  cursor: pointer;
+}
+
+.member-chip.on {
+  border-color: var(--green);
+  background: color-mix(in srgb, var(--green) 14%, transparent);
+  color: var(--green);
+}

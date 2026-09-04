@@ -68,6 +68,8 @@ export class SidecarManager extends EventEmitter {
       // 强制 opencode 只用我们的配置目录（否则会回退加载 ~/.opencode/opencode.json 用户全局配置）
       OPENCODE_CONFIG_DIR: this.opts.paths.ocConfigDir,
       OPENCODE_DISABLE_AUTOUPDATE: '1',
+      // 技能只认 Jeff 自己的 skills 目录，不扫 ~/.claude、~/.agents 等外部目录
+      OPENCODE_DISABLE_EXTERNAL_SKILLS: '1',
       // 阻止 opencode 读取项目级 .opencode 配置造成串扰：cwd 固定在 Jeff 工作区
       HOME: process.env.HOME,
     }

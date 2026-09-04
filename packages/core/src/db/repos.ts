@@ -101,10 +101,10 @@ export const kvRepo = (db: DB) => ({
 export const agentRepo = (db: DB) => ({
   list(includeDeleted = false): AgentRow[] {
     const where = includeDeleted ? '' : 'WHERE deleted_at IS NULL'
-    return db.prepare(`SELECT * FROM agent ${where} ORDER BY builtin DESC, archived ASC, name ASC`).all() as AgentRow[]
+    return db.prepare(`SELECT * FROM agent ${where} ORDER BY builtin DESC, archived ASC, name ASC`).all() as unknown as AgentRow[]
   },
   get(id: string): AgentRow | undefined {
-    return db.prepare('SELECT * FROM agent WHERE id = ?').get(id) as AgentRow | undefined
+    return db.prepare('SELECT * FROM agent WHERE id = ?').get(id) as unknown as AgentRow | undefined
   },
   create(data: { name: string; avatar?: string; description?: string; instructions?: string; model_provider?: string; model_id?: string; builtin?: number; id?: string }): AgentRow {
     const id = data.id ?? genId('agt')
@@ -125,7 +125,7 @@ export const agentRepo = (db: DB) => ({
     db.prepare(
       `INSERT INTO agent (id, name, avatar, description, instructions, model_provider, model_id, builtin, archived, created_at, updated_at, deleted_at)
        VALUES (@id, @name, @avatar, @description, @instructions, @model_provider, @model_id, @builtin, @archived, @created_at, @updated_at, @deleted_at)`,
-    ).run(row)
+    ).run(row as unknown as Record<string, never>)
     return row
   },
   update(id: string, patch: Partial<Pick<AgentRow, 'name' | 'avatar' | 'description' | 'instructions' | 'model_provider' | 'model_id' | 'archived'>>): AgentRow | undefined {
@@ -135,7 +135,17 @@ export const agentRepo = (db: DB) => ({
     db.prepare(
       `UPDATE agent SET name=@name, avatar=@avatar, description=@description, instructions=@instructions,
        model_provider=@model_provider, model_id=@model_id, archived=@archived, updated_at=@updated_at WHERE id=@id`,
-    ).run(next)
+    ).run({
+      name: next.name,
+      avatar: next.avatar,
+      description: next.description,
+      instructions: next.instructions,
+      model_provider: next.model_provider,
+      model_id: next.model_id,
+      archived: next.archived,
+      updated_at: next.updated_at,
+      id: next.id,
+    })
     return this.get(id)
   },
   softDelete(id: string): boolean {
@@ -150,10 +160,10 @@ export const agentRepo = (db: DB) => ({
 export const projectRepo = (db: DB) => ({
   list(includeDeleted = false): ProjectRow[] {
     const where = includeDeleted ? '' : 'WHERE deleted_at IS NULL'
-    return db.prepare(`SELECT * FROM project ${where} ORDER BY updated_at DESC`).all() as ProjectRow[]
+    return db.prepare(`SELECT * FROM project ${where} ORDER BY updated_at DESC`).all() as unknown as ProjectRow[]
   },
   get(id: string): ProjectRow | undefined {
-    return db.prepare('SELECT * FROM project WHERE id = ?').get(id) as ProjectRow | undefined
+    return db.prepare('SELECT * FROM project WHERE id = ?').get(id) as unknown as ProjectRow | undefined
   },
   create(data: { title: string; description?: string; icon?: string; leader_agent_id?: string | null; status?: string }): ProjectRow {
     const row: ProjectRow = {
@@ -170,7 +180,7 @@ export const projectRepo = (db: DB) => ({
     db.prepare(
       `INSERT INTO project (id, title, description, icon, status, leader_agent_id, created_at, updated_at, deleted_at)
        VALUES (@id, @title, @description, @icon, @status, @leader_agent_id, @created_at, @updated_at, @deleted_at)`,
-    ).run(row)
+    ).run(row as unknown as Record<string, never>)
     return row
   },
   update(id: string, patch: Partial<Pick<ProjectRow, 'title' | 'description' | 'icon' | 'status' | 'leader_agent_id'>>): ProjectRow | undefined {
@@ -179,7 +189,15 @@ export const projectRepo = (db: DB) => ({
     const next = { ...cur, ...patch, updated_at: now() }
     db.prepare(
       `UPDATE project SET title=@title, description=@description, icon=@icon, status=@status, leader_agent_id=@leader_agent_id, updated_at=@updated_at WHERE id=@id`,
-    ).run(next)
+    ).run({
+      title: next.title,
+      description: next.description,
+      icon: next.icon,
+      status: next.status,
+      leader_agent_id: next.leader_agent_id,
+      updated_at: next.updated_at,
+      id: next.id,
+    })
     return this.get(id)
   },
   softDelete(id: string): boolean {
@@ -193,7 +211,7 @@ export const projectRepo = (db: DB) => ({
 // ---------- project_agent ----------
 export const projectAgentRepo = (db: DB) => ({
   listByProject(projectId: string): ProjectAgentRow[] {
-    return db.prepare('SELECT * FROM project_agent WHERE project_id = ? ORDER BY position, created_at').all(projectId) as ProjectAgentRow[]
+    return db.prepare('SELECT * FROM project_agent WHERE project_id = ? ORDER BY position, created_at').all(projectId) as unknown as ProjectAgentRow[]
   },
   add(projectId: string, agentId: string, role = 'member', position = 0): void {
     db.prepare(
@@ -214,10 +232,10 @@ export const projectAgentRepo = (db: DB) => ({
 export const taskRepo = (db: DB) => ({
   listByProject(projectId: string, includeDeleted = false): TaskRow[] {
     const where = includeDeleted ? 'WHERE project_id = ?' : 'WHERE project_id = ? AND deleted_at IS NULL'
-    return db.prepare(`SELECT * FROM task ${where} ORDER BY number DESC`).all(projectId) as TaskRow[]
+    return db.prepare(`SELECT * FROM task ${where} ORDER BY number DESC`).all(projectId) as unknown as TaskRow[]
   },
   get(id: string): TaskRow | undefined {
-    return db.prepare('SELECT * FROM task WHERE id = ?').get(id) as TaskRow | undefined
+    return db.prepare('SELECT * FROM task WHERE id = ?').get(id) as unknown as TaskRow | undefined
   },
   /** 项目内编号：取当前最大编号 +1（软删除占用也跳过不复用，避免歧义） */
   nextNumber(projectId: string): number {
@@ -244,7 +262,7 @@ export const taskRepo = (db: DB) => ({
     db.prepare(
       `INSERT INTO task (id, project_id, number, title, description, status, priority, assignee_type, assignee_id, parent_task_id, position, created_at, updated_at, deleted_at)
        VALUES (@id, @project_id, @number, @title, @description, @status, @priority, @assignee_type, @assignee_id, @parent_task_id, @position, @created_at, @updated_at, @deleted_at)`,
-    ).run(row)
+    ).run(row as unknown as Record<string, never>)
     return row
   },
   update(id: string, patch: Partial<Pick<TaskRow, 'title' | 'description' | 'status' | 'priority' | 'assignee_type' | 'assignee_id' | 'parent_task_id' | 'position'>>): TaskRow | undefined {
@@ -256,7 +274,18 @@ export const taskRepo = (db: DB) => ({
     db.prepare(
       `UPDATE task SET title=@title, description=@description, status=@status, priority=@priority, assignee_type=@assignee_type,
        assignee_id=@assignee_id, parent_task_id=@parent_task_id, position=@position, updated_at=@updated_at WHERE id=@id`,
-    ).run(next)
+    ).run({
+      title: next.title,
+      description: next.description,
+      status: next.status,
+      priority: next.priority,
+      assignee_type: next.assignee_type,
+      assignee_id: next.assignee_id,
+      parent_task_id: next.parent_task_id,
+      position: next.position,
+      updated_at: next.updated_at,
+      id: next.id,
+    })
     return this.get(id)
   },
   softDelete(id: string): boolean {
@@ -273,7 +302,7 @@ export const chatMessageRepo = (db: DB) => ({
     return db
       .prepare('SELECT * FROM chat_message WHERE scope = ? ORDER BY created_at DESC LIMIT ?')
       .all(scope, limit)
-      .reverse() as ChatMessageRow[]
+      .reverse() as unknown as ChatMessageRow[]
   },
   add(row: { scope: string; sender_type: ChatMessageRow['sender_type']; sender_id?: string; content?: string; meta?: unknown; id?: string }): ChatMessageRow {
     const rec: ChatMessageRow = {
@@ -287,7 +316,7 @@ export const chatMessageRepo = (db: DB) => ({
     }
     db.prepare(
       'INSERT INTO chat_message (id, scope, sender_type, sender_id, content, meta, created_at) VALUES (@id, @scope, @sender_type, @sender_id, @content, @meta, @created_at)',
-    ).run(rec)
+    ).run(rec as unknown as Record<string, never>)
     return rec
   },
 })

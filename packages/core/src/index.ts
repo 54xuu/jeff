@@ -13,6 +13,8 @@ import { ToolBridge, renderBridgePlugin } from './tools/bridge.js'
 import { registerAdminTools } from './tools/adminTools.js'
 import { allToolDefs } from './tools/definitions.js'
 import { PrivateChat } from './chat/private.js'
+import { GroupChat } from './orchestrator/group.js'
+import { registerProjectTools, taskCardMessage } from './tools/projectTools.js'
 
 export const APP_VERSION = '0.1.0'
 export { buildPaths, ensureDirs, jeffRoot } from './paths.js'
@@ -27,6 +29,7 @@ export class JeffCore extends EventEmitter {
   registry!: AgentRegistry
   bridge = new ToolBridge()
   privateChat!: PrivateChat
+  groupChat!: GroupChat
   bus = new EventEmitter()
   private started = false
   private registryDirty = false
@@ -52,6 +55,20 @@ export class JeffCore extends EventEmitter {
         this.bus.emit('data-changed', 'agents')
       },
     })
+    registerProjectTools(this.bridge, {
+      db: this.db,
+      onProjectChanged: () => {
+        this.bus.emit('data-changed', 'projects')
+      },
+      onTaskChanged: (projectId, taskId) => {
+        if (taskId) {
+          const card = taskCardMessage(this.db, projectId, taskId)
+          if (card.content) this.groupChat.addSystemMessage(projectId, card.content, card.meta)
+        }
+        this.bus.emit('data-changed', 'tasks')
+        this.bus.emit('group-updated', { projectId })
+      },
+    })
     await this.bridge.start()
     this.writeBridgePlugin()
 
@@ -72,6 +89,7 @@ export class JeffCore extends EventEmitter {
     this.oc.on('event', (evt: { type?: string; properties?: Record<string, unknown> }) => this.handleOcEvent(evt))
 
     this.privateChat = new PrivateChat(this.db, () => this.oc, { beforeEnsure: () => this.restartIfRegistryDirty() })
+    this.groupChat = new GroupChat(this.db, () => this.oc, { beforeEnsure: () => this.restartIfRegistryDirty() })
     this.started = true
   }
 
@@ -207,3 +225,5 @@ export { XIAOJIE_SLUG, agentSlug } from './agents/registry.js'
 export { XIAOJIE_ID, BUILTIN_PROVIDER_PRESETS } from './ipc/contract.js'
 export { SidecarManager } from './sidecar/manager.js'
 export { ToolBridge } from './tools/bridge.js'
+export { GroupChat } from './orchestrator/group.js'
+export { registerProjectTools, taskCardMessage } from './tools/projectTools.js'

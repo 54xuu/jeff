@@ -9,8 +9,8 @@ import type {
   AppSettings,
   AppInfo,
 } from '@jeff/core'
-import { IPC, XIAOJIE_ID } from '@jeff/core'
-import type { JeffCore } from '@jeff/core'
+import { IPC, XIAOJIE_ID, agentRepo, projectRepo, projectAgentRepo, taskRepo, taskCardMessage } from '@jeff/core'
+import type { JeffCore, TaskRow } from '@jeff/core'
 
 type Handler = (payload: unknown) => Promise<unknown>
 
@@ -128,6 +128,133 @@ export function registerIpc(core: JeffCore): void {
       }
       return { ok: true }
     },
+
+    // ---------- 项目群 ----------
+    [IPC.projectsList]: async (): Promise<ProjectInfo[]> => {
+      const projects = projectRepo(core.db).list()
+      return projects.map((p) => ({
+        id: p.id,
+        title: p.title,
+        description: p.description,
+        icon: p.icon,
+        status: p.status,
+        leader_agent_id: p.leader_agent_id,
+        updated_at: p.updated_at,
+        memberCount: projectAgentRepo(core.db).listByProject(p.id).length,
+      }))
+    },
+    [IPC.projectSave]: async (p): Promise<ProjectInfo> => {
+      const d = p as { id?: string; title: string; description?: string; icon?: string; leader_agent_id?: string | null; memberAgentIds?: string[] }
+      if (!d.leader_agent_id) throw new Error('必须选择群主（leader）')
+      if (d.id) {
+        const row = projectRepo(core.db).update(d.id, { title: d.title, description: d.description, icon: d.icon, leader_agent_id: d.leader_agent_id })
+        if (!row) throw new Error('项目不存在')
+        projectAgentRepo(core.db).add(d.id, d.leader_agent_id, 'leader', 0)
+        for (const mid of d.memberAgentIds || []) {
+          if (mid !== d.leader_agent_id) projectAgentRepo(core.db).add(d.id, mid, 'member')
+        }
+      } else {
+        const row = projectRepo(core.db).create({ title: d.title, description: d.description, icon: d.icon, leader_agent_id: d.leader_agent_id })
+        projectAgentRepo(core.db).add(row.id, d.leader_agent_id, 'leader', 0)
+        for (const mid of d.memberAgentIds || []) {
+          if (mid !== d.leader_agent_id) projectAgentRepo(core.db).add(row.id, mid, 'member')
+        }
+      }
+      core.bus.emit('data-changed', 'projects')
+      const row = projectRepo(core.db).list().find((x) => x.title === d.title)!
+      return {
+        id: row.id,
+        title: row.title,
+        description: row.description,
+        icon: row.icon,
+        status: row.status,
+        leader_agent_id: row.leader_agent_id,
+        updated_at: row.updated_at,
+        memberCount: projectAgentRepo(core.db).listByProject(row.id).length,
+      }
+    },
+    [IPC.projectDelete]: async (p): Promise<{ ok: boolean }> => {
+      const { id } = p as { id: string }
+      const ok = projectRepo(core.db).softDelete(id)
+      core.bus.emit('data-changed', 'projects')
+      return { ok }
+    },
+    [IPC.projectMembers]: async (p): Promise<ProjectMember[]> => {
+      const { projectId } = p as { projectId: string }
+      return projectAgentRepo(core.db).listByProject(projectId).map((m) => {
+        const a = agentRepo(core.db).get(m.agent_id)
+        return { agent_id: m.agent_id, role: m.role, name: a?.name || m.agent_id, avatar: a?.avatar || '🤖' }
+      })
+    },
+    [IPC.projectAddMember]: async (p): Promise<{ ok: boolean }> => {
+      const { projectId, agentId, role } = p as { projectId: string; agentId: string; role?: string }
+      projectAgentRepo(core.db).add(projectId, agentId, role || 'member')
+      core.bus.emit('data-changed', 'projects')
+      return { ok: true }
+    },
+    [IPC.projectRemoveMember]: async (p): Promise<{ ok: boolean }> => {
+      const { projectId, agentId } = p as { projectId: string; agentId: string }
+      const project = projectRepo(core.db).get(projectId)
+      if (project?.leader_agent_id === agentId) throw new Error('不能移除群主；请先改群主')
+      projectAgentRepo(core.db).remove(projectId, agentId)
+      core.bus.emit('data-changed', 'projects')
+      return { ok: true }
+    },
+
+    // ---------- 任务 ----------
+    [IPC.tasksList]: async (p): Promise<TaskInfo[]> => {
+      const { projectId } = p as { projectId: string }
+      return taskRepo(core.db).listByProject(projectId).map(toTaskInfo)
+    },
+    [IPC.taskSave]: async (p): Promise<TaskInfo> => {
+      const d = p as { id?: string; project_id: string; title: string; description?: string; status?: string; priority?: string; assignee_id?: string }
+      let row
+      if (d.id) {
+        row = taskRepo(core.db).update(d.id, {
+          title: d.title,
+          description: d.description,
+          status: d.status,
+          priority: d.priority,
+          ...(d.assignee_id !== undefined ? { assignee_type: d.assignee_id ? 'agent' : 'none', assignee_id: d.assignee_id } : {}),
+        })
+      } else {
+        row = taskRepo(core.db).create({
+          project_id: d.project_id,
+          title: d.title,
+          description: d.description,
+          status: d.status,
+          priority: d.priority,
+          assignee_type: d.assignee_id ? 'agent' : 'none',
+          assignee_id: d.assignee_id || '',
+        })
+      }
+      if (!row) throw new Error('任务保存失败')
+      const card = taskCardMessage(core.db, row.project_id, row.id)
+      if (card.content) core.groupChat.addSystemMessage(row.project_id, card.content, card.meta)
+      core.bus.emit('data-changed', 'tasks')
+      core.bus.emit('group-updated', { projectId: row.project_id })
+      return toTaskInfo(row)
+    },
+    [IPC.taskDelete]: async (p): Promise<{ ok: boolean }> => {
+      const { id } = p as { id: string }
+      const cur = taskRepo(core.db).get(id)
+      const ok = cur ? taskRepo(core.db).softDelete(id) : false
+      if (cur) {
+        core.bus.emit('data-changed', 'tasks')
+        core.bus.emit('group-updated', { projectId: cur.project_id })
+      }
+      return { ok }
+    },
+
+    // ---------- 群聊 ----------
+    [IPC.groupHistory]: async (p): Promise<unknown> => {
+      const { projectId } = p as { projectId: string }
+      return core.groupChat.history(projectId)
+    },
+    [IPC.groupSend]: async (p): Promise<{ routedTo: string }> => {
+      const { projectId, text, model } = p as { projectId: string; text: string; model?: { providerID: string; modelID: string } }
+      return core.groupChat.send({ projectId, text, model })
+    },
   }
 
   for (const [channel, handler] of Object.entries(handlers)) {
@@ -146,5 +273,21 @@ export function toAgentInfo(row: import('@jeff/core').AgentRow): AgentInfo {
     model_id: row.model_id,
     builtin: !!row.builtin,
     archived: !!row.archived,
+  }
+}
+
+function toTaskInfo(row: TaskRow): TaskInfo {
+  return {
+    id: row.id,
+    project_id: row.project_id,
+    number: row.number,
+    key: `JEF-${row.number}`,
+    title: row.title,
+    description: row.description,
+    status: row.status,
+    priority: row.priority,
+    assignee_type: row.assignee_type,
+    assignee_id: row.assignee_id,
+    parent_task_id: row.parent_task_id,
   }
 }

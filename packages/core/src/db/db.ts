@@ -1,16 +1,17 @@
-import Database from 'better-sqlite3'
+import { DatabaseSync } from 'node:sqlite'
 import type { JeffPaths } from '../paths.js'
 
-export type DB = Database.Database
+export type DB = DatabaseSync
 
 /**
  * 打开数据库并执行迁移。
+ * 用 node:sqlite（Node >=22.13 与 Electron 39 均内置，含 FTS5）：零原生依赖，彻底避免双运行时 ABI 重编译问题。
  * 规范：所有字段必须有注释（SQLite 用 -- 注释，与 MySQL 规范保持同一精神）。
  */
 export function openDb(p: JeffPaths): DB {
-  const db = new Database(p.dbFile)
-  db.pragma('journal_mode = WAL')
-  db.pragma('foreign_keys = ON')
+  const db = new DatabaseSync(p.dbFile)
+  db.exec('PRAGMA journal_mode = WAL')
+  db.exec('PRAGMA foreign_keys = ON')
   migrate(db)
   return db
 }
