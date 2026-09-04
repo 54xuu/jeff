@@ -52,7 +52,8 @@ describe('GroupChat', () => {
 
   it('briefing 包含名册与 leader 指示', () => {
     const p = projectRepo(db).list()[0]
-    const briefing = group.buildBriefing(p.id)
+    const leaderId = projectRepo(db).list()[0].leader_agent_id as string
+    const briefing = group.buildBriefing(p.id, leaderId)
     expect(briefing).toContain('官网项目')
     expect(briefing).toContain('架构师')
     expect(briefing).toContain('群主/leader')

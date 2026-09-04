@@ -46,6 +46,9 @@ export const IPC = {
   modelsDefault: 'models:default',
   settingsGet: 'settings:get',
   settingsSet: 'settings:set',
+  memoryScopes: 'memory:scopes',
+  memoryGet: 'memory:get',
+  memorySave: 'memory:save',
   syncNow: 'sync:now',
   syncStatus: 'sync:status',
   syncConfigure: 'sync:configure',
@@ -134,6 +137,13 @@ export interface AppInfo {
   jeffVersion: string
 }
 
+export interface MemoryScopeInfo {
+  kind: 'user' | 'agent' | 'project'
+  id: string // user | agentId | projectId
+  label: string
+  file: string
+}
+
 export type InvokeMap = {
   [IPC.appInfo]: void
   [IPC.agentsList]: void
@@ -161,6 +171,9 @@ export type InvokeMap = {
   [IPC.modelsDefault]: { defaultModel?: { providerID: string; modelID: string } | null }
   [IPC.settingsGet]: void
   [IPC.settingsSet]: { theme?: AppSettings['theme'] }
+  [IPC.memoryScopes]: void
+  [IPC.memoryGet]: { kind: 'user' | 'agent' | 'project'; id: string }
+  [IPC.memorySave]: { kind: 'user' | 'agent' | 'project'; id: string; content: string }
   [IPC.syncNow]: void
   [IPC.syncStatus]: void
   [IPC.syncConfigure]: { url: string; username: string; password: string; basePath: string; autoSync: boolean }

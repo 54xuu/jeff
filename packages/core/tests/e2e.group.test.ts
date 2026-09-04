@@ -9,6 +9,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { JeffCore, agentRepo, projectRepo, taskRepo, projectAgentRepo, buildPaths, openDb, kvRepo, XIAOJIE_ID, chatMessageRepo } from '../src/index.js'
+import { sesMetaKey } from '../src/tools/memoryTools.js'
 
 const RUN = process.env.JEFF_E2E === '1'
 const d = RUN ? describe : describe.skip
@@ -127,4 +128,56 @@ d('E2E: 项目群聊 + 任务卡片', () => {
     const history2 = core.groupChat.history(p.id)
     expect(history2.filter((m) => (m.meta as { type?: string })?.type === 'task').length).toBeGreaterThanOrEqual(2)
   }, 60000)
+
+  it('M3: 群会话写项目记忆 + 会话搜索命中', async () => {
+    const p = projectRepo(core.db).list()[0]
+    const leaderSession = core.groupChat.getSessionId(p.id, XIAOJIE_ID)!
+    // 群会话默认 → 项目共享记忆
+    const res = await fetch(`${core.bridge.url()}/tools/jeff_memory`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${core.bridge.token}` },
+      body: JSON.stringify({ __ctx: { sessionID: leaderSession, agent: 'jeff_xiaojie' }, action: 'add', text: '部署目标是 linux-x64 服务器，每周五发版' }),
+    })
+    const memRes = (await res.json()) as { ok: boolean; data?: { ok: boolean; error?: string; budget?: number }; error?: string }
+    expect(memRes.ok).toBe(true)
+    const mem = memRes.data!
+    expect(mem.ok).toBe(true)
+    // 落盘检查
+    const memFile = core.memory.file({ kind: 'project', projectId: p.id })
+    expect(fs.readFileSync(memFile, 'utf8')).toContain('linux-x64')
+
+    // 会话搜索：此前群聊里说过的「项目启动」应能命中
+    const res2 = await fetch(`${core.bridge.url()}/tools/jeff_session_search`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${core.bridge.token}` },
+      body: JSON.stringify({ query: '项目启动', scope: `group:${p.id}` }),
+    })
+    const searchRes = (await res2.json()) as { ok: boolean; data?: { ok: boolean; count: number; hits: Array<{ snippet: string }> }; error?: string }
+    expect(searchRes.ok).toBe(true)
+    const search = searchRes.data!
+    expect(search.ok).toBe(true)
+    expect(search.count).toBeGreaterThanOrEqual(1)
+    expect(search.hits[0].snippet).toContain('「项 目 启 动」')
+  }, 60000)
+
+  it('M3: leader 委派成员（真实 sidecar 执行成员会话）', async () => {
+    const p = projectRepo(core.db).list()[0]
+    const dev = agentRepo(core.db).list().find((a) => a.name === '前端小王')!
+    const leaderSession = core.groupChat.getSessionId(p.id, XIAOJIE_ID)!
+    const res = await fetch(`${core.bridge.url()}/tools/jeff_delegate`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${core.bridge.token}` },
+      body: JSON.stringify({ __ctx: { sessionID: leaderSession, agent: 'jeff_xiaojie', messageID: 'msg_del_e2e' }, member_agent_id: dev.id, instruction: '请把首页按钮改成圆角风格' }),
+    })
+    const delRes = (await res.json()) as { ok: boolean; data?: { member?: string; result?: string; error?: string }; error?: string }
+    expect(delRes.ok).toBe(true)
+    const r = delRes.data!
+    expect(r.member).toBe('前端小王')
+    expect(r.member).toBe('前端小王')
+    expect(r.result).toBeTruthy()
+    // 群记录：公告 + 成员结果
+    const history = core.groupChat.history(p.id)
+    expect(history.some((m) => m.role === 'system' && m.text.includes('委派任务给 前端小王'))).toBe(true)
+    expect(history.some((m) => m.sender_name === '前端小王' && (m.meta as { delegatedBy?: string })?.delegatedBy === XIAOJIE_ID)).toBe(true)
+  }, 180000)
 })

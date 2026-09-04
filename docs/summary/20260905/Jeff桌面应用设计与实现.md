@@ -51,10 +51,23 @@ Electron 主进程
 - [x] opencode 1.18.26 本机验证：隔离目录、自定义 provider/agent/插件工具、消息往返
 - [x] M1 基座与私聊（2026-09-05）
 - [x] M2 项目群与任务（2026-09-05）
-- [ ] M3 记忆与群聊编排
+- [x] M3 记忆与群聊编排（2026-09-05）
 - [ ] M4 WebDAV 与双平台发布
 
 ## 验收记录
+
+### M3（2026-09-05）✅
+
+- **单测**：42/42 通过（新增 memory 12 个、delegate 6 个）。
+- **E2E**（真实 sidecar，`JEFF_E2E=1`）：群套件 4/4——新增：群会话写项目共享记忆（落盘校验）、`jeff_session_search` 中文检索命中、leader 委派成员（成员真实执行、结果回群、群公告）。
+- **记忆系统（hermes 前两层移植）**：
+  - `MemoryStore`：§ 分隔条目、硬字符预算（USER 1375 / agent/project 2200）、超限报错附带现有条目逼模型用 batch 原子腾挪、唯一子串匹配、精确去重、tmp+rename 原子写、目录锁；
+  - 注入：每条消息的 system 带「agent 记忆 + 项目记忆 + 用户画像」冻结块（下一条消息自然刷新，prefix-cache 友好）；
+  - nudge：每 10 轮触发后台临时会话自省（重放最近 30 条，结束后删除会话，带防并发守卫）；
+  - 权限：USER.md 仅小杰可写；项目记忆要求成员身份；群会话默认写项目记忆。
+- **会话搜索**：FTS5（external content + 触发器同步），CJK 逐字 token + phrase 查询支持中文子串；消息级幂等索引（私聊/群聊/启动回填）。
+- **委派（multica squad 进程内适配）**：leader 调 `jeff_delegate` → 成员独立会话执行（注入指派 briefing）→ 结果回群并作为工具输出给 leader 同轮汇总；防重（同群+同成员+同指令并发去重）+ 防失控（单条消息最多 5 次委派）。
+- **关键发现**：opencode 插件 `execute(args, ctx)` 的 ctx 带 `sessionID/agent/messageID`——工具桥透传后可精确定位调用者会话语义（私聊/群聊/自省会话）。
 
 ### M2（2026-09-05）✅
 

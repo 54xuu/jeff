@@ -19,6 +19,12 @@ const SESSION_KEY = (agentId: string) => `session:private:${agentId}`
 export interface PrivateChatHooks {
   /** 每次确保会话前调用（用于惰性重启 sidecar 等） */
   beforeEnsure?: () => Promise<void>
+  /** 新会话创建后记录元数据（session → jeff 语义映射） */
+  onSessionCreated?: (sessionId: string, meta: { kind: 'private' | 'group' | 'review'; agentId: string; projectId?: string }) => void
+  /** 每条消息的 system 注入（长期记忆块） */
+  buildSystem?: (agentId: string, projectId?: string) => string | undefined
+  /** 回复完成后（索引 + nudge） */
+  afterReply?: (scope: { kind: 'private'; agentId: string } | { kind: 'group'; projectId: string; agentId: string }) => void
 }
 
 /** 私聊（agent = 微信好友）：每个 agent 一条持续会话 */
@@ -44,6 +50,7 @@ export class PrivateChat {
     }
     const s = await this.getOc().createSession({ title: `与 ${agentName} 的聊天`, agent: agentSlug(agentId) })
     kv.set(SESSION_KEY(agentId), s.id)
+    this.hooks?.onSessionCreated?.(s.id, { kind: 'private', agentId })
     return s.id
   }
 
@@ -61,12 +68,15 @@ export class PrivateChat {
   /** 发送消息并等待回复完成 */
   async send(agentId: string, agentName: string, text: string, model?: { providerID: string; modelID: string }): Promise<AssistantInfo> {
     const sessionId = await this.ensureSession(agentId, agentName)
-    return this.getOc().sendMessage({
+    const reply = await this.getOc().sendMessage({
       sessionId,
       text,
       agent: agentSlug(agentId),
+      system: this.hooks?.buildSystem?.(agentId),
       ...(model && model.providerID && model.modelID ? { model } : {}),
     })
+    this.hooks?.afterReply?.({ kind: 'private', agentId })
+    return reply
   }
 
   /** 读取历史消息（映射为 UI 形状） */

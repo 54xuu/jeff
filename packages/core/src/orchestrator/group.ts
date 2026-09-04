@@ -8,6 +8,10 @@ const SESSION_KEY = (projectId: string, agentId: string) => `session:group:${pro
 
 export interface GroupChatHooks {
   beforeEnsure?: () => Promise<void>
+  onSessionCreated?: (sessionId: string, meta: { kind: 'private' | 'group' | 'review'; agentId: string; projectId?: string }) => void
+  /** 群消息的记忆块注入（追加在 briefing 之后） */
+  buildMemory?: (agentId: string, projectId: string) => string | undefined
+  afterReply?: (scope: { kind: 'private'; agentId: string } | { kind: 'group'; projectId: string; agentId: string }) => void
 }
 
 /**
@@ -46,6 +50,7 @@ export class GroupChat {
       agent: agentSlug(agentId),
     })
     kv.set(key, s.id)
+    this.hooks?.onSessionCreated?.(s.id, { kind: 'group', agentId, projectId })
     return s.id
   }
 
@@ -62,8 +67,8 @@ export class GroupChat {
     return hits[0].agent_id
   }
 
-  /** leader 的 roster briefing（注入到每条群消息的 system，保持会话内上下文新鲜） */
-  buildBriefing(projectId: string): string {
+  /** roster briefing（注入到每条群消息的 system；按接收者 agent 区分 leader/成员视角） */
+  buildBriefing(projectId: string, agentId: string): string {
     const project = projectRepo(this.db).get(projectId)
     if (!project) throw new Error(`项目不存在: ${projectId}`)
     const agents = agentRepo(this.db)
@@ -74,7 +79,7 @@ export class GroupChat {
         return `- ${a?.name || m.agent_id}（角色: ${m.role}${m.agent_id === project.leader_agent_id ? '，群主/leader' : ''}）id=${m.agent_id}`
       })
       .join('\n')
-    const isLeaderBriefing = project.leader_agent_id === this.currentAgentId
+    const isLeaderBriefing = project.leader_agent_id === agentId
     const leaderLine = isLeaderBriefing
       ? '你是本群群主（leader），用户的消息默认由你统筹：能自己答就答；需要别人干活的，说明你打算怎么做（M3 将支持直接委派工具）。'
       : '你是本群成员，就你职责范围内的问题作答。'
@@ -89,8 +94,6 @@ export class GroupChat {
       .filter(Boolean)
       .join('\n')
   }
-
-  private currentAgentId = ''
 
   /** 用户在群里发消息：存储 + 路由（@直达 或 leader）+ 回帖 */
   async send(input: { projectId: string; text: string; model?: { providerID: string; modelID: string } }): Promise<{ routedTo: string }> {
@@ -111,17 +114,18 @@ export class GroupChat {
     const targetId = mentioned ?? project.leader_agent_id
     const target = agents.get(targetId)
     if (!target) throw new Error(`路由目标不存在: ${targetId}`)
-    this.currentAgentId = targetId
 
     // 3. 会话发送（system 注入群上下文）
     const sessionId = await this.ensureSession(projectId, targetId)
     let reply: AssistantInfo
+    const memoryBlock = this.hooks?.buildMemory?.(targetId, projectId)
+    const system = memoryBlock ? `${this.buildBriefing(projectId, targetId)}\n\n${memoryBlock}` : this.buildBriefing(projectId, targetId)
     try {
       reply = await this.getOc().sendMessage({
         sessionId,
         text,
         agent: agentSlug(targetId),
-        system: this.buildBriefing(projectId),
+        system,
         ...(input.model && input.model.providerID && input.model.modelID ? { model: input.model } : {}),
       })
     } catch (err) {
@@ -148,6 +152,7 @@ export class GroupChat {
       content,
       meta: { sessionId, messageId: reply.id },
     })
+    this.hooks?.afterReply?.({ kind: 'group', projectId, agentId: targetId })
     return { routedTo: targetId }
   }
 

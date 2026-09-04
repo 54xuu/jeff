@@ -10,6 +10,7 @@ import type {
   AppInfo,
 } from '@jeff/core'
 import { IPC, XIAOJIE_ID, agentRepo, projectRepo, projectAgentRepo, taskRepo, taskCardMessage } from '@jeff/core'
+import type { MemoryScopeInfo } from '@jeff/core'
 import type { JeffCore, TaskRow } from '@jeff/core'
 
 type Handler = (payload: unknown) => Promise<unknown>
@@ -126,6 +127,30 @@ export function registerIpc(core: JeffCore): void {
         core.kv().setJSON('settings:theme', theme)
         nativeTheme.themeSource = theme
       }
+      return { ok: true }
+    },
+
+    // ---------- 记忆管理 ----------
+    [IPC.memoryScopes]: async (): Promise<MemoryScopeInfo[]> => {
+      const out: MemoryScopeInfo[] = [{ kind: 'user', id: 'user', label: '全局用户画像', file: core.memory.file({ kind: 'user' }) }]
+      for (const a of agentRepo(core.db).list()) {
+        if (a.builtin) continue
+        out.push({ kind: 'agent', id: a.id, label: `${a.avatar} ${a.name}`, file: core.memory.file({ kind: 'agent', agentId: a.id }) })
+      }
+      for (const pr of projectRepo(core.db).list()) {
+        out.push({ kind: 'project', id: pr.id, label: `${pr.icon} ${pr.title}`, file: core.memory.file({ kind: 'project', projectId: pr.id }) })
+      }
+      return out
+    },
+    [IPC.memoryGet]: async (p): Promise<{ content: string; label: string }> => {
+      const d = p as { kind: 'user' | 'agent' | 'project'; id: string }
+      const scope = d.kind === 'user' ? ({ kind: 'user' } as const) : d.kind === 'agent' ? ({ kind: 'agent', agentId: d.id } as const) : ({ kind: 'project', projectId: d.id } as const)
+      return { content: core.memory.list(scope).join('\n§\n'), label: core.memory.label(scope) }
+    },
+    [IPC.memorySave]: async (p): Promise<{ ok: boolean }> => {
+      const d = p as { kind: 'user' | 'agent' | 'project'; id: string; content: string }
+      const scope = d.kind === 'user' ? ({ kind: 'user' } as const) : d.kind === 'agent' ? ({ kind: 'agent', agentId: d.id } as const) : ({ kind: 'project', projectId: d.id } as const)
+      core.memory.writeRaw(scope, d.content)
       return { ok: true }
     },
 

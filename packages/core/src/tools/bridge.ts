@@ -90,18 +90,19 @@ export function renderBridgePlugin(bridgeUrl: string, token: string, tools: Arra
           ]),
         ),
       )
-      return `    '${t.name}': {\n      description: ${JSON.stringify(t.description)},\n      args: ${args},\n      async execute(args) {\n        return await call('${t.name}', args)\n      },\n    },`
+      return `    '${t.name}': {\n      description: ${JSON.stringify(t.description)},\n      args: ${args},\n      async execute(args, ctx) {\n        return await call('${t.name}', args, ctx)\n      },\n    },`
     })
     .join('\n')
   return `// 由 Jeff 自动生成 — 工具桥接插件（勿手工编辑）
 export const JeffBridge = async () => {
   const BASE = ${JSON.stringify(bridgeUrl)}
   const TOKEN = ${JSON.stringify(token)}
-  async function call(name, args) {
+  async function call(name, args, ctx) {
+    const payload = { ...(args ?? {}), __ctx: { sessionID: ctx?.sessionID, agent: ctx?.agent, messageID: ctx?.messageID } }
     const res = await fetch(BASE + '/tools/' + name, {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: 'Bearer ' + TOKEN },
-      body: JSON.stringify(args ?? {}),
+      body: JSON.stringify(payload),
     })
     const data = await res.json()
     if (!data.ok) throw new Error(data.error || '工具调用失败')

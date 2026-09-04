@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useStore, applyTheme } from '../store'
 import { api } from '../api'
-import { IPC, BUILTIN_PROVIDER_PRESETS, type ProviderSetting } from '@jeff/core'
+import { IPC, BUILTIN_PROVIDER_PRESETS, type ProviderSetting, type MemoryScopeInfo } from '@jeff/core'
 
 export default function SettingsPage(): React.JSX.Element {
   const { settings, refreshSettings, refreshCatalog, appInfo } = useStore()
@@ -71,6 +71,9 @@ export default function SettingsPage(): React.JSX.Element {
             保存{dirty ? '（未保存更改）' : ''}
           </button>
         </div>
+
+        <div className="settings-sec">记忆（长期记忆 · 条目以 § 分隔，每行一条）</div>
+        <MemoryManager />
 
         <div className="settings-sec">外观</div>
         <div className="seg">
@@ -188,6 +191,63 @@ function AddProvider(props: { onClose: () => void; onAdd: (p: ProviderSetting) =
           >
             添加
           </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+
+function MemoryManager(): React.JSX.Element {
+  const [scopes, setScopes] = useState<MemoryScopeInfo[]>([])
+  const [sel, setSel] = useState<MemoryScopeInfo | null>(null)
+  const [content, setContent] = useState('')
+  const [dirty, setDirty] = useState(false)
+
+  useEffect(() => {
+    void api.invoke<MemoryScopeInfo[]>(IPC.memoryScopes).then((list) => {
+      setScopes(list)
+      if (!sel && list[0]) void pick(list[0])
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const pick = async (m: MemoryScopeInfo) => {
+    const data = await api.invoke<{ content: string; label: string }>(IPC.memoryGet, { kind: m.kind, id: m.id })
+    setSel(m)
+    setContent(data.content)
+    setDirty(false)
+  }
+
+  return (
+    <div style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
+      <div style={{ width: 170, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
+        {scopes.map((m) => (
+          <button key={`${m.kind}:${m.id}`} className={`member-chip ${sel?.id === m.id ? 'on' : ''}`} onClick={() => void pick(m)}>
+            {m.label}
+          </button>
+        ))}
+      </div>
+      <div style={{ flex: 1 }}>
+        <textarea
+          rows={8}
+          value={content}
+          onChange={(e) => {
+            setContent(e.target.value)
+            setDirty(true)
+          }}
+          placeholder="空 = 暂无记忆。每行一条；也可整段编辑，保存时按 § 分隔解析。"
+          style={{ width: '100%', fontFamily: 'inherit', fontSize: 12 }}
+        />
+        <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
+          <button className="btn primary" disabled={!sel || !dirty} onClick={async () => {
+            if (!sel) return
+            await api.invoke(IPC.memorySave, { kind: sel.kind, id: sel.id, content })
+            setDirty(false)
+          }}>
+            保存{dirty ? '（未保存）' : ''}
+          </button>
+          {sel && <span className="settings-tip" style={{ alignSelf: 'center' }}>{sel.file}</span>}
         </div>
       </div>
     </div>
