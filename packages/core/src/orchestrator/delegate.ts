@@ -27,7 +27,8 @@ const MAX_DELEGATIONS_PER_MESSAGE = 5
  */
 export class Delegator {
   private inflight = new Set<string>()
-  private perMessageCount = new Map<string, number>()
+  private perMessageCount = new Map<string, { count: number; ts: number }>()
+  private static PRUNE_MS = 30 * 60 * 1000
 
   constructor(
     private db: DB,
@@ -61,13 +62,19 @@ export class Delegator {
     }
     if (!instruction.trim()) return { ok: false, memberName: member.name, error: 'instruction 不能为空' }
 
-    // 防失控：同一条 leader 消息的委派次数上限
+    // 防失控：同一条 leader 消息的委派次数上限（条目带时间戳，顺带清理过期项防内存缓增）
+    const now = Date.now()
+    for (const [k, v] of this.perMessageCount) {
+      if (now - v.ts > Delegator.PRUNE_MS) this.perMessageCount.delete(k)
+    }
     const mid = sourceMessageId || 'unknown'
-    const count = (this.perMessageCount.get(mid) || 0) + 1
-    if (count > MAX_DELEGATIONS_PER_MESSAGE) {
+    const entry = this.perMessageCount.get(mid) || { count: 0, ts: now }
+    entry.count += 1
+    entry.ts = now
+    if (entry.count > MAX_DELEGATIONS_PER_MESSAGE) {
       return { ok: false, memberName: member.name, error: `同一条消息的委派已达上限（${MAX_DELEGATIONS_PER_MESSAGE} 次），请先汇总当前进展` }
     }
-    this.perMessageCount.set(mid, count)
+    this.perMessageCount.set(mid, entry)
 
     // 防重：同 (群, 成员, 归一化指令) 正在执行 → 拒绝重复
     const sig = `${ctx.projectId}:${memberId}:${crypto.createHash('sha1').update(instruction.replace(/\s+/g, ' ').trim()).digest('hex').slice(0, 12)}`

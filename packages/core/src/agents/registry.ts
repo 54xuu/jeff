@@ -1,3 +1,4 @@
+import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import type { DB } from '../db/db.js'
@@ -10,11 +11,12 @@ import { XIAOJIE_ID } from '../ipc/contract.js'
 
 export const XIAOJIE_SLUG = 'jeff_xiaojie'
 
-/** agent id → opencode agent 名（slug） */
+/** agent id → opencode agent 名（slug）。截断 + 4 位 hash 后缀，避免不同 id 截断后撞名（文件名即 agent 名）。 */
 export function agentSlug(agentId: string): string {
   if (agentId === XIAOJIE_ID) return XIAOJIE_SLUG
   const safe = agentId.replace(/[^a-zA-Z0-9]/g, '')
-  return `jeff_${safe.slice(0, 16)}`
+  const hash = crypto.createHash('sha1').update(agentId).digest('hex').slice(0, 4)
+  return `jeff_${safe.slice(0, 12)}_${hash}`
 }
 
 export const XIAOJIE_INSTRUCTIONS = `你是「小杰」，Jeff 桌面应用的内置管家 agent。Jeff 把工作组织成：智能体（聊天好友）、项目群（群主 leader + 成员智能体，像微信群）、任务（待办/进行/待审/完成，编号 JEF-n）。

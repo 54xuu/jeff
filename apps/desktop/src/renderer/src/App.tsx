@@ -1,12 +1,14 @@
 import { useEffect } from 'react'
-import { useStore } from './store'
+import { useStore, applyTheme } from './store'
 import { api } from './api'
 import NavRail from './components/NavRail'
 import ChatList from './components/ChatList'
 import ChatWindow from './components/ChatWindow'
 import GroupWindow from './components/GroupWindow'
 import AgentsPage from './components/AgentsPage'
-import SettingsPage from './components/SettingsPage'
+import SettingsNav from './components/settings/SettingsNav'
+import SettingsContent from './components/settings/SettingsContent'
+import type { SettingsSection } from './store'
 
 export default function App(): React.JSX.Element {
   const { tab, active, agents, projects, refreshAgents, refreshProjects, refreshAppInfo, refreshSettings, refreshCatalog, handlePush } = useStore()
@@ -18,19 +20,54 @@ export default function App(): React.JSX.Element {
     void refreshSettings()
     void refreshCatalog()
     const off = api.onPush((e) => handlePush(e.what, e.payload))
-    // 冒烟钩子：自动选中第一个会话（打包验证 UI 用）
-    const smokeSelect = (window as { jeff?: { env?: { smokeSelect?: string } } }).jeff?.env?.smokeSelect
-    if (smokeSelect) {
-      setTimeout(async () => {
-        await useStore.getState().refreshProjects()
-        const ps = useStore.getState().projects
-        if (smokeSelect === 'group' && ps[0]) useStore.getState().setActive({ kind: 'group', id: ps[0].id })
-        else if (smokeSelect === 'settings') useStore.getState().setTab('settings')
-        else if (ps.length === 0) {
-          const as = useStore.getState().agents
-          if (as[0]) useStore.getState().setActive({ kind: 'agent', id: as[0].id })
-        }
-      }, 300)
+    // 冒烟钩子（多视图）：JEFF_SMOKE_VIEWS=chat,group,settings:memory,… 逐视图截图
+    const smokeViews = (window as { jeff?: { env?: { smokeViews?: string; smokeTheme?: string } } }).jeff?.env?.smokeViews
+    if (smokeViews) {
+      console.log(`[jeff-smoke] 多视图驱动启动: ${smokeViews}`)
+      const smokeTheme = (window as { jeff?: { env?: { smokeTheme?: string } } }).jeff?.env?.smokeTheme
+      const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+      setTimeout(() => {
+        void (async () => {
+          if (smokeTheme === 'dark' || smokeTheme === 'light') applyTheme(smokeTheme)
+          for (const raw of smokeViews.split(',')) {
+            const view = raw.trim()
+            if (!view) continue
+            if (view.startsWith('settings:')) {
+              useStore.getState().setTab('settings')
+              useStore.getState().setSettingsSection(view.slice(9) as SettingsSection)
+            } else if (view === 'contacts') {
+              useStore.getState().setTab('contacts')
+            } else if (view === 'group') {
+              useStore.getState().setTab('chats')
+              const ps = useStore.getState().projects
+              useStore.getState().setActive(ps[0] ? { kind: 'group', id: ps[0].id } : null)
+            } else {
+              useStore.getState().setTab('chats')
+              const as = useStore.getState().agents
+              useStore.getState().setActive(as[0] ? { kind: 'agent', id: as[0].id } : null)
+            }
+            await sleep(900)
+            console.log(`[jeff-smoke] 截图 ${view}`)
+            await api.invoke('smoke:shot', { name: view.replace(/[^a-z0-9]+/gi, '_') })
+          }
+          await api.invoke('smoke:done')
+        })()
+      }, 1500)
+    } else {
+      // 单视图冒烟（CI 兼容）：自动选中第一个会话后由主进程截图
+      const smokeSelect = (window as { jeff?: { env?: { smokeSelect?: string } } }).jeff?.env?.smokeSelect
+      if (smokeSelect) {
+        setTimeout(async () => {
+          await useStore.getState().refreshProjects()
+          const ps = useStore.getState().projects
+          if (smokeSelect === 'group' && ps[0]) useStore.getState().setActive({ kind: 'group', id: ps[0].id })
+          else if (smokeSelect === 'settings') useStore.getState().setTab('settings')
+          else if (ps.length === 0) {
+            const as = useStore.getState().agents
+            if (as[0]) useStore.getState().setActive({ kind: 'agent', id: as[0].id })
+          }
+        }, 300)
+      }
     }
     const media = window.matchMedia('(prefers-color-scheme: dark)')
     const onMedia = () => {
@@ -50,14 +87,14 @@ export default function App(): React.JSX.Element {
       <div className="list-pane">
         {tab === 'chats' && <ChatList />}
         {tab === 'contacts' && <AgentsPage />}
-        {tab === 'settings' && <SettingsPage />}
+        {tab === 'settings' && <SettingsNav />}
       </div>
       <div className="main-pane">
         {tab === 'chats' && active?.kind === 'agent' && <ChatWindow key={active.id} agentId={active.id} />}
         {tab === 'chats' && active?.kind === 'group' && <GroupWindow key={active.id} projectId={active.id} />}
         {tab === 'chats' && !active && <EmptyHint hasAgents={agents.length > 0} hasProjects={projects.length > 0} />}
         {tab === 'contacts' && <ContactHint hasAgents={agents.length > 0} />}
-        {tab === 'settings' && <SettingsHint />}
+        {tab === 'settings' && <SettingsContent />}
       </div>
     </div>
   )
@@ -83,14 +120,6 @@ function ContactHint(props: { hasAgents: boolean }): React.JSX.Element {
   return (
     <div className="empty-hint">
       <p>{props.hasAgents ? '点击左侧智能体查看详情、编辑或开始聊天' : '还没有智能体，点左侧「新建智能体」创建一个吧'}</p>
-    </div>
-  )
-}
-
-function SettingsHint(): React.JSX.Element {
-  return (
-    <div className="empty-hint">
-      <p>设置项目在左侧：提供商、外观、关于</p>
     </div>
   )
 }

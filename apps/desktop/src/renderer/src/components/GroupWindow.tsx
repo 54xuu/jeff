@@ -1,23 +1,29 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useStore } from '../store'
-import { IPC, type GroupMessage, type ProjectInfo, type TaskInfo, type ModelOption, type ProviderCatalogItem } from '@jeff/core'
+import { IPC, type GroupMessage, type ModelOption, type ProviderCatalogItem } from '@jeff/core'
 import Avatar from './Avatar'
 import GroupInfoDrawer from './GroupInfoDrawer'
+import { Markdown } from './Markdown'
+import { useImages, ImagePreviews, MsgImages } from './ChatShared'
 
 /** 项目群聊天窗口（= 微信群） */
 export default function GroupWindow(props: { projectId: string }): React.JSX.Element {
-  const { projects, groupMessages, tasks, sending, loadGroupHistory, loadTasks, sendGroup, catalog, settings } = useStore()
+  const { projects, groupMessages, tasks, sending, streaming, loadGroupHistory, loadTasks, sendGroup, catalog, settings, agents } = useStore()
   const project = projects.find((p) => p.id === props.projectId)
   const msgs = groupMessages[props.projectId] || []
   const projectTasks = tasks[props.projectId] || []
   const busy = !!sending[`group:${props.projectId}`]
+  const stream = streaming[`group:${props.projectId}`]
   const [draft, setDraft] = useState('')
   const [drawer, setDrawer] = useState(false)
   const [modelOverride, setModelOverride] = useState<{ providerID: string; modelID: string } | null>(null)
   const [modelOpen, setModelOpen] = useState(false)
   const [mention, setMention] = useState<{ query: string; start: number } | null>(null)
+  const [dragOver, setDragOver] = useState(false)
+  const attachments = useImages()
   const bodyRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     void loadGroupHistory(props.projectId)
@@ -27,7 +33,7 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
   useEffect(() => {
     const el = bodyRef.current
     if (el) el.scrollTop = el.scrollHeight
-  }, [msgs.length, busy])
+  }, [msgs.length, busy, stream?.text])
 
   const allModels: ModelOption[] = useMemo(() => catalog.flatMap((c) => c.models), [catalog])
   const currentModel = modelOverride || settings?.defaultModel || null
@@ -67,10 +73,12 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
 
   const doSend = async () => {
     const text = draft.trim()
-    if (!text || busy) return
+    if ((!text && attachments.images.length === 0) || busy) return
     setDraft('')
     setMention(null)
-    await sendGroup(project.id, text, modelOverride || undefined)
+    const images = attachments.images
+    attachments.clear()
+    await sendGroup(project.id, text, modelOverride || undefined, images)
   }
 
   return (
@@ -101,13 +109,25 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
         {msgs.map((m) => (
           <GroupBubble key={m.id} msg={m} />
         ))}
-        {busy && (
+        {busy && !stream && (
           <div className="msg-row left">
             <Avatar emoji="⏳" size={34} />
             <div className="bubble assistant typing">
               <span className="dot" />
               <span className="dot" />
               <span className="dot" />
+            </div>
+          </div>
+        )}
+        {busy && stream && (
+          <div className="msg-row left">
+            <Avatar emoji={stream.senderAvatar} size={34} />
+            <div className="msg-stack">
+              <div className="msg-sender">{stream.senderName}</div>
+              <div className="bubble assistant">
+                <Markdown text={stream.text || '…'} />
+                <span className="stream-caret" />
+              </div>
             </div>
           </div>
         )}
@@ -125,7 +145,7 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
             </button>
             {modelOpen && (
               <div className="model-menu">
-                {allModels.length === 0 && <div className="model-menu-empty">暂无可用模型：请到「设置 → 模型提供商」添加并保存</div>}
+                {allModels.length === 0 && <div className="model-menu-empty">暂无可用模型：请到「设置 → 模型供应商」添加并保存</div>}
                 {allModels.map((m) => (
                   <button
                     key={`${m.providerID}/${m.modelID}`}
@@ -143,7 +163,21 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
           </div>
           <span className="composer-hint">默认由群主处理 · @成员名 直达</span>
         </div>
-        <div className="composer-input" style={{ position: 'relative' }}>
+        <ImagePreviews images={attachments.images} onRemove={attachments.remove} />
+        <div
+          className={`composer-input ${dragOver ? 'drag-over' : ''}`}
+          style={{ position: 'relative' }}
+          onDragOver={(e) => {
+            e.preventDefault()
+            setDragOver(true)
+          }}
+          onDragLeave={() => setDragOver(false)}
+          onDrop={(e) => {
+            e.preventDefault()
+            setDragOver(false)
+            void attachments.addFiles(e.dataTransfer.files)
+          }}
+        >
           {mentionCandidates.length > 0 && (
             <div className="mention-pop">
               {mentionCandidates.map((a) => (
@@ -154,11 +188,36 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
               ))}
             </div>
           )}
+          <input
+            ref={fileRef}
+            type="file"
+            accept="image/*"
+            multiple
+            hidden
+            onChange={(e) => {
+              void attachments.addFiles(e.target.files || [])
+              e.target.value = ''
+            }}
+          />
+          <button className="attach-btn" title="添加图片（可粘贴/拖拽）" onClick={() => fileRef.current?.click()}>
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="3" y="3" width="18" height="18" rx="2" />
+              <circle cx="8.5" cy="8.5" r="1.5" />
+              <path d="M21 15l-5-5L5 21" />
+            </svg>
+          </button>
           <textarea
             ref={inputRef}
             value={draft}
-            placeholder={`在「${project.title}」群里说话…（@某成员 直接指名）`}
+            placeholder={`在「${project.title}」群里说话…（@某成员 直接指名，支持图片）`}
             onChange={(e) => onDraftChange(e.target.value)}
+            onPaste={(e) => {
+              const files = Array.from(e.clipboardData.files || [])
+              if (files.length > 0) {
+                e.preventDefault()
+                void attachments.addFiles(files)
+              }
+            }}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
                 e.preventDefault()
@@ -166,13 +225,14 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
               }
             }}
           />
-          <button className="send-btn" onClick={() => void doSend()} disabled={!draft.trim() || busy}>
+          <button className="send-btn" onClick={() => void doSend()} disabled={(!draft.trim() && attachments.images.length === 0) || busy}>
             发送
           </button>
         </div>
       </div>
 
       {drawer && <GroupInfoDrawer project={project} tasks={projectTasks} onClose={() => setDrawer(false)} />}
+      {void agents}
     </div>
   )
 }
@@ -203,9 +263,14 @@ function GroupBubble(props: { msg: GroupMessage }): React.JSX.Element {
       <div className="msg-stack">
         {!mine && <div className="msg-sender">{msg.sender_name}</div>}
         <div className={`bubble ${mine ? 'user' : 'assistant'}`}>
-          {msg.text.split('\n').map((line, i) => (
-            <p key={i}>{line || ' '}</p>
-          ))}
+          <MsgImages images={msg.images || []} />
+          {msg.role === 'assistant' ? (
+            <Markdown text={msg.text} />
+          ) : (
+            msg.text.split('\n').map((line, i) => (
+              <p key={i}>{line || ' '}</p>
+            ))
+          )}
         </div>
       </div>
       {mine && <div className="self-avatar">🧑</div>}
@@ -233,4 +298,3 @@ function TaskCardInline(props: { msg: GroupMessage }): React.JSX.Element {
     </div>
   )
 }
-

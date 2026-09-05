@@ -35,7 +35,7 @@ describe('writeSidecarConfig', () => {
     expect(pv['myproxy']?.npm).toBe('@ai-sdk/openai-compatible')
     expect(cfg['small_model']).toBe('deepseek/deepseek-chat')
 
-    const auth = JSON.parse(fs.readFileSync(path.join(p.ocConfigDir, 'auth.json'), 'utf8')) as Record<string, { type: string; key: string }>
+    const auth = JSON.parse(fs.readFileSync(path.join(p.ocDataHome, 'opencode', 'auth.json'), 'utf8')) as Record<string, { type: string; key: string }>
     expect(auth['deepseek'].key).toBe('sk-ds')
     expect(auth['myproxy'].key).toBe('sk-x')
   })

@@ -11,3 +11,4 @@ Thumbs.db
 test-results/
 playwright-report/
 apps/desktop/resources/oc-bin/
+.zcode/

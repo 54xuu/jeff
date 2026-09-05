@@ -1,7 +1,7 @@
 /**
  * 端到端冒烟：真实 opencode sidecar + mock LLM。
  * 仅在 JEFF_E2E=1 时运行（需要本机有 opencode 可执行文件）。
- * 运行：JEFF_E2E=1 npm test -w @jeff/core -- tests/e2e.sidecar.test.ts
+ * 运行：JEFF_E2E=1 npx vitest run --no-file-parallelism tests/e2e.sidecar.test.ts
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { spawn, type ChildProcess } from 'node:child_process'

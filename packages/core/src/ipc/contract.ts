@@ -1,6 +1,11 @@
 import type { ChatMsg } from '../chat/private.js'
 import type { ProviderSetting } from '../oc/configWriter.js'
 
+// 渲染进程把 @jeff/core 别名到本文件（避免 node 依赖进浏览器 bundle）；
+// parseMcpServerJson / McpServerCfg 是纯 TS，从这里再导出供渲染层使用。
+export { parseMcpServerJson } from '../mcp/parse.js'
+export type { McpServerCfg } from '../mcp/parse.js'
+
 /** 内置小杰（管家）agent id —— 渲染进程也要用，放契约里（无 node 依赖） */
 export const XIAOJIE_ID = 'agt_xiaojie'
 
@@ -13,6 +18,8 @@ export const BUILTIN_PROVIDER_PRESETS: Array<{ id: string; name: string }> = [
   { id: 'openrouter', name: 'OpenRouter' },
   { id: 'google', name: 'Google Gemini' },
   { id: 'zhipuai', name: '智谱 GLM' },
+  { id: 'siliconflow-cn', name: '硅基流动（中国站）' },
+  { id: 'siliconflow', name: '硅基流动（国际站）' },
 ]
 
 export type { ChatMsg }
@@ -54,6 +61,9 @@ export const IPC = {
   syncNow: 'sync:now',
   syncStatus: 'sync:status',
   syncConfigure: 'sync:configure',
+  // 冒烟钩子（仅 JEFF_SMOKE=1 时注册）
+  smokeShot: 'smoke:shot',
+  smokeDone: 'smoke:done',
   // 事件（主 → 渲染）
   evStatus: 'ev:status',
   evSidecarLog: 'ev:sidecar-log',
@@ -61,6 +71,7 @@ export const IPC = {
   evDataChanged: 'ev:data-changed',
   evGroupUpdated: 'ev:group-updated',
   evSync: 'ev:sync',
+  evChatStream: 'ev:chat-stream',
 } as const
 
 // ---------- 共享类型 ----------
@@ -146,6 +157,12 @@ export interface MemoryScopeInfo {
   file: string
 }
 
+/** 聊天里随文本一起发送的图片（dataURL 内联，≤ 若干 MB） */
+export interface ChatImage {
+  mime: string
+  dataUrl: string
+}
+
 export type InvokeMap = {
   [IPC.appInfo]: void
   [IPC.agentsList]: void
@@ -153,7 +170,7 @@ export type InvokeMap = {
   [IPC.agentsUpsert]: { id?: string; name: string; avatar?: string; description?: string; instructions?: string; model_provider?: string; model_id?: string }
   [IPC.agentsDelete]: { id: string }
   [IPC.chatHistory]: { agentId: string }
-  [IPC.chatSend]: { agentId: string; text: string; model?: { providerID: string; modelID: string } }
+  [IPC.chatSend]: { agentId: string; text: string; model?: { providerID: string; modelID: string }; images?: ChatImage[] }
   [IPC.chatNew]: { agentId: string }
   [IPC.chatStop]: { agentId: string }
   [IPC.projectsList]: void
@@ -166,7 +183,7 @@ export type InvokeMap = {
   [IPC.taskSave]: { id?: string; project_id: string; title: string; description?: string; status?: string; priority?: string; assignee_id?: string }
   [IPC.taskDelete]: { id: string }
   [IPC.groupHistory]: { projectId: string }
-  [IPC.groupSend]: { projectId: string; text: string; model?: { providerID: string; modelID: string } }
+  [IPC.groupSend]: { projectId: string; text: string; model?: { providerID: string; modelID: string }; images?: ChatImage[] }
   [IPC.providersList]: void
   [IPC.providersSave]: { providers: ProviderSetting[]; defaultModel?: { providerID: string; modelID: string } | null }
   [IPC.providersCatalog]: void
@@ -181,6 +198,8 @@ export type InvokeMap = {
   [IPC.syncNow]: void
   [IPC.syncStatus]: void
   [IPC.syncConfigure]: { url: string; username: string; password: string; basePath: string; autoSync: boolean }
+  [IPC.smokeShot]: { name: string }
+  [IPC.smokeDone]: void
 }
 
 export type EventPayloads = {
@@ -190,4 +209,5 @@ export type EventPayloads = {
   [IPC.evDataChanged]: { what: 'agents' | 'projects' | 'tasks' | 'settings' }
   [IPC.evGroupUpdated]: { projectId: string }
   [IPC.evSync]: { state: string; detail?: string }
+  [IPC.evChatStream]: { kind: 'private' | 'group'; agentId: string; projectId?: string; messageId: string; text: string; done: boolean }
 }

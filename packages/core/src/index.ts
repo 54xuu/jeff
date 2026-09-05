@@ -19,19 +19,12 @@ import { GroupChat } from './orchestrator/group.js'
 import { Delegator } from './orchestrator/delegate.js'
 import { MemoryStore } from './memory/store.js'
 import { SessionIndex } from './memory/indexer.js'
+import type { McpServerCfg } from './mcp/parse.js'
 import { SyncEngine, type WebdavConfig, type SyncReport } from './sync/engine.js'
 
-export const APP_VERSION = '1.0.0'
+export const APP_VERSION = '1.1.0'
 
-export interface McpServerCfg {
-  type: 'local' | 'remote'
-  enabled: boolean
-  /** local: 可执行命令 */
-  command?: string[]
-  /** remote: URL */
-  url?: string
-  headers?: Record<string, string>
-}
+export type { McpServerCfg } from './mcp/parse.js'
 export { buildPaths, ensureDirs, jeffRoot } from './paths.js'
 export { openDb } from './db/db.js'
 
@@ -378,16 +371,93 @@ export class JeffCore extends EventEmitter {
     return null
   }
 
-  /** SSE 事件 → bus（UI 刷新信号） */
+  /** SSE 事件 → bus（UI 刷新信号 + 流式增量） */
+  private streamParts = new Map<string, { text: string }>() // key: sessionId:messageId:partId
+  private msgRoles = new Map<string, string>() // messageId → role（过滤用户消息的 part 回显）
+
   private handleOcEvent(evt: { type?: string; properties?: Record<string, unknown> }): void {
     if (!evt?.type) return
-    if (evt.type === 'message.updated' || evt.type === 'message.part.updated' || evt.type === 'message.part.delta') {
-      const sessionId = evt.properties?.sessionID as string | undefined
-      if (!sessionId) return
+    const props = (evt.properties || {}) as Record<string, unknown>
+    const sessionId = props.sessionID as string | undefined
+    if (!sessionId) return
+
+    // 记录消息角色（流式只推 assistant 的 part，避免用户消息回显被当成流式气泡）
+    if (evt.type === 'message.updated') {
+      const info = props.info as { id?: string; role?: string } | undefined
+      if (info?.id && info.role) {
+        this.msgRoles.set(info.id, info.role)
+        if (this.msgRoles.size > 500) {
+          const first = this.msgRoles.keys().next().value
+          if (first) this.msgRoles.delete(first)
+        }
+      }
+    }
+
+    // 流式：text part 增量（field==='text' 才是正文）
+    if (evt.type === 'message.part.delta') {
+      const { messageID, partID, field, delta } = props as { messageID?: string; partID?: string; field?: string; delta?: string }
+      if (!messageID || !partID || field !== 'text' || !delta) return
+      if (this.msgRoles.get(messageID) && this.msgRoles.get(messageID) !== 'assistant') return
+      const key = `${sessionId}:${messageID}:${partID}`
+      const cur = this.streamParts.get(key) || { text: '' }
+      cur.text += delta
+      this.streamParts.set(key, cur)
+      this.emitStream(sessionId, messageID)
+      return
+    }
+
+    // 流式纠偏：part.updated 带全量文本，比增量拼接长则以它为准
+    if (evt.type === 'message.part.updated') {
+      const part = props.part as { id?: string; messageID?: string; type?: string; text?: string } | undefined
+      if (part?.type === 'text' && part.id && part.messageID && typeof part.text === 'string') {
+        if (this.msgRoles.get(part.messageID) && this.msgRoles.get(part.messageID) !== 'assistant') return
+        const key = `${sessionId}:${part.messageID}:${part.id}`
+        const cur = this.streamParts.get(key)
+        if (cur && part.text.length >= cur.text.length) cur.text = part.text
+        else if (!cur && part.text) this.streamParts.set(key, { text: part.text })
+        this.emitStream(sessionId, part.messageID)
+      }
+      return
+    }
+
+    // 完成信号：assistant 消息 completed 或会话转 idle → 通知渲染层拉全量 + 清流式缓冲
+    if (evt.type === 'message.updated' || evt.type === 'session.idle') {
+      const info = props.info as { id?: string; role?: string; time?: { completed?: number } } | undefined
+      const completed = evt.type === 'session.idle' || (info?.role === 'assistant' && !!info?.time?.completed)
+      if (!completed) return
       const resolved = this.resolveSession(sessionId)
+      for (const key of Array.from(this.streamParts.keys())) {
+        if (key.startsWith(`${sessionId}:`)) this.streamParts.delete(key)
+      }
       if (!resolved) return
-      if (resolved.kind === 'group') this.bus.emit('group-updated', { projectId: resolved.projectId })
-      else this.bus.emit('chat-updated', { agentId: resolved.agentId, sessionId })
+      if (resolved.kind === 'group') {
+        this.bus.emit('chat-stream', { kind: 'group', projectId: resolved.projectId, agentId: resolved.agentId, messageId: info?.id || '', text: '', done: true })
+        this.bus.emit('group-updated', { projectId: resolved.projectId })
+      } else if (resolved.kind === 'private') {
+        this.bus.emit('chat-stream', { kind: 'private', agentId: resolved.agentId, messageId: info?.id || '', text: '', done: true })
+        this.bus.emit('chat-updated', { agentId: resolved.agentId, sessionId })
+      }
+    }
+  }
+
+  /** 把某会话某消息的流式增量发给渲染层（review/未知会话跳过） */
+  private emitStream(sessionId: string, messageId: string): void {
+    const resolved = this.resolveSession(sessionId)
+    if (!resolved || resolved.kind === 'review') {
+      // 无法归属：清掉对应缓冲防泄漏
+      for (const key of Array.from(this.streamParts.keys())) {
+        if (key.startsWith(`${sessionId}:`)) this.streamParts.delete(key)
+      }
+      return
+    }
+    let text = ''
+    for (const [key, v] of this.streamParts) {
+      if (key.startsWith(`${sessionId}:${messageId}:`)) text += (text ? '\n' : '') + v.text
+    }
+    if (resolved.kind === 'group') {
+      this.bus.emit('chat-stream', { kind: 'group', projectId: resolved.projectId, agentId: resolved.agentId, messageId, text, done: false })
+    } else {
+      this.bus.emit('chat-stream', { kind: 'private', agentId: resolved.agentId, messageId, text, done: false })
     }
   }
 
@@ -488,7 +558,8 @@ Jeff 把「开发 + 项目管理」组织成三个概念（微信心智模型）
 ## 其他能力
 - **记忆**：每个智能体有自己的长期记忆；项目群有共享记忆；全局用户画像由小杰维护（用 jeff_memory 工具读写）。设置页可人工查看/编辑。
 - **会话搜索**：所有历史对话全文可搜（jeff_session_search）。
-- **模型提供商**：设置页配置（OpenAI/Anthropic/DeepSeek/Kimi/OpenRouter/自定义 OpenAI 兼容端点）；聊天输入框可临时切换模型。
+- **模型提供商**：设置页配置（Anthropic/OpenAI/DeepSeek/Kimi/智谱/硅基流动/OpenRouter/自定义 OpenAI 兼容端点）；聊天输入框可临时切换模型。
+- **图片消息**：聊天输入框支持上传/粘贴/拖拽图片（需模型支持多模态，如 Qwen3.5、Qwen-VL、GPT-4o），智能体能看图回答。
 - **WebDAV 同步**：设置页配置；同步智能体/项目/任务/设置/记忆（不含会话数据）；实体级双向合并，多台机器交替使用不丢数据。
 - **亮/深夜模式**：左侧导航底部切换，或跟随系统。
 `
@@ -560,4 +631,5 @@ export { MemoryStore, parseEntries, matchUnique, type MemoryScope, type MemoryOp
 export { SyncEngine, type WebdavConfig, type SyncReport } from './sync/engine.js'
 
 export { SessionIndex, cjkSplit, buildMatchQuery } from './memory/indexer.js'
+export { parseMcpServerJson } from './mcp/parse.js'
 export { MEMORY_TOOL, SEARCH_TOOL, DELEGATE_TOOL, type SessionScopeCtx, type ToolCtx } from './tools/memoryTools.js'

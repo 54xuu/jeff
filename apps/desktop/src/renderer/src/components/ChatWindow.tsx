@@ -1,19 +1,25 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useStore } from '../store'
 import { api } from '../api'
-import { IPC, type AgentInfo, type ChatMsg, type ModelOption, type ProviderCatalogItem } from '@jeff/core'
+import { IPC, type ChatMsg, type ModelOption, type ProviderCatalogItem } from '@jeff/core'
 import Avatar from './Avatar'
+import { Markdown } from './Markdown'
+import { useImages, ImagePreviews, MsgImages } from './ChatShared'
 
 export default function ChatWindow(props: { agentId: string }): React.JSX.Element {
-  const { agents, messages, sending, loadHistory, sendAgent, newAgentSession, stopAgent, catalog, settings } = useStore()
+  const { agents, messages, sending, streaming, loadHistory, sendAgent, newAgentSession, stopAgent, catalog, settings } = useStore()
   const agent = agents.find((a) => a.id === props.agentId)
   const key = `agent:${props.agentId}`
   const msgs = messages[key] || []
   const sendingNow = !!sending[key]
+  const stream = streaming[key]
   const [draft, setDraft] = useState('')
   const [modelOverride, setModelOverride] = useState<{ providerID: string; modelID: string } | null>(null)
   const [modelOpen, setModelOpen] = useState(false)
+  const [dragOver, setDragOver] = useState(false)
+  const attachments = useImages()
   const bodyRef = useRef<HTMLDivElement>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     void loadHistory(key)
@@ -22,7 +28,7 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
   useEffect(() => {
     const el = bodyRef.current
     if (el) el.scrollTop = el.scrollHeight
-  }, [msgs.length, sendingNow])
+  }, [msgs.length, sendingNow, stream?.text])
 
   const allModels: ModelOption[] = useMemo(() => catalog.flatMap((c) => c.models), [catalog])
   const currentModel = modelOverride || (agent?.model_provider && agent?.model_id ? { providerID: agent.model_provider, modelID: agent.model_id } : settings?.defaultModel || null)
@@ -31,9 +37,11 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
 
   const doSend = async () => {
     const text = draft.trim()
-    if (!text || sendingNow) return
+    if ((!text && attachments.images.length === 0) || sendingNow) return
     setDraft('')
-    await sendAgent(agent.id, text, modelOverride || undefined)
+    const images = attachments.images
+    attachments.clear()
+    await sendAgent(agent.id, text, modelOverride || undefined, images)
   }
 
   return (
@@ -67,13 +75,25 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
         {msgs.map((m) => (
           <MessageBubble key={m.id} msg={m} agentName={agent.name} agentAvatar={agent.avatar} />
         ))}
-        {sendingNow && (
+        {sendingNow && !stream && (
           <div className="msg-row left">
             <Avatar emoji={agent.avatar} size={34} />
             <div className="bubble assistant typing">
               <span className="dot" />
               <span className="dot" />
               <span className="dot" />
+            </div>
+          </div>
+        )}
+        {sendingNow && stream && (
+          <div className="msg-row left">
+            <Avatar emoji={agent.avatar} size={34} />
+            <div className="msg-stack">
+              <div className="msg-sender">{agent.name}</div>
+              <div className="bubble assistant">
+                <Markdown text={stream.text || '…'} />
+                <span className="stream-caret" />
+              </div>
             </div>
           </div>
         )}
@@ -91,7 +111,7 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
             </button>
             {modelOpen && (
               <div className="model-menu">
-                {allModels.length === 0 && <div className="model-menu-empty">暂无可用模型：请到「设置 → 模型提供商」添加并保存</div>}
+                {allModels.length === 0 && <div className="model-menu-empty">暂无可用模型：请到「设置 → 模型供应商」添加并保存</div>}
                 {allModels.map((m) => (
                   <button
                     key={`${m.providerID}/${m.modelID}`}
@@ -108,11 +128,49 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
             )}
           </div>
         </div>
-        <div className="composer-input">
+        <ImagePreviews images={attachments.images} onRemove={attachments.remove} />
+        <div
+          className={`composer-input ${dragOver ? 'drag-over' : ''}`}
+          onDragOver={(e) => {
+            e.preventDefault()
+            setDragOver(true)
+          }}
+          onDragLeave={() => setDragOver(false)}
+          onDrop={(e) => {
+            e.preventDefault()
+            setDragOver(false)
+            void attachments.addFiles(e.dataTransfer.files)
+          }}
+        >
+          <input
+            ref={fileRef}
+            type="file"
+            accept="image/*"
+            multiple
+            hidden
+            onChange={(e) => {
+              void attachments.addFiles(e.target.files || [])
+              e.target.value = ''
+            }}
+          />
+          <button className="attach-btn" title="添加图片（可粘贴/拖拽）" onClick={() => fileRef.current?.click()}>
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="3" y="3" width="18" height="18" rx="2" />
+              <circle cx="8.5" cy="8.5" r="1.5" />
+              <path d="M21 15l-5-5L5 21" />
+            </svg>
+          </button>
           <textarea
             value={draft}
-            placeholder={agent.builtin ? '跟小杰说点什么…（例如：帮我创建一个「架构师阿伟」）' : `发消息给 ${agent.name}…`}
+            placeholder={agent.builtin ? '跟小杰说点什么…（例如：帮我创建一个「架构师阿伟」）' : `发消息给 ${agent.name}…（支持粘贴/拖拽图片）`}
             onChange={(e) => setDraft(e.target.value)}
+            onPaste={(e) => {
+              const files = Array.from(e.clipboardData.files || [])
+              if (files.length > 0) {
+                e.preventDefault()
+                void attachments.addFiles(files)
+              }
+            }}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
                 e.preventDefault()
@@ -120,7 +178,7 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
               }
             }}
           />
-          <button className="send-btn" onClick={() => void doSend()} disabled={!draft.trim() || sendingNow}>
+          <button className="send-btn" onClick={() => void doSend()} disabled={(!draft.trim() && attachments.images.length === 0) || sendingNow}>
             发送
           </button>
         </div>
@@ -138,17 +196,21 @@ function modelLabel(m: { providerID: string; modelID: string }, catalog: Provide
 export function MessageBubble(props: { msg: ChatMsg; agentName: string; agentAvatar: string }): React.JSX.Element {
   const { msg, agentName, agentAvatar } = props
   const mine = msg.role === 'user'
+  const isMarkdown = !mine && msg.role === 'assistant'
   return (
     <div className={`msg-row ${mine ? 'right' : 'left'}`}>
       {!mine && <Avatar emoji={agentAvatar} size={34} />}
       <div className="msg-stack">
         {!mine && <div className="msg-sender">{agentName}</div>}
         <div className={`bubble ${mine ? 'user' : 'assistant'}`}>
-          {msg.text.split('\n').map((line, i) => (
-            <p key={i} className={line.startsWith('【mock') ? '' : ''}>
-              {line || ' '}
-            </p>
-          ))}
+          <MsgImages images={msg.images || []} />
+          {isMarkdown ? (
+            <Markdown text={msg.text} />
+          ) : (
+            msg.text.split('\n').map((line, i) => (
+              <p key={i}>{line || ' '}</p>
+            ))
+          )}
           {msg.tools?.map((t, i) => (
             <details key={i} className="tool-block">
               <summary>

@@ -11,6 +11,8 @@ export interface ChatMsg {
   text: string
   time: number
   tools?: Array<{ tool: string; status?: string; output?: string; error?: string }>
+  /** 消息携带的图片（用户发送或历史回放） */
+  images?: Array<{ mime: string; dataUrl: string }>
   meta?: Record<string, unknown>
 }
 
@@ -66,11 +68,18 @@ export class PrivateChat {
   }
 
   /** 发送消息并等待回复完成 */
-  async send(agentId: string, agentName: string, text: string, model?: { providerID: string; modelID: string }): Promise<AssistantInfo> {
+  async send(
+    agentId: string,
+    agentName: string,
+    text: string,
+    model?: { providerID: string; modelID: string },
+    images?: Array<{ mime: string; dataUrl: string }>,
+  ): Promise<AssistantInfo> {
     const sessionId = await this.ensureSession(agentId, agentName)
     const reply = await this.getOc().sendMessage({
       sessionId,
       text,
+      ...(images && images.length ? { images } : {}),
       agent: agentSlug(agentId),
       system: this.hooks?.buildSystem?.(agentId),
       ...(model && model.providerID && model.modelID ? { model } : {}),
@@ -95,9 +104,12 @@ export class PrivateChat {
       const parts = m.parts || (info as { parts?: unknown[] }).parts || []
       let text = ''
       const tools: NonNullable<ChatMsg['tools']> = []
+      const images: NonNullable<ChatMsg['images']> = []
       for (const p of parts as Array<Record<string, unknown>>) {
         if (p.type === 'text' && !p.synthetic && typeof p.text === 'string' && p.text.trim()) {
           text += (text ? '\n' : '') + p.text
+        } else if (p.type === 'file' && typeof p.url === 'string' && p.url.startsWith('data:')) {
+          images.push({ mime: String(p.mime || 'image/png'), dataUrl: p.url })
         } else if (p.type === 'tool') {
           const st = (p.state || {}) as { status?: string; output?: string; error?: string }
           tools.push({ tool: String(p.tool || ''), status: st.status, output: (st.output || '').slice(0, 2000), error: st.error })
@@ -111,6 +123,7 @@ export class PrivateChat {
         text,
         time: info.time?.created || 0,
         ...(tools.length ? { tools } : {}),
+        ...(images.length ? { images } : {}),
       })
     }
     return out

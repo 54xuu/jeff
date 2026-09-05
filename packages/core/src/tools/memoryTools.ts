@@ -52,22 +52,17 @@ export function registerMemoryTools(reg: ToolBridge, deps: MemoryToolDeps): void
     if ('error' in target) return { ok: false, error: target.error }
     const memScope = target.scope
 
-    try {
-      if (action === 'list') {
-        const entries = deps.store.list(memScope)
-        return { ok: true, entries, totalChars: entries.join('\n').length, budget: deps.store.budget(memScope), scope: deps.store.label(memScope) }
-      }
-      if (action === 'batch' && Array.isArray(operations)) {
-        const r = deps.store.batch(memScope, operations as MemoryOp[])
-        return r
-      }
-      if (action === 'add') return deps.store.add(memScope, String(text || ''))
-      if (action === 'replace') return deps.store.replace(memScope, String(old_text || ''), String(new_text ?? ''))
-      if (action === 'remove') return deps.store.remove(memScope, String(old_text || ''))
-      return { ok: false, error: 'action 必须是 list/add/replace/remove/batch' }
-    } finally {
-      // 记忆变化：通知 UI（快照在下一条消息注入时自然刷新）
+    if (action === 'list') {
+      const entries = deps.store.list(memScope)
+      return { ok: true, entries, totalChars: entries.join('\n').length, budget: deps.store.budget(memScope), scope: deps.store.label(memScope) }
     }
+    if (action === 'batch' && Array.isArray(operations)) {
+      return deps.store.batch(memScope, operations as MemoryOp[])
+    }
+    if (action === 'add') return deps.store.add(memScope, String(text || ''))
+    if (action === 'replace') return deps.store.replace(memScope, String(old_text || ''), String(new_text ?? ''))
+    if (action === 'remove') return deps.store.remove(memScope, String(old_text || ''))
+    return { ok: false, error: 'action 必须是 list/add/replace/remove/batch' }
   })
 
   reg.register(SEARCH_TOOL, async (raw: Record<string, unknown>) => {

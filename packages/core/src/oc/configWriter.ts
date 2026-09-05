@@ -11,8 +11,8 @@ export interface ProviderSetting {
   apiKey?: string
   /** custom（OpenAI 兼容端点）专用 */
   baseURL?: string
-  /** custom 的模型 id 列表 */
-  models?: Array<{ id: string; name?: string }>
+  /** custom 的模型 id 列表；attachment: 该模型支持图片输入（多模态） */
+  models?: Array<{ id: string; name?: string; attachment?: boolean }>
 }
 
 
@@ -37,7 +37,18 @@ export function writeSidecarConfig(
         npm: '@ai-sdk/openai-compatible',
         name: pv.name || pv.id,
         options: { baseURL: pv.baseURL || '' },
-        models: Object.fromEntries((pv.models || []).map((m) => [m.id, m.name ? { name: m.name } : {}])),
+        models: Object.fromEntries(
+          (pv.models || []).map((m) => [
+            m.id,
+            {
+              ...(m.name ? { name: m.name } : {}),
+              // 不声明 attachment/modalities 时 opencode 视为不支持图片输入，会把图片替换成错误文本
+              ...(m.attachment
+                ? { attachment: true, modalities: { input: ['text', 'image'], output: ['text'] } }
+                : {}),
+            },
+          ]),
+        ),
       }
     }
     // builtin provider 不写配置（models.dev 目录自动提供），只写 auth
@@ -51,10 +62,12 @@ export function writeSidecarConfig(
   fs.mkdirSync(p.ocConfigDir, { recursive: true })
   fs.writeFileSync(configFile, JSON.stringify(cfg, null, 2), 'utf8')
 
-  // auth.json：API key（含 custom 端点）
+  // auth.json：opencode 从 XDG_DATA_HOME/opencode/auth.json 读密钥（不是 config 目录！）
+  const authDir = path.join(p.ocDataHome, 'opencode')
+  fs.mkdirSync(authDir, { recursive: true })
   const auth: Record<string, { type: string; key: string }> = {}
   for (const pv of providers) {
     if (pv.apiKey) auth[pv.id] = { type: 'api', key: pv.apiKey }
   }
-  fs.writeFileSync(path.join(p.ocConfigDir, 'auth.json'), JSON.stringify(auth, null, 2), 'utf8')
+  fs.writeFileSync(path.join(authDir, 'auth.json'), JSON.stringify(auth, null, 2), 'utf8')
 }

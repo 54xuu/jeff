@@ -3,6 +3,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { openDb } from '../src/db/db.js'
+import { agentSlug } from '../src/agents/registry.js'
 import { agentRepo, projectAgentRepo, projectRepo, taskRepo } from '../src/db/repos.js'
 import { buildPaths } from '../src/paths.js'
 import { GroupChat } from '../src/orchestrator/group.js'
@@ -74,7 +75,7 @@ describe('GroupChat', () => {
     group = new GroupChat(db, () => ocStub)
 
     await group.send({ projectId: p.id, text: '大家好，这需求怎么排？' })
-    expect(sent[0].agent).toBe('jeff_agt' + (agentRepo(db).list().find((a) => a.name === '架构师')!.id.slice(4).replace(/[^a-zA-Z0-9]/g, '').slice(0, 12)))
+    expect(sent[0].agent).toBe(agentSlug(agentRepo(db).list().find((a) => a.name === '架构师')!.id))
     expect(sent[0].system).toContain('群主')
 
     await group.send({ projectId: p.id, text: '@开发 把登录页改一下' })
@@ -90,6 +91,30 @@ describe('GroupChat', () => {
   it('send：未设 leader 报错', async () => {
     const p2 = projectRepo(db).create({ title: '无主群', leader_agent_id: null })
     await expect(group.send({ projectId: p2.id, text: 'hi' })).rejects.toThrow('群主')
+  })
+
+  it('send：图片随消息入 meta，历史回放还原 images 并透传给会话', async () => {
+    const p = projectRepo(db).list()[0]
+    const sent: Array<{ images?: Array<{ mime: string; dataUrl: string }> }> = []
+    const ocStub = {
+      getSession: async () => ({ id: 'x' }),
+      createSession: async () => ({ id: 'ses_img' }),
+      sendMessage: async (input: { images?: Array<{ mime: string; dataUrl: string }> }) => {
+        sent.push(input)
+        return { id: 'msg_img', parts: [{ type: 'text', text: '收到图' }] }
+      },
+    } as unknown as OcClient
+    group = new GroupChat(db, () => ocStub)
+
+    const img = { mime: 'image/png', dataUrl: 'data:image/png;base64,AAAA' }
+    await group.send({ projectId: p.id, text: '看这张图', images: [img] })
+    expect(sent[0].images?.length).toBe(1)
+    expect(sent[0].images?.[0].mime).toBe('image/png')
+
+    const history = group.history(p.id)
+    const userMsg = history.find((m) => m.role === 'user')
+    expect(userMsg?.images?.length).toBe(1)
+    expect(userMsg?.images?.[0].dataUrl).toBe(img.dataUrl)
   })
 })
 

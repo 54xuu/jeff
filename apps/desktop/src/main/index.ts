@@ -1,4 +1,5 @@
-import { app, BrowserWindow, shell, Tray, Menu, nativeImage } from 'electron'
+import { app, BrowserWindow, shell, Tray, Menu, dialog, nativeImage } from 'electron'
+import type { MenuItemConstructorOptions } from 'electron'
 import fs from 'node:fs'
 import path from 'node:path'
 import { JeffCore } from '@jeff/core'
@@ -42,10 +43,12 @@ if (!gotLock) {
     }
     core.bus.on('data-changed', (what: string) => broadcast(what))
     core.bus.on('chat-updated', (p: unknown) => broadcast('chat-updated', p))
+    core.bus.on('chat-stream', (p: unknown) => broadcast('chat-stream', p))
     core.on('sidecar-status', (p: unknown) => broadcast('sidecar-status', p))
     registerIpc(core)
 
     createWindow()
+    setupAppMenu()
     setupTray()
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow()
@@ -56,6 +59,72 @@ if (!gotLock) {
     if (core) await core.dispose().catch(() => {})
     if (process.platform !== 'darwin') app.quit()
   })
+}
+
+/** 中文应用菜单（不设置则显示 Electron 默认英文菜单） */
+function setupAppMenu(): void {
+  const template: MenuItemConstructorOptions[] = [
+    {
+      label: '文件',
+      submenu: [
+        {
+          label: '退出 Jeff',
+          accelerator: 'CmdOrCtrl+Q',
+          click: () => app.quit(),
+        },
+      ],
+    },
+    {
+      label: '编辑',
+      submenu: [
+        { label: '撤销', role: 'undo' },
+        { label: '重做', role: 'redo' },
+        { type: 'separator' },
+        { label: '剪切', role: 'cut' },
+        { label: '复制', role: 'copy' },
+        { label: '粘贴', role: 'paste' },
+        { label: '全选', role: 'selectAll' },
+      ],
+    },
+    {
+      label: '视图',
+      submenu: [
+        { label: '重新加载', accelerator: 'CmdOrCtrl+R', role: 'reload' },
+        { label: '强制刷新', accelerator: 'CmdOrCtrl+Shift+R', role: 'forceReload' },
+        { type: 'separator' },
+        { label: '放大', role: 'zoomIn' },
+        { label: '缩小', role: 'zoomOut' },
+        { label: '重置缩放', role: 'resetZoom' },
+        { type: 'separator' },
+        { label: '全屏', role: 'togglefullscreen' },
+        { label: '开发者工具', accelerator: 'CmdOrCtrl+Shift+I', role: 'toggleDevTools' },
+      ],
+    },
+    {
+      label: '窗口',
+      submenu: [
+        { label: '最小化', role: 'minimize' },
+        { label: '关闭窗口', accelerator: 'CmdOrCtrl+W', role: 'close' },
+      ],
+    },
+    {
+      label: '帮助',
+      submenu: [
+        {
+          label: '关于 Jeff',
+          click: () => {
+            void dialog.showMessageBox({
+              type: 'info',
+              title: '关于 Jeff',
+              message: `Jeff ${app.getVersion()}`,
+              detail: '个人「开发 + 项目管理」agent 桌面应用\n引擎：opencode sidecar',
+            })
+          },
+        },
+      ],
+    },
+  ]
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template))
 }
 
 function setupTray(): void {
@@ -131,7 +200,8 @@ function createWindow(): void {
   })
 
   // 冒烟钩子：JEFF_SMOKE=1 时加载完成后截图并退出（用于 CI/验收）
-  if (process.env.JEFF_SMOKE === '1') {
+  // 多视图模式（JEFF_SMOKE_VIEWS）由渲染层驱动逐视图截图，这里只兜底单视图模式
+  if (process.env.JEFF_SMOKE === '1' && !process.env.JEFF_SMOKE_VIEWS) {
     win.webContents.once('did-finish-load', async () => {
       setTimeout(async () => {
         try {

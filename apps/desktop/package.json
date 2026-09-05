@@ -1,7 +1,7 @@
 {
   "name": "jeff-desktop",
   "productName": "Jeff",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "type": "module",
   "main": "out/main/index.js",
@@ -15,7 +15,10 @@
     "fetch-opencode": "node scripts/fetch-opencode.mjs"
   },
   "dependencies": {
-    "@jeff/core": "*"
+    "@jeff/core": "*",
+    "react-markdown": "^10.1.0",
+    "rehype-highlight": "^7.0.2",
+    "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

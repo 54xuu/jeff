@@ -1,4 +1,5 @@
-import { useStore, type Tab } from '../store'
+import { useStore, applyTheme, effectiveTheme, type Tab } from '../store'
+import { api } from '../api'
 
 const ITEMS: Array<{ id: Tab; label: string; icon: React.JSX.Element }> = [
   {
@@ -36,6 +37,14 @@ const ITEMS: Array<{ id: Tab; label: string; icon: React.JSX.Element }> = [
 
 export default function NavRail(): React.JSX.Element {
   const { tab, setTab, settings } = useStore()
+  const current = settings?.theme ?? 'system'
+  const eff = effectiveTheme(current)
+  const toggleTheme = () => {
+    const next = eff === 'dark' ? 'light' : 'dark'
+    applyTheme(next)
+    useStore.setState((s) => ({ settings: s.settings ? { ...s.settings, theme: next } : s.settings }))
+    void api.invoke('settings:set', { theme: next })
+  }
   return (
     <div className="nav-rail">
       {ITEMS.map((it) => (
@@ -52,16 +61,12 @@ export default function NavRail(): React.JSX.Element {
       <div className="nav-spacer" />
       <button
         className="nav-item theme-toggle"
-        title="切换主题"
-        onClick={() => {
-          const cur = settings?.theme || 'system'
-          const next = cur === 'dark' ? 'light' : 'dark'
-          document.documentElement.dataset.theme = next
-          void import('../api').then(({ api }) => api.invoke('settings:set', { theme: next }))
-        }}
+        title={eff === 'dark' ? '切换到亮色模式' : '切换到深夜模式'}
+        disabled={!settings}
+        onClick={toggleTheme}
       >
         <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
-          {settings?.theme === 'dark' ? (
+          {eff === 'dark' ? (
             <>
               <circle cx="12" cy="12" r="4" />
               <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" />

@@ -1,4 +1,6 @@
 import { app, ipcMain, nativeTheme } from 'electron'
+import fs from 'node:fs'
+import path from 'node:path'
 import type {
   AgentInfo,
   InvokeMap,
@@ -12,6 +14,7 @@ import type {
 import { IPC, XIAOJIE_ID, agentRepo, projectRepo, projectAgentRepo, taskRepo, taskCardMessage, APP_VERSION } from '@jeff/core'
 import type { MemoryScopeInfo } from '@jeff/core'
 import type { JeffCore, TaskRow } from '@jeff/core'
+import { getMainWindow } from './index.js'
 
 type Handler = (payload: unknown) => Promise<unknown>
 
@@ -65,14 +68,13 @@ export function registerIpc(core: JeffCore): void {
     // ---------- 私聊 ----------
     [IPC.chatHistory]: async (p): Promise<unknown> => {
       const { agentId } = p as { agentId: string }
-      const row = core.agents.get(agentId)
       return core.privateChat.history(agentId)
     },
     [IPC.chatSend]: async (p): Promise<{ ok: boolean }> => {
-      const { agentId, text, model } = p as { agentId: string; text: string; model?: { providerID: string; modelID: string } }
+      const { agentId, text, model, images } = p as { agentId: string; text: string; model?: { providerID: string; modelID: string }; images?: Array<{ mime: string; dataUrl: string }> }
       const row = core.agents.get(agentId)
       if (!row) throw new Error('智能体不存在')
-      await core.privateChat.send(agentId, row.name, text, model)
+      await core.privateChat.send(agentId, row.name, text, model, images)
       return { ok: true }
     },
     [IPC.chatNew]: async (p): Promise<{ sessionId: string }> => {
@@ -126,6 +128,7 @@ export function registerIpc(core: JeffCore): void {
       if (theme) {
         core.kv().setJSON('settings:theme', theme)
         nativeTheme.themeSource = theme
+        core.bus.emit('data-changed', 'settings')
       }
       return { ok: true }
     },
@@ -299,13 +302,40 @@ export function registerIpc(core: JeffCore): void {
       return core.groupChat.history(projectId)
     },
     [IPC.groupSend]: async (p): Promise<{ routedTo: string }> => {
-      const { projectId, text, model } = p as { projectId: string; text: string; model?: { providerID: string; modelID: string } }
-      return core.groupChat.send({ projectId, text, model })
+      const { projectId, text, model, images } = p as { projectId: string; text: string; model?: { providerID: string; modelID: string }; images?: Array<{ mime: string; dataUrl: string }> }
+      return core.groupChat.send({ projectId, text, model, images })
     },
   }
 
   for (const [channel, handler] of Object.entries(handlers)) {
     ipcMain.handle(`jeff:${channel}`, (_evt, payload) => handler(payload))
+  }
+
+  // 冒烟钩子（JEFF_SMOKE=1）：渲染层逐视图驱动截图后退出
+  if (process.env.JEFF_SMOKE === '1') {
+    let seq = 0
+    handlers[IPC.smokeShot] = async (p) => {
+      const { name } = p as { name: string }
+      const win = getMainWindow()
+      if (win) {
+        const image = await win.webContents.capturePage()
+        const dir = process.env.JEFF_SMOKE_OUT_DIR || path.join(app.getPath('temp'), 'jeff-smoke')
+        fs.mkdirSync(dir, { recursive: true })
+        seq += 1
+        const file = path.join(dir, `${String(seq).padStart(2, '0')}-${name}.png`)
+        fs.writeFileSync(file, image.toPNG())
+        console.log(`[jeff-smoke] screenshot saved: ${file}`)
+      }
+      return { ok: true }
+    }
+    handlers[IPC.smokeDone] = async () => {
+      setTimeout(() => app.exit(0), 300)
+      return { ok: true }
+    }
+    for (const channel of [IPC.smokeShot, IPC.smokeDone]) {
+      const handler = handlers[channel]
+      ipcMain.handle(`jeff:${channel}`, (_evt, payload) => handler(payload))
+    }
   }
 }
 

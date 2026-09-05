@@ -59,6 +59,8 @@ export class OcClient extends EventEmitter {
   async sendMessage(input: {
     sessionId: string
     text: string
+    /** 随文本发送的图片（dataURL 内联），映射为 opencode file part */
+    images?: Array<{ mime: string; dataUrl: string }>
     agent?: string
     model?: { providerID: string; modelID: string }
     system?: string
@@ -69,7 +71,10 @@ export class OcClient extends EventEmitter {
       'POST',
       `/session/${input.sessionId}/message`,
       {
-        parts: [{ type: 'text', text: input.text }],
+        parts: [
+          ...(input.text ? [{ type: 'text', text: input.text }] : []),
+          ...(input.images || []).map((img) => ({ type: 'file', mime: img.mime, url: img.dataUrl })),
+        ],
         ...(input.agent ? { agent: input.agent } : {}),
         ...(input.model ? { model: input.model } : {}),
         ...(input.system ? { system: input.system } : {}),
@@ -82,8 +87,11 @@ export class OcClient extends EventEmitter {
     const deadline = Date.now() + (input.timeoutMs ?? 180000)
     for (;;) {
       const msgs = await this.getMessages(input.sessionId)
-      const found = msgs.find((m) => m.info?.id === assistantId)?.info as AssistantInfo | undefined
+      const entry = msgs.find((m) => m.info?.id === assistantId)
+      const found = entry?.info as AssistantInfo | undefined
       if (found) {
+        // 列表条目的 parts 在顶层（info 里没有）——合并回去，调用方才能提取回复文本
+        if (entry?.parts?.length && !found.parts) found.parts = entry.parts
         if (found.error) throw new Error(`assistant 消息出错: ${JSON.stringify(found.error).slice(0, 300)}`)
         if (found.time?.completed) return found
       } else if (Date.now() > deadline) {

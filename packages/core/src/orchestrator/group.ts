@@ -96,7 +96,7 @@ export class GroupChat {
   }
 
   /** 用户在群里发消息：存储 + 路由（@直达 或 leader）+ 回帖 */
-  async send(input: { projectId: string; text: string; model?: { providerID: string; modelID: string } }): Promise<{ routedTo: string }> {
+  async send(input: { projectId: string; text: string; model?: { providerID: string; modelID: string }; images?: Array<{ mime: string; dataUrl: string }> }): Promise<{ routedTo: string }> {
     const { projectId, text } = input
     const project = projectRepo(this.db).get(projectId)
     if (!project) throw new Error(`项目不存在: ${projectId}`)
@@ -105,8 +105,13 @@ export class GroupChat {
     const agents = agentRepo(this.db)
     const scope = GroupChat.scope(projectId)
 
-    // 1. 存用户消息
-    chatMessageRepo(this.db).add({ scope, sender_type: 'user', content: text })
+    // 1. 存用户消息（图片放 meta，历史回放时还原）
+    chatMessageRepo(this.db).add({
+      scope,
+      sender_type: 'user',
+      content: text,
+      ...(input.images && input.images.length ? { meta: { images: input.images } } : {}),
+    })
 
     // 2. 路由：@直达 or leader
     const memberInfos = members.map((m) => ({ agent_id: m.agent_id, name: agents.get(m.agent_id)?.name || '' }))
@@ -124,6 +129,7 @@ export class GroupChat {
       reply = await this.getOc().sendMessage({
         sessionId,
         text,
+        ...(input.images && input.images.length ? { images: input.images } : {}),
         agent: agentSlug(targetId),
         system,
         ...(input.model && input.model.providerID && input.model.modelID ? { model: input.model } : {}),
@@ -156,20 +162,25 @@ export class GroupChat {
     return { routedTo: targetId }
   }
 
-  /** 读取群消息（映射 UI 形状，含发送者信息） */
+  /** 读取群消息（映射 UI 形状，含发送者信息；用户消息的图片从 meta 还原） */
   history(projectId: string): GroupMessage[] {
     const agents = agentRepo(this.db)
     const scope = GroupChat.scope(projectId)
     const rows = chatMessageRepo(this.db).listByScope(scope)
     return rows.map((r: ChatMessageRow) => {
       const a = r.sender_id ? agents.get(r.sender_id) : undefined
+      const meta = safeJson(r.meta)
+      const metaImages = Array.isArray(meta.images)
+        ? meta.images.filter((x): x is { mime: string; dataUrl: string } => !!x && typeof x === 'object' && typeof (x as { dataUrl?: unknown }).dataUrl === 'string')
+        : undefined
       return {
         id: r.id,
         role: r.sender_type === 'user' ? 'user' : r.sender_type === 'agent' ? 'assistant' : 'system',
         agentId: r.sender_id || undefined,
         text: r.content,
         time: r.created_at,
-        meta: safeJson(r.meta),
+        meta,
+        ...(metaImages && metaImages.length ? { images: metaImages } : {}),
         sender_name: r.sender_type === 'user' ? '我' : a?.name || '系统',
         sender_avatar: r.sender_type === 'user' ? '🧑' : a?.avatar || '⚙️',
       }

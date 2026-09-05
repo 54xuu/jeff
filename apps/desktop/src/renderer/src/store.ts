@@ -1,32 +1,46 @@
 import { create } from 'zustand'
 import { api } from './api'
-import type { AgentInfo, ChatMsg, AppInfo, AppSettings, ProviderCatalogItem, ProjectInfo, ProjectMember, TaskInfo, GroupMessage } from '@jeff/core'
+import type { AgentInfo, ChatMsg, AppInfo, AppSettings, ProviderCatalogItem, ProjectInfo, ProjectMember, TaskInfo, GroupMessage, ChatImage } from '@jeff/core'
 import { IPC } from '@jeff/core'
 
 export type Tab = 'chats' | 'contacts' | 'settings'
 export type ActiveChat = { kind: 'agent'; id: string } | { kind: 'group'; id: string } | null
+export type SettingsSection = 'providers' | 'mcp' | 'memory' | 'sync' | 'appearance' | 'about'
+
+/** 进行中的流式回复（key: agent:<id> / group:<id>） */
+export interface StreamState {
+  agentId?: string
+  projectId?: string
+  senderName: string
+  senderAvatar: string
+  text: string
+}
 
 interface JeffState {
   tab: Tab
   active: ActiveChat
+  settingsSection: SettingsSection
   agents: AgentInfo[]
   projects: ProjectInfo[]
   messages: Record<string, ChatMsg[]>
   groupMessages: Record<string, GroupMessage[]>
   tasks: Record<string, TaskInfo[]>
   sending: Record<string, boolean>
+  /** 流式回复增量（key: agent:<id> / group:<id>；完成时清空） */
+  streaming: Record<string, StreamState>
   appInfo: AppInfo | null
   settings: AppSettings | null
   catalog: ProviderCatalogItem[]
   setTab: (t: Tab) => void
   setActive: (a: ActiveChat) => void
+  setSettingsSection: (s: SettingsSection) => void
   refreshAgents: () => Promise<void>
   refreshProjects: () => Promise<void>
   loadHistory: (key: string) => Promise<void>
   loadGroupHistory: (projectId: string) => Promise<void>
   loadTasks: (projectId: string) => Promise<void>
-  sendAgent: (agentId: string, text: string, model?: { providerID: string; modelID: string }) => Promise<void>
-  sendGroup: (projectId: string, text: string, model?: { providerID: string; modelID: string }) => Promise<void>
+  sendAgent: (agentId: string, text: string, model?: { providerID: string; modelID: string }, images?: ChatImage[]) => Promise<void>
+  sendGroup: (projectId: string, text: string, model?: { providerID: string; modelID: string }, images?: ChatImage[]) => Promise<void>
   newAgentSession: (agentId: string) => Promise<void>
   stopAgent: (agentId: string) => Promise<void>
   refreshAppInfo: () => Promise<void>
@@ -38,18 +52,21 @@ interface JeffState {
 export const useStore = create<JeffState>((set, get) => ({
   tab: 'chats',
   active: null,
+  settingsSection: 'providers',
   agents: [],
   projects: [],
   messages: {},
   groupMessages: {},
   tasks: {},
   sending: {},
+  streaming: {},
   appInfo: null,
   settings: null,
   catalog: [],
 
   setTab: (tab) => set({ tab }),
   setActive: (active) => set({ active }),
+  setSettingsSection: (settingsSection) => set({ settingsSection }),
 
   refreshAgents: async () => {
     const agents = await api.invoke<AgentInfo[]>(IPC.agentsList)
@@ -79,18 +96,18 @@ export const useStore = create<JeffState>((set, get) => ({
     set((s) => ({ tasks: { ...s.tasks, [projectId]: tasks } }))
   },
 
-  sendAgent: async (agentId, text, model) => {
+  sendAgent: async (agentId, text, model, images) => {
     const key = `agent:${agentId}`
     const now = Date.now()
     set((s) => ({ sending: { ...s.sending, [key]: true } }))
     set((s) => ({
       messages: {
         ...s.messages,
-        [key]: [...(s.messages[key] || []), { id: `local-${now}`, role: 'user', text, time: now }],
+        [key]: [...(s.messages[key] || []), { id: `local-${now}`, role: 'user', text, time: now, ...(images && images.length ? { images } : {}) }],
       },
     }))
     try {
-      await api.invoke(IPC.chatSend, { agentId, text, model })
+      await api.invoke(IPC.chatSend, { agentId, text, model, ...(images && images.length ? { images } : {}) })
     } catch (err) {
       set((s) => ({
         messages: {
@@ -104,7 +121,7 @@ export const useStore = create<JeffState>((set, get) => ({
     }
   },
 
-  sendGroup: async (projectId, text, model) => {
+  sendGroup: async (projectId, text, model, images) => {
     const key = projectId
     const now = Date.now()
     set((s) => ({ sending: { ...s.sending, [`group:${key}`]: true } }))
@@ -113,12 +130,12 @@ export const useStore = create<JeffState>((set, get) => ({
         ...s.groupMessages,
         [key]: [
           ...(s.groupMessages[key] || []),
-          { id: `local-${now}`, role: 'user', text, time: now, sender_name: '我', sender_avatar: '🧑' },
+          { id: `local-${now}`, role: 'user', text, time: now, ...(images && images.length ? { images } : {}), sender_name: '我', sender_avatar: '🧑' },
         ],
       },
     }))
     try {
-      await api.invoke(IPC.groupSend, { projectId, text, model })
+      await api.invoke(IPC.groupSend, { projectId, text, model, ...(images && images.length ? { images } : {}) })
     } catch (err) {
       set((s) => ({
         groupMessages: {
@@ -167,13 +184,46 @@ export const useStore = create<JeffState>((set, get) => ({
 
   handlePush: (what, payload) => {
     const { active } = get()
-    if (what === 'chat-updated') {
+    if (what === 'chat-stream') {
+      const p = (payload || {}) as { kind: 'private' | 'group'; agentId: string; projectId?: string; text: string; done: boolean }
+      const key = p.kind === 'group' ? `group:${p.projectId}` : `agent:${p.agentId}`
+      if (p.done) {
+        set((s) => {
+          if (!(key in s.streaming)) return s
+          const streaming = { ...s.streaming }
+          delete streaming[key]
+          return { streaming }
+        })
+      } else {
+        const agent = get().agents.find((a) => a.id === p.agentId)
+        set((s) => ({
+          streaming: {
+            ...s.streaming,
+            [key]: { agentId: p.agentId, projectId: p.projectId, senderName: agent?.name || '对方', senderAvatar: agent?.avatar || '🤖', text: p.text },
+          },
+        }))
+      }
+    } else if (what === 'chat-updated') {
       const { agentId } = (payload || {}) as { agentId?: string; sessionId?: string }
+      const key = `agent:${agentId}`
+      set((s) => {
+        if (!(key in s.streaming)) return s
+        const streaming = { ...s.streaming }
+        delete streaming[key]
+        return { streaming }
+      })
       if (agentId && active?.kind === 'agent' && active.id === agentId) {
         void get().loadHistory(`agent:${agentId}`)
       }
     } else if (what === 'group-updated') {
       const { projectId } = (payload || {}) as { projectId?: string }
+      const key = `group:${projectId}`
+      set((s) => {
+        if (!(key in s.streaming)) return s
+        const streaming = { ...s.streaming }
+        delete streaming[key]
+        return { streaming }
+      })
       if (projectId && active?.kind === 'group' && active.id === projectId) {
         void get().loadGroupHistory(projectId)
       }
@@ -200,4 +250,10 @@ export function applyTheme(theme: 'system' | 'light' | 'dark' | undefined): void
   } else {
     root.dataset.theme = theme
   }
+}
+
+/** 把 system 主题解析为实际生效的亮/深夜 */
+export function effectiveTheme(theme: 'system' | 'light' | 'dark' | undefined): 'light' | 'dark' {
+  if (theme === 'dark' || theme === 'light') return theme
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
 }

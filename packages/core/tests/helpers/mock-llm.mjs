@@ -1,10 +1,12 @@
 // E2E 用极简 OpenAI 兼容 mock：/v1/models + /v1/chat/completions（流式，含工具调用回环）
 import http from 'node:http'
+import fs from 'node:fs'
 
 /**
  * @param {number} port
  * @param {object} [opts]
  * @param {(userText: string, msgs: unknown[]) => string|null} [opts.customReply] 定制文本回复；返回 null 走默认
+ * @param {string} [opts.imageReply] 请求带图片时的定向回复（多模态链路验证）
  */
 export function startMockLlm(port, opts = {}) {
   const server = http.createServer((req, res) => {
@@ -21,8 +23,13 @@ export function startMockLlm(port, opts = {}) {
         const payload = JSON.parse(body || '{}')
         const msgs = payload.messages || []
         const tools = payload.tools || []
+        // 请求是否携带图片（openai 兼容：image_url / image part）
+        const hasImage = body.includes('"image_url"') || body.includes('"image"')
         if (process.env.MOCK_LOG) {
-          console.error(`[mock] tools=${JSON.stringify(tools.map((t) => t?.function?.name))} msgs=${msgs.length}`)
+          console.error(`[mock] tools=${JSON.stringify(tools.map((t) => t?.function?.name))} msgs=${msgs.length} image=${hasImage}`)
+        }
+        if (process.env.MOCK_DUMP) {
+          fs.appendFileSync(process.env.MOCK_DUMP, `--- hasImage=${hasImage} ---\n${body.slice(0, 4000)}\n`)
         }
         const lastUser = [...msgs].reverse().find((m) => m.role === 'user')
         const userText =
@@ -47,6 +54,14 @@ export function startMockLlm(port, opts = {}) {
           const text = `【工具结果摘要】${String(out).slice(0, 300)}`
           res.write(chunk({ role: 'assistant' }))
           for (const c of text.match(/[\s\S]{1,20}/g) || []) res.write(chunk({ content: c }))
+          res.write(finishLine())
+          res.end()
+          return
+        }
+        // 带图片的请求：opts.imageReply 定向回复（多模态链路验证）
+        if (hasImage && opts.imageReply) {
+          res.write(chunk({ role: 'assistant' }))
+          for (const c of opts.imageReply.match(/[\s\S]{1,20}/g) || []) res.write(chunk({ content: c }))
           res.write(finishLine())
           res.end()
           return
