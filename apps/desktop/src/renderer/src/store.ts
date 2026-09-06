@@ -180,6 +180,7 @@ export const useStore = create<JeffState>((set, get) => ({
     const settings = await api.invoke<AppSettings>(IPC.settingsGet)
     set({ settings })
     applyTheme(settings.theme)
+    applyThemePack(settings.themePack)
   },
 
   refreshCatalog: async () => {
@@ -289,6 +290,11 @@ export function applyTheme(theme: 'system' | 'light' | 'dark' | undefined): void
   } else {
     root.dataset.theme = theme
   }
+}
+
+/** 主题包（皮肤）：当前仅 weui */
+export function applyThemePack(pack: 'weui' | undefined): void {
+  document.documentElement.dataset.themePack = pack || 'weui'
 }
 
 /** 把 system 主题解析为实际生效的亮/深夜 */

@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useStore } from '../store'
-import { IPC, type ChatMsg, type ModelOption, type ProviderCatalogItem } from '@jeff/core'
+import { IPC, modelDisplayLabel, type ChatMsg, type ModelOption, type ProviderCatalogItem } from '@jeff/core'
 import Avatar from './Avatar'
 import { Markdown } from './Markdown'
 import { useImages, ImagePreviews, MsgImages, AssistantExtras } from './ChatShared'
 import ChatHistoryDrawer from './ChatHistoryDrawer'
+import { useDismissable } from '../hooks/useDismissable'
 
 export default function ChatWindow(props: { agentId: string }): React.JSX.Element {
   const { agents, messages, sending, streaming, loadHistory, sendAgent, newAgentSession, stopAgent, catalog, settings } = useStore()
@@ -24,6 +25,10 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
   const attachments = useImages()
   const bodyRef = useRef<HTMLDivElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
+  const modelMenuRef = useRef<HTMLDivElement>(null)
+  const variantMenuRef = useRef<HTMLDivElement>(null)
+  useDismissable(modelOpen, () => setModelOpen(false), modelMenuRef)
+  useDismissable(variantOpen, () => setVariantOpen(false), variantMenuRef)
 
   useEffect(() => {
     void loadHistory(key)
@@ -61,7 +66,7 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
   }
 
   return (
-    <div className="chat-window">
+    <div className="chat-window" data-testid="chat-window">
       <div className="chat-header">
         <Avatar emoji={agent.avatar} size={34} />
         <div className="chat-header-title">
@@ -69,10 +74,10 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
           <span className="chat-header-sub">{agent.builtin ? 'Jeff 内置管家' : agent.description || '智能体'}</span>
         </div>
         <div className="chat-header-actions">
-          <button className="text-btn" onClick={() => void newAgentSession(agent.id)} title="开启新会话（旧会话保留在聊天记录里）">
+          <button className="text-btn" data-testid="chat-new-session" onClick={() => void newAgentSession(agent.id)} title="开启新会话（旧会话保留在聊天记录里）">
             新会话
           </button>
-          <button className="icon-btn" title="聊天记录" onClick={() => setHistoryOpen(true)}>
+          <button className="icon-btn" title="聊天记录" data-testid="chat-history" onClick={() => setHistoryOpen(true)}>
             <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <circle cx="12" cy="12" r="9" />
               <path d="M12 7v5l3.5 2" />
@@ -119,16 +124,16 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
 
       <div className="composer">
         <div className="composer-toolbar">
-          <div className="model-select">
-            <button className="chip" onClick={() => { setModelOpen((v) => !v); setModelFilter('') }}>
+          <div className="model-select" ref={modelMenuRef}>
+            <button className="chip" data-testid="chat-model-chip" onClick={() => { setModelOpen((v) => !v); setModelFilter('') }}>
               <span className="chip-dot" />
-              {currentModel ? modelLabel(currentModel, catalog) : '未配置模型 — 去设置添加 provider'}
+              {currentModel ? modelDisplayLabel(currentModel, catalog) : '未配置模型 — 去设置添加 provider'}
               <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
                 <path d="M6 9l6 6 6-6" />
               </svg>
             </button>
             {modelOpen && (
-              <div className="model-menu">
+              <div className="model-menu" data-testid="chat-model-menu">
                 <input
                   className="model-menu-search"
                   autoFocus
@@ -157,8 +162,8 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
             )}
           </div>
           {tiers.length > 0 && (
-            <div className="model-select">
-              <button className="chip chip-variant" onClick={() => setVariantOpen((v) => !v)} title="思考程度">
+            <div className="model-select" ref={variantMenuRef}>
+              <button className="chip chip-variant" data-testid="chat-thinking-chip" onClick={() => setVariantOpen((v) => !v)} title="思考程度">
                 <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.5 10.9c.6.5 1 1.2 1 2.1h5c0-.9.4-1.6 1-2.1A6 6 0 0 0 12 3z" />
                 </svg>
@@ -168,10 +173,10 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
                 </svg>
               </button>
               {variantOpen && (
-                <div className="model-menu">
+                <div className="model-menu" data-testid="chat-thinking-menu">
                   <button className={`model-menu-item ${variant === '' ? 'on' : ''}`} onClick={() => { setVariant(''); setVariantOpen(false) }}>默认（跟随模型配置）</button>
                   {tiers.map((t) => (
-                    <button key={t} className={`model-menu-item ${variant === t ? 'on' : ''}`} onClick={() => { setVariant(t); setVariantOpen(false) }}>
+                    <button key={t} className={`model-menu-item ${variant === t ? 'on' : ''}`} data-testid={`thinking-${t}`} onClick={() => { setVariant(t); setVariantOpen(false) }}>
                       {TIER_LABEL[t] || t}（{t}）
                     </button>
                   ))}
@@ -214,6 +219,7 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
           </button>
           <textarea
             value={draft}
+            data-testid="chat-draft"
             placeholder={agent.builtin ? '跟小杰说点什么…（例如：帮我创建一个「架构师阿伟」）' : `发消息给 ${agent.name}…（支持粘贴/拖拽图片）`}
             onChange={(e) => setDraft(e.target.value)}
             onPaste={(e) => {
@@ -231,13 +237,13 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
             }}
           />
           {sendingNow ? (
-            <button className="send-btn stop" title="停止生成" onClick={() => void stopAgent(agent.id)}>
+            <button className="send-btn stop" title="停止生成" data-testid="chat-stop" onClick={() => void stopAgent(agent.id)}>
               <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
                 <rect x="6" y="6" width="12" height="12" rx="2" />
               </svg>
             </button>
           ) : (
-            <button className="send-btn" onClick={() => void doSend()} disabled={!draft.trim() && attachments.images.length === 0}>
+            <button className="send-btn" data-testid="chat-send" onClick={() => void doSend()} disabled={!draft.trim() && attachments.images.length === 0}>
               发送
             </button>
           )}
@@ -250,9 +256,7 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
 }
 
 function modelLabel(m: { providerID: string; modelID: string }, catalog: ProviderCatalogItem[]): string {
-  // 规格：按「提供商名称 / 模型ID」展示
-  const hit = catalog.find((c) => c.id === m.providerID)
-  return `${hit?.name || m.providerID} / ${m.modelID}`
+  return modelDisplayLabel(m, catalog)
 }
 
 const TIER_LABEL: Record<string, string> = { none: '无思考', low: '低', high: '高', max: '最大' }

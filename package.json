@@ -10,6 +10,8 @@
   "scripts": {
     "typecheck": "tsc -p tsconfig.base.json --noEmit",
     "test": "npm run test -w @jeff/core",
+    "test:e2e": "npm run test:e2e -w jeff-desktop",
+    "test:e2e:live": "npm run test:e2e:live -w jeff-desktop",
     "smoke": "node scripts/smoke.mjs",
     "dev": "npm run dev -w jeff-desktop",
     "build": "npm run build -w @jeff/core && npm run build -w jeff-desktop",

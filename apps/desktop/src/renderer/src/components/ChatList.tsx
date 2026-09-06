@@ -22,7 +22,7 @@ export default function ChatList(): React.JSX.Element {
       <div className="list-header">
         <span>聊天</span>
         <div className="plus-wrap">
-          <button className="icon-btn" title="新建会话 / 发起群聊" onClick={() => setMenuOpen((v) => !v)}>
+          <button className="icon-btn" data-testid="chat-list-plus" title="新建会话 / 发起群聊" onClick={() => setMenuOpen((v) => !v)}>
             <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
               <path d="M12 5v14M5 12h14" />
             </svg>
@@ -46,6 +46,7 @@ export default function ChatList(): React.JSX.Element {
               </button>
               <button
                 className="plus-menu-item"
+                data-testid="create-group-btn"
                 onClick={() => {
                   setCreating(true)
                   setMenuOpen(false)
@@ -111,7 +112,7 @@ function ChatItem(props: {
   onClick: () => void
 }): React.JSX.Element {
   return (
-    <div className={`chat-item ${props.selected ? 'selected' : ''}`} onClick={props.onClick}>
+    <div className={`chat-item ${props.selected ? 'selected' : ''}`} data-testid={props.isGroup ? `chat-group-${props.name}` : `chat-agent-${props.name}`} onClick={props.onClick}>
       <Avatar emoji={props.avatar} />
       <div className="chat-item-body">
         <div className="chat-item-top">

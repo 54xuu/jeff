@@ -134,7 +134,14 @@ export class JeffCore extends EventEmitter {
     this.syncRegistry()
 
     // sidecar 启动
-    this.sidecar = new SidecarManager({ paths: this.paths, resourceBinDir: opts.resourceBinDir, binaryPath: opts.binaryPath })
+    const e2e = process.env.JEFF_E2E === '1'
+    this.sidecar = new SidecarManager({
+      paths: this.paths,
+      resourceBinDir: opts.resourceBinDir,
+      binaryPath: opts.binaryPath,
+      // E2E 避开本机日常 Jeff 占用的 14096+ 端口段
+      ...(e2e ? { minPort: 16096, maxPort: 17096 } : {}),
+    })
     this.sidecar.on('status', (status: string, error?: string) => {
       this.bus.emit('sidecar-status', { status, error })
       this.emit('sidecar-status', { status, error })
@@ -847,3 +854,4 @@ export { migrateProviders, firstEnabledModel, configuredModelOptions, thinkingVa
 export { SessionIndex, cjkSplit, buildMatchQuery } from './memory/indexer.js'
 export { parseMcpServerJson } from './mcp/parse.js'
 export { MEMORY_TOOL, SEARCH_TOOL, DELEGATE_TOOL, type SessionScopeCtx, type ToolCtx } from './tools/memoryTools.js'
+export { formatModelKey, parseModelKey, modelDisplayLabel } from './util/modelKey.js'

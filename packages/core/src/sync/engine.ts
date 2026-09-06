@@ -187,6 +187,7 @@ export class SyncEngine {
       providers: this.kvGet('settings:providers'),
       defaultModel: this.kvGet('settings:defaultModel'),
       theme: this.kvGet('settings:theme'),
+      themePack: this.kvGet('settings:themePack'),
       // webdav 配置本身不同步（每台设备自己的连接信息）
     }
     const settingsUpdated = Number(
@@ -221,10 +222,11 @@ export class SyncEngine {
     let n = 0
     for (const [id, rec] of merged) {
       if (id === 'settings') {
-        const d = (rec.data || {}) as { providers?: unknown; defaultModel?: unknown; theme?: unknown }
+        const d = (rec.data || {}) as { providers?: unknown; defaultModel?: unknown; theme?: unknown; themePack?: unknown }
         this.kvSetJSON('settings:providers', d.providers ?? [])
         this.kvSetJSON('settings:defaultModel', d.defaultModel ?? null)
         this.kvSetJSON('settings:theme', d.theme ?? 'system')
+        this.kvSetJSON('settings:themePack', d.themePack ?? 'weui')
         n += 1
         continue
       }

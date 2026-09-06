@@ -200,11 +200,12 @@ export class SidecarManager extends EventEmitter {
     this.stopHealthMonitor()
     const proc = this.proc
     this.proc = null
+    const killWait = process.env.JEFF_E2E === '1' ? 800 : 3000
     if (proc) {
       await new Promise<void>((resolve) => {
         proc.once('exit', () => resolve())
         try {
-          proc.kill('SIGTERM')
+          proc.kill(process.env.JEFF_E2E === '1' ? 'SIGKILL' : 'SIGTERM')
         } catch {
           /* 已退出 */
         }
@@ -215,7 +216,7 @@ export class SidecarManager extends EventEmitter {
             /* 忽略 */
           }
           resolve()
-        }, 3000).unref?.()
+        }, killWait).unref?.()
       })
     }
     this.status = 'stopped'

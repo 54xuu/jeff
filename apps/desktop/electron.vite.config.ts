@@ -3,8 +3,8 @@ import react from '@vitejs/plugin-react'
 import { resolve } from 'node:path'
 
 const coreSource = resolve(__dirname, '../../packages/core/src/index.ts')
-// 渲染进程只用契约（类型 + IPC 常量 + 纯数据），避免把 node 依赖卷进浏览器 bundle
-const coreIpcSource = resolve(__dirname, '../../packages/core/src/ipc/contract.ts')
+// 渲染进程只用契约 + 纯工具（类型 + IPC 常量 + modelKey），避免把 node 依赖卷进浏览器 bundle
+const coreBrowserSource = resolve(__dirname, '../../packages/core/src/browser.ts')
 
 export default defineConfig({
   main: {
@@ -31,7 +31,7 @@ export default defineConfig({
     plugins: [react()],
     resolve: {
       alias: {
-        '@jeff/core': coreIpcSource,
+        '@jeff/core': coreBrowserSource,
         '@': resolve(__dirname, 'src/renderer/src'),
       },
     },

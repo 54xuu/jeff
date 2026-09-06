@@ -1,9 +1,11 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { formatModelKey, parseModelKey, modelDisplayLabel } from '@jeff/core'
 import { useStore } from '../store'
 
 /**
  * 可搜索的模型选择下拉（数据源 = 供应商配置里添加的模型，按提供商分组）。
  * value 为 `providerID/modelID`，空字符串 = 跟随默认。
+ * Esc / 点空白关闭。
  */
 export default function ModelPickerCombo(props: {
   value: string
@@ -13,6 +15,7 @@ export default function ModelPickerCombo(props: {
   const catalog = useStore((s) => s.catalog)
   const [open, setOpen] = useState(false)
   const [filter, setFilter] = useState('')
+  const rootRef = useRef<HTMLDivElement>(null)
 
   const groups = useMemo(() => {
     const q = filter.trim().toLowerCase()
@@ -26,16 +29,52 @@ export default function ModelPickerCombo(props: {
 
   const total = catalog.reduce((n, c) => n + c.models.length, 0)
 
+  const triggerLabel = useMemo(() => {
+    if (!props.value) return props.placeholderEmpty || '跟随默认'
+    const parsed = parseModelKey(props.value)
+    if (!parsed) return props.value
+    return modelDisplayLabel(parsed, catalog)
+  }, [props.value, props.placeholderEmpty, catalog])
+
+  useEffect(() => {
+    if (!open) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('keydown', onKey)
+    let onDoc: ((e: MouseEvent) => void) | null = null
+    // 仅延后 outside-click，Esc 立即生效
+    const timer = window.setTimeout(() => {
+      onDoc = (e: MouseEvent) => {
+        if (!rootRef.current?.contains(e.target as Node)) setOpen(false)
+      }
+      document.addEventListener('mousedown', onDoc)
+    }, 0)
+    return () => {
+      clearTimeout(timer)
+      document.removeEventListener('keydown', onKey)
+      if (onDoc) document.removeEventListener('mousedown', onDoc)
+    }
+  }, [open])
+
   return (
-    <div className="combo">
-      <button type="button" className="combo-trigger" onClick={() => { setOpen((v) => !v); setFilter('') }}>
-        {props.value || props.placeholderEmpty || '跟随默认'}
+    <div className="combo" ref={rootRef} data-testid="model-picker">
+      <button
+        type="button"
+        className="combo-trigger"
+        data-testid="model-picker-trigger"
+        onClick={() => {
+          setOpen((v) => !v)
+          setFilter('')
+        }}
+      >
+        {triggerLabel}
         <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
           <path d="M6 9l6 6 6-6" />
         </svg>
       </button>
       {open && (
-        <div className="combo-menu">
+        <div className="combo-menu" data-testid="model-picker-menu">
           <input
             className="model-menu-search"
             autoFocus
@@ -43,7 +82,14 @@ export default function ModelPickerCombo(props: {
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
           />
-          <button type="button" className={`combo-item ${props.value === '' ? 'on' : ''}`} onClick={() => { props.onChange(''); setOpen(false) }}>
+          <button
+            type="button"
+            className={`combo-item ${props.value === '' ? 'on' : ''}`}
+            onClick={() => {
+              props.onChange('')
+              setOpen(false)
+            }}
+          >
             {props.placeholderEmpty || '跟随默认'}
           </button>
           {groups.length === 0 && (
@@ -52,20 +98,24 @@ export default function ModelPickerCombo(props: {
           {groups.map((c) => (
             <div key={c.id}>
               <div className="combo-group">{c.name}</div>
-              {c.models.map((m) => (
-                <button
-                  key={`${m.providerID}/${m.modelID}`}
-                  type="button"
-                  className={`combo-item ${props.value === `${m.providerID}/${m.modelID}` ? 'on' : ''}`}
-                  onClick={() => {
-                    props.onChange(`${m.providerID}/${m.modelID}`)
-                    setOpen(false)
-                  }}
-                >
-                  {m.label}
-                  {m.thinkingTiers?.length ? <span className="tag">{m.thinkingTiers.length} 档思考</span> : null}
-                </button>
-              ))}
+              {c.models.map((m) => {
+                const key = formatModelKey(m.providerID, m.modelID)
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    className={`combo-item ${props.value === key ? 'on' : ''}`}
+                    data-testid={`model-option-${key}`}
+                    onClick={() => {
+                      props.onChange(key)
+                      setOpen(false)
+                    }}
+                  >
+                    {m.label}
+                    {m.thinkingTiers?.length ? <span className="tag">{m.thinkingTiers.length} 档思考</span> : null}
+                  </button>
+                )
+              })}
             </div>
           ))}
         </div>

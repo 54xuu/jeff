@@ -38,12 +38,12 @@ export default function CreateGroupModal(props: { onClose: () => void }): React.
   }
 
   return (
-    <div className="modal-mask" onClick={props.onClose}>
+    <div className="modal-mask" data-testid="create-group-modal" onClick={props.onClose}>
       <div className="modal form" onClick={(e) => e.stopPropagation()}>
         <div className="modal-title">发起群聊（创建项目）</div>
         <label className="field">
           <span>群名 *</span>
-          <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="如：Jeff 官网开发" />
+          <input value={title} data-testid="group-title" onChange={(e) => setTitle(e.target.value)} placeholder="如：Jeff 官网开发" />
         </label>
         <div style={{ display: 'flex', gap: 12 }}>
           <label className="field" style={{ width: 90 }}>
@@ -64,7 +64,7 @@ export default function CreateGroupModal(props: { onClose: () => void }): React.
         </label>
         <label className="field">
           <span>群主（leader，统筹一切）*</span>
-          <select value={leaderId} onChange={(e) => setLeaderId(e.target.value)}>
+          <select value={leaderId} data-testid="group-leader" onChange={(e) => setLeaderId(e.target.value)}>
             <option value="">选择智能体…</option>
             {agents.map((a) => (
               <option key={a.id} value={a.id}>
@@ -94,7 +94,7 @@ export default function CreateGroupModal(props: { onClose: () => void }): React.
         </div>
         <div className="modal-actions">
           <button className="btn" onClick={props.onClose}>取消</button>
-          <button className="btn primary" disabled={!title.trim() || !leaderId} onClick={() => void save()}>
+          <button className="btn primary" data-testid="group-create-confirm" disabled={!title.trim() || !leaderId} onClick={() => void save()}>
             建群
           </button>
         </div>

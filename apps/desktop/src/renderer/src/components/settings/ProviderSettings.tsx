@@ -5,7 +5,7 @@ import { IPC, API_FORMATS, THINKING_TIERS, type ProviderSetting, type ProviderMo
 
 /** 设置 → 模型供应商：横向 tabs + 每个提供商独立详情（无内置，专注自定义供应商） */
 export default function ProviderSettings(): React.JSX.Element {
-  const { refreshCatalog, appInfo } = useStore()
+  const { refreshCatalog, refreshSettings, appInfo } = useStore()
   const [providers, setProviders] = useState<ProviderSetting[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
   const [dirty, setDirty] = useState(false)
@@ -19,6 +19,7 @@ export default function ProviderSettings(): React.JSX.Element {
     setDirty(false)
     setActiveId((cur) => (cur && data.providers.some((p) => p.id === cur) ? cur : data.providers[0]?.id ?? null))
     await refreshCatalog()
+    await refreshSettings()
   }
 
   useEffect(() => {
@@ -81,7 +82,7 @@ export default function ProviderSettings(): React.JSX.Element {
       )}
 
       <div className="settings-actions">
-        <button className="btn primary" disabled={!dirty || saving} onClick={() => void save()}>
+        <button className="btn primary" data-testid="providers-save" disabled={!dirty || saving} onClick={() => void save()}>
           {saving ? '保存中…（引擎重启）' : `保存${dirty ? '（未保存更改）' : ''}`}
         </button>
         {savedAt && !dirty && <span className="settings-tip" style={{ alignSelf: 'center' }}>✅ 已保存（{new Date(savedAt).toLocaleTimeString()}）</span>}

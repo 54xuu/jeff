@@ -12,7 +12,9 @@
     "package:dir": "electron-vite build && electron-builder --dir",
     "package:linux": "electron-vite build && electron-builder --linux --x64",
     "package:win": "electron-vite build && electron-builder --win --x64",
-    "fetch-opencode": "node scripts/fetch-opencode.mjs"
+    "fetch-opencode": "node scripts/fetch-opencode.mjs",
+    "test:e2e": "electron-vite build && playwright test -c e2e/playwright.config.ts --project=ui",
+    "test:e2e:live": "electron-vite build && playwright test -c e2e/playwright.config.ts --project=live"
   },
   "dependencies": {
     "@jeff/core": "*",
@@ -21,6 +23,7 @@
     "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "@types/node": "^22.10.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",

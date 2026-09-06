@@ -1,40 +1,67 @@
-/* ===== Jeff 微信式主题（亮/暗） ===== */
+/* ===== Jeff 主题变量合同（themePack × light/dark） =====
+ * data-theme-pack：皮肤（当前仅 weui）
+ * data-theme：亮/暗
+ * 组件只吃下列变量，禁止硬编码色值。
+ */
 :root,
-:root[data-theme='light'] {
+:root[data-theme-pack='weui'],
+:root[data-theme='light'],
+:root[data-theme-pack='weui'][data-theme='light'] {
+  /* WeUI 官方色 → Jeff 合同 */
+  --weui-BRAND: #07c160;
+  --weui-RED: #fa5151;
   --bg: #ededed;
   --bg-list: #f7f7f7;
   --bg-panel: #ffffff;
   --bg-rail: #2e2e2e;
   --rail-text: #d8d8d8;
-  --rail-active: #07c160;
+  --rail-active: var(--weui-BRAND);
   --text: #191919;
   --text-2: #7a7a7a;
-  --border: #e4e4e4;
-  --green: #07c160;
+  --border: #e5e5e5;
+  --green: var(--weui-BRAND);
   --green-dark: #06ad56;
   --bubble-user: #95ec69;
   --bubble-user-text: #191919;
   --bubble-ai: #ffffff;
-  --danger: #fa5151;
+  --danger: var(--weui-RED);
   --shadow: 0 4px 20px rgba(0, 0, 0, 0.12);
+  /* 字号阶 / 间距 / 圆角 */
+  --fs-xs: 11px;
+  --fs-sm: 12px;
+  --fs-md: 14px;
+  --fs-lg: 16px;
+  --fs-xl: 18px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --btn-h: 36px;
+  --input-h: 36px;
 }
 
-:root[data-theme='dark'] {
-  --bg: #191919;
-  --bg-list: #222222;
-  --bg-panel: #2c2c2c;
-  --bg-rail: #111111;
+:root[data-theme='dark'],
+:root[data-theme-pack='weui'][data-theme='dark'] {
+  --weui-BRAND: #07c160;
+  --weui-RED: #fa5151;
+  --bg: #111111;
+  --bg-list: #191919;
+  --bg-panel: #1e1e1e;
+  --bg-rail: #0d0d0d;
   --rail-text: #b8b8b8;
-  --rail-active: #07c160;
-  --text: #e8e8e8;
-  --text-2: #8f8f8f;
-  --border: #333333;
-  --green: #07c160;
+  --rail-active: var(--weui-BRAND);
+  --text: #e5e5e5;
+  --text-2: #8c8c8c;
+  --border: #2c2c2c;
+  --green: var(--weui-BRAND);
   --green-dark: #06ad56;
-  --bubble-user: #3eb575;
+  --bubble-user: #2ba864;
   --bubble-user-text: #0d1a10;
   --bubble-ai: #2c2c2c;
-  --danger: #fa5151;
+  --danger: var(--weui-RED);
   --shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
 }
 
@@ -52,6 +79,7 @@ body,
 
 body {
   font-family: 'PingFang SC', 'Microsoft YaHei', 'Noto Sans CJK SC', system-ui, sans-serif;
+  font-size: var(--fs-md);
   color: var(--text);
   background: var(--bg);
   overflow: hidden;
@@ -691,10 +719,21 @@ body {
   border: 1px solid var(--border);
   background: var(--bg-panel);
   color: var(--text);
-  font-size: 13px;
-  padding: 7px 16px;
-  border-radius: 8px;
+  font-size: var(--fs-md);
+  height: var(--btn-h);
+  padding: 0 var(--space-4);
+  border-radius: var(--radius-md);
   cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  box-sizing: border-box;
+}
+
+.btn.ghost {
+  background: transparent;
+  border-color: transparent;
 }
 
 .btn:hover {
@@ -727,12 +766,17 @@ body {
   flex-direction: column;
   gap: 5px;
   margin-bottom: 12px;
-  font-size: 13px;
+  font-size: var(--fs-md);
 }
 
 .field > span {
   color: var(--text-2);
-  font-size: 12px;
+  font-size: var(--fs-sm);
+}
+
+.field-hint {
+  color: var(--text-2);
+  font-size: var(--fs-xs);
 }
 
 .field input,
@@ -1177,9 +1221,16 @@ body {
 }
 
 .settings-title {
-  font-size: 16px;
+  font-size: var(--fs-lg);
   font-weight: 600;
   margin-bottom: 6px;
+}
+
+.settings-subtitle {
+  font-size: var(--fs-md);
+  font-weight: 600;
+  margin: 18px 0 10px;
+  color: var(--text);
 }
 
 .settings-content .settings-title + .settings-tip {
@@ -2139,3 +2190,72 @@ body {
   background: color-mix(in srgb, var(--green) 12%, transparent);
   border-right: 2px solid var(--green);
 }
+
+/* ===== Toast / Dialog 小组件 ===== */
+.jeff-toast {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  font-size: var(--fs-md);
+  margin: var(--space-3) 0;
+  border: 1px solid var(--border);
+  background: var(--bg-panel);
+}
+.jeff-toast-error {
+  border-color: color-mix(in srgb, var(--danger) 45%, transparent);
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
+}
+.jeff-toast-success {
+  border-color: color-mix(in srgb, var(--green) 45%, transparent);
+  color: var(--green);
+}
+.jeff-toast-msg { flex: 1; }
+.jeff-toast-close {
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: var(--fs-lg);
+  line-height: 1;
+  padding: 0 var(--space-1);
+}
+
+.jeff-dialog-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+.jeff-dialog {
+  width: min(480px, 92vw);
+  background: var(--bg-panel);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+  border: 1px solid var(--border);
+}
+.jeff-dialog-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border);
+  font-size: var(--fs-lg);
+}
+.jeff-dialog-body {
+  padding: var(--space-4);
+  font-size: var(--fs-md);
+}
+.jeff-dialog-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-top: 1px solid var(--border);
+}
+

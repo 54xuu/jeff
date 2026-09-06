@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useStore } from '../store'
-import { IPC, type GroupMessage, type ModelOption, type ProviderCatalogItem } from '@jeff/core'
+import { modelDisplayLabel, type GroupMessage, type ModelOption, type ProviderCatalogItem } from '@jeff/core'
 import Avatar from './Avatar'
 import GroupInfoDrawer from './GroupInfoDrawer'
 import { Markdown } from './Markdown'
 import { useImages, ImagePreviews, MsgImages, AssistantExtras } from './ChatShared'
 import ChatHistoryDrawer from './ChatHistoryDrawer'
+import { useDismissable } from '../hooks/useDismissable'
 
 /** 项目群聊天窗口（= 微信群） */
 export default function GroupWindow(props: { projectId: string }): React.JSX.Element {
@@ -29,6 +30,10 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
   const bodyRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
+  const modelMenuRef = useRef<HTMLDivElement>(null)
+  const variantMenuRef = useRef<HTMLDivElement>(null)
+  useDismissable(modelOpen, () => setModelOpen(false), modelMenuRef)
+  useDismissable(variantOpen, () => setVariantOpen(false), variantMenuRef)
 
   useEffect(() => {
     void loadGroupHistory(props.projectId)
@@ -158,10 +163,10 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
 
       <div className="composer">
         <div className="composer-toolbar">
-          <div className="model-select">
-            <button className="chip" onClick={() => { setModelOpen((v) => !v); setModelFilter('') }}>
+          <div className="model-select" ref={modelMenuRef}>
+            <button className="chip" data-testid="group-model-chip" onClick={() => { setModelOpen((v) => !v); setModelFilter('') }}>
               <span className="chip-dot" />
-              {currentModel ? modelLabel(currentModel, catalog) : '未配置模型 — 去设置添加 provider'}
+              {currentModel ? modelDisplayLabel(currentModel, catalog) : '未配置模型 — 去设置添加 provider'}
               <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
                 <path d="M6 9l6 6 6-6" />
               </svg>
@@ -196,7 +201,7 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
             )}
           </div>
           {tiers.length > 0 && (
-            <div className="model-select">
+            <div className="model-select" ref={variantMenuRef}>
               <button className="chip chip-variant" onClick={() => setVariantOpen((v) => !v)} title="思考程度">
                 {variant ? TIER_LABEL[variant] || variant : '思考: 默认'}
                 <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
@@ -263,6 +268,7 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
           <textarea
             ref={inputRef}
             value={draft}
+            data-testid="chat-draft"
             placeholder={`在「${project.title}」群里说话…（@某成员 直接指名，支持图片）`}
             onChange={(e) => onDraftChange(e.target.value)}
             onPaste={(e) => {
@@ -280,13 +286,13 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
             }}
           />
           {busy ? (
-            <button className="send-btn stop" title="停止生成" onClick={() => void stopGroup(project.id)}>
+            <button className="send-btn stop" title="停止生成" data-testid="chat-stop" onClick={() => void stopGroup(project.id)}>
               <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
                 <rect x="6" y="6" width="12" height="12" rx="2" />
               </svg>
             </button>
           ) : (
-            <button className="send-btn" onClick={() => void doSend()} disabled={!draft.trim() && attachments.images.length === 0}>
+            <button className="send-btn" data-testid="chat-send" onClick={() => void doSend()} disabled={!draft.trim() && attachments.images.length === 0}>
               发送
             </button>
           )}
@@ -301,9 +307,7 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
 }
 
 export function modelLabel(m: { providerID: string; modelID: string }, catalog: ProviderCatalogItem[]): string {
-  // 规格：按「提供商名称 / 模型ID」展示
-  const hit = catalog.find((c) => c.id === m.providerID)
-  return `${hit?.name || m.providerID} / ${m.modelID}`
+  return modelDisplayLabel(m, catalog)
 }
 
 const TIER_LABEL: Record<string, string> = { none: '无思考', low: '低', high: '高', max: '最大' }

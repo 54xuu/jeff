@@ -46,12 +46,13 @@ export default function NavRail(): React.JSX.Element {
     void api.invoke('settings:set', { theme: next })
   }
   return (
-    <div className="nav-rail">
+    <div className="nav-rail" data-testid="nav-rail">
       {ITEMS.map((it) => (
         <button
           key={it.id}
           className={`nav-item ${tab === it.id ? 'active' : ''}`}
           title={it.label}
+          data-testid={`nav-${it.id}`}
           onClick={() => setTab(it.id)}
         >
           {it.icon}
@@ -61,6 +62,7 @@ export default function NavRail(): React.JSX.Element {
       <div className="nav-spacer" />
       <button
         className="nav-item theme-toggle"
+        data-testid="nav-theme-toggle"
         title={eff === 'dark' ? '切换到亮色模式' : '切换到深夜模式'}
         disabled={!settings}
         onClick={toggleTheme}

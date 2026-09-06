@@ -90,6 +90,7 @@ export default function SettingsNav(): React.JSX.Element {
           <button
             key={s.id}
             className={`settings-nav-item ${settingsSection === s.id ? 'on' : ''}`}
+            data-testid={`settings-nav-${s.id}`}
             onClick={() => setSettingsSection(s.id)}
           >
             <span className="settings-nav-icon">{s.icon}</span>

@@ -163,17 +163,24 @@ export function registerIpc(core: JeffCore): void {
       const kv = core.kv()
       return {
         theme: kv.getJSON<AppSettings['theme']>('settings:theme', 'system'),
+        themePack: kv.getJSON<AppSettings['themePack']>('settings:themePack', 'weui'),
         defaultModel: core.defaultModel(),
         webdav: kv.getJSON<AppSettings['webdav']>('settings:webdav', null) ?? undefined,
       }
     },
     [IPC.settingsSet]: async (p) => {
-      const { theme } = p as { theme?: AppSettings['theme'] }
+      const { theme, themePack } = p as { theme?: AppSettings['theme']; themePack?: AppSettings['themePack'] }
+      let changed = false
       if (theme) {
         core.kv().setJSON('settings:theme', theme)
         nativeTheme.themeSource = theme
-        core.bus.emit('data-changed', 'settings')
+        changed = true
       }
+      if (themePack) {
+        core.kv().setJSON('settings:themePack', themePack)
+        changed = true
+      }
+      if (changed) core.bus.emit('data-changed', 'settings')
       return { ok: true }
     },
 
@@ -198,7 +205,20 @@ export function registerIpc(core: JeffCore): void {
       core.bus.emit('data-changed', 'settings')
       return { ok: true }
     },
-    [IPC.mcpProbe]: async (): Promise<Record<string, import('@jeff/core').McpProbe>> => core.probeMcp(),
+    [IPC.mcpProbe]: async (): Promise<Record<string, import('@jeff/core').McpProbeResult>> => {
+      const raw = await core.probeMcp()
+      const out: Record<string, import('@jeff/core').McpProbeResult> = {}
+      for (const [name, r] of Object.entries(raw)) {
+        out[name] = {
+          name,
+          status: r.ok ? 'ok' : 'error',
+          tools: r.tools || [],
+          toolCount: (r.tools || []).length,
+          error: r.error,
+        }
+      }
+      return out
+    },
 
     // ---------- AGENTS.md ----------
     [IPC.agentsMdList]: async () => core.agentsMdList(),

@@ -33,7 +33,7 @@ export default function EngineSettings(): React.JSX.Element {
   }
 
   return (
-    <div className="settings-content">
+    <div className="settings-content" data-testid="engine-settings">
       <h2 className="settings-title">引擎服务</h2>
       <p className="settings-tip">
         Jeff 基于 opencode 引擎运行（安装包内自带，无需单独安装）。修改供应商 / MCP 配置后会自动重启引擎；如遇异常也可手动重启。

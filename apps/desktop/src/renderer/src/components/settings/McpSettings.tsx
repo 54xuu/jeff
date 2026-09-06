@@ -53,15 +53,15 @@ export default function McpSettings(): React.JSX.Element {
 
   const names = Object.keys(servers)
   return (
-    <div className="settings-content">
+    <div className="settings-content" data-testid="mcp-settings">
       <h2 className="settings-title">MCP 连接器</h2>
       <p className="settings-tip">
         直接粘贴 MCP JSON 导入：支持 <code>{'{"mcpServers":{…}}'}</code>（Claude Desktop / Cursor 格式）或 opencode 原生 map 格式。local = 本机命令；remote = HTTP/SSE。保存后重启引擎生效。
       </p>
 
       <div className="settings-actions" style={{ justifyContent: 'flex-start' }}>
-        <button className="btn primary" onClick={() => setImportOpen(true)}>导入 JSON…</button>
-        <button className="btn" disabled={probing || names.length === 0} onClick={() => void probe()}>{probing ? '探测中…' : '重新检测状态'}</button>
+        <button className="btn primary" data-testid="mcp-import" onClick={() => setImportOpen(true)}>导入 JSON…</button>
+        <button className="btn" data-testid="mcp-probe" disabled={probing || names.length === 0} onClick={() => void probe()}>{probing ? '探测中…' : '重新检测状态'}</button>
       </div>
 
       {!loaded && <p className="settings-tip">加载中…</p>}
@@ -151,6 +151,7 @@ function ImportJson(props: { existing: Record<string, McpServerCfg>; onClose: ()
           <textarea
             rows={10}
             value={text}
+            data-testid="mcp-import-json"
             onChange={(e) => { setText(e.target.value); setError(''); setParsed(null) }}
             placeholder={EXAMPLE_JSON}
             spellCheck={false}
@@ -170,8 +171,8 @@ function ImportJson(props: { existing: Record<string, McpServerCfg>; onClose: ()
         )}
         <div className="modal-actions">
           <button className="btn" onClick={props.onClose}>取消</button>
-          <button className="btn" disabled={!text.trim()} onClick={doParse}>解析校验</button>
-          <button className="btn primary" disabled={!parsed} onClick={() => parsed && props.onImport({ ...props.existing, ...parsed })}>
+          <button className="btn" data-testid="mcp-parse" disabled={!text.trim()} onClick={doParse}>解析校验</button>
+          <button className="btn primary" data-testid="mcp-import-confirm" disabled={!parsed} onClick={() => parsed && props.onImport({ ...props.existing, ...parsed })}>
             {conflicts.length ? '覆盖并保存' : '添加'}
           </button>
         </div>

@@ -21,16 +21,18 @@ function iconPath(): string | null {
   return null
 }
 
-const gotLock = app.requestSingleInstanceLock()
+const gotLock = process.env.JEFF_E2E === '1' || process.env.JEFF_SMOKE === '1' ? true : app.requestSingleInstanceLock()
 if (!gotLock) {
   app.quit()
 } else {
-  app.on('second-instance', () => {
-    if (win) {
-      if (win.isMinimized()) win.restore()
-      win.focus()
-    }
-  })
+  if (process.env.JEFF_E2E !== '1' && process.env.JEFF_SMOKE !== '1') {
+    app.on('second-instance', () => {
+      if (win) {
+        if (win.isMinimized()) win.restore()
+        win.focus()
+      }
+    })
+  }
 
   app.whenReady().then(async () => {
     core = new JeffCore()

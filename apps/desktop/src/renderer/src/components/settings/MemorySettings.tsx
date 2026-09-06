@@ -71,7 +71,7 @@ export default function MemorySettings(): React.JSX.Element {
   }, [scopes])
 
   return (
-    <div className="settings-content">
+    <div className="settings-content" data-testid="memory-settings">
       <h2 className="settings-title">记忆</h2>
       <p className="settings-tip">
         长期记忆按范围分层（全局 / 智能体 / 项目群），由 agent 在对话中自主读写（说「记住…」「忘记…」即可）；这里可人工查看、编辑、删除单条。为控制 token 消耗，每个范围有字符预算，超出时 agent 会自动整合。
@@ -151,6 +151,7 @@ export default function MemorySettings(): React.JSX.Element {
                   <div className="settings-actions" style={{ justifyContent: 'flex-start' }}>
                     <button
                       className="btn primary"
+                      data-testid="memory-save"
                       disabled={!dirty || saving}
                       onClick={async () => {
                         if (!sel) return

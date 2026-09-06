@@ -174,10 +174,11 @@ export function writeSidecarConfig(
   }
   cfg['provider'] = providerCfg
   if (opts.mcp) cfg['mcp'] = opts.mcp
-  // skills：直接挂载用户级 ~/.agents/skills（opencode skills.paths 支持 ~ 展开，跨平台免 symlink）
+  // skills：默认挂载 ~/.agents/skills；测试/便携可用 JEFF_SKILLS_DIR 覆盖
   const skillsCfg = (cfg['skills'] as { paths?: string[] } | undefined) ?? {}
   const skillPaths = new Set(skillsCfg.paths ?? [])
-  skillPaths.add('~/.agents/skills')
+  const skillsMount = process.env.JEFF_SKILLS_DIR || '~/.agents/skills'
+  skillPaths.add(skillsMount)
   cfg['skills'] = { ...skillsCfg, paths: [...skillPaths] }
   const small = opts.smallModel ?? firstEnabledModel(providers)
   if (small) {

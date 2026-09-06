@@ -171,6 +171,8 @@ export interface SessionBrief {
 
 export interface AppSettings {
   theme: 'system' | 'light' | 'dark'
+  /** 主题包（视觉皮肤）；当前仅 weui，为后续扩展预留 */
+  themePack: 'weui'
   /** 会话无覆盖且 agent 无绑定时的兜底模型（动态计算 = 第一个启用提供商的第一个模型） */
   defaultModel: { providerID: string; modelID: string } | null
   webdav?: { url: string; username: string; basePath: string; autoSync: boolean } | null
@@ -290,7 +292,7 @@ export type InvokeMap = {
   [IPC.sessionActivate]: { scope: 'private' | 'group'; agentId: string; projectId?: string; sessionId: string }
   [IPC.sessionDelete]: { sessionId: string }
   [IPC.settingsGet]: void
-  [IPC.settingsSet]: { theme?: AppSettings['theme'] }
+  [IPC.settingsSet]: { theme?: AppSettings['theme']; themePack?: AppSettings['themePack'] }
   [IPC.mcpList]: void
   [IPC.mcpSave]: { servers: Record<string, { type: 'local' | 'remote'; enabled: boolean; command?: string[]; url?: string; headers?: Record<string, string> }> }
   [IPC.mcpProbe]: void
