@@ -11,6 +11,8 @@ export interface AgentRow {
   instructions: string
   model_provider: string
   model_id: string
+  /** 默认思考档位：'' /none/low/high/max（''=跟随模型配置） */
+  thinking: string
   builtin: number
   archived: number
   created_at: number
@@ -25,6 +27,8 @@ export interface ProjectRow {
   icon: string
   status: string
   leader_agent_id: string | null
+  /** 工作空间目录（空 = 全局 workspace） */
+  workspace_dir: string
   created_at: number
   updated_at: number
   deleted_at: number | null
@@ -106,7 +110,7 @@ export const agentRepo = (db: DB) => ({
   get(id: string): AgentRow | undefined {
     return db.prepare('SELECT * FROM agent WHERE id = ?').get(id) as unknown as AgentRow | undefined
   },
-  create(data: { name: string; avatar?: string; description?: string; instructions?: string; model_provider?: string; model_id?: string; builtin?: number; id?: string }): AgentRow {
+  create(data: { name: string; avatar?: string; description?: string; instructions?: string; model_provider?: string; model_id?: string; thinking?: string; builtin?: number; id?: string }): AgentRow {
     const id = data.id ?? genId('agt')
     const row: AgentRow = {
       id,
@@ -116,6 +120,7 @@ export const agentRepo = (db: DB) => ({
       instructions: data.instructions || '',
       model_provider: data.model_provider || '',
       model_id: data.model_id || '',
+      thinking: data.thinking || '',
       builtin: data.builtin || 0,
       archived: 0,
       created_at: now(),
@@ -123,18 +128,18 @@ export const agentRepo = (db: DB) => ({
       deleted_at: null,
     }
     db.prepare(
-      `INSERT INTO agent (id, name, avatar, description, instructions, model_provider, model_id, builtin, archived, created_at, updated_at, deleted_at)
-       VALUES (@id, @name, @avatar, @description, @instructions, @model_provider, @model_id, @builtin, @archived, @created_at, @updated_at, @deleted_at)`,
+      `INSERT INTO agent (id, name, avatar, description, instructions, model_provider, model_id, thinking, builtin, archived, created_at, updated_at, deleted_at)
+       VALUES (@id, @name, @avatar, @description, @instructions, @model_provider, @model_id, @thinking, @builtin, @archived, @created_at, @updated_at, @deleted_at)`,
     ).run(row as unknown as Record<string, never>)
     return row
   },
-  update(id: string, patch: Partial<Pick<AgentRow, 'name' | 'avatar' | 'description' | 'instructions' | 'model_provider' | 'model_id' | 'archived'>>): AgentRow | undefined {
+  update(id: string, patch: Partial<Pick<AgentRow, 'name' | 'avatar' | 'description' | 'instructions' | 'model_provider' | 'model_id' | 'thinking' | 'archived'>>): AgentRow | undefined {
     const cur = this.get(id)
     if (!cur) return undefined
     const next = { ...cur, ...patch, updated_at: now() }
     db.prepare(
       `UPDATE agent SET name=@name, avatar=@avatar, description=@description, instructions=@instructions,
-       model_provider=@model_provider, model_id=@model_id, archived=@archived, updated_at=@updated_at WHERE id=@id`,
+       model_provider=@model_provider, model_id=@model_id, thinking=@thinking, archived=@archived, updated_at=@updated_at WHERE id=@id`,
     ).run({
       name: next.name,
       avatar: next.avatar,
@@ -142,6 +147,7 @@ export const agentRepo = (db: DB) => ({
       instructions: next.instructions,
       model_provider: next.model_provider,
       model_id: next.model_id,
+      thinking: next.thinking,
       archived: next.archived,
       updated_at: next.updated_at,
       id: next.id,
@@ -165,7 +171,7 @@ export const projectRepo = (db: DB) => ({
   get(id: string): ProjectRow | undefined {
     return db.prepare('SELECT * FROM project WHERE id = ?').get(id) as unknown as ProjectRow | undefined
   },
-  create(data: { title: string; description?: string; icon?: string; leader_agent_id?: string | null; status?: string }): ProjectRow {
+  create(data: { title: string; description?: string; icon?: string; leader_agent_id?: string | null; status?: string; workspace_dir?: string }): ProjectRow {
     const row: ProjectRow = {
       id: genId('prj'),
       title: data.title,
@@ -173,28 +179,30 @@ export const projectRepo = (db: DB) => ({
       icon: data.icon || '👥',
       status: data.status || 'in_progress',
       leader_agent_id: data.leader_agent_id ?? null,
+      workspace_dir: data.workspace_dir || '',
       created_at: now(),
       updated_at: now(),
       deleted_at: null,
     }
     db.prepare(
-      `INSERT INTO project (id, title, description, icon, status, leader_agent_id, created_at, updated_at, deleted_at)
-       VALUES (@id, @title, @description, @icon, @status, @leader_agent_id, @created_at, @updated_at, @deleted_at)`,
+      `INSERT INTO project (id, title, description, icon, status, leader_agent_id, workspace_dir, created_at, updated_at, deleted_at)
+       VALUES (@id, @title, @description, @icon, @status, @leader_agent_id, @workspace_dir, @created_at, @updated_at, @deleted_at)`,
     ).run(row as unknown as Record<string, never>)
     return row
   },
-  update(id: string, patch: Partial<Pick<ProjectRow, 'title' | 'description' | 'icon' | 'status' | 'leader_agent_id'>>): ProjectRow | undefined {
+  update(id: string, patch: Partial<Pick<ProjectRow, 'title' | 'description' | 'icon' | 'status' | 'leader_agent_id' | 'workspace_dir'>>): ProjectRow | undefined {
     const cur = this.get(id)
     if (!cur) return undefined
     const next = { ...cur, ...patch, updated_at: now() }
     db.prepare(
-      `UPDATE project SET title=@title, description=@description, icon=@icon, status=@status, leader_agent_id=@leader_agent_id, updated_at=@updated_at WHERE id=@id`,
+      `UPDATE project SET title=@title, description=@description, icon=@icon, status=@status, leader_agent_id=@leader_agent_id, workspace_dir=@workspace_dir, updated_at=@updated_at WHERE id=@id`,
     ).run({
       title: next.title,
       description: next.description,
       icon: next.icon,
       status: next.status,
       leader_agent_id: next.leader_agent_id,
+      workspace_dir: next.workspace_dir,
       updated_at: next.updated_at,
       id: next.id,
     })

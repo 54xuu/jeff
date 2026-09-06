@@ -22,7 +22,7 @@ const flag = (name, def) => {
 }
 
 const outDir = path.resolve(flag('out', '.tmp/smoke-shots'))
-const views = flag('views', 'chat,contacts,settings:providers,settings:appearance,settings:memory,settings:mcp,settings:sync,settings:about')
+const views = flag('views', 'chat,contacts,settings:providers,settings:appearance,settings:memory,settings:mcp,settings:engine,settings:sync,settings:about')
 const theme = flag('theme', '')
 const home = flag('home', '')
 const delay = Number(flag('delay', '2500'))
@@ -36,6 +36,8 @@ const env = {
   JEFF_SMOKE_DELAY_MS: String(delay),
 }
 if (theme) env.JEFF_SMOKE_THEME = theme
+const viewDelay = flag('view-delay', '')
+if (viewDelay) env.JEFF_SMOKE_VIEW_DELAY = String(viewDelay)
 if (home) env.JEFF_HOME = home
 
 console.log(`[smoke] 启动 ${appBin}`)

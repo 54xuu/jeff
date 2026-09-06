@@ -3,10 +3,10 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { buildPaths, ensureDirs, jeffRoot, type JeffPaths } from './paths.js'
 import { openDb, type DB } from './db/db.js'
-import { agentRepo, kvRepo, chatMessageRepo, type AgentRow } from './db/repos.js'
+import { agentRepo, kvRepo, chatMessageRepo, projectRepo, type AgentRow } from './db/repos.js'
 import { SidecarManager } from './sidecar/manager.js'
 import { OcClient } from './oc/client.js'
-import { writeSidecarConfig, type ProviderSetting } from './oc/configWriter.js'
+import { writeSidecarConfig, migrateProviders, firstEnabledModel, type ProviderSetting } from './oc/configWriter.js'
 import { AgentRegistry, XIAOJIE_INSTRUCTIONS, agentSlug } from './agents/registry.js'
 import { XIAOJIE_ID } from './ipc/contract.js'
 import { ToolBridge, renderBridgePlugin } from './tools/bridge.js'
@@ -20,9 +20,11 @@ import { Delegator } from './orchestrator/delegate.js'
 import { MemoryStore } from './memory/store.js'
 import { SessionIndex } from './memory/indexer.js'
 import type { McpServerCfg } from './mcp/parse.js'
+import { probeMcpAll } from './mcp/probe.js'
+import type { SkillsBackupReport, SkillsRestoreStage, SkillsRestoreApply } from './ipc/contract.js'
 import { SyncEngine, type WebdavConfig, type SyncReport } from './sync/engine.js'
 
-export const APP_VERSION = '1.1.0'
+export const APP_VERSION = '1.2.0'
 
 export type { McpServerCfg } from './mcp/parse.js'
 export { buildPaths, ensureDirs, jeffRoot } from './paths.js'
@@ -195,9 +197,10 @@ export class JeffCore extends EventEmitter {
     }
   }
 
-  /** 记忆注入：agent 记忆 + 项目记忆（群聊）+ 全局用户画像 */
+  /** 记忆注入：agent 记忆 + 项目记忆（群聊）+ 全局用户画像 + AGENTS.md（用户级/项目级） */
   buildMemorySystem(agentId: string, projectId?: string): string | undefined {
     const blocks: string[] = []
+    for (const md of this.agentsMdBlocks(projectId)) blocks.push(md)
     const agentBlock = this.memory.renderBlock({ kind: 'agent', agentId })
     if (agentBlock) blocks.push(agentBlock)
     if (projectId) {
@@ -208,9 +211,79 @@ export class JeffCore extends EventEmitter {
     if (userBlock) blocks.push(userBlock)
     if (blocks.length === 0) return undefined
     return [
-      '【长期记忆（Jeff）】以下是关于用户与项目的持久记忆，供你参考；如与当前对话冲突，以对话为准，并可用 jeff_memory 工具更新你的记忆。',
+      '【长期记忆与规则（Jeff）】以下是关于用户/项目的持久记忆与 AGENTS.md 规则，供你参考；如与当前对话冲突，以对话为准，记忆可用 jeff_memory 工具更新。',
       ...blocks,
     ].join('\n')
+  }
+
+  /** AGENTS.md 注入块：用户级（<data>/AGENTS.md）+ 项目级（工作空间目录下 AGENTS.md，存在才注入） */
+  agentsMdBlocks(projectId?: string): string[] {
+    const out: string[] = []
+    try {
+      const userFile = this.paths.agentsMdUser
+      if (fs.existsSync(userFile)) {
+        const text = fs.readFileSync(userFile, 'utf8').trim()
+        if (text) out.push(`【AGENTS.md · 用户级】（${userFile}）\n${text}`)
+      }
+      if (projectId) {
+        const project = projectRepo(this.db).get(projectId)
+        const dir = project?.workspace_dir || this.paths.workspaceDir
+        const file = path.join(dir, 'AGENTS.md')
+        if (fs.existsSync(file)) {
+          const text = fs.readFileSync(file, 'utf8').trim()
+          if (text) out.push(`【AGENTS.md · 项目级】（${file}）\n${text}`)
+        }
+      }
+    } catch {
+      /* 读取失败不注入 */
+    }
+    return out
+  }
+
+  /** AGENTS.md 文件清单（设置页编辑用） */
+  agentsMdList(): Array<{ kind: 'user' | 'project'; id: string; label: string; file: string; exists: boolean }> {
+    const out: Array<{ kind: 'user' | 'project'; id: string; label: string; file: string; exists: boolean }> = []
+    const userFile = this.paths.agentsMdUser
+    out.push({ kind: 'user', id: 'user', label: '用户级 AGENTS.md（全局）', file: userFile, exists: fs.existsSync(userFile) })
+    for (const p of projectRepo(this.db).list()) {
+      const dir = p.workspace_dir || this.paths.workspaceDir
+      const file = path.join(dir, 'AGENTS.md')
+      out.push({ kind: 'project', id: p.id, label: `${p.icon} ${p.title}（${dir}）`, file, exists: fs.existsSync(file) })
+    }
+    return out
+  }
+
+  agentsMdGet(kind: 'user' | 'project', id: string): { content: string; file: string } {
+    const list = this.agentsMdList()
+    const hit = list.find((x) => x.kind === kind && x.id === id)
+    if (!hit) throw new Error('AGENTS.md 条目不存在')
+    const content = fs.existsSync(hit.file) ? fs.readFileSync(hit.file, 'utf8') : ''
+    return { content, file: hit.file }
+  }
+
+  agentsMdSave(kind: 'user' | 'project', id: string, content: string): void {
+    const list = this.agentsMdList()
+    const hit = list.find((x) => x.kind === kind && x.id === id)
+    if (!hit) throw new Error('AGENTS.md 条目不存在')
+    fs.mkdirSync(path.dirname(hit.file), { recursive: true })
+    fs.writeFileSync(hit.file, content, 'utf8')
+  }
+
+  // ---------- skills 备份/恢复（委托 SyncEngine；安全模型见 engine.ts） ----------
+  async skillsBackupNow(): Promise<SkillsBackupReport> {
+    return this.sync.backupSkills()
+  }
+
+  lastSkillsBackup(): (SkillsBackupReport & { fileCount?: number }) | null {
+    return this.sync.lastSkillsBackup()
+  }
+
+  async skillsRestoreStage(): Promise<SkillsRestoreStage> {
+    return this.sync.restoreSkillsStage()
+  }
+
+  async skillsRestoreApply(): Promise<SkillsRestoreApply> {
+    return this.sync.restoreSkillsApply()
   }
 
   /** 回复完成：索引本轮内容 + 计数 nudge */
@@ -556,11 +629,14 @@ Jeff 把「开发 + 项目管理」组织成三个概念（微信心智模型）
 - 创建途径：群里对话让 leader/小杰建（自动出现任务卡片）、或群资料看板手动建。
 
 ## 其他能力
-- **记忆**：每个智能体有自己的长期记忆；项目群有共享记忆；全局用户画像由小杰维护（用 jeff_memory 工具读写）。设置页可人工查看/编辑。
+- **记忆**：每个智能体有自己的长期记忆；项目群有共享记忆；全局用户画像由小杰维护（用 jeff_memory 工具读写，用户说「记住/忘记/整理记忆」即可）。设置页可人工查看、删除单条；每个范围有字符预算防止 token 浪费。
+- **AGENTS.md**：用户级（数据目录 AGENTS.md）与项目级（工作空间目录 AGENTS.md）规则文件，每轮对话自动注入；设置 → 记忆页可编辑。
 - **会话搜索**：所有历史对话全文可搜（jeff_session_search）。
-- **模型提供商**：设置页配置（Anthropic/OpenAI/DeepSeek/Kimi/智谱/硅基流动/OpenRouter/自定义 OpenAI 兼容端点）；聊天输入框可临时切换模型。
-- **图片消息**：聊天输入框支持上传/粘贴/拖拽图片（需模型支持多模态，如 Qwen3.5、Qwen-VL、GPT-4o），智能体能看图回答。
-- **WebDAV 同步**：设置页配置；同步智能体/项目/任务/设置/记忆（不含会话数据）；实体级双向合并，多台机器交替使用不丢数据。
+- **模型提供商**：设置页配置自定义提供商（Chat / Responses / Anthropic 三种 API 格式），每个模型可配上下文/最大输出/图片输入/思考档位（none/low/high/max）；聊天输入框可切换模型与思考程度。新会话默认用第一个启用提供商的第一个模型。
+- **MCP**：设置页粘贴 JSON 导入（支持 mcpServers 包裹格式），可查看每个服务的连接状态与工具清单。
+- **图片消息**：聊天输入框支持上传/粘贴/拖拽图片（需模型支持图片输入），智能体能看图回答。
+- **项目群工作空间**：发起群聊可选工作空间目录，群内产出的文件默认保存到该目录。
+- **WebDAV 同步**：设置页配置；同步智能体/项目/任务/设置/记忆 + 备份 ~/.agents/skills（单向备份，本地永不自动改写）；实体级双向合并，多台机器交替使用不丢数据。
 - **亮/深夜模式**：左侧导航底部切换，或跟随系统。
 `
     fs.writeFileSync(path.join(dir, 'SKILL.md'), content, 'utf8')
@@ -568,9 +644,8 @@ Jeff 把「开发 + 项目管理」组织成三个概念（微信心智模型）
 
   writeSidecarConfig(): void {
     const kv = kvRepo(this.db)
-    const providers = kv.getJSON<ProviderSetting[]>('settings:providers', [])
-    const defaultModel = kv.getJSON<{ providerID: string; modelID: string } | null>('settings:defaultModel', null)
-    writeSidecarConfig(this.paths, providers, { defaultModel: defaultModel ?? undefined, mcp: this.listMcp() })
+    const providers = this.listProviders()
+    writeSidecarConfig(this.paths, providers, { mcp: this.listMcp() })
   }
 
   /** MCP 连接器配置（存 kv，写入 sidecar opencode.json 的 mcp 字段） */
@@ -584,6 +659,11 @@ Jeff 把「开发 + 项目管理」组织成三个概念（微信心智模型）
     await this.restartSidecar()
   }
 
+  /** 探测全部 MCP：连接 + tools/list（设置页展示状态与工具清单；与 sidecar 无关） */
+  async probeMcp(): Promise<Awaited<ReturnType<typeof probeMcpAll>>> {
+    return probeMcpAll(this.listMcp())
+  }
+
   /** 便捷访问器 */
   get agents() {
     return agentRepo(this.db)
@@ -594,16 +674,17 @@ Jeff 把「开发 + 项目管理」组织成三个概念（微信心智模型）
   }
 
   listProviders(): ProviderSetting[] {
-    return this.kv().getJSON<ProviderSetting[]>('settings:providers', [])
+    // migrateProviders 兼容旧 kv：丢弃 builtin、补齐新字段
+    return migrateProviders(this.kv().getJSON<unknown>('settings:providers', []))
   }
 
+  /** 会话兜底模型（动态）：第一个启用提供商的第一个模型 */
   defaultModel(): { providerID: string; modelID: string } | null {
-    return this.kv().getJSON<{ providerID: string; modelID: string } | null>('settings:defaultModel', null)
+    return firstEnabledModel(this.listProviders())
   }
 
-  async saveProviders(providers: ProviderSetting[], defaultModel?: { providerID: string; modelID: string } | null): Promise<void> {
+  async saveProviders(providers: ProviderSetting[]): Promise<void> {
     this.kv().setJSON('settings:providers', providers)
-    if (defaultModel !== undefined) this.kv().setJSON('settings:defaultModel', defaultModel ?? null)
     this.writeSidecarConfig()
     await this.restartSidecar()
   }
@@ -621,7 +702,7 @@ export * from './oc/client.js'
 export * from './oc/configWriter.js'
 export * from './chat/private.js'
 export { XIAOJIE_SLUG, agentSlug } from './agents/registry.js'
-export { XIAOJIE_ID, BUILTIN_PROVIDER_PRESETS } from './ipc/contract.js'
+export { XIAOJIE_ID } from './ipc/contract.js'
 export { SidecarManager } from './sidecar/manager.js'
 export { ToolBridge } from './tools/bridge.js'
 export { GroupChat } from './orchestrator/group.js'
@@ -629,6 +710,8 @@ export { Delegator } from './orchestrator/delegate.js'
 export { registerProjectTools, taskCardMessage } from './tools/projectTools.js'
 export { MemoryStore, parseEntries, matchUnique, type MemoryScope, type MemoryOp, type MemoryResult } from './memory/store.js'
 export { SyncEngine, type WebdavConfig, type SyncReport } from './sync/engine.js'
+export { probeMcpServer, probeMcpAll, type McpProbe } from './mcp/probe.js'
+export { migrateProviders, firstEnabledModel, thinkingVariant, API_FORMAT_NPM, ANTHROPIC_BUDGET } from './oc/configWriter.js'
 
 export { SessionIndex, cjkSplit, buildMatchQuery } from './memory/indexer.js'
 export { parseMcpServerJson } from './mcp/parse.js'

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parseMcpServerJson } from '../src/mcp/parse.js'
+import { parseMcpServerJson, parseMcpServersJson } from '../src/mcp/parse.js'
 
 describe('parseMcpServerJson（MCP JSON 编辑校验）', () => {
   it('local：合法 command 数组', () => {
@@ -53,5 +53,51 @@ describe('parseMcpServerJson（MCP JSON 编辑校验）', () => {
   it('type 非法报错；数组输入报错', () => {
     expect(parseMcpServerJson('{"type":"ftp","command":[]}').ok).toBe(false)
     expect(parseMcpServerJson('[1,2]').ok).toBe(false)
+  })
+})
+
+describe('parseMcpServersJson（双格式兼容）', () => {
+  it('mcpServers 包裹格式（Claude Desktop 风格 command+args+env）', () => {
+    const r = parseMcpServersJson('{"mcpServers":{"fs":{"command":"npx","args":["-y","server-fs"],"env":{"K":"V"}}}}')
+    expect(r.ok).toBe(true)
+    if (r.ok) {
+      expect(r.servers['fs'].type).toBe('local')
+      expect(r.servers['fs'].command).toEqual(['npx', '-y', 'server-fs'])
+      expect(r.servers['fs'].environment?.K).toBe('V')
+    }
+  })
+
+  it('opencode 原生 map：多服务 + local/remote 混合', () => {
+    const r = parseMcpServersJson('{"a":{"type":"local","command":["uvx","x"]},"b":{"type":"remote","url":"https://mcp.example.com"}}')
+    expect(r.ok).toBe(true)
+    if (r.ok) {
+      expect(r.servers['a'].command).toEqual(['uvx', 'x'])
+      expect(r.servers['b'].url).toBe('https://mcp.example.com')
+    }
+  })
+
+  it('无 type 时按 command/url 推断', () => {
+    const r = parseMcpServersJson('{"x":{"command":["npx","y"]},"y":{"url":"http://a"}}')
+    expect(r.ok).toBe(true)
+    if (r.ok) {
+      expect(r.servers['x'].type).toBe('local')
+      expect(r.servers['y'].type).toBe('remote')
+    }
+  })
+
+  it('非法 JSON 报错并带原始原因', () => {
+    const r = parseMcpServersJson('{"mcpServers": {')
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error).toContain('JSON 解析失败')
+  })
+
+  it('某服务缺 command/url 时报错并指名服务', () => {
+    const r = parseMcpServersJson('{"mcpServers":{"good":{"command":["npx","x"]},"bad":{}}}')
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.error).toContain('bad')
+  })
+
+  it('空对象报错', () => {
+    expect(parseMcpServersJson('{}').ok).toBe(false)
   })
 })

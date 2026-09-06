@@ -6,6 +6,7 @@ import CreateGroupModal from './CreateGroupModal'
 export default function ChatList(): React.JSX.Element {
   const { agents, projects, active, setActive } = useStore()
   const [creating, setCreating] = useState(false)
+  const [menuOpen, setMenuOpen] = useState(false)
   const xiaojie = agents.find((a) => a.builtin)
   const others = agents.filter((a) => !a.builtin)
 
@@ -13,24 +14,44 @@ export default function ChatList(): React.JSX.Element {
     <div className="chat-list">
       <div className="list-header">
         <span>聊天</span>
-        <div style={{ display: 'flex' }}>
-          <button className="icon-btn" title="发起群聊（建项目）" onClick={() => setCreating(true)}>
-            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
-              <circle cx="9" cy="7" r="4" />
-              <path d="M16 3.13a4 4 0 0 1 0 7.75" />
-              <path d="M12 15v6M9 18h6" />
-            </svg>
-          </button>
-          <button
-            className="icon-btn"
-            title="去通讯录新建智能体"
-            onClick={() => useStore.getState().setTab('contacts')}
-          >
+        <div className="plus-wrap">
+          <button className="icon-btn" title="新建会话 / 发起群聊" onClick={() => setMenuOpen((v) => !v)}>
             <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
               <path d="M12 5v14M5 12h14" />
             </svg>
           </button>
+          {menuOpen && (
+            <div className="plus-menu" onMouseLeave={() => setMenuOpen(false)}>
+              <button
+                className="plus-menu-item"
+                disabled={active?.kind !== 'agent'}
+                title={active?.kind === 'agent' ? '给当前聊天对象开新会话' : '先在左侧选择一个聊天对象'}
+                onClick={() => {
+                  if (active?.kind !== 'agent') return
+                  void useStore.getState().newAgentSession(active.id)
+                  setMenuOpen(false)
+                }}
+              >
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5c-1.2 0-2.4-.2-3.4-.7L3 21l1.7-5.1A8.5 8.5 0 1 1 21 11.5z" />
+                </svg>
+                新建会话
+              </button>
+              <button
+                className="plus-menu-item"
+                onClick={() => {
+                  setCreating(true)
+                  setMenuOpen(false)
+                }}
+              >
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5c-1.2 0-2.4-.2-3.4-.7L3 21l1.7-5.1A8.5 8.5 0 1 1 21 11.5z" />
+                  <path d="M12 8v7M8.5 11.5h7" />
+                </svg>
+                发起群聊
+              </button>
+            </div>
+          )}
         </div>
       </div>
       {xiaojie && (

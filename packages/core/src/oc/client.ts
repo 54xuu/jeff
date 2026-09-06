@@ -31,8 +31,10 @@ export class OcClient extends EventEmitter {
   }
 
   // ---------- 会话 ----------
-  async createSession(input: { title?: string; agent?: string; model?: { providerID: string; id: string } }): Promise<SessionInfo> {
-    return this.req('POST', '/session', input)
+  async createSession(input: { title?: string; agent?: string; model?: { providerID: string; id: string }; directory?: string }): Promise<SessionInfo> {
+    // directory：把会话锚定到指定工作空间目录（opencode WorkspaceRoutingQuery，文件操作以该目录为根）
+    const qs = input.directory ? `?directory=${encodeURIComponent(input.directory)}` : ''
+    return this.req('POST', `/session${qs}`, input)
   }
 
   async getSession(sessionId: string): Promise<SessionInfo> {
@@ -63,6 +65,8 @@ export class OcClient extends EventEmitter {
     images?: Array<{ mime: string; dataUrl: string }>
     agent?: string
     model?: { providerID: string; modelID: string }
+    /** 思考档位（模型 variants 的 key；opencode PromptInput.variant 原生支持） */
+    variant?: string
     system?: string
     noReply?: boolean
     timeoutMs?: number
@@ -77,6 +81,7 @@ export class OcClient extends EventEmitter {
         ],
         ...(input.agent ? { agent: input.agent } : {}),
         ...(input.model ? { model: input.model } : {}),
+        ...(input.variant ? { variant: input.variant } : {}),
         ...(input.system ? { system: input.system } : {}),
         ...(input.noReply ? { noReply: true } : {}),
       },

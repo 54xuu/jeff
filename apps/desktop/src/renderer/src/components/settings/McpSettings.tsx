@@ -1,38 +1,54 @@
 import { useEffect, useState } from 'react'
-import { useStore } from '../../store'
 import { api } from '../../api'
-import { IPC, parseMcpServerJson, type McpServerCfg } from '@jeff/core'
+import { useStore } from '../../store'
+import { IPC, parseMcpServersJson, type McpServerCfg, type McpProbeResult } from '@jeff/core'
 
-/** 设置 → MCP 连接器：表单添加 + 每项 JSON 编辑 */
+const EXAMPLE_JSON = `{
+  "mcpServers": {
+    "context7": { "type": "remote", "url": "https://mcp.context7.com/mcp" },
+    "fetch": { "command": "npx", "args": ["-y", "@modelcontextprotocol/server-fetch"] }
+  }
+}`
+
+/** 设置 → MCP 连接器：JSON 粘贴导入 + 服务列表（状态 / 工具清单 / 启用禁用删除） */
 export default function McpSettings(): React.JSX.Element {
   const [servers, setServers] = useState<Record<string, McpServerCfg>>({})
-  const [dirty, setDirty] = useState(false)
-  const [busy, setBusy] = useState(false)
-  const [adding, setAdding] = useState(false)
-  const [editing, setEditing] = useState<string | null>(null)
+  const [probes, setProbes] = useState<Record<string, McpProbeResult>>({})
+  const [probing, setProbing] = useState(false)
   const [loaded, setLoaded] = useState(false)
+  const [importOpen, setImportOpen] = useState(false)
 
-  useEffect(() => {
-    void api.invoke<Record<string, McpServerCfg>>(IPC.mcpList).then((s) => {
-      setServers(s)
-      setLoaded(true)
-    })
-  }, [])
-
-  const update = (next: Record<string, McpServerCfg>) => {
-    setServers(next)
-    setDirty(true)
+  const refresh = async () => {
+    const s = await api.invoke<Record<string, McpServerCfg>>(IPC.mcpList)
+    setServers(s)
+    setLoaded(true)
   }
 
-  const save = async () => {
-    setBusy(true)
+  useEffect(() => {
+    void refresh()
+  }, [])
+
+  const probe = async () => {
+    setProbing(true)
     try {
-      await api.invoke(IPC.mcpSave, { servers })
-      setDirty(false)
-      await useStore.getState().refreshCatalog()
+      const r = await api.invoke<Record<string, McpProbeResult>>(IPC.mcpProbe)
+      setProbes(r)
     } finally {
-      setBusy(false)
+      setProbing(false)
     }
+  }
+
+  useEffect(() => {
+    // 有服务且尚无探测结果时自动探测一次
+    if (loaded && Object.keys(servers).length > 0 && Object.keys(probes).length === 0) void probe()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loaded, servers])
+
+  const save = async (next: Record<string, McpServerCfg>) => {
+    setServers(next)
+    await api.invoke(IPC.mcpSave, { servers: next })
+    await useStore.getState().refreshCatalog()
+    setProbes({})
   }
 
   const names = Object.keys(servers)
@@ -40,62 +56,66 @@ export default function McpSettings(): React.JSX.Element {
     <div className="settings-content">
       <h2 className="settings-title">MCP 连接器</h2>
       <p className="settings-tip">
-        local = 本机命令行 MCP 服务；remote = HTTP/SSE 端点（支持 headers）。可逐个编辑 JSON（opencode 原生格式），保存后重启引擎生效。
+        直接粘贴 MCP JSON 导入：支持 <code>{'{"mcpServers":{…}}'}</code>（Claude Desktop / Cursor 格式）或 opencode 原生 map 格式。local = 本机命令；remote = HTTP/SSE。保存后重启引擎生效。
       </p>
 
+      <div className="settings-actions" style={{ justifyContent: 'flex-start' }}>
+        <button className="btn primary" onClick={() => setImportOpen(true)}>导入 JSON…</button>
+        <button className="btn" disabled={probing || names.length === 0} onClick={() => void probe()}>{probing ? '探测中…' : '重新检测状态'}</button>
+      </div>
+
       {!loaded && <p className="settings-tip">加载中…</p>}
-      {loaded && names.length === 0 && (
-        <div className="empty-card">还没有配置 MCP 连接器。点击「添加 MCP」用表单创建，或用小杰帮你配置。</div>
-      )}
+      {loaded && names.length === 0 && <div className="empty-card">还没有 MCP 连接器。点「导入 JSON…」粘贴配置，或在对话里让小杰帮你配置。</div>}
+
       {names.map((name) => {
         const cfg = servers[name]
+        const probe = probes[name]
         return (
           <div key={name} className="provider-row">
             <div className="provider-main">
               <div className="provider-name">
-                {name} <span className="tag">{cfg.type === 'local' ? 'local' : 'remote'}</span>
+                <span className={`pv-dot ${cfg.enabled ? 'on' : ''}`} />
+                {name}
+                <span className="tag">{cfg.type === 'local' ? 'local' : 'remote'}</span>
                 {!cfg.enabled && <span className="tag">已停用</span>}
+                {probe && cfg.enabled && probe.status === 'ok' && <span className="tag tag-green">已连接 · {probe.toolCount} 个工具</span>}
+                {probe && cfg.enabled && probe.status === 'error' && <span className="tag" style={{ color: '#dc2626' }}>连接失败</span>}
               </div>
               <div className="provider-sub">{cfg.type === 'local' ? (cfg.command || []).join(' ') : cfg.url}</div>
+              {probe && cfg.enabled && probe.status === 'error' && <div className="provider-sub" style={{ color: '#dc2626' }}>⚠️ {probe.error}</div>}
+              {probe && probe.status === 'ok' && probe.tools.length > 0 && (
+                <details className="mcp-tools">
+                  <summary>工具清单（{probe.toolCount}）</summary>
+                  <div className="mcp-tool-list">
+                    {probe.tools.map((t) => (
+                      <span key={t} className="tag">{t}</span>
+                    ))}
+                  </div>
+                </details>
+              )}
             </div>
-            <button className="text-btn" onClick={() => setEditing(name)}>编辑 JSON</button>
-            <button className="text-btn" onClick={() => update({ ...servers, [name]: { ...cfg, enabled: !cfg.enabled } })}>
-              {cfg.enabled ? '停用' : '启用'}
+            <button className="text-btn" onClick={() => void save({ ...servers, [name]: { ...cfg, enabled: !cfg.enabled } })}>
+              {cfg.enabled ? '禁用' : '启用'}
             </button>
             <button className="text-btn danger" onClick={() => {
+              if (!confirm(`删除 MCP「${name}」？`)) return
               const next = { ...servers }
               delete next[name]
-              update(next)
+              void save(next)
             }}>
-              移除
+              删除
             </button>
           </div>
         )
       })}
-      <div className="settings-actions" style={{ justifyContent: 'flex-start' }}>
-        <button className="btn" onClick={() => setAdding(true)}>+ 添加 MCP</button>
-        <button className="btn primary" disabled={!dirty || busy} onClick={() => void save()}>
-          {busy ? '保存中…' : `保存${dirty ? '（重启引擎生效）' : ''}`}
-        </button>
-      </div>
 
-      {adding && (
-        <AddMcp onClose={() => setAdding(false)} onAdd={(name, cfg) => {
-          update({ ...servers, [name]: cfg })
-          setAdding(false)
-        }} />
-      )}
-      {editing && (
-        <EditMcpJson
-          name={editing}
-          cfg={servers[editing]}
-          onClose={() => setEditing(null)}
-          onSave={(name, cfg) => {
-            const next = { ...servers }
-            if (name !== editing) delete next[editing]
-            next[name] = cfg
-            update(next)
-            setEditing(null)
+      {importOpen && (
+        <ImportJson
+          existing={servers}
+          onClose={() => setImportOpen(false)}
+          onImport={async (merged) => {
+            await save(merged)
+            setImportOpen(false)
           }}
         />
       )}
@@ -103,112 +123,56 @@ export default function McpSettings(): React.JSX.Element {
   )
 }
 
-/** 编辑单个 MCP server 的 JSON（opencode 原生格式，带结构校验） */
-function EditMcpJson(props: { name: string; cfg: McpServerCfg; onClose: () => void; onSave: (name: string, cfg: McpServerCfg) => void }): React.JSX.Element {
-  const [name, setName] = useState(props.name)
-  const [text, setText] = useState(() => JSON.stringify(props.cfg, null, 2))
+/** JSON 导入弹窗：粘贴 → 解析校验 → 预览 → 确认合并 */
+function ImportJson(props: { existing: Record<string, McpServerCfg>; onClose: () => void; onImport: (merged: Record<string, McpServerCfg>) => void }): React.JSX.Element {
+  const [text, setText] = useState('')
   const [error, setError] = useState('')
+  const [parsed, setParsed] = useState<Record<string, McpServerCfg> | null>(null)
 
-  const submit = () => {
-    const r = parseMcpServerJson(text)
+  const doParse = () => {
+    setParsed(null)
+    setError('')
+    const r = parseMcpServersJson(text)
     if (!r.ok) {
       setError(r.error)
       return
     }
-    if (!name.trim()) {
-      setError('名称不能为空')
-      return
-    }
-    props.onSave(name.trim(), r.cfg)
+    setParsed(r.servers)
   }
+
+  const conflicts = parsed ? Object.keys(parsed).filter((k) => k in props.existing) : []
 
   return (
     <div className="modal-mask" onClick={props.onClose}>
       <div className="modal form" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-title">编辑 MCP 连接器 JSON</div>
+        <div className="modal-title">导入 MCP JSON</div>
         <label className="field">
-          <span>名称</span>
-          <input value={name} onChange={(e) => setName(e.target.value)} />
-        </label>
-        <label className="field">
-          <span>配置（opencode mcp 格式）</span>
+          <span>粘贴 MCP 配置 JSON（mcpServers 包裹或 opencode map 均可）</span>
           <textarea
             rows={10}
             value={text}
-            onChange={(e) => { setText(e.target.value); setError('') }}
+            onChange={(e) => { setText(e.target.value); setError(''); setParsed(null) }}
+            placeholder={EXAMPLE_JSON}
             spellCheck={false}
             style={{ fontFamily: 'ui-monospace, Menlo, Consolas, monospace', fontSize: 12 }}
           />
         </label>
-        <p className="settings-tip">
-          示例 — local：{'{"type":"local","command":["npx","-y","@modelcontextprotocol/server-xxx"],"enabled":true}'}；
-          remote：{'{"type":"remote","url":"https://…","headers":{"Authorization":"Bearer …"}}'}
-        </p>
         {error && <p className="settings-error">⚠️ {error}</p>}
-        <div className="modal-actions">
-          <button className="btn" onClick={props.onClose}>取消</button>
-          <button className="btn primary" onClick={submit}>保存</button>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-function AddMcp(props: { onClose: () => void; onAdd: (name: string, cfg: McpServerCfg) => void }): React.JSX.Element {
-  const [type, setType] = useState<'local' | 'remote'>('local')
-  const [name, setName] = useState('')
-  const [command, setCommand] = useState('npx -y @modelcontextprotocol/server-xxx')
-  const [url, setUrl] = useState('https://')
-  const [headerText, setHeaderText] = useState('')
-
-  return (
-    <div className="modal-mask" onClick={props.onClose}>
-      <div className="modal form" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-title">添加 MCP 连接器</div>
-        <div className="seg">
-          <button className={`seg-item ${type === 'local' ? 'on' : ''}`} onClick={() => setType('local')}>local（本机命令）</button>
-          <button className={`seg-item ${type === 'remote' ? 'on' : ''}`} onClick={() => setType('remote')}>remote（HTTP）</button>
-        </div>
-        <label className="field">
-          <span>名称 *</span>
-          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="如 context7" />
-        </label>
-        {type === 'local' ? (
-          <label className="field">
-            <span>启动命令（空格分隔）</span>
-            <input value={command} onChange={(e) => setCommand(e.target.value)} />
-          </label>
-        ) : (
-          <>
-            <label className="field">
-              <span>URL *</span>
-              <input value={url} onChange={(e) => setUrl(e.target.value)} />
-            </label>
-            <label className="field">
-              <span>Headers（每行 key: value，可选）</span>
-              <textarea rows={2} value={headerText} onChange={(e) => setHeaderText(e.target.value)} placeholder="Authorization: Bearer sk-…" />
-            </label>
-          </>
+        {parsed && (
+          <div className="mcp-preview">
+            <p className="settings-tip">解析成功，将{conflicts.length ? `覆盖 ${conflicts.join('、')}` : '新增'} {Object.keys(parsed).length} 个服务：</p>
+            {Object.entries(parsed).map(([name, cfg]) => (
+              <div key={name} className="provider-sub">
+                • <b>{name}</b>（{cfg.type}）：{cfg.type === 'local' ? (cfg.command || []).join(' ') : cfg.url}
+              </div>
+            ))}
+          </div>
         )}
         <div className="modal-actions">
           <button className="btn" onClick={props.onClose}>取消</button>
-          <button
-            className="btn primary"
-            disabled={!name.trim()}
-            onClick={() => {
-              const headers: Record<string, string> = {}
-              for (const line of headerText.split('\n')) {
-                const idx = line.indexOf(':')
-                if (idx > 0) headers[line.slice(0, idx).trim()] = line.slice(idx + 1).trim()
-              }
-              props.onAdd(name.trim(), {
-                type,
-                enabled: true,
-                ...(type === 'local' ? { command: command.trim().split(/\s+/) } : { url: url.trim(), headers }),
-              })
-            }}
-          >
-            添加
+          <button className="btn" disabled={!text.trim()} onClick={doParse}>解析校验</button>
+          <button className="btn primary" disabled={!parsed} onClick={() => parsed && props.onImport({ ...props.existing, ...parsed })}>
+            {conflicts.length ? '覆盖并保存' : '添加'}
           </button>
         </div>
       </div>

@@ -17,7 +17,9 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
   const [draft, setDraft] = useState('')
   const [drawer, setDrawer] = useState(false)
   const [modelOverride, setModelOverride] = useState<{ providerID: string; modelID: string } | null>(null)
+  const [variant, setVariant] = useState<string>('')
   const [modelOpen, setModelOpen] = useState(false)
+  const [variantOpen, setVariantOpen] = useState(false)
   const [mention, setMention] = useState<{ query: string; start: number } | null>(null)
   const [dragOver, setDragOver] = useState(false)
   const attachments = useImages()
@@ -37,6 +39,12 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
 
   const allModels: ModelOption[] = useMemo(() => catalog.flatMap((c) => c.models), [catalog])
   const currentModel = modelOverride || settings?.defaultModel || null
+  const tiers = useMemo(() => {
+    if (!currentModel) return []
+    return allModels.find((m) => m.providerID === currentModel.providerID && m.modelID === currentModel.modelID)?.thinkingTiers ?? []
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentModel?.providerID, currentModel?.modelID, allModels])
+  useEffect(() => setVariant(''), [currentModel?.providerID, currentModel?.modelID])
 
   // @ 自动补全：光标前最近的 @xx
   const mentionCandidates = useMemo(() => {
@@ -78,7 +86,7 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
     setMention(null)
     const images = attachments.images
     attachments.clear()
-    await sendGroup(project.id, text, modelOverride || undefined, images)
+    await sendGroup(project.id, text, modelOverride || undefined, images, variant || undefined)
   }
 
   return (
@@ -161,6 +169,26 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
               </div>
             )}
           </div>
+          {tiers.length > 0 && (
+            <div className="model-select">
+              <button className="chip chip-variant" onClick={() => setVariantOpen((v) => !v)} title="思考程度">
+                {variant ? TIER_LABEL[variant] || variant : '思考: 默认'}
+                <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                  <path d="M6 9l6 6 6-6" />
+                </svg>
+              </button>
+              {variantOpen && (
+                <div className="model-menu">
+                  <button className={`model-menu-item ${variant === '' ? 'on' : ''}`} onClick={() => { setVariant(''); setVariantOpen(false) }}>默认（跟随模型配置）</button>
+                  {tiers.map((t) => (
+                    <button key={t} className={`model-menu-item ${variant === t ? 'on' : ''}`} onClick={() => { setVariant(t); setVariantOpen(false) }}>
+                      {TIER_LABEL[t] || t}（{t}）
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
           <span className="composer-hint">默认由群主处理 · @成员名 直达</span>
         </div>
         <ImagePreviews images={attachments.images} onRemove={attachments.remove} />
@@ -238,10 +266,12 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
 }
 
 export function modelLabel(m: { providerID: string; modelID: string }, catalog: ProviderCatalogItem[]): string {
+  // 规格：按「提供商名称 / 模型ID」展示
   const hit = catalog.find((c) => c.id === m.providerID)
-  const modelName = hit?.models.find((x) => x.modelID === m.modelID)?.label
-  return modelName || `${m.providerID} / ${m.modelID}`
+  return `${hit?.name || m.providerID} / ${m.modelID}`
 }
+
+const TIER_LABEL: Record<string, string> = { none: '无思考', low: '低', high: '高', max: '最大' }
 
 function GroupBubble(props: { msg: GroupMessage }): React.JSX.Element {
   const { msg } = props

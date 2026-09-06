@@ -33,6 +33,17 @@ const SECTIONS: Array<{ id: SettingsSection; label: string; desc: string; icon: 
     ),
   },
   {
+    id: 'engine',
+    label: '引擎服务',
+    desc: 'opencode 状态与重启',
+    icon: (
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M5 12a7 7 0 0 1 12-4.9M19 12a7 7 0 0 1-12 4.9" />
+        <path d="M17 3v4h-4M7 21v-4h4" />
+      </svg>
+    ),
+  },
+  {
     id: 'sync',
     label: 'WebDAV 同步',
     desc: '多设备数据同步',

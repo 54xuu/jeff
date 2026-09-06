@@ -3,23 +3,36 @@ import { useStore } from '../store'
 import { api } from '../api'
 import { IPC, XIAOJIE_ID } from '@jeff/core'
 
-/** 发起群聊 = 创建项目群：群名/图标/群主/成员 */
+/** 发起群聊 = 创建项目群：群名/图标/群主/成员/工作空间目录 */
 export default function CreateGroupModal(props: { onClose: () => void }): React.JSX.Element {
-  const agents = useStore((s) => s.agents)
+  const { agents } = useStore()
   const [title, setTitle] = useState('')
   const [icon, setIcon] = useState('👥')
   const [description, setDescription] = useState('')
   const [leaderId, setLeaderId] = useState('')
   const [memberIds, setMemberIds] = useState<string[]>([])
+  const [workspaceDir, setWorkspaceDir] = useState('')
 
   const toggleMember = (id: string) => {
     setMemberIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
   }
 
+  const pickDir = async () => {
+    const dir = await api.invoke<string | null>(IPC.dialogPickDir, { title: '选择工作空间目录', defaultPath: workspaceDir || undefined })
+    if (dir) setWorkspaceDir(dir)
+  }
+
   const save = async () => {
     if (!title.trim() || !leaderId) return
     const members = [leaderId, ...memberIds.filter((m) => m !== leaderId)]
-    await api.invoke(IPC.projectSave, { title: title.trim(), icon: icon.trim() || '👥', description: description.trim(), leader_agent_id: leaderId, memberAgentIds: members })
+    await api.invoke(IPC.projectSave, {
+      title: title.trim(),
+      icon: icon.trim() || '👥',
+      description: description.trim(),
+      leader_agent_id: leaderId,
+      memberAgentIds: members,
+      workspace_dir: workspaceDir.trim(),
+    })
     await useStore.getState().refreshProjects()
     props.onClose()
   }
@@ -42,6 +55,13 @@ export default function CreateGroupModal(props: { onClose: () => void }): React.
             <input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="这个项目是干嘛的" />
           </label>
         </div>
+        <label className="field">
+          <span>工作空间目录（不选 = Jeff 默认工作区）</span>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <input value={workspaceDir} onChange={(e) => setWorkspaceDir(e.target.value)} placeholder="留空 = Jeff 默认工作区；群内产出的文件都保存在这里" style={{ flex: 1 }} />
+            <button className="btn" type="button" onClick={() => void pickDir()}>浏览…</button>
+          </div>
+        </label>
         <label className="field">
           <span>群主（leader，统筹一切）*</span>
           <select value={leaderId} onChange={(e) => setLeaderId(e.target.value)}>

@@ -45,6 +45,7 @@ if (!gotLock) {
     core.bus.on('chat-updated', (p: unknown) => broadcast('chat-updated', p))
     core.bus.on('chat-stream', (p: unknown) => broadcast('chat-stream', p))
     core.on('sidecar-status', (p: unknown) => broadcast('sidecar-status', p))
+    core.on('sidecar-log', (line: string) => pushSidecarLog(line))
     registerIpc(core)
 
     createWindow()
@@ -190,6 +191,10 @@ function createWindow(): void {
     void shell.openExternal(url)
     return { action: 'deny' }
   })
+  // 渲染层订阅 push 之前 sidecar 可能已 running：补发一次当前状态（触发渲染层补拉模型目录）
+  win.webContents.once('did-finish-load', () => {
+    if (core?.sidecar) broadcast('sidecar-status', { status: core.sidecar.status, error: core.sidecar.lastError || undefined })
+  })
   if (process.env.ELECTRON_RENDERER_URL) {
     void win.loadURL(process.env.ELECTRON_RENDERER_URL)
   } else {
@@ -216,6 +221,17 @@ function createWindow(): void {
       }, Number(process.env.JEFF_SMOKE_DELAY_MS || 4000))
     })
   }
+}
+
+/** sidecar 最近日志环形缓冲（设置页「引擎服务」展示） */
+const sidecarLogBuffer: string[] = []
+function pushSidecarLog(line: string): void {
+  sidecarLogBuffer.push(line)
+  if (sidecarLogBuffer.length > 300) sidecarLogBuffer.splice(0, sidecarLogBuffer.length - 300)
+}
+
+export function getSidecarLogs(): string[] {
+  return sidecarLogBuffer.slice(-200)
 }
 
 export function getMainWindow(): BrowserWindow | null {

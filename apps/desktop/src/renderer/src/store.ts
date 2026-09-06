@@ -5,7 +5,7 @@ import { IPC } from '@jeff/core'
 
 export type Tab = 'chats' | 'contacts' | 'settings'
 export type ActiveChat = { kind: 'agent'; id: string } | { kind: 'group'; id: string } | null
-export type SettingsSection = 'providers' | 'mcp' | 'memory' | 'sync' | 'appearance' | 'about'
+export type SettingsSection = 'providers' | 'mcp' | 'memory' | 'engine' | 'sync' | 'appearance' | 'about'
 
 /** 进行中的流式回复（key: agent:<id> / group:<id>） */
 export interface StreamState {
@@ -39,8 +39,8 @@ interface JeffState {
   loadHistory: (key: string) => Promise<void>
   loadGroupHistory: (projectId: string) => Promise<void>
   loadTasks: (projectId: string) => Promise<void>
-  sendAgent: (agentId: string, text: string, model?: { providerID: string; modelID: string }, images?: ChatImage[]) => Promise<void>
-  sendGroup: (projectId: string, text: string, model?: { providerID: string; modelID: string }, images?: ChatImage[]) => Promise<void>
+  sendAgent: (agentId: string, text: string, model?: { providerID: string; modelID: string }, images?: ChatImage[], variant?: string) => Promise<void>
+  sendGroup: (projectId: string, text: string, model?: { providerID: string; modelID: string }, images?: ChatImage[], variant?: string) => Promise<void>
   newAgentSession: (agentId: string) => Promise<void>
   stopAgent: (agentId: string) => Promise<void>
   refreshAppInfo: () => Promise<void>
@@ -96,7 +96,7 @@ export const useStore = create<JeffState>((set, get) => ({
     set((s) => ({ tasks: { ...s.tasks, [projectId]: tasks } }))
   },
 
-  sendAgent: async (agentId, text, model, images) => {
+  sendAgent: async (agentId, text, model, images, variant) => {
     const key = `agent:${agentId}`
     const now = Date.now()
     set((s) => ({ sending: { ...s.sending, [key]: true } }))
@@ -107,7 +107,7 @@ export const useStore = create<JeffState>((set, get) => ({
       },
     }))
     try {
-      await api.invoke(IPC.chatSend, { agentId, text, model, ...(images && images.length ? { images } : {}) })
+      await api.invoke(IPC.chatSend, { agentId, text, model, ...(variant ? { variant } : {}), ...(images && images.length ? { images } : {}) })
     } catch (err) {
       set((s) => ({
         messages: {
@@ -121,7 +121,7 @@ export const useStore = create<JeffState>((set, get) => ({
     }
   },
 
-  sendGroup: async (projectId, text, model, images) => {
+  sendGroup: async (projectId, text, model, images, variant) => {
     const key = projectId
     const now = Date.now()
     set((s) => ({ sending: { ...s.sending, [`group:${key}`]: true } }))
@@ -135,7 +135,7 @@ export const useStore = create<JeffState>((set, get) => ({
       },
     }))
     try {
-      await api.invoke(IPC.groupSend, { projectId, text, model, ...(images && images.length ? { images } : {}) })
+      await api.invoke(IPC.groupSend, { projectId, text, model, ...(variant ? { variant } : {}), ...(images && images.length ? { images } : {}) })
     } catch (err) {
       set((s) => ({
         groupMessages: {
@@ -174,11 +174,18 @@ export const useStore = create<JeffState>((set, get) => ({
   },
 
   refreshCatalog: async () => {
-    try {
-      const { catalog } = await api.invoke<{ catalog: ProviderCatalogItem[] }>(IPC.providersCatalog)
-      set({ catalog })
-    } catch {
-      set({ catalog: [] })
+    // sidecar 就绪通常晚于渲染层首帧：重试到拿到非空目录为止（12 次 × 2s ≈ 24s 上限）
+    for (let i = 0; i < 12; i++) {
+      try {
+        const { catalog } = await api.invoke<{ catalog: ProviderCatalogItem[] }>(IPC.providersCatalog)
+        if (catalog.length > 0 || i === 11) {
+          set({ catalog })
+          return
+        }
+      } catch {
+        if (i === 11) set({ catalog: [] })
+      }
+      await new Promise((r) => setTimeout(r, 2000))
     }
   },
 
@@ -236,6 +243,9 @@ export const useStore = create<JeffState>((set, get) => ({
       if (active?.kind === 'group') void get().loadGroupHistory(active.id)
     } else if (what === 'sidecar-status') {
       void get().refreshAppInfo()
+      // 引擎就绪后补拉模型目录（启动竞态兜底）
+      const st = (payload || {}) as { status?: string }
+      if (st.status === 'running') void get().refreshCatalog()
     } else if (what === 'settings') {
       void get().refreshSettings()
     }

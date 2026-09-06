@@ -5,6 +5,7 @@ const api = {
     smokeSelect: process.env.JEFF_SMOKE_SELECT || '',
     smokeViews: process.env.JEFF_SMOKE_VIEWS || '',
     smokeTheme: process.env.JEFF_SMOKE_THEME || '',
+    smokeViewDelay: process.env.JEFF_SMOKE_VIEW_DELAY || '',
   },
   invoke: (channel: string, payload?: unknown): Promise<unknown> => ipcRenderer.invoke(`jeff:${channel}`, payload),
   /** 主进程推送：{what, payload} */

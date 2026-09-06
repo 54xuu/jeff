@@ -92,6 +92,19 @@ CREATE INDEX IF NOT EXISTS idx_agent_name ON agent(name);
 CREATE INDEX IF NOT EXISTS idx_task_project ON task(project_id, status);
 CREATE INDEX IF NOT EXISTS idx_msg_scope ON chat_message(scope, created_at);
 `)
+
+  // 增量列迁移（CREATE TABLE IF NOT EXISTS 不会给旧库加列）
+  addColumn(db, 'agent', 'thinking', "TEXT NOT NULL DEFAULT ''", "默认思考档位：'' /none/low/high/max（''=跟随模型配置）")
+  addColumn(db, 'project', 'workspace_dir', "TEXT NOT NULL DEFAULT ''", '工作空间目录（空=全局 workspace，输出文件默认落这里）')
+}
+
+/** 若表缺列则 ALTER TABLE ADD COLUMN（幂等） */
+function addColumn(db: DB, table: string, column: string, def: string, comment: string): void {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>
+  if (cols.some((c) => c.name === column)) return
+  // eslint-disable-next-line @typescript-eslint/no-unused-expressions
+  comment // 注释仅作文档（SQLite 无法附加列注释），保持与建表注释同一精神
+  db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${def}`)
 }
 
 export const now = (): number => Date.now()

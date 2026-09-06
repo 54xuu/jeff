@@ -1,4 +1,4 @@
-import { app, ipcMain, nativeTheme } from 'electron'
+import { app, ipcMain, nativeTheme, dialog } from 'electron'
 import fs from 'node:fs'
 import path from 'node:path'
 import type {
@@ -11,10 +11,10 @@ import type {
   AppSettings,
   AppInfo,
 } from '@jeff/core'
-import { IPC, XIAOJIE_ID, agentRepo, projectRepo, projectAgentRepo, taskRepo, taskCardMessage, APP_VERSION } from '@jeff/core'
+import { IPC, XIAOJIE_ID, agentRepo, projectRepo, projectAgentRepo, taskRepo, taskCardMessage, APP_VERSION, type ThinkingTier } from '@jeff/core'
 import type { MemoryScopeInfo } from '@jeff/core'
 import type { JeffCore, TaskRow } from '@jeff/core'
-import { getMainWindow } from './index.js'
+import { getMainWindow, getSidecarLogs } from './index.js'
 
 type Handler = (payload: unknown) => Promise<unknown>
 
@@ -27,7 +27,10 @@ export function registerIpc(core: JeffCore): void {
       version: app.getVersion(),
       jeffVersion: APP_VERSION,
       sidecarStatus: core.sidecar?.status ?? 'stopped',
+      sidecarError: core.sidecar?.lastError || undefined,
+      sidecarPort: core.sidecar?.port || undefined,
       opencodeBinary: core.sidecar?.resolveBinary() ?? null,
+      opencodeVersion: (await core.sidecar?.version().catch(() => null)) ?? undefined,
       dataDir: core.paths.root,
     }),
 
@@ -41,11 +44,25 @@ export function registerIpc(core: JeffCore): void {
       return toAgentInfo(row)
     },
     [IPC.agentsUpsert]: async (p): Promise<AgentInfo> => {
-      const d = p as { id?: string; name: string; avatar?: string; description?: string; instructions?: string; model_provider?: string; model_id?: string }
-      if (d.id === XIAOJIE_ID) throw new Error('小杰是内置管家，不可编辑')
-      const row = d.id
-        ? core.agents.update(d.id, { name: d.name, avatar: d.avatar, description: d.description, instructions: d.instructions, model_provider: d.model_provider ?? '', model_id: d.model_id ?? '' })
-        : core.agents.create({ name: d.name, avatar: d.avatar, description: d.description, instructions: d.instructions, model_provider: d.model_provider, model_id: d.model_id })
+      const d = p as { id?: string; name: string; avatar?: string; description?: string; instructions?: string; model_provider?: string; model_id?: string; thinking?: string }
+      const patch = {
+        name: d.name,
+        avatar: d.avatar,
+        description: d.description,
+        instructions: d.instructions,
+        model_provider: d.model_provider ?? '',
+        model_id: d.model_id ?? '',
+        thinking: (d.thinking ?? '') as ThinkingTier | '',
+      }
+      let row
+      if (d.id === XIAOJIE_ID) {
+        // 小杰可配模型/思考/指令外的一切（名称头像锁定），指令保持内置
+        row = core.agents.update(XIAOJIE_ID, { model_provider: patch.model_provider, model_id: patch.model_id, thinking: patch.thinking, description: patch.description })
+      } else if (d.id) {
+        row = core.agents.update(d.id, patch)
+      } else {
+        row = core.agents.create(patch)
+      }
       if (!row) throw new Error('保存失败')
       core.syncRegistry()
       core.markRegistryDirty()
@@ -71,10 +88,10 @@ export function registerIpc(core: JeffCore): void {
       return core.privateChat.history(agentId)
     },
     [IPC.chatSend]: async (p): Promise<{ ok: boolean }> => {
-      const { agentId, text, model, images } = p as { agentId: string; text: string; model?: { providerID: string; modelID: string }; images?: Array<{ mime: string; dataUrl: string }> }
+      const { agentId, text, model, variant, images } = p as { agentId: string; text: string; model?: { providerID: string; modelID: string }; variant?: string; images?: Array<{ mime: string; dataUrl: string }> }
       const row = core.agents.get(agentId)
       if (!row) throw new Error('智能体不存在')
-      await core.privateChat.send(agentId, row.name, text, model, images)
+      await core.privateChat.send(agentId, row.name, text, model, images, variant || undefined)
       return { ok: true }
     },
     [IPC.chatNew]: async (p): Promise<{ sessionId: string }> => {
@@ -93,27 +110,27 @@ export function registerIpc(core: JeffCore): void {
     // ---------- provider / 设置 ----------
     [IPC.providersList]: async () => ({
       providers: core.listProviders(),
-      defaultModel: core.defaultModel(),
     }),
     [IPC.providersSave]: async (p) => {
-      const { providers, defaultModel } = p as { providers: InvokeMap[typeof IPC.providersSave]['providers']; defaultModel?: { providerID: string; modelID: string } | null }
-      await core.saveProviders(providers, defaultModel)
+      const { providers } = p as { providers: InvokeMap[typeof IPC.providersSave]['providers'] }
+      await core.saveProviders(providers)
       core.bus.emit('data-changed', 'settings')
       return { ok: true }
     },
     [IPC.providersCatalog]: async (): Promise<{ catalog: ProviderCatalogItem[] }> => {
       const providers = await core.oc.listProviders()
+      const configured = new Map(core.listProviders().map((p) => [p.id, p]))
       const catalog: ProviderCatalogItem[] = providers.map((pv) => ({
         id: pv.id,
         name: pv.name || pv.id,
-        models: Object.keys(pv.models || {}).map((mid) => ({ providerID: pv.id, modelID: mid, label: `${pv.name || pv.id} / ${mid}` })),
+        models: Object.keys(pv.models || {}).map((mid) => ({
+          providerID: pv.id,
+          modelID: mid,
+          label: `${pv.name || pv.id} / ${mid}`,
+          thinkingTiers: configured.get(pv.id)?.models.find((m) => m.id === mid)?.thinkingTiers ?? [],
+        })),
       }))
       return { catalog }
-    },
-    [IPC.modelsDefault]: async (p) => {
-      const { defaultModel } = p as { defaultModel?: { providerID: string; modelID: string } | null }
-      core.kv().setJSON('settings:defaultModel', defaultModel ?? null)
-      return { ok: true }
     },
     [IPC.settingsGet]: async (): Promise<AppSettings> => {
       const kv = core.kv()
@@ -154,6 +171,39 @@ export function registerIpc(core: JeffCore): void {
       core.bus.emit('data-changed', 'settings')
       return { ok: true }
     },
+    [IPC.mcpProbe]: async (): Promise<Record<string, import('@jeff/core').McpProbe>> => core.probeMcp(),
+
+    // ---------- AGENTS.md ----------
+    [IPC.agentsMdList]: async () => core.agentsMdList(),
+    [IPC.agentsMdGet]: async (p): Promise<{ content: string; file: string }> => {
+      const d = p as { kind: 'user' | 'project'; id: string }
+      return core.agentsMdGet(d.kind, d.id)
+    },
+    [IPC.agentsMdSave]: async (p): Promise<{ ok: boolean }> => {
+      const d = p as { kind: 'user' | 'project'; id: string; content: string }
+      core.agentsMdSave(d.kind, d.id, d.content)
+      return { ok: true }
+    },
+
+    // ---------- 引擎服务 ----------
+    [IPC.sidecarRestart]: async (): Promise<{ ok: boolean }> => {
+      await core.restartSidecar()
+      return { ok: true }
+    },
+    [IPC.sidecarLogs]: async (): Promise<{ lines: string[] }> => ({ lines: getSidecarLogs() }),
+    [IPC.dialogPickDir]: async (p): Promise<string | null> => {
+      const d = p as { title?: string; defaultPath?: string }
+      const win = getMainWindow()
+      if (!win) return null
+      const r = await dialog.showOpenDialog(win, { title: d.title || '选择目录', defaultPath: d.defaultPath, properties: ['openDirectory', 'createDirectory'] })
+      return r.canceled || r.filePaths.length === 0 ? null : r.filePaths[0]
+    },
+
+    // ---------- skills 备份/恢复 ----------
+    [IPC.skillsBackupNow]: async () => core.skillsBackupNow(),
+    [IPC.skillsLast]: async () => core.lastSkillsBackup(),
+    [IPC.skillsRestoreStage]: async () => core.skillsRestoreStage(),
+    [IPC.skillsRestoreApply]: async () => core.skillsRestoreApply(),
 
     // ---------- 记忆管理 ----------
     [IPC.memoryScopes]: async (): Promise<MemoryScopeInfo[]> => {
@@ -167,10 +217,11 @@ export function registerIpc(core: JeffCore): void {
       }
       return out
     },
-    [IPC.memoryGet]: async (p): Promise<{ content: string; label: string }> => {
+    [IPC.memoryGet]: async (p): Promise<{ content: string; label: string; budget: number }> => {
       const d = p as { kind: 'user' | 'agent' | 'project'; id: string }
       const scope = d.kind === 'user' ? ({ kind: 'user' } as const) : d.kind === 'agent' ? ({ kind: 'agent', agentId: d.id } as const) : ({ kind: 'project', projectId: d.id } as const)
-      return { content: core.memory.list(scope).join('\n§\n'), label: core.memory.label(scope) }
+      const budget = d.kind === 'user' ? 1375 : d.kind === 'agent' ? 2200 : 2200
+      return { content: core.memory.list(scope).join('\n§\n'), label: core.memory.label(scope), budget }
     },
     [IPC.memorySave]: async (p): Promise<{ ok: boolean }> => {
       const d = p as { kind: 'user' | 'agent' | 'project'; id: string; content: string }
@@ -189,22 +240,23 @@ export function registerIpc(core: JeffCore): void {
         icon: p.icon,
         status: p.status,
         leader_agent_id: p.leader_agent_id,
+        workspace_dir: p.workspace_dir || '',
         updated_at: p.updated_at,
         memberCount: projectAgentRepo(core.db).listByProject(p.id).length,
       }))
     },
     [IPC.projectSave]: async (p): Promise<ProjectInfo> => {
-      const d = p as { id?: string; title: string; description?: string; icon?: string; leader_agent_id?: string | null; memberAgentIds?: string[] }
+      const d = p as { id?: string; title: string; description?: string; icon?: string; leader_agent_id?: string | null; memberAgentIds?: string[]; workspace_dir?: string }
       if (!d.leader_agent_id) throw new Error('必须选择群主（leader）')
       if (d.id) {
-        const row = projectRepo(core.db).update(d.id, { title: d.title, description: d.description, icon: d.icon, leader_agent_id: d.leader_agent_id })
+        const row = projectRepo(core.db).update(d.id, { title: d.title, description: d.description, icon: d.icon, leader_agent_id: d.leader_agent_id, ...(d.workspace_dir !== undefined ? { workspace_dir: d.workspace_dir } : {}) })
         if (!row) throw new Error('项目不存在')
         projectAgentRepo(core.db).add(d.id, d.leader_agent_id, 'leader', 0)
         for (const mid of d.memberAgentIds || []) {
           if (mid !== d.leader_agent_id) projectAgentRepo(core.db).add(d.id, mid, 'member')
         }
       } else {
-        const row = projectRepo(core.db).create({ title: d.title, description: d.description, icon: d.icon, leader_agent_id: d.leader_agent_id })
+        const row = projectRepo(core.db).create({ title: d.title, description: d.description, icon: d.icon, leader_agent_id: d.leader_agent_id, workspace_dir: d.workspace_dir || '' })
         projectAgentRepo(core.db).add(row.id, d.leader_agent_id, 'leader', 0)
         for (const mid of d.memberAgentIds || []) {
           if (mid !== d.leader_agent_id) projectAgentRepo(core.db).add(row.id, mid, 'member')
@@ -219,6 +271,7 @@ export function registerIpc(core: JeffCore): void {
         icon: row.icon,
         status: row.status,
         leader_agent_id: row.leader_agent_id,
+        workspace_dir: row.workspace_dir || '',
         updated_at: row.updated_at,
         memberCount: projectAgentRepo(core.db).listByProject(row.id).length,
       }
@@ -302,8 +355,8 @@ export function registerIpc(core: JeffCore): void {
       return core.groupChat.history(projectId)
     },
     [IPC.groupSend]: async (p): Promise<{ routedTo: string }> => {
-      const { projectId, text, model, images } = p as { projectId: string; text: string; model?: { providerID: string; modelID: string }; images?: Array<{ mime: string; dataUrl: string }> }
-      return core.groupChat.send({ projectId, text, model, images })
+      const { projectId, text, model, variant, images } = p as { projectId: string; text: string; model?: { providerID: string; modelID: string }; variant?: string; images?: Array<{ mime: string; dataUrl: string }> }
+      return core.groupChat.send({ projectId, text, model, variant: variant || undefined, images })
     },
   }
 
@@ -348,6 +401,7 @@ export function toAgentInfo(row: import('@jeff/core').AgentRow): AgentInfo {
     instructions: row.instructions,
     model_provider: row.model_provider,
     model_id: row.model_id,
+    thinking: row.thinking || '',
     builtin: !!row.builtin,
     archived: !!row.archived,
   }

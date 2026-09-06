@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // 生成 Jeff 应用图标（纯 Node PNG 编码，无外部依赖）
-// 设计：微信绿圆角方块 + 白色对话气泡（圆角矩形 + 左下尾巴）
+// 设计（v1.2，参考 zcode 风格）：绿底圆角方块 + 白色粗体「JF」字
 import fs from 'node:fs'
 import path from 'node:path'
 import zlib from 'node:zlib'
@@ -55,6 +55,18 @@ function inRoundedRect(x, y, size, r) {
   return dx * dx + dy * dy <= r * r || (x >= r && x < size - r) || (y >= r && y < size - r)
 }
 
+// 「JF」字母几何（相对坐标矩形 [x, y, w, h]），粗体无衬线风格
+const JF_RECTS = [
+  // J：右侧竖笔 + 底部横笔 + 左侧短扬
+  [0.36, 0.26, 0.095, 0.48],
+  [0.225, 0.645, 0.23, 0.095],
+  [0.225, 0.50, 0.095, 0.24],
+  // F：左竖笔 + 顶横 + 中横
+  [0.545, 0.26, 0.095, 0.48],
+  [0.545, 0.26, 0.245, 0.095],
+  [0.545, 0.44, 0.205, 0.095],
+]
+
 function drawIcon(size) {
   const rgba = Buffer.alloc(size * size * 4)
   const S = size
@@ -62,52 +74,23 @@ function drawIcon(size) {
   const greenDark = [0x06, 0xad, 0x56]
   const white = [255, 255, 255]
   const cornerR = S * 0.22
-  // 气泡几何
-  const bx = S * 0.2
-  const by = S * 0.24
-  const bw = S * 0.6
-  const bh = S * 0.44
-  const br = S * 0.12
-  // 尾巴三角（左下）
-  const tail = [
-    [S * 0.3, S * 0.62],
-    [S * 0.3, S * 0.82],
-    [S * 0.48, S * 0.64],
-  ]
-  const inTail = (px, py) => {
-    const [a, b, c] = tail
-    const sign = (p1, p2, p3) => (p1[0] - p3[0]) * (p2[1] - p3[1]) - (p2[0] - p3[0]) * (p1[1] - p3[1])
-    const d1 = sign([px, py], a, b)
-    const d2 = sign([px, py], b, c)
-    const d3 = sign([px, py], c, a)
-    const neg = d1 < 0 || d2 < 0 || d3 < 0
-    const pos = d1 > 0 || d2 > 0 || d3 > 0
-    return !(neg && pos)
-  }
   for (let y = 0; y < S; y++) {
     for (let x = 0; x < S; x++) {
       const i = (y * S + x) * 4
       if (!inRoundedRect(x, y, S, cornerR)) continue // 透明背景
       // 渐变绿底
       const t = (x + y) / (2 * S)
+      const inLetter = JF_RECTS.some(([rx, ry, rw, rh]) => x >= rx * S && x < (rx + rw) * S && y >= ry * S && y < (ry + rh) * S)
       const base = [
         Math.round(green[0] + (greenDark[0] - green[0]) * t * 0.6),
         Math.round(green[1] + (greenDark[1] - green[1]) * t * 0.6),
         Math.round(green[2] + (greenDark[2] - green[2]) * t * 0.6),
       ]
-      // 气泡
-      const inBubble = x >= bx && x < bx + bw && y >= by && y < by + bh && inRoundedRect(x - bx, y - by, bw, br)
-      if (inBubble || inTail(x, y)) {
-        rgba[i] = white[0]
-        rgba[i + 1] = white[1]
-        rgba[i + 2] = white[2]
-        rgba[i + 3] = 255
-      } else {
-        rgba[i] = base[0]
-        rgba[i + 1] = base[1]
-        rgba[i + 2] = base[2]
-        rgba[i + 3] = 255
-      }
+      const c = inLetter ? white : base
+      rgba[i] = c[0]
+      rgba[i + 1] = c[1]
+      rgba[i + 2] = c[2]
+      rgba[i + 3] = 255
     }
   }
   return encodePng(S, S, rgba)

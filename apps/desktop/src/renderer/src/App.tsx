@@ -21,10 +21,11 @@ export default function App(): React.JSX.Element {
     void refreshCatalog()
     const off = api.onPush((e) => handlePush(e.what, e.payload))
     // 冒烟钩子（多视图）：JEFF_SMOKE_VIEWS=chat,group,settings:memory,… 逐视图截图
-    const smokeViews = (window as { jeff?: { env?: { smokeViews?: string; smokeTheme?: string } } }).jeff?.env?.smokeViews
+    const smokeViews = (window as { jeff?: { env?: { smokeViews?: string; smokeTheme?: string; smokeViewDelay?: string } } }).jeff?.env?.smokeViews
     if (smokeViews) {
       console.log(`[jeff-smoke] 多视图驱动启动: ${smokeViews}`)
       const smokeTheme = (window as { jeff?: { env?: { smokeTheme?: string } } }).jeff?.env?.smokeTheme
+      const viewDelay = Number((window as { jeff?: { env?: { smokeViewDelay?: string } } }).jeff?.env?.smokeViewDelay || 900)
       const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
       setTimeout(() => {
         void (async () => {
@@ -46,7 +47,7 @@ export default function App(): React.JSX.Element {
               const as = useStore.getState().agents
               useStore.getState().setActive(as[0] ? { kind: 'agent', id: as[0].id } : null)
             }
-            await sleep(900)
+            await sleep(viewDelay)
             console.log(`[jeff-smoke] 截图 ${view}`)
             await api.invoke('smoke:shot', { name: view.replace(/[^a-z0-9]+/gi, '_') })
           }
@@ -86,14 +87,13 @@ export default function App(): React.JSX.Element {
       <NavRail />
       <div className="list-pane">
         {tab === 'chats' && <ChatList />}
-        {tab === 'contacts' && <AgentsPage />}
         {tab === 'settings' && <SettingsNav />}
       </div>
       <div className="main-pane">
         {tab === 'chats' && active?.kind === 'agent' && <ChatWindow key={active.id} agentId={active.id} />}
         {tab === 'chats' && active?.kind === 'group' && <GroupWindow key={active.id} projectId={active.id} />}
         {tab === 'chats' && !active && <EmptyHint hasAgents={agents.length > 0} hasProjects={projects.length > 0} />}
-        {tab === 'contacts' && <ContactHint hasAgents={agents.length > 0} />}
+        {tab === 'contacts' && <AgentsPage />}
         {tab === 'settings' && <SettingsContent />}
       </div>
     </div>
@@ -112,14 +112,6 @@ function EmptyHint(props: { hasAgents: boolean; hasProjects: boolean }): React.J
             ? '点开项目群，所有工作由群主统筹'
             : '让小杰帮你创建智能体和项目群'}
       </p>
-    </div>
-  )
-}
-
-function ContactHint(props: { hasAgents: boolean }): React.JSX.Element {
-  return (
-    <div className="empty-hint">
-      <p>{props.hasAgents ? '点击左侧智能体查看详情、编辑或开始聊天' : '还没有智能体，点左侧「新建智能体」创建一个吧'}</p>
     </div>
   )
 }

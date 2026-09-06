@@ -15,7 +15,9 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
   const stream = streaming[key]
   const [draft, setDraft] = useState('')
   const [modelOverride, setModelOverride] = useState<{ providerID: string; modelID: string } | null>(null)
+  const [variant, setVariant] = useState<string>('')
   const [modelOpen, setModelOpen] = useState(false)
+  const [variantOpen, setVariantOpen] = useState(false)
   const [dragOver, setDragOver] = useState(false)
   const attachments = useImages()
   const bodyRef = useRef<HTMLDivElement>(null)
@@ -32,6 +34,13 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
 
   const allModels: ModelOption[] = useMemo(() => catalog.flatMap((c) => c.models), [catalog])
   const currentModel = modelOverride || (agent?.model_provider && agent?.model_id ? { providerID: agent.model_provider, modelID: agent.model_id } : settings?.defaultModel || null)
+  // 当前模型的思考档位（来自供应商配置）；切模型时档位复位
+  const tiers = useMemo(() => {
+    if (!currentModel) return []
+    return allModels.find((m) => m.providerID === currentModel.providerID && m.modelID === currentModel.modelID)?.thinkingTiers ?? []
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentModel?.providerID, currentModel?.modelID, allModels])
+  useEffect(() => setVariant(''), [currentModel?.providerID, currentModel?.modelID])
 
   if (!agent) return <div className="empty-hint">智能体不存在</div>
 
@@ -41,7 +50,7 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
     setDraft('')
     const images = attachments.images
     attachments.clear()
-    await sendAgent(agent.id, text, modelOverride || undefined, images)
+    await sendAgent(agent.id, text, modelOverride || undefined, images, variant || undefined)
   }
 
   return (
@@ -127,6 +136,29 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
               </div>
             )}
           </div>
+          {tiers.length > 0 && (
+            <div className="model-select">
+              <button className="chip chip-variant" onClick={() => setVariantOpen((v) => !v)} title="思考程度">
+                <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.5 10.9c.6.5 1 1.2 1 2.1h5c0-.9.4-1.6 1-2.1A6 6 0 0 0 12 3z" />
+                </svg>
+                {variant ? TIER_LABEL[variant] || variant : '思考: 默认'}
+                <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                  <path d="M6 9l6 6 6-6" />
+                </svg>
+              </button>
+              {variantOpen && (
+                <div className="model-menu">
+                  <button className={`model-menu-item ${variant === '' ? 'on' : ''}`} onClick={() => { setVariant(''); setVariantOpen(false) }}>默认（跟随模型配置）</button>
+                  {tiers.map((t) => (
+                    <button key={t} className={`model-menu-item ${variant === t ? 'on' : ''}`} onClick={() => { setVariant(t); setVariantOpen(false) }}>
+                      {TIER_LABEL[t] || t}（{t}）
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
         <ImagePreviews images={attachments.images} onRemove={attachments.remove} />
         <div
@@ -188,10 +220,12 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
 }
 
 function modelLabel(m: { providerID: string; modelID: string }, catalog: ProviderCatalogItem[]): string {
+  // 规格：按「提供商名称 / 模型ID」展示
   const hit = catalog.find((c) => c.id === m.providerID)
-  const modelName = hit?.models.find((x) => x.modelID === m.modelID)?.label
-  return modelName || `${m.providerID} / ${m.modelID}`
+  return `${hit?.name || m.providerID} / ${m.modelID}`
 }
+
+const TIER_LABEL: Record<string, string> = { none: '无思考', low: '低', high: '高', max: '最大' }
 
 export function MessageBubble(props: { msg: ChatMsg; agentName: string; agentAvatar: string }): React.JSX.Element {
   const { msg, agentName, agentAvatar } = props

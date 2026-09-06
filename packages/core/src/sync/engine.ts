@@ -1,10 +1,12 @@
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { createClient, WebDAVClient } from 'webdav'
 import type { DB } from '../db/db.js'
 import { agentRepo, projectAgentRepo, projectRepo, taskRepo, type AgentRow, type ProjectAgentRow, type ProjectRow, type TaskRow } from '../db/repos.js'
 import type { JeffPaths } from '../paths.js'
 import type { MemoryStore, MemoryScope } from '../memory/store.js'
+import type { SkillsBackupReport, SkillsRestoreApply, SkillsRestoreStage } from '../ipc/contract.js'
 
 export interface WebdavConfig {
   url: string
@@ -28,9 +30,12 @@ export interface SyncReport {
  * - 远端：<basePath>/{agents,projects,tasks,settings}.json + tombstones.json + manifest.json + memory/*.md
  * - 合并：按实体 updatedAt LWW；软删除 = 墓碑（deletedAt 时间参与 LWW）；双端都改 → 记录冲突并按 LWW 取胜
  * - 会话数据不同步（chat_message / opencode 会话）
+ * - skills 目录（~/.agents/skills）为单向备份：只上传不下载、本地删除不传播、覆盖前归档旧版本
  */
 export class SyncEngine {
   private davClient: WebDAVClient | null = null
+  /** 重入锁：同一时刻只允许一个 sync 在跑（自动定时器与手动按钮并发会交叉读写远端） */
+  private syncing = false
 
   constructor(
     private db: DB,
@@ -64,6 +69,21 @@ export class SyncEngine {
   }
 
   async sync(): Promise<SyncReport> {
+    // 重入保护：跳过并发调用（不排队，等下一轮防抖/手动触发）
+    if (this.syncing) {
+      const skipped: SyncReport = { ok: false, at: Date.now(), uploaded: 0, downloaded: 0, conflicts: [], error: '上一轮同步仍在进行，本次跳过' }
+      this.onReport(skipped)
+      return skipped
+    }
+    this.syncing = true
+    try {
+      return await this.doSync()
+    } finally {
+      this.syncing = false
+    }
+  }
+
+  private async doSync(): Promise<SyncReport> {
     const report: SyncReport = { ok: false, at: Date.now(), uploaded: 0, downloaded: 0, conflicts: [] }
     try {
       const client = this.client()
@@ -125,7 +145,14 @@ export class SyncEngine {
       report.downloaded = this.applyToLocal(merged)
 
       // 5. 推远端
-      report.uploaded = await this.pushToRemote(merged)
+      report.uploaded += await this.pushToRemote(merged)
+
+      // 5.5 skills 单向备份（独立于实体同步：失败不拖垮整体，也不写进 report 计数）
+      try {
+        await this.backupSkills()
+      } catch {
+        /* backupSkills 内部已记录失败详情到 kv */
+      }
 
       // 6. 记录状态
       const nextLast: Record<string, number> = {}
@@ -217,13 +244,13 @@ export class SyncEngine {
         if (!exists) {
           this.db
             .prepare(
-              `INSERT INTO agent (id, name, avatar, description, instructions, model_provider, model_id, builtin, archived, created_at, updated_at, deleted_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+              `INSERT INTO agent (id, name, avatar, description, instructions, model_provider, model_id, thinking, builtin, archived, created_at, updated_at, deleted_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
             )
-            .run(id, d.name, d.avatar, d.description, d.instructions, d.model_provider, d.model_id, d.builtin, d.archived, d.created_at, rec.updatedAt, rec.deletedAt)
+            .run(id, d.name, d.avatar, d.description, d.instructions, d.model_provider, d.model_id, (d as { thinking?: string }).thinking || '', d.builtin, d.archived, d.created_at, rec.updatedAt, rec.deletedAt)
         } else {
           this.db
-            .prepare(`UPDATE agent SET name=?, avatar=?, description=?, instructions=?, model_provider=?, model_id=?, builtin=?, archived=?, updated_at=?, deleted_at=? WHERE id=?`)
-            .run(d.name, d.avatar, d.description, d.instructions, d.model_provider, d.model_id, d.builtin, d.archived, rec.updatedAt, rec.deletedAt, id)
+            .prepare(`UPDATE agent SET name=?, avatar=?, description=?, instructions=?, model_provider=?, model_id=?, thinking=?, builtin=?, archived=?, updated_at=?, deleted_at=? WHERE id=?`)
+            .run(d.name, d.avatar, d.description, d.instructions, d.model_provider, d.model_id, (d as { thinking?: string }).thinking || exists.thinking || '', d.builtin, d.archived, rec.updatedAt, rec.deletedAt, id)
         }
         n += 1
         continue
@@ -234,12 +261,12 @@ export class SyncEngine {
         const exists = projectRepo(this.db).get(id)
         if (!exists) {
           this.db
-            .prepare(`INSERT INTO project (id, title, description, icon, status, leader_agent_id, created_at, updated_at, deleted_at) VALUES (?,?,?,?,?,?,?,?,?)`)
-            .run(id, d.project.title, d.project.description, d.project.icon, d.project.status, d.project.leader_agent_id, d.project.created_at, rec.updatedAt, rec.deletedAt)
+            .prepare(`INSERT INTO project (id, title, description, icon, status, leader_agent_id, workspace_dir, created_at, updated_at, deleted_at) VALUES (?,?,?,?,?,?,?,?,?,?)`)
+            .run(id, d.project.title, d.project.description, d.project.icon, d.project.status, d.project.leader_agent_id, d.project.workspace_dir || '', d.project.created_at, rec.updatedAt, rec.deletedAt)
         } else {
           this.db
-            .prepare(`UPDATE project SET title=?, description=?, icon=?, status=?, leader_agent_id=?, updated_at=?, deleted_at=? WHERE id=?`)
-            .run(d.project.title, d.project.description, d.project.icon, d.project.status, d.project.leader_agent_id, rec.updatedAt, rec.deletedAt, id)
+            .prepare(`UPDATE project SET title=?, description=?, icon=?, status=?, leader_agent_id=?, workspace_dir=?, updated_at=?, deleted_at=? WHERE id=?`)
+            .run(d.project.title, d.project.description, d.project.icon, d.project.status, d.project.leader_agent_id, d.project.workspace_dir || exists.workspace_dir || '', rec.updatedAt, rec.deletedAt, id)
         }
         this.db.prepare('DELETE FROM project_agent WHERE project_id = ?').run(id)
         for (const m of d.members) {
@@ -347,6 +374,171 @@ export class SyncEngine {
     return 0
   }
 
+  // ---------- skills 单向备份（安全第一：本地永不自动写回，远端永不删除） ----------
+  private skillsDir(): string {
+    // 默认 ~/.agents/skills（agent skills 标准目录）；测试/便携模式可用 JEFF_SKILLS_DIR 覆盖
+    return process.env.JEFF_SKILLS_DIR || path.join(os.homedir(), '.agents', 'skills')
+  }
+
+  private skillsKv<T>(key: string, fallback: T): T {
+    return this.kvGetJSON<T>(`sync:skills:${key}`, fallback)
+  }
+
+  private skillsKvSet(key: string, value: unknown): void {
+    this.kvSetJSON(`sync:skills:${key}`, value)
+  }
+
+  /** 递归列出 skills 目录下的所有文件（相对路径）；目录不存在返回空 */
+  private listSkillFiles(root: string): string[] {
+    const out: string[] = []
+    const walk = (dir: string) => {
+      for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, ent.name)
+        if (ent.isDirectory()) walk(full)
+        else if (ent.isFile()) out.push(path.relative(root, full).split(path.sep).join('/'))
+      }
+    }
+    if (!fs.existsSync(root)) return out
+    walk(root)
+    return out
+  }
+
+  /**
+   * 单向备份 ~/.agents/skills → <base>/skills/**：
+   * - 只上传：本地删除不传播（远端永不因本地消失而删）
+   * - 内容变化时先把远端旧文件归档到 <base>/skills-versions/<rel>/<时间戳> 再覆盖（多设备互不抹历史）
+   */
+  async backupSkills(): Promise<SkillsBackupReport> {
+    const report: SkillsBackupReport = { ok: false, at: Date.now(), uploaded: 0, archived: 0, skipped: 0 }
+    try {
+      const client = this.client()
+      const base = this.base()
+      const root = this.skillsDir()
+      const files = this.listSkillFiles(root)
+      const lastHashes = this.skillsKv<Record<string, string>>('hashes', {})
+      const hashes: Record<string, string> = {}
+      for (const rel of files) {
+        const content = fs.readFileSync(path.join(root, rel))
+        const hash = contentHash(content)
+        hashes[rel] = hash
+        // 远端当前内容（仅当上次备份后有变化才拉取对比，减少请求）
+        let remoteContent: Buffer | null = null
+        try {
+          remoteContent = (await client.getFileContents(`${base}/skills/${rel}`)) as Buffer
+        } catch {
+          remoteContent = null
+        }
+        if (remoteContent && contentHash(remoteContent) === hash) {
+          report.skipped += 1
+          continue
+        }
+        if (remoteContent && remoteContent.length > 0) {
+          // 归档远端旧版本（按相对路径 + 时间戳），永不覆盖 versions
+          const verPath = `${base}/skills-versions/${rel}/${Date.now()}`
+          const verDir = verPath.slice(0, verPath.lastIndexOf('/'))
+          await client.createDirectory(verDir, { recursive: true }).catch(() => {})
+          await client.putFileContents(verPath, remoteContent, { overwrite: false }).catch(() => {})
+          report.archived += 1
+        }
+        await client.putFileContents(`${base}/skills/${rel}`, content, { overwrite: true })
+        report.uploaded += 1
+      }
+      hashes.__uploadedAt = String(Date.now())
+      this.skillsKvSet('hashes', hashes)
+      this.skillsKvSet('last', { ...report, ok: true, fileCount: files.length })
+      report.ok = true
+    } catch (err) {
+      report.error = String((err as Error)?.message || err).slice(0, 300)
+      this.skillsKvSet('last', report)
+    }
+    return report
+  }
+
+  /** 上次备份报告（设置页展示） */
+  lastSkillsBackup(): (SkillsBackupReport & { fileCount?: number }) | null {
+    return this.skillsKv<(SkillsBackupReport & { fileCount?: number }) | null>('last', null)
+  }
+
+  /** 恢复第一段：下载远端 skills 全量到暂存目录（<data>/restore-staging/skills），绝不碰本地 skills */
+  async restoreSkillsStage(): Promise<SkillsRestoreStage> {
+    try {
+      const client = this.client()
+      const base = this.base()
+      const staging = path.join(this.paths.restoreStagingDir, 'skills')
+      fs.rmSync(staging, { recursive: true, force: true })
+      fs.mkdirSync(staging, { recursive: true })
+      const files = await this.listRemoteFiles(`${base}/skills`)
+      for (const rel of files) {
+        const buf = (await client.getFileContents(`${base}/skills/${rel}`)) as Buffer
+        const target = path.join(staging, ...rel.split('/'))
+        fs.mkdirSync(path.dirname(target), { recursive: true })
+        fs.writeFileSync(target, buf)
+      }
+      return { ok: true, files, total: files.length }
+    } catch (err) {
+      return { ok: false, files: [], total: 0, error: String((err as Error)?.message || err).slice(0, 300) }
+    }
+  }
+
+  /**
+   * 恢复第二段（显式确认后）：先把本地 skills 全量快照到 <data>/backups/skills-<时间戳>/，
+   * 再把暂存区文件覆盖进 ~/.agents/skills。只覆盖备份中存在的文件，绝不删除本地多出的文件。
+   */
+  async restoreSkillsApply(): Promise<SkillsRestoreApply> {
+    const staging = path.join(this.paths.restoreStagingDir, 'skills')
+    const root = this.skillsDir()
+    try {
+      const files = this.listSkillFiles(staging)
+      if (files.length === 0) return { ok: false, restored: 0, snapshotDir: '', error: '暂存区为空：请先执行「检查备份」' }
+      // 1. 本地快照（可手工回退的兜底）
+      const snapshotDir = path.join(this.paths.backupsDir, `skills-${Date.now()}`)
+      fs.mkdirSync(snapshotDir, { recursive: true })
+      for (const rel of this.listSkillFiles(root)) {
+        const target = path.join(snapshotDir, ...rel.split('/'))
+        fs.mkdirSync(path.dirname(target), { recursive: true })
+        fs.copyFileSync(path.join(root, rel), target)
+      }
+      // 2. 覆盖式恢复（不删除本地多出的文件）
+      let restored = 0
+      for (const rel of files) {
+        const target = path.join(root, ...rel.split('/'))
+        fs.mkdirSync(path.dirname(target), { recursive: true })
+        fs.copyFileSync(path.join(staging, ...rel.split('/')), target)
+        restored += 1
+      }
+      return { ok: true, restored, snapshotDir }
+    } catch (err) {
+      return { ok: false, restored: 0, snapshotDir: '', error: String((err as Error)?.message || err).slice(0, 300) }
+    }
+  }
+
+  /** 递归列远端目录文件（相对 baseDir 的 posix 相对路径）；跳过 self 引用防死循环 */
+  private async listRemoteFiles(baseDir: string): Promise<string[]> {
+    const client = this.client()
+    const out: string[] = []
+    const visited = new Set<string>()
+    const norm = (p: string) => p.replace(/\/+$/, '')
+    const walk = async (dir: string, rel: string): Promise<void> => {
+      const key = norm(dir)
+      if (visited.has(key)) return
+      visited.add(key)
+      let items: Array<{ filename: string; basename: string; type: string }>
+      try {
+        items = (await client.getDirectoryContents(dir)) as Array<{ filename: string; basename: string; type: string }>
+      } catch {
+        return
+      }
+      for (const item of items) {
+        // 防御：部分服务器/代理会返回目录自身 href（带尾斜杠），不能当作子项递归
+        if (norm(item.filename) === key) continue
+        if (item.type === 'directory') await walk(item.filename, `${rel}${item.basename}/`)
+        else out.push(`${rel}${item.basename}`)
+      }
+    }
+    await walk(baseDir, '')
+    return out
+  }
+
   // ---------- kv 原语 ----------
   private kvGet(key: string): unknown {
     const row = this.db.prepare('SELECT value FROM kv WHERE key = ?').get(key) as { value?: string } | undefined
@@ -404,4 +596,14 @@ function memScopeFromRel(rel: string): MemoryScope {
   if (name === 'user') return { kind: 'user' }
   if (name.startsWith('agent-')) return { kind: 'agent', agentId: name.slice(6) }
   return { kind: 'project', projectId: name.slice(8) }
+}
+
+function contentHash(buf: Buffer): string {
+  // FNV-1a 32 位足够做「内容是否变化」对比，避免引入 crypto 依赖
+  let h = 0x811c9dc5
+  for (let i = 0; i < buf.length; i++) {
+    h ^= buf[i]
+    h = Math.imul(h, 0x01000193)
+  }
+  return `${(h >>> 0).toString(16)}:${buf.length}`
 }

@@ -167,6 +167,24 @@ export class SidecarManager extends EventEmitter {
     }
   }
 
+  /** opencode 版本（`--version`，带缓存；供设置页「引擎服务」展示） */
+  private versionCache: string | null = null
+  async version(): Promise<string | null> {
+    if (this.versionCache) return this.versionCache
+    const bin = this.resolveBinary()
+    if (!bin) return null
+    try {
+      const { execFile } = await import('node:child_process')
+      const out = await new Promise<string>((resolve, reject) => {
+        execFile(bin, ['--version'], { timeout: 5000, windowsHide: true }, (err, stdout) => (err ? reject(err) : resolve(String(stdout))))
+      })
+      this.versionCache = out.trim() || null
+      return this.versionCache
+    } catch {
+      return null
+    }
+  }
+
   private async waitHealthy(timeoutMs: number): Promise<boolean> {
     const deadline = Date.now() + timeoutMs
     while (Date.now() < deadline) {

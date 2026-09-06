@@ -26,6 +26,12 @@ export interface JeffPaths {
   ocPluginsDir: string
   /** opencode skills 目录 */
   ocSkillsDir: string
+  /** 用户级 AGENTS.md */
+  agentsMdUser: string
+  /** skills 恢复暂存目录 */
+  restoreStagingDir: string
+  /** 本地备份根目录（skills 恢复前快照等） */
+  backupsDir: string
 }
 
 export function buildPaths(root: string): JeffPaths {
@@ -44,6 +50,9 @@ export function buildPaths(root: string): JeffPaths {
     ocAgentsDir: path.join(ocConfigDir, 'agent'),
     ocPluginsDir: path.join(ocConfigDir, 'plugin'),
     ocSkillsDir: path.join(ocConfigDir, 'skills'),
+    agentsMdUser: path.join(root, 'AGENTS.md'),
+    restoreStagingDir: path.join(root, 'restore-staging'),
+    backupsDir: path.join(root, 'backups'),
   }
 }
 

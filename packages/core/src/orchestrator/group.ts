@@ -45,9 +45,12 @@ export class GroupChat {
     }
     const project = projectRepo(this.db).get(projectId)
     const agent = agentRepo(this.db).get(agentId)
+    // 会话锚定到项目工作空间目录（opencode 支持 ?directory=；未指定时用 sidecar 全局 workspace）
+    const dir = project?.workspace_dir || undefined
     const s = await this.getOc().createSession({
       title: `群「${project?.title || projectId}」· ${agent?.name || agentId}`,
       agent: agentSlug(agentId),
+      ...(dir ? { directory: dir } : {}),
     })
     kv.set(key, s.id)
     this.hooks?.onSessionCreated?.(s.id, { kind: 'group', agentId, projectId })
@@ -86,6 +89,7 @@ export class GroupChat {
     return [
       `【项目群上下文】群名：${project.title}`,
       project.description ? `群简介：${project.description}` : '',
+      `工作空间目录：${project.workspace_dir || '默认工作区'}。用户没有指定输出位置时，你产出的所有文件（代码、文档等）都保存到该目录。`,
       `成员名册：`,
       roster,
       leaderLine,
@@ -96,7 +100,7 @@ export class GroupChat {
   }
 
   /** 用户在群里发消息：存储 + 路由（@直达 或 leader）+ 回帖 */
-  async send(input: { projectId: string; text: string; model?: { providerID: string; modelID: string }; images?: Array<{ mime: string; dataUrl: string }> }): Promise<{ routedTo: string }> {
+  async send(input: { projectId: string; text: string; model?: { providerID: string; modelID: string }; variant?: string; images?: Array<{ mime: string; dataUrl: string }> }): Promise<{ routedTo: string }> {
     const { projectId, text } = input
     const project = projectRepo(this.db).get(projectId)
     if (!project) throw new Error(`项目不存在: ${projectId}`)
@@ -133,6 +137,7 @@ export class GroupChat {
         agent: agentSlug(targetId),
         system,
         ...(input.model && input.model.providerID && input.model.modelID ? { model: input.model } : {}),
+        ...(input.variant ? { variant: input.variant } : {}),
       })
     } catch (err) {
       chatMessageRepo(this.db).add({

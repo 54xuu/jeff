@@ -1,34 +1,35 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useStore } from '../../store'
 import { api } from '../../api'
-import { IPC, BUILTIN_PROVIDER_PRESETS, type ProviderSetting } from '@jeff/core'
+import { IPC, API_FORMATS, THINKING_TIERS, type ProviderSetting, type ProviderModelCfg, type ThinkingTier } from '@jeff/core'
 
-/** 设置 → 模型供应商：provider 管理 + 默认模型 */
+/** 设置 → 模型供应商：横向 tabs + 每个提供商独立详情（无内置，专注自定义供应商） */
 export default function ProviderSettings(): React.JSX.Element {
   const { refreshCatalog, appInfo } = useStore()
   const [providers, setProviders] = useState<ProviderSetting[]>([])
-  const [defaultModel, setDefaultModel] = useState<{ providerID: string; modelID: string } | null>(null)
+  const [activeId, setActiveId] = useState<string | null>(null)
   const [dirty, setDirty] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [adding, setAdding] = useState(false)
   const [savedAt, setSavedAt] = useState<number | null>(null)
+  const [adding, setAdding] = useState(false)
 
   const load = async () => {
-    const data = await api.invoke<{ providers: ProviderSetting[]; defaultModel: { providerID: string; modelID: string } | null }>(IPC.providersList)
+    const data = await api.invoke<{ providers: ProviderSetting[] }>(IPC.providersList)
     setProviders(data.providers)
-    setDefaultModel(data.defaultModel)
     setDirty(false)
+    setActiveId((cur) => (cur && data.providers.some((p) => p.id === cur) ? cur : data.providers[0]?.id ?? null))
     await refreshCatalog()
   }
 
   useEffect(() => {
     void load()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const save = async () => {
     setSaving(true)
     try {
-      await api.invoke(IPC.providersSave, { providers, defaultModel })
+      await api.invoke(IPC.providersSave, { providers })
       await load()
       setSavedAt(Date.now())
     } finally {
@@ -36,46 +37,52 @@ export default function ProviderSettings(): React.JSX.Element {
     }
   }
 
+  const active = providers.find((p) => p.id === activeId) ?? null
+  const update = (fn: (arr: ProviderSetting[]) => ProviderSetting[]) => {
+    setProviders((arr) => fn(arr))
+    setDirty(true)
+  }
+
   return (
     <div className="settings-content">
       <h2 className="settings-title">模型供应商</h2>
-      <p className="settings-tip">
-        内置预设只需填 API Key；自定义 OpenAI 兼容端点需填 baseURL 和模型 id。保存后会重启后台引擎使其生效。
-      </p>
+      <p className="settings-tip">配置自定义模型提供商（Chat / Responses / Anthropic 格式）。保存后自动重启后台引擎生效；每次新会话默认使用第一个启用提供商的第一个模型。</p>
 
-      {providers.length === 0 && (
-        <div className="empty-card">
-          还没有配置任何模型供应商。点击下方「添加提供商」，选一个预设（如硅基流动、DeepSeek）填入 API Key 即可开始对话。
-        </div>
-      )}
-      <div className="provider-list">
+      {/* 横向 tabs：提供商列表 + 永远在最后的【+】 */}
+      <div className="pv-tabs">
         {providers.map((p) => (
-          <div key={p.id} className="provider-row">
-            <div className="provider-main">
-              <div className="provider-name">
-                {p.name || p.id} <span className="tag">{p.kind === 'custom' ? '自定义' : '预设'}</span>
-                <span className="tag">id: {p.id}</span>
-              </div>
-              <div className="provider-sub">
-                {p.kind === 'custom' ? `baseURL: ${p.baseURL || '未填'}` : '密钥已配置'}
-                {p.apiKey ? ` · Key: ${p.apiKey.slice(0, 4)}…` : ' · 未配置 Key'}
-              </div>
-            </div>
-            <button className="text-btn danger" onClick={() => { setProviders((arr) => arr.filter((x) => x.id !== p.id)); setDirty(true) }}>移除</button>
-          </div>
+          <button key={p.id} className={`pv-tab ${p.id === activeId ? 'on' : ''}`} onClick={() => setActiveId(p.id)}>
+            <span className={`pv-dot ${p.enabled ? 'on' : ''}`} />
+            {p.name || p.id}
+          </button>
         ))}
-      </div>
-      <div className="settings-actions" style={{ justifyContent: 'flex-start' }}>
-        <button className="btn" onClick={() => setAdding(true)}>+ 添加提供商</button>
+        <button className="pv-tab pv-add" title="添加自定义提供商" onClick={() => setAdding(true)}>
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round">
+            <path d="M12 5v14M5 12h14" />
+          </svg>
+        </button>
       </div>
 
-      <h2 className="settings-title">默认模型</h2>
-      <p className="settings-tip">小杰与未指定模型的智能体使用该模型；每条会话也可在输入框上方临时切换。</p>
-      <ModelPicker value={defaultModel} onChange={(m) => { setDefaultModel(m); setDirty(true) }} />
+      {providers.length === 0 && <div className="empty-card">还没有模型供应商：点上方【+】添加一个（如硅基流动、DeepSeek、OpenRouter 中转等）。</div>}
+
+      {active && (
+        <ProviderDetail
+          key={active.id}
+          provider={active}
+          canDelete={providers.length > 0}
+          onChange={(next) => update((arr) => arr.map((p) => (p.id === next.id ? next : p)))}
+          onDelete={() => {
+            const rest = providers.filter((p) => p.id !== active.id)
+            setProviders(rest)
+            setActiveId(rest[0]?.id ?? null)
+            setDirty(true)
+          }}
+        />
+      )}
 
       <div className="settings-actions">
         <button className="btn primary" disabled={!dirty || saving} onClick={() => void save()}>
-          {saving ? '保存中…' : `保存${dirty ? '（未保存更改）' : ''}`}
+          {saving ? '保存中…（引擎重启）' : `保存${dirty ? '（未保存更改）' : ''}`}
         </button>
         {savedAt && !dirty && <span className="settings-tip" style={{ alignSelf: 'center' }}>✅ 已保存（{new Date(savedAt).toLocaleTimeString()}）</span>}
         {appInfo && <span className="settings-tip" style={{ marginLeft: 'auto', alignSelf: 'center' }}>引擎状态：{appInfo.sidecarStatus}</span>}
@@ -83,10 +90,11 @@ export default function ProviderSettings(): React.JSX.Element {
 
       {adding && (
         <AddProvider
+          existingIds={providers.map((p) => p.id)}
           onClose={() => setAdding(false)}
           onAdd={(p) => {
-            setProviders((prev) => [...prev.filter((x) => x.id !== p.id), p])
-            setDirty(true)
+            update((arr) => [...arr.filter((x) => x.id !== p.id), p])
+            setActiveId(p.id)
             setAdding(false)
           }}
         />
@@ -95,103 +103,252 @@ export default function ProviderSettings(): React.JSX.Element {
   )
 }
 
-function ModelPicker(props: { value: { providerID: string; modelID: string } | null; onChange: (m: { providerID: string; modelID: string } | null) => void }): React.JSX.Element {
-  const catalog = useStore((s) => s.catalog)
-  const models = catalog.flatMap((c) => c.models)
-  const key = props.value ? `${props.value.providerID}/${props.value.modelID}` : ''
+/** 单个提供商详情（右侧内容） */
+function ProviderDetail(props: {
+  provider: ProviderSetting
+  canDelete: boolean
+  onChange: (p: ProviderSetting) => void
+  onDelete: () => void
+}): React.JSX.Element {
+  const p = props.provider
+  const set = (patch: Partial<ProviderSetting>) => props.onChange({ ...p, ...patch })
+  const [addingModel, setAddingModel] = useState(false)
+  const [editModel, setEditModel] = useState<string | null>(null)
+
+  const formatHint = useMemo(() => API_FORMATS.find((f) => f.id === p.apiFormat)?.hint ?? '', [p.apiFormat])
+
   return (
-    <select className="model-picker" value={key} onChange={(e) => {
-      const v = e.target.value
-      props.onChange(v ? { providerID: v.split('/')[0], modelID: v.split('/')[1] } : null)
-    }}>
-      <option value="">（未设置）</option>
-      {models.map((m) => (
-        <option key={`${m.providerID}/${m.modelID}`} value={`${m.providerID}/${m.modelID}`}>{m.label}</option>
+    <div className="pv-detail">
+      <div className="pv-grid">
+        <label className="field">
+          <span>名称</span>
+          <input value={p.name} onChange={(e) => set({ name: e.target.value })} placeholder="如 我的中转" />
+        </label>
+        <label className="field">
+          <span>id（唯一标识）</span>
+          <input value={p.id} disabled title="id 创建后不可修改" />
+        </label>
+        <label className="field">
+          <span>API 格式</span>
+          <select value={p.apiFormat} onChange={(e) => set({ apiFormat: e.target.value as ProviderSetting['apiFormat'] })}>
+            {API_FORMATS.map((f) => (
+              <option key={f.id} value={f.id}>{f.label}</option>
+            ))}
+          </select>
+        </label>
+        <label className="field">
+          <span>API Key</span>
+          <input type="password" value={p.apiKey || ''} onChange={(e) => set({ apiKey: e.target.value || undefined })} placeholder="sk-…" />
+        </label>
+        <label className="field" style={{ gridColumn: '1 / -1' }}>
+          <span>baseURL{p.apiFormat === 'anthropic' ? '（Anthropic 官方为 https://api.anthropic.com）' : ''}</span>
+          <input value={p.baseURL || ''} onChange={(e) => set({ baseURL: e.target.value || undefined })} placeholder={p.apiFormat === 'anthropic' ? 'https://api.anthropic.com' : 'https://api.example.com/v1'} />
+        </label>
+      </div>
+      <p className="settings-tip">{formatHint}</p>
+
+      <div className="pv-models-head">
+        <span className="pv-models-title">模型（{p.models.length}）</span>
+        <div className="settings-actions" style={{ margin: 0 }}>
+          <button className={`toggle ${p.enabled ? 'on' : ''}`} onClick={() => set({ enabled: !p.enabled })}>
+            {p.enabled ? '已启用' : '已禁用'}
+          </button>
+          <button className="btn" onClick={() => setAddingModel(true)}>+ 添加模型</button>
+          <button className="btn danger" onClick={() => { if (confirm(`删除提供商「${p.name || p.id}」及其模型配置？`)) props.onDelete() }}>删除提供商</button>
+        </div>
+      </div>
+
+      {p.models.length === 0 && <div className="empty-card">还没有模型。点「+ 添加模型」录入模型 ID 等参数。</div>}
+      {p.models.map((m) => (
+        <div key={m.id} className="provider-row">
+          <div className="provider-main">
+            <div className="provider-name">
+              {m.name || m.id}
+              <span className="tag">id: {m.id}</span>
+              {m.attachment && <span className="tag tag-green">图片输入</span>}
+              {(m.thinkingTiers?.length ?? 0) > 0 && <span className="tag">思考: {m.thinkingTiers!.join('/')}</span>}
+            </div>
+            <div className="provider-sub">
+              {m.contextLimit ? `上下文 ${m.contextLimit}` : '上下文默认'}
+              {m.outputLimit ? ` · 最大输出 ${m.outputLimit}` : ' · 输出默认'}
+              {' · 输出: 文本'}
+            </div>
+          </div>
+          <button className="text-btn" onClick={() => setEditModel(m.id)}>编辑</button>
+          <button className="text-btn danger" onClick={() => set({ models: p.models.filter((x) => x.id !== m.id) })}>移除</button>
+        </div>
       ))}
-    </select>
+
+      {addingModel && (
+        <ModelForm
+          existingIds={p.models.map((m) => m.id)}
+          onClose={() => setAddingModel(false)}
+          onSave={(m) => {
+            set({ models: [...p.models, m] })
+            setAddingModel(false)
+          }}
+        />
+      )}
+      {editModel && (
+        <ModelForm
+          initial={p.models.find((m) => m.id === editModel)}
+          existingIds={p.models.filter((m) => m.id !== editModel).map((m) => m.id)}
+          onClose={() => setEditModel(null)}
+          onSave={(m) => {
+            set({ models: p.models.map((x) => (x.id === editModel ? m : x)) })
+            setEditModel(null)
+          }}
+        />
+      )}
+    </div>
   )
 }
 
-function AddProvider(props: { onClose: () => void; onAdd: (p: ProviderSetting) => void }): React.JSX.Element {
-  const [kind, setKind] = useState<'preset' | 'custom'>('preset')
-  const [presetId, setPresetId] = useState(BUILTIN_PROVIDER_PRESETS[0].id)
+const TIER_LABELS: Record<ThinkingTier, string> = { none: '无思考', low: '低', high: '高', max: '最大' }
+
+/** 模型表单：模型ID / 上下文窗口 / 最大输出 / 输入类型 / 输出类型(固定文本) / 思考模式(多选) */
+function ModelForm(props: {
+  initial?: ProviderModelCfg
+  existingIds: string[]
+  onClose: () => void
+  onSave: (m: ProviderModelCfg) => void
+}): React.JSX.Element {
+  const isEdit = !!props.initial
+  const [id, setId] = useState(props.initial?.id || '')
+  const [name, setName] = useState(props.initial?.name || '')
+  const [ctx, setCtx] = useState(props.initial?.contextLimit ? String(props.initial.contextLimit) : '')
+  const [out, setOut] = useState(props.initial?.outputLimit ? String(props.initial.outputLimit) : '')
+  const [attachment, setAttachment] = useState(!!props.initial?.attachment)
+  const [tiers, setTiers] = useState<ThinkingTier[]>(props.initial?.thinkingTiers ?? [])
+  const [error, setError] = useState('')
+
+  const submit = () => {
+    const mid = id.trim()
+    if (!mid) return setError('模型 ID 必填')
+    if (props.existingIds.includes(mid)) return setError(`模型 ID「${mid}」已存在`)
+    const num = (s: string) => (s.trim() && /^\d+$/.test(s.trim()) ? Number(s.trim()) : undefined)
+    props.onSave({
+      id: mid,
+      ...(name.trim() ? { name: name.trim() } : {}),
+      ...(attachment ? { attachment: true } : {}),
+      ...(num(ctx) ? { contextLimit: num(ctx) } : {}),
+      ...(num(out) ? { outputLimit: num(out) } : {}),
+      ...(tiers.length ? { thinkingTiers: tiers } : {}),
+    })
+  }
+
+  return (
+    <div className="modal-mask" onClick={props.onClose}>
+      <div className="modal form" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-title">{isEdit ? `编辑模型「${props.initial?.id}」` : '添加模型'}</div>
+        <label className="field">
+          <span>模型 ID *</span>
+          <input value={id} onChange={(e) => setId(e.target.value)} disabled={isEdit} placeholder="如 deepseek-chat / claude-sonnet-4-5" />
+        </label>
+        <label className="field">
+          <span>显示名（可选）</span>
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="如 DeepSeek Chat" />
+        </label>
+        <div style={{ display: 'flex', gap: 12 }}>
+          <label className="field" style={{ flex: 1 }}>
+            <span>上下文窗口（tokens，可选）</span>
+            <input value={ctx} onChange={(e) => setCtx(e.target.value.replace(/[^\d]/g, ''))} placeholder="如 128000" />
+          </label>
+          <label className="field" style={{ flex: 1 }}>
+            <span>最大输出 Token（可选）</span>
+            <input value={out} onChange={(e) => setOut(e.target.value.replace(/[^\d]/g, ''))} placeholder="如 8192" />
+          </label>
+        </div>
+        <label className="field check-field">
+          <input type="checkbox" checked={attachment} onChange={(e) => setAttachment(e.target.checked)} />
+          <span>输入类型：支持图片（勾选后聊天里可发图；不勾 = 纯文本输入）</span>
+        </label>
+        <div className="field">
+          <span>输出类型：文本（当前固定）</span>
+        </div>
+        <div className="field">
+          <span>思考模式（多选；会话里可切换，OpenAI 系 max=high，Anthropic 按预算映射）</span>
+          <div className="member-picker">
+            {THINKING_TIERS.map((t) => (
+              <button
+                key={t}
+                type="button"
+                className={`member-chip ${tiers.includes(t) ? 'on' : ''}`}
+                onClick={() => setTiers((cur) => (cur.includes(t) ? cur.filter((x) => x !== t) : [...cur, t]))}
+              >
+                {TIER_LABELS[t]}（{t}）
+              </button>
+            ))}
+          </div>
+        </div>
+        {error && <p className="settings-error">⚠️ {error}</p>}
+        <div className="modal-actions">
+          <button className="btn" onClick={props.onClose}>取消</button>
+          <button className="btn primary" onClick={submit}>{isEdit ? '保存' : '添加'}</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/** 添加提供商（名称/id/baseURL/格式/Key，模型后补） */
+function AddProvider(props: { existingIds: string[]; onClose: () => void; onAdd: (p: ProviderSetting) => void }): React.JSX.Element {
   const [id, setId] = useState('')
   const [name, setName] = useState('')
   const [baseURL, setBaseURL] = useState('')
+  const [apiFormat, setApiFormat] = useState<ProviderSetting['apiFormat']>('chat')
   const [apiKey, setApiKey] = useState('')
-  const [modelsText, setModelsText] = useState('')
-  const [attachment, setAttachment] = useState(false)
+  const [error, setError] = useState('')
 
   const submit = () => {
-    if (kind === 'preset') {
-      props.onAdd({ id: presetId, kind: 'builtin', name: BUILTIN_PROVIDER_PRESETS.find((x) => x.id === presetId)?.name || presetId, apiKey: apiKey.trim() || undefined })
-    } else {
-      const models = modelsText
-        .split('\n')
-        .map((s) => s.trim())
-        .filter(Boolean)
-        .map((mid) => ({ id: mid, ...(attachment ? { attachment: true } : {}) }))
-      props.onAdd({ id: id.trim(), kind: 'custom', name: name.trim() || id.trim(), baseURL: baseURL.trim(), apiKey: apiKey.trim() || undefined, models })
-    }
+    const pid = id.trim().replace(/\s+/g, '-').toLowerCase()
+    if (!pid) return setError('id 必填（如 my-proxy）')
+    if (props.existingIds.includes(pid)) return setError(`id「${pid}」已存在`)
+    if (apiFormat !== 'anthropic' && !baseURL.trim()) return setError('baseURL 必填（Anthropic 官方可留空）')
+    props.onAdd({
+      id: pid,
+      name: name.trim() || pid,
+      apiFormat,
+      ...(baseURL.trim() ? { baseURL: baseURL.trim() } : {}),
+      ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
+      enabled: true,
+      models: [],
+    })
   }
 
   return (
     <div className="modal-mask" onClick={props.onClose}>
       <div className="modal form" onClick={(e) => e.stopPropagation()}>
         <div className="modal-title">添加模型提供商</div>
-        <div className="seg">
-          <button className={`seg-item ${kind === 'preset' ? 'on' : ''}`} onClick={() => setKind('preset')}>内置预设</button>
-          <button className={`seg-item ${kind === 'custom' ? 'on' : ''}`} onClick={() => setKind('custom')}>OpenAI 兼容</button>
-        </div>
-        {kind === 'preset' ? (
-          <>
-            <label className="field">
-              <span>提供商</span>
-              <select value={presetId} onChange={(e) => setPresetId(e.target.value)}>
-                {BUILTIN_PROVIDER_PRESETS.map((p) => (
-                  <option key={p.id} value={p.id}>{p.name}</option>
-                ))}
-              </select>
-            </label>
-            <p className="settings-tip">保存后，该提供商的可用模型会出现在默认模型下拉与聊天输入框的模型切换里。</p>
-          </>
-        ) : (
-          <>
-            <label className="field">
-              <span>id *</span>
-              <input value={id} onChange={(e) => setId(e.target.value)} placeholder="如 my-proxy" />
-            </label>
-            <label className="field">
-              <span>名称</span>
-              <input value={name} onChange={(e) => setName(e.target.value)} placeholder="如 我的中转" />
-            </label>
-            <label className="field">
-              <span>baseURL *</span>
-              <input value={baseURL} onChange={(e) => setBaseURL(e.target.value)} placeholder="https://api.example.com/v1" />
-            </label>
-            <label className="field">
-              <span>模型 id（每行一个）</span>
-              <textarea rows={3} value={modelsText} onChange={(e) => setModelsText(e.target.value)} placeholder={'gpt-4o\ndeepseek-chat'} />
-            </label>
-            <label className="field check-field">
-              <input type="checkbox" checked={attachment} onChange={(e) => setAttachment(e.target.checked)} />
-              <span>这些模型支持图片输入（多模态，如 Qwen-VL、GPT-4o）；勾选后聊天里可发送图片</span>
-            </label>
-          </>
-        )}
+        <label className="field">
+          <span>id *（唯一标识，如 my-proxy）</span>
+          <input value={id} onChange={(e) => setId(e.target.value)} placeholder="my-proxy" />
+        </label>
+        <label className="field">
+          <span>名称</span>
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="如 我的中转" />
+        </label>
+        <label className="field">
+          <span>API 格式</span>
+          <select value={apiFormat} onChange={(e) => setApiFormat(e.target.value as ProviderSetting['apiFormat'])}>
+            {API_FORMATS.map((f) => (
+              <option key={f.id} value={f.id}>{f.label}</option>
+            ))}
+          </select>
+        </label>
+        <label className="field">
+          <span>baseURL{apiFormat === 'anthropic' ? '（官方 https://api.anthropic.com 可留空）' : ' *'}</span>
+          <input value={baseURL} onChange={(e) => setBaseURL(e.target.value)} placeholder={apiFormat === 'anthropic' ? 'https://api.anthropic.com' : 'https://api.example.com/v1'} />
+        </label>
         <label className="field">
           <span>API Key</span>
           <input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="sk-…" />
         </label>
+        <p className="settings-tip">创建后到提供商详情里「+ 添加模型」录入模型 ID 与参数。</p>
+        {error && <p className="settings-error">⚠️ {error}</p>}
         <div className="modal-actions">
           <button className="btn" onClick={props.onClose}>取消</button>
-          <button
-            className="btn primary"
-            disabled={kind === 'preset' ? false : !id.trim() || !baseURL.trim()}
-            onClick={submit}
-          >
-            添加
-          </button>
+          <button className="btn primary" onClick={submit}>添加</button>
         </div>
       </div>
     </div>

@@ -2,6 +2,7 @@ import { useStore } from '../../store'
 import ProviderSettings from './ProviderSettings'
 import McpSettings from './McpSettings'
 import MemorySettings from './MemorySettings'
+import EngineSettings from './EngineSettings'
 import SyncSettings from './SyncSettings'
 import AppearanceSettings from './AppearanceSettings'
 import AboutSettings from './AboutSettings'
@@ -14,6 +15,7 @@ export default function SettingsContent(): React.JSX.Element {
       {settingsSection === 'providers' && <ProviderSettings />}
       {settingsSection === 'mcp' && <McpSettings />}
       {settingsSection === 'memory' && <MemorySettings />}
+      {settingsSection === 'engine' && <EngineSettings />}
       {settingsSection === 'sync' && <SyncSettings />}
       {settingsSection === 'appearance' && <AppearanceSettings />}
       {settingsSection === 'about' && <AboutSettings />}

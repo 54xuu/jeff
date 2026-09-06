@@ -74,6 +74,7 @@ export class PrivateChat {
     text: string,
     model?: { providerID: string; modelID: string },
     images?: Array<{ mime: string; dataUrl: string }>,
+    variant?: string,
   ): Promise<AssistantInfo> {
     const sessionId = await this.ensureSession(agentId, agentName)
     const reply = await this.getOc().sendMessage({
@@ -83,6 +84,7 @@ export class PrivateChat {
       agent: agentSlug(agentId),
       system: this.hooks?.buildSystem?.(agentId),
       ...(model && model.providerID && model.modelID ? { model } : {}),
+      ...(variant ? { variant } : {}),
     })
     this.hooks?.afterReply?.({ kind: 'private', agentId })
     return reply

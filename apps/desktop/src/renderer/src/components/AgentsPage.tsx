@@ -1,146 +1,158 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useStore } from '../store'
 import { api } from '../api'
-import { IPC, XIAOJIE_ID, type AgentInfo, type ModelOption } from '@jeff/core'
+import { IPC, type AgentInfo, type ModelOption } from '@jeff/core'
 import Avatar from './Avatar'
 
-type Editing = Partial<AgentInfo> & { isNew?: boolean }
+type ThinkingTierOpt = '' | 'none' | 'low' | 'high' | 'max'
 
+/** 通讯录 · 智能体：左右布局（左列表 / 右编辑表单），每个智能体可设指令、模型、思考程度 */
 export default function AgentsPage(): React.JSX.Element {
-  const { agents, catalog } = useStore()
-  const [editing, setEditing] = useState<Editing | null>(null)
-  const [detail, setDetail] = useState<AgentInfo | null>(null)
+  const { agents, catalog, refreshAgents } = useStore()
+  const [selId, setSelId] = useState<string | null>(null)
+  const [creating, setCreating] = useState(false)
 
-  const xiaojie = agents.find((a) => a.builtin)
-  const others = agents.filter((a) => !a.builtin)
+  useEffect(() => {
+    if (!selId && agents.length > 0) setSelId(agents[0].id)
+  }, [agents, selId])
 
+  const sel = agents.find((a) => a.id === selId) ?? null
+  const models: ModelOption[] = catalog.flatMap((c) => c.models)
+
+  const save = async (d: { id?: string; name: string; avatar: string; description: string; instructions: string; model_provider: string; model_id: string; thinking: string }) => {
+    await api.invoke(IPC.agentsUpsert, d)
+    await refreshAgents()
+    if (d.id) setSelId(d.id)
+    setCreating(false)
+  }
+
+  const remove = async (a: AgentInfo) => {
+    if (!confirm(`确定删除「${a.name}」？该操作可由历史记录恢复（软删除）。`)) return
+    await api.invoke(IPC.agentsDelete, { id: a.id })
+    await refreshAgents()
+    setSelId(null)
+  }
+
+  const list = agents
   return (
     <div className="agents-page">
-      <div className="list-header">
-        <span>通讯录 · 智能体</span>
-        <button className="icon-btn" title="新建智能体" onClick={() => setEditing({ isNew: true, avatar: '🤖' })}>
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-            <path d="M12 5v14M5 12h14" />
-          </svg>
-        </button>
+      <div className="agents-left">
+        <div className="list-header">
+          <span>通讯录 · 智能体</span>
+          <button className="icon-btn" title="新建智能体" onClick={() => setCreating(true)}>
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <path d="M12 5v14M5 12h14" />
+            </svg>
+          </button>
+        </div>
+        {list.map((a) => (
+          <div key={a.id} className={`contact-card ${selId === a.id ? 'selected' : ''}`} onClick={() => { setSelId(a.id); setCreating(false) }}>
+            <Avatar emoji={a.avatar} />
+            <div className="contact-body">
+              <div className="contact-name">
+                {a.name} {a.builtin && <span className="tag tag-green">内置</span>}
+              </div>
+              <div className="contact-desc">{a.description || '（无简介）'}</div>
+            </div>
+          </div>
+        ))}
       </div>
 
-      {xiaojie && (
-        <div className="contact-card" onClick={() => setDetail(xiaojie)}>
-          <Avatar emoji={xiaojie.avatar} />
-          <div className="contact-body">
-            <div className="contact-name">
-              {xiaojie.name} <span className="tag tag-green">内置</span>
-            </div>
-            <div className="contact-desc">{xiaojie.description}</div>
-          </div>
-        </div>
-      )}
-      <div className="list-section">我的智能体（{others.length}）</div>
-      {others.map((a) => (
-        <div key={a.id} className="contact-card" onClick={() => setDetail(a)}>
-          <Avatar emoji={a.avatar} />
-          <div className="contact-body">
-            <div className="contact-name">{a.name}</div>
-            <div className="contact-desc">{a.description || '（无简介）'}</div>
-          </div>
-        </div>
-      ))}
-
-      {detail && <AgentDetail agent={detail} onClose={() => setDetail(null)} onEdit={() => { setEditing({ ...detail }); setDetail(null) }} onDelete={async () => {
-        if (!confirm(`确定删除「${detail.name}」？该操作可由历史记录恢复（软删除）。`)) return
-        await api.invoke(IPC.agentsDelete, { id: detail.id })
-        setDetail(null)
-        void useStore.getState().refreshAgents()
-      }} />}
-
-      {editing && (
-        <AgentEditor
-          initial={editing}
-          models={catalog.flatMap((c) => c.models)}
-          onClose={() => setEditing(null)}
-          onSave={async (d) => {
-            await api.invoke(IPC.agentsUpsert, d)
-            setEditing(null)
-            void useStore.getState().refreshAgents()
-          }}
-        />
-      )}
-    </div>
-  )
-}
-
-function AgentDetail(props: { agent: AgentInfo; onClose: () => void; onEdit: () => void; onDelete: () => void }): React.JSX.Element {
-  const a = props.agent
-  const locked = a.builtin
-  return (
-    <div className="modal-mask" onClick={props.onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-head">
-          <Avatar emoji={a.avatar} size={52} />
-          <div>
-            <div className="contact-name big">
-              {a.name} {locked && <span className="tag tag-green">内置</span>}
-            </div>
-            <div className="contact-desc">{a.description || '（无简介）'}</div>
-          </div>
-        </div>
-        <div className="modal-sec">身份指令</div>
-        <pre className="modal-pre">{a.instructions || '（无）'}</pre>
-        <div className="modal-sec">默认模型</div>
-        <div className="modal-line">{a.model_provider && a.model_id ? `${a.model_provider} / ${a.model_id}` : '跟随全局默认'}</div>
-        <div className="modal-actions">
-          {!locked && (
-            <>
-              <button className="btn" onClick={props.onEdit}>编辑</button>
-              <button className="btn danger" onClick={() => void props.onDelete()}>删除</button>
-            </>
-          )}
-          <button className="btn primary" onClick={() => { useStore.getState().setActive({ kind: 'agent', id: a.id }); useStore.getState().setTab('chats'); props.onClose() }}>发消息</button>
-        </div>
+      <div className="agents-right">
+        {creating ? (
+          <AgentEditor key="new" initial={{ isNew: true }} models={models} onCancel={() => setCreating(false)} onSave={(d) => void save(d)} />
+        ) : sel ? (
+          <AgentEditor
+            key={sel.id}
+            initial={sel}
+            models={models}
+            onDelete={sel.builtin ? undefined : () => void remove(sel)}
+            onCancel={() => setSelId(sel.id)}
+            onSave={(d) => void save(d)}
+            onChat={() => {
+              useStore.getState().setActive({ kind: 'agent', id: sel.id })
+              useStore.getState().setTab('chats')
+            }}
+          />
+        ) : (
+          <div className="empty-hint"><p>选择左侧智能体查看 / 编辑，或点右上角「+」新建</p></div>
+        )}
       </div>
     </div>
   )
 }
 
+/** 右侧编辑表单（小杰：名称/头像/指令锁定，仅模型与思考程度可改） */
 function AgentEditor(props: {
-  initial: Editing
+  initial: Partial<AgentInfo> & { isNew?: boolean }
   models: ModelOption[]
-  onClose: () => void
-  onSave: (d: { id?: string; name: string; avatar: string; description: string; instructions: string; model_provider: string; model_id: string }) => Promise<void>
+  onCancel: () => void
+  onSave: (d: { id?: string; name: string; avatar: string; description: string; instructions: string; model_provider: string; model_id: string; thinking: string }) => void
+  onDelete?: () => void
+  onChat?: () => void
 }): React.JSX.Element {
-  const [name, setName] = useState(props.initial.name || '')
-  const [avatar, setAvatar] = useState(props.initial.avatar || '🤖')
-  const [description, setDescription] = useState(props.initial.description || '')
-  const [instructions, setInstructions] = useState(props.initial.instructions || '')
-  const [modelKey, setModelKey] = useState(
-    props.initial.model_provider && props.initial.model_id ? `${props.initial.model_provider}/${props.initial.model_id}` : '',
-  )
+  const a = props.initial
+  const locked = !!a.builtin && !a.isNew
+  const [name, setName] = useState(a.name || '')
+  const [avatar, setAvatar] = useState(a.avatar || '🤖')
+  const [description, setDescription] = useState(a.description || '')
+  const [instructions, setInstructions] = useState(a.instructions || '')
+  const [modelKey, setModelKey] = useState(a.model_provider && a.model_id ? `${a.model_provider}/${a.model_id}` : '')
+  const [thinking, setThinking] = useState<ThinkingTierOpt>((a.thinking as ThinkingTierOpt) || '')
+  const [saving, setSaving] = useState(false)
+
+  const submit = () => {
+    if (!locked && !name.trim()) return
+    setSaving(true)
+    props.onSave({
+      ...(a.id ? { id: a.id } : {}),
+      name: locked ? a.name || '小杰' : name.trim(),
+      avatar: locked ? a.avatar || '🧑‍💻' : avatar.trim() || '🤖',
+      description: locked ? a.description || '' : description.trim(),
+      instructions: locked ? a.instructions || '' : instructions,
+      model_provider: modelKey ? modelKey.split('/')[0] : '',
+      model_id: modelKey ? modelKey.split('/')[1] : '',
+      thinking,
+    })
+  }
 
   return (
-    <div className="modal-mask" onClick={props.onClose}>
-      <div className="modal form" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-title">{props.initial.isNew ? '新建智能体' : `编辑「${props.initial.name}」`}</div>
-        <label className="field">
-          <span>名字 *</span>
-          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="如：架构师阿伟" />
-        </label>
-        <label className="field">
-          <span>头像 emoji</span>
-          <input value={avatar} onChange={(e) => setAvatar(e.target.value)} maxLength={4} />
-        </label>
-        <label className="field">
-          <span>简介</span>
-          <input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="一句话说明它是干嘛的" />
-        </label>
-        <label className="field">
-          <span>身份指令（system prompt）</span>
-          <textarea rows={5} value={instructions} onChange={(e) => setInstructions(e.target.value)} placeholder="它擅长什么、行为规矩、输出格式…" />
-        </label>
-        <label className="field">
-          <span>默认模型</span>
+    <div className="agents-editor">
+      <div className="agents-editor-head">
+        <Avatar emoji={locked ? a.avatar || '🧑‍💻' : avatar} size={44} />
+        <div>
+          <div className="contact-name big">{a.isNew ? '新建智能体' : `${a.name} ${locked ? '（内置 · 名称与指令锁定）' : ''}`}</div>
+          <div className="contact-desc">{a.isNew ? '创建后可在聊天列表直接对话' : a.description || '（无简介）'}</div>
+        </div>
+        <div className="settings-actions" style={{ marginLeft: 'auto', margin: 0 }}>
+          {props.onChat && !a.isNew && <button className="btn" onClick={props.onChat}>发消息</button>}
+          {props.onDelete && <button className="btn danger" onClick={props.onDelete}>删除</button>}
+        </div>
+      </div>
+
+      <div className="pv-grid">
+        {!locked && (
+          <>
+            <label className="field">
+              <span>名字 *</span>
+              <input value={name} onChange={(e) => setName(e.target.value)} placeholder="如：架构师阿伟" />
+            </label>
+            <label className="field">
+              <span>头像 emoji</span>
+              <input value={avatar} onChange={(e) => setAvatar(e.target.value)} maxLength={4} />
+            </label>
+          </>
+        )}
+        {!locked && (
+          <label className="field" style={{ gridColumn: '1 / -1' }}>
+            <span>简介</span>
+            <input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="一句话说明它是干嘛的" />
+          </label>
+        )}
+        <label className="field" style={{ gridColumn: '1 / -1' }}>
+          <span>模型（留空 = 默认用第一个启用提供商的第一个模型）</span>
           <select value={modelKey} onChange={(e) => setModelKey(e.target.value)}>
-            <option value="">跟随全局默认</option>
+            <option value="">跟随默认</option>
             {props.models.map((m) => (
               <option key={`${m.providerID}/${m.modelID}`} value={`${m.providerID}/${m.modelID}`}>
                 {m.label}
@@ -148,26 +160,27 @@ function AgentEditor(props: {
             ))}
           </select>
         </label>
-        <div className="modal-actions">
-          <button className="btn" onClick={props.onClose}>取消</button>
-          <button
-            className="btn primary"
-            disabled={!name.trim()}
-            onClick={() =>
-              void props.onSave({
-                ...(props.initial.id ? { id: props.initial.id } : {}),
-                name: name.trim(),
-                avatar: avatar.trim() || '🤖',
-                description: description.trim(),
-                instructions,
-                model_provider: modelKey ? modelKey.split('/')[0] : '',
-                model_id: modelKey ? modelKey.split('/')[1] : '',
-              })
-            }
-          >
-            保存
-          </button>
-        </div>
+        <label className="field">
+          <span>思考程度（默认 = 跟随模型配置）</span>
+          <select value={thinking} onChange={(e) => setThinking(e.target.value as ThinkingTierOpt)}>
+            <option value="">默认</option>
+            <option value="none">无思考（none）</option>
+            <option value="low">低（low）</option>
+            <option value="high">高（high）</option>
+            <option value="max">最大（max）</option>
+          </select>
+        </label>
+        {!locked && (
+          <label className="field" style={{ gridColumn: '1 / -1' }}>
+            <span>身份指令（system prompt）</span>
+            <textarea rows={7} value={instructions} onChange={(e) => setInstructions(e.target.value)} placeholder="它擅长什么、行为规矩、输出格式…" />
+          </label>
+        )}
+      </div>
+
+      <div className="settings-actions" style={{ justifyContent: 'flex-start' }}>
+        <button className="btn primary" disabled={saving || (!locked && !name.trim())} onClick={submit}>{saving ? '保存中…' : '保存'}</button>
+        <button className="btn" onClick={props.onCancel}>取消</button>
       </div>
     </div>
   )

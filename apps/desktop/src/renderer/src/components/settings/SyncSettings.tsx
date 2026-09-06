@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api } from '../../api'
-import { IPC } from '@jeff/core'
+import { IPC, type SkillsBackupReport, type SkillsRestoreStage, type SkillsRestoreApply } from '@jeff/core'
 
 interface WebdavCfg {
   url: string
@@ -106,6 +106,97 @@ export default function SyncSettings(): React.JSX.Element {
           {report.error ? ` · ${report.error}` : ''}
         </p>
       )}
+
+      <SkillsBackup />
     </div>
+  )
+}
+
+/** Skills 目录备份（~/.agents/skills → WebDAV）：单向备份、永不自动写回本地、恢复需两步确认 */
+function SkillsBackup(): React.JSX.Element {
+  const [last, setLast] = useState<(SkillsBackupReport & { fileCount?: number }) | null>(null)
+  const [busy, setBusy] = useState('')
+  const [staged, setStaged] = useState<SkillsRestoreStage | null>(null)
+
+  useEffect(() => {
+    void api.invoke<SkillsBackupReport & { fileCount?: number } | null>(IPC.skillsLast).then(setLast).catch(() => {})
+  }, [])
+
+  const backupNow = async () => {
+    setBusy('backup')
+    try {
+      const r = await api.invoke<SkillsBackupReport>(IPC.skillsBackupNow)
+      setLast({ ...r })
+    } finally {
+      setBusy('')
+    }
+  }
+
+  const stage = async () => {
+    setBusy('stage')
+    try {
+      const r = await api.invoke<SkillsRestoreStage>(IPC.skillsRestoreStage)
+      setStaged(r)
+    } finally {
+      setBusy('')
+    }
+  }
+
+  const apply = async () => {
+    if (!confirm(
+      '恢复将覆盖本地 ~/.agents/skills 中与备份同名的文件（不会删除本地多出的文件）。\n恢复前 Jeff 会先把本地整个 skills 目录快照到数据目录 backups/ 下，可手工回退。\n\n确认恢复？',
+    )) return
+    setBusy('apply')
+    try {
+      const r = await api.invoke<SkillsRestoreApply>(IPC.skillsRestoreApply)
+      if (r.ok) {
+        alert(`已恢复 ${r.restored} 个文件。\n恢复前本地快照：${r.snapshotDir}`)
+        setStaged(null)
+        void backupNow()
+      } else {
+        alert(`恢复失败：${r.error}`)
+      }
+    } finally {
+      setBusy('')
+    }
+  }
+
+  return (
+    <>
+      <h2 className="settings-title" style={{ marginTop: 24 }}>Skills 目录备份</h2>
+      <p className="settings-tip">
+        自动把 <code>~/.agents/skills</code>（所有 skill 文件）备份到 WebDAV 的 <code>skills/</code> 目录。
+        <b>单向备份</b>：本地文件永不自动修改；远端只增不删；内容被覆盖前旧版本归档到远端 <code>skills-versions/</code>。多台设备同时备份不会互相破坏。
+      </p>
+      <div className="settings-actions" style={{ justifyContent: 'flex-start' }}>
+        <button className="btn primary" disabled={!!busy} onClick={() => void backupNow()}>{busy === 'backup' ? '备份中…' : '立即备份 skills'}</button>
+        <button className="btn" disabled={!!busy} onClick={() => void stage()}>{busy === 'stage' ? '检查中…' : '从备份恢复…'}</button>
+      </div>
+      {last && (
+        <p className="settings-tip" style={{ marginTop: 6 }}>
+          上次备份：{last.ok ? '✅' : '❌'} {new Date(last.at).toLocaleString()} · 共 {last.fileCount ?? '?'} 个文件 · 上传 {last.uploaded} · 旧版本归档 {last.archived} · 未变化 {last.skipped}
+          {last.error ? ` · ${last.error}` : ''}
+        </p>
+      )}
+      {staged && (
+        <div className="pv-detail" style={{ marginTop: 10 }}>
+          {staged.ok ? (
+            <>
+              <p className="settings-tip">远端备份共 <b>{staged.total}</b> 个文件，前 30 个：</p>
+              <div className="mcp-tool-list">
+                {staged.files.slice(0, 30).map((f) => <span key={f} className="tag">{f}</span>)}
+                {staged.total > 30 && <span className="tag">…共 {staged.total} 个</span>}
+              </div>
+              <div className="settings-actions" style={{ justifyContent: 'flex-start' }}>
+                <button className="btn danger" disabled={!!busy} onClick={() => void apply()}>{busy === 'apply' ? '恢复中…' : '确认恢复到本地'}</button>
+                <button className="btn" onClick={() => setStaged(null)}>取消</button>
+              </div>
+            </>
+          ) : (
+            <p className="settings-error">⚠️ 检查备份失败：{staged.error}（远端还没有备份？先点「立即备份 skills」）</p>
+          )}
+        </div>
+      )}
+    </>
   )
 }
