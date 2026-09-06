@@ -118,19 +118,46 @@ export function registerIpc(core: JeffCore): void {
       return { ok: true }
     },
     [IPC.providersCatalog]: async (): Promise<{ catalog: ProviderCatalogItem[] }> => {
-      const providers = await core.oc.listProviders()
-      const configured = new Map(core.listProviders().map((p) => [p.id, p]))
-      const catalog: ProviderCatalogItem[] = providers.map((pv) => ({
-        id: pv.id,
-        name: pv.name || pv.id,
-        models: Object.keys(pv.models || {}).map((mid) => ({
-          providerID: pv.id,
-          modelID: mid,
-          label: `${pv.name || pv.id} / ${mid}`,
-          thinkingTiers: configured.get(pv.id)?.models.find((m) => m.id === mid)?.thinkingTiers ?? [],
-        })),
-      }))
-      return { catalog }
+      // v1.3：目录直接来自供应商配置（不再调 opencode 平台接口，避免冒出未添加的模型）
+      const options = core.configuredModels()
+      const byProvider = new Map<string, ProviderCatalogItem>()
+      for (const o of options) {
+        let item = byProvider.get(o.providerID)
+        if (!item) {
+          item = { id: o.providerID, name: o.providerName, models: [] }
+          byProvider.set(o.providerID, item)
+        }
+        item.models.push({
+          providerID: o.providerID,
+          modelID: o.modelID,
+          label: o.label,
+          thinkingTiers: o.thinkingTiers as Array<'none' | 'low' | 'high' | 'max'>,
+        })
+      }
+      return { catalog: Array.from(byProvider.values()) }
+    },
+    [IPC.modelsConfigured]: async () => ({ models: core.configuredModels() }),
+
+    // ---------- 历史会话（聊天记录） ----------
+    [IPC.sessionsList]: async (p) => {
+      const d = p as { agentId?: string; projectId?: string }
+      if (d.projectId) return { sessions: await core.listGroupSessions(d.projectId) }
+      if (d.agentId) return { sessions: await core.listAgentSessions(d.agentId) }
+      throw new Error('agentId 与 projectId 至少提供一个')
+    },
+    [IPC.sessionPreview]: async (p) => {
+      const { sessionId } = p as { sessionId: string }
+      return { messages: await core.previewSession(sessionId) }
+    },
+    [IPC.sessionActivate]: async (p) => {
+      const d = p as { scope: 'private' | 'group'; agentId: string; projectId?: string; sessionId: string }
+      core.activateSession(d.scope, d.agentId, d.sessionId, d.projectId)
+      return { ok: true }
+    },
+    [IPC.sessionDelete]: async (p) => {
+      const { sessionId } = p as { sessionId: string }
+      await core.deleteSession(sessionId)
+      return { ok: true }
     },
     [IPC.settingsGet]: async (): Promise<AppSettings> => {
       const kv = core.kv()
@@ -357,6 +384,11 @@ export function registerIpc(core: JeffCore): void {
     [IPC.groupSend]: async (p): Promise<{ routedTo: string }> => {
       const { projectId, text, model, variant, images } = p as { projectId: string; text: string; model?: { providerID: string; modelID: string }; variant?: string; images?: Array<{ mime: string; dataUrl: string }> }
       return core.groupChat.send({ projectId, text, model, variant: variant || undefined, images })
+    },
+    [IPC.groupStop]: async (p): Promise<{ ok: boolean }> => {
+      const { projectId } = p as { projectId: string }
+      await core.abortGroup(projectId)
+      return { ok: true }
     },
   }
 

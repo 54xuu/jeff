@@ -99,6 +99,11 @@ export const kvRepo = (db: DB) => ({
   delete(key: string): void {
     db.prepare('DELETE FROM kv WHERE key = ?').run(key)
   },
+  /** 按前缀扫描全部键值（聊天记录抽屉清理当前会话指针等） */
+  prefixScan(prefix: string): Array<[string, string]> {
+    const rows = db.prepare('SELECT key, value FROM kv WHERE key LIKE ?').all(`${prefix}%`) as Array<{ key: string; value: string }>
+    return rows.map((r) => [r.key, r.value])
+  },
 })
 
 // ---------- agent ----------

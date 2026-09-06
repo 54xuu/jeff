@@ -1889,3 +1889,253 @@ body {
 
 /* v1.2：通讯录页占满主区，隐藏空列表栏 */
 .list-pane:empty { display: none; }
+
+/* ===== v1.3：对话体验重构 ===== */
+/* assistant 气泡弱化为浅底无边框卡片 */
+.bubble.assistant {
+  background: color-mix(in srgb, var(--text) 4%, transparent);
+  border: none;
+}
+
+/* 气泡内折叠区（思考过程 / 工具调用） */
+.msg-extras {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+.msg-extra {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--text) 3%, transparent);
+  font-size: 12px;
+  overflow: hidden;
+}
+.msg-extra > summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 9px;
+  cursor: pointer;
+  color: var(--text-2);
+  user-select: none;
+  list-style: none;
+}
+.msg-extra > summary::-webkit-details-marker { display: none; }
+.msg-extra > summary:hover { color: var(--text); }
+.extra-live { color: var(--green); font-size: 11px; }
+.extra-reasoning {
+  padding: 2px 10px 8px;
+  color: var(--text-2);
+  font-style: italic;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  border-top: 1px dashed var(--line);
+}
+.extra-reasoning p { margin: 6px 0 0; }
+.extra-tools { border-top: 1px dashed var(--line); }
+.extra-tool { border-bottom: 1px solid var(--line); }
+.extra-tool:last-child { border-bottom: none; }
+.extra-tool > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+.extra-tool > summary::-webkit-details-marker { display: none; }
+.extra-tool-name { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11px; }
+.extra-tool-status { margin-left: auto; font-size: 11px; color: var(--text-2); }
+.extra-tool-status.danger { color: #dc2626; }
+.tool-output {
+  margin: 0;
+  padding: 8px 10px;
+  max-height: 260px;
+  overflow: auto;
+  background: color-mix(in srgb, var(--text) 4%, transparent);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.tool-output.danger { color: #dc2626; }
+.tool-expand { margin: 4px 10px 8px; font-size: 11px; }
+
+/* 发送 ⇄ 停止 */
+.send-btn.stop {
+  background: #dc2626;
+  color: #fff;
+}
+.send-btn.stop:hover { background: #b91c1c; }
+
+/* 模型菜单搜索框 */
+.model-menu-search {
+  margin: 6px;
+  padding: 6px 9px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  outline: none;
+}
+.model-menu-search:focus { border-color: var(--green); }
+
+/* 可搜索模型下拉（智能体表单） */
+.combo { position: relative; }
+.combo-trigger {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 11px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+  text-align: left;
+}
+.combo-trigger:hover { border-color: var(--green); }
+.combo-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 40;
+  max-height: 300px;
+  overflow-y: auto;
+  background: var(--bg-2, var(--bg));
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 14%);
+  padding: 4px;
+}
+.combo-group {
+  padding: 6px 9px 2px;
+  font-size: 11px;
+  color: var(--text-2);
+}
+.combo-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 9px;
+  border: none;
+  background: transparent;
+  border-radius: 7px;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+}
+.combo-item:hover { background: color-mix(in srgb, var(--green) 12%, transparent); }
+.combo-item.on { background: color-mix(in srgb, var(--green) 16%, transparent); }
+.combo-item .tag { margin-left: auto; }
+
+/* 聊天记录抽屉 */
+.drawer-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: rgb(0 0 0 / 35%);
+  display: flex;
+  justify-content: flex-end;
+}
+.history-drawer {
+  width: min(760px, 88vw);
+  height: 100%;
+  background: var(--bg);
+  border-left: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  animation: drawer-in 0.18s ease-out;
+}
+@keyframes drawer-in {
+  from { transform: translateX(24px); opacity: 0.4; }
+  to { transform: translateX(0); opacity: 1; }
+}
+.history-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line);
+  font-weight: 600;
+}
+.history-tip { padding: 10px 16px; }
+.history-body { flex: 1; display: flex; min-height: 0; }
+.history-list {
+  width: 300px;
+  min-width: 260px;
+  border-right: 1px solid var(--line);
+  overflow-y: auto;
+  padding: 6px;
+}
+.history-group-title {
+  padding: 8px 9px 2px;
+  font-size: 11px;
+  color: var(--text-2);
+}
+.history-item {
+  padding: 8px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.history-item:hover { background: color-mix(in srgb, var(--text) 5%, transparent); }
+.history-item.previewing { background: color-mix(in srgb, var(--green) 12%, transparent); }
+.history-item-top { display: flex; align-items: center; gap: 6px; }
+.history-item-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+.history-item-sub { margin-top: 2px; font-size: 11px; color: var(--text-2); }
+.history-preview { flex: 1; overflow-y: auto; padding: 12px 16px; }
+.history-preview-msgs { display: flex; flex-direction: column; gap: 10px; }
+.history-msg { max-width: 92%; }
+.history-msg.user { align-self: flex-end; }
+.history-msg-meta { font-size: 11px; color: var(--text-2); margin-bottom: 2px; }
+.history-msg.assistant .history-msg-text,
+.history-msg.assistant {
+  background: color-mix(in srgb, var(--text) 4%, transparent);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+.history-msg.user .history-msg-text {
+  margin: 0;
+  background: var(--green);
+  color: #fff;
+  border-radius: 8px;
+  padding: 8px 10px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: inherit;
+  font-size: 13px;
+}
+.history-preview-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  padding: 12px 0 4px;
+  border-top: 1px solid var(--line);
+  margin-top: 12px;
+}
+
+/* 旧工具块（tool-block）兼容保留；新样式由 msg-extras 承担 */
+
+/* ===== v1.3：智能体页配色对齐聊天界面 ===== */
+.agents-right { background: color-mix(in srgb, var(--text) 2%, transparent); }
+.agents-left .contact-card.selected {
+  background: color-mix(in srgb, var(--green) 12%, transparent);
+  border-right: 2px solid var(--green);
+}

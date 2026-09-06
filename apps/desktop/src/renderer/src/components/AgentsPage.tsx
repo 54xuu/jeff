@@ -3,6 +3,7 @@ import { useStore } from '../store'
 import { api } from '../api'
 import { IPC, type AgentInfo, type ModelOption } from '@jeff/core'
 import Avatar from './Avatar'
+import ModelPickerCombo from './ModelPickerCombo'
 
 type ThinkingTierOpt = '' | 'none' | 'low' | 'high' | 'max'
 
@@ -151,14 +152,7 @@ function AgentEditor(props: {
         )}
         <label className="field" style={{ gridColumn: '1 / -1' }}>
           <span>模型（留空 = 默认用第一个启用提供商的第一个模型）</span>
-          <select value={modelKey} onChange={(e) => setModelKey(e.target.value)}>
-            <option value="">跟随默认</option>
-            {props.models.map((m) => (
-              <option key={`${m.providerID}/${m.modelID}`} value={`${m.providerID}/${m.modelID}`}>
-                {m.label}
-              </option>
-            ))}
-          </select>
+          <ModelPickerCombo value={modelKey} onChange={setModelKey} placeholderEmpty="跟随默认" />
         </label>
         <label className="field">
           <span>思考程度（默认 = 跟随模型配置）</span>

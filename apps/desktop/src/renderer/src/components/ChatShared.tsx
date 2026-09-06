@@ -74,3 +74,84 @@ export function MsgImages(props: { images: ChatImage[] }): React.JSX.Element | n
     </>
   )
 }
+
+const TOOL_STATUS_LABEL: Record<string, string> = {
+  running: '运行中',
+  completed: '完成',
+  error: '出错',
+  pending: '等待',
+}
+
+const TRUNCATE_LEN = 2000
+
+/** 工具输出预览：超长截断 + 展开全文 */
+function ToolOutput(props: { text: string }): React.JSX.Element {
+  const [expanded, setExpanded] = useState(false)
+  const full = props.text
+  const truncated = full.length > TRUNCATE_LEN
+  return (
+    <>
+      <pre className="tool-output">{expanded || !truncated ? full : `${full.slice(0, TRUNCATE_LEN)}…`}</pre>
+      {truncated && (
+        <button className="text-btn tool-expand" onClick={() => setExpanded((v) => !v)}>
+          {expanded ? '收起' : `展开全文（${full.length} 字符）`}
+        </button>
+      )}
+    </>
+  )
+}
+
+/** assistant 气泡内折叠区：思考过程 + 工具调用（历史消息与流式共用） */
+export function AssistantExtras(props: {
+  reasoning?: string[]
+  tools?: Array<{ tool: string; status?: string; output?: string; error?: string }>
+  live?: boolean
+}): React.JSX.Element | null {
+  const { reasoning, tools, live } = props
+  const hasReasoning = !!reasoning && reasoning.length > 0
+  const hasTools = !!tools && tools.length > 0
+  if (!hasReasoning && !hasTools) return null
+  return (
+    <div className="msg-extras">
+      {hasReasoning && (
+        <details className="msg-extra">
+          <summary>
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.5 10.9c.6.5 1 1.2 1 2.1h5c0-.9.4-1.6 1-2.1A6 6 0 0 0 12 3z" />
+            </svg>
+            思考过程
+            {live && <span className="extra-live">思考中…</span>}
+          </summary>
+          <div className="extra-reasoning">
+            {reasoning!.map((r, i) => (
+              <p key={i}>{r}</p>
+            ))}
+          </div>
+        </details>
+      )}
+      {hasTools && (
+        <details className="msg-extra">
+          <summary>
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M14.7 6.3a4.5 4.5 0 0 0-6 6L3 18l3 3 5.7-5.7a4.5 4.5 0 0 0 6-6L14 13l-3-3 3.7-3.7z" />
+            </svg>
+            工具调用 {tools!.length}
+            {live && tools!.some((t) => t.status === 'running') && <span className="extra-live">运行中…</span>}
+          </summary>
+          <div className="extra-tools">
+            {tools!.map((t, i) => (
+              <details key={i} className="extra-tool">
+                <summary>
+                  <span className="extra-tool-name">{t.tool}</span>
+                  <span className={`extra-tool-status ${t.status === 'error' ? 'danger' : ''}`}>{TOOL_STATUS_LABEL[t.status || ''] || t.status || ''}</span>
+                </summary>
+                {t.error ? <pre className="tool-output danger">{t.error}</pre> : <ToolOutput text={t.output || '（无输出）'} />}
+              </details>
+            ))}
+          </div>
+        </details>
+      )}
+    </div>
+  )
+}
+

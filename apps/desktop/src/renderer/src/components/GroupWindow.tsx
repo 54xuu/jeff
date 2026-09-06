@@ -4,11 +4,12 @@ import { IPC, type GroupMessage, type ModelOption, type ProviderCatalogItem } fr
 import Avatar from './Avatar'
 import GroupInfoDrawer from './GroupInfoDrawer'
 import { Markdown } from './Markdown'
-import { useImages, ImagePreviews, MsgImages } from './ChatShared'
+import { useImages, ImagePreviews, MsgImages, AssistantExtras } from './ChatShared'
+import ChatHistoryDrawer from './ChatHistoryDrawer'
 
 /** 项目群聊天窗口（= 微信群） */
 export default function GroupWindow(props: { projectId: string }): React.JSX.Element {
-  const { projects, groupMessages, tasks, sending, streaming, loadGroupHistory, loadTasks, sendGroup, catalog, settings, agents } = useStore()
+  const { projects, groupMessages, tasks, sending, streaming, loadGroupHistory, loadTasks, sendGroup, stopGroup, catalog, settings, agents } = useStore()
   const project = projects.find((p) => p.id === props.projectId)
   const msgs = groupMessages[props.projectId] || []
   const projectTasks = tasks[props.projectId] || []
@@ -19,7 +20,9 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
   const [modelOverride, setModelOverride] = useState<{ providerID: string; modelID: string } | null>(null)
   const [variant, setVariant] = useState<string>('')
   const [modelOpen, setModelOpen] = useState(false)
+  const [modelFilter, setModelFilter] = useState('')
   const [variantOpen, setVariantOpen] = useState(false)
+  const [historyOpen, setHistoryOpen] = useState(false)
   const [mention, setMention] = useState<{ query: string; start: number } | null>(null)
   const [dragOver, setDragOver] = useState(false)
   const attachments = useImages()
@@ -45,6 +48,11 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentModel?.providerID, currentModel?.modelID, allModels])
   useEffect(() => setVariant(''), [currentModel?.providerID, currentModel?.modelID])
+  const filteredModels = useMemo(() => {
+    const q = modelFilter.trim().toLowerCase()
+    if (!q) return allModels
+    return allModels.filter((m) => m.label.toLowerCase().includes(q) || m.modelID.toLowerCase().includes(q))
+  }, [allModels, modelFilter])
 
   // @ 自动补全：光标前最近的 @xx
   const mentionCandidates = useMemo(() => {
@@ -98,6 +106,12 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
           <span className="chat-header-sub">{project.memberCount} 个成员 · 群主统筹</span>
         </div>
         <div className="chat-header-actions">
+          <button className="icon-btn" title="聊天记录" onClick={() => setHistoryOpen(true)}>
+            <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="9" />
+              <path d="M12 7v5l3.5 2" />
+            </svg>
+          </button>
           <button className="text-btn" onClick={() => setDrawer(true)}>
             群资料与任务
           </button>
@@ -133,6 +147,7 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
             <div className="msg-stack">
               <div className="msg-sender">{stream.senderName}</div>
               <div className="bubble assistant">
+                <AssistantExtras reasoning={stream.reasoning ? [stream.reasoning] : undefined} tools={stream.tools} live />
                 <Markdown text={stream.text || '…'} />
                 <span className="stream-caret" />
               </div>
@@ -144,7 +159,7 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
       <div className="composer">
         <div className="composer-toolbar">
           <div className="model-select">
-            <button className="chip" onClick={() => setModelOpen((v) => !v)}>
+            <button className="chip" onClick={() => { setModelOpen((v) => !v); setModelFilter('') }}>
               <span className="chip-dot" />
               {currentModel ? modelLabel(currentModel, catalog) : '未配置模型 — 去设置添加 provider'}
               <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
@@ -153,8 +168,19 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
             </button>
             {modelOpen && (
               <div className="model-menu">
-                {allModels.length === 0 && <div className="model-menu-empty">暂无可用模型：请到「设置 → 模型供应商」添加并保存</div>}
-                {allModels.map((m) => (
+                <input
+                  className="model-menu-search"
+                  autoFocus
+                  placeholder="搜索模型（提供商 / 模型ID）…"
+                  value={modelFilter}
+                  onChange={(e) => setModelFilter(e.target.value)}
+                />
+                {filteredModels.length === 0 && (
+                  <div className="model-menu-empty">
+                    {allModels.length === 0 ? '暂无可用模型：请到「设置 → 模型供应商」添加并保存' : '没有匹配的模型'}
+                  </div>
+                )}
+                {filteredModels.map((m) => (
                   <button
                     key={`${m.providerID}/${m.modelID}`}
                     className={`model-menu-item ${currentModel?.providerID === m.providerID && currentModel?.modelID === m.modelID ? 'on' : ''}`}
@@ -253,13 +279,22 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
               }
             }}
           />
-          <button className="send-btn" onClick={() => void doSend()} disabled={(!draft.trim() && attachments.images.length === 0) || busy}>
-            发送
-          </button>
+          {busy ? (
+            <button className="send-btn stop" title="停止生成" onClick={() => void stopGroup(project.id)}>
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+                <rect x="6" y="6" width="12" height="12" rx="2" />
+              </svg>
+            </button>
+          ) : (
+            <button className="send-btn" onClick={() => void doSend()} disabled={!draft.trim() && attachments.images.length === 0}>
+              发送
+            </button>
+          )}
         </div>
       </div>
 
       {drawer && <GroupInfoDrawer project={project} tasks={projectTasks} onClose={() => setDrawer(false)} />}
+      {historyOpen && <ChatHistoryDrawer projectId={project.id} onClose={() => setHistoryOpen(false)} />}
       {void agents}
     </div>
   )
@@ -293,6 +328,7 @@ function GroupBubble(props: { msg: GroupMessage }): React.JSX.Element {
       <div className="msg-stack">
         {!mine && <div className="msg-sender">{msg.sender_name}</div>}
         <div className={`bubble ${mine ? 'user' : 'assistant'}`}>
+          {msg.role === 'assistant' && <AssistantExtras reasoning={msg.reasoning} tools={msg.tools} />}
           <MsgImages images={msg.images || []} />
           {msg.role === 'assistant' ? (
             <Markdown text={msg.text} />

@@ -3,10 +3,10 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { buildPaths, ensureDirs, jeffRoot, type JeffPaths } from './paths.js'
 import { openDb, type DB } from './db/db.js'
-import { agentRepo, kvRepo, chatMessageRepo, projectRepo, type AgentRow } from './db/repos.js'
+import { agentRepo, kvRepo, chatMessageRepo, projectRepo, projectAgentRepo, type AgentRow } from './db/repos.js'
 import { SidecarManager } from './sidecar/manager.js'
-import { OcClient } from './oc/client.js'
-import { writeSidecarConfig, migrateProviders, firstEnabledModel, type ProviderSetting } from './oc/configWriter.js'
+import { OcClient, type SessionInfo } from './oc/client.js'
+import { writeSidecarConfig, migrateProviders, firstEnabledModel, configuredModelOptions, type ProviderSetting } from './oc/configWriter.js'
 import { AgentRegistry, XIAOJIE_INSTRUCTIONS, agentSlug } from './agents/registry.js'
 import { XIAOJIE_ID } from './ipc/contract.js'
 import { ToolBridge, renderBridgePlugin } from './tools/bridge.js'
@@ -24,7 +24,7 @@ import { probeMcpAll } from './mcp/probe.js'
 import type { SkillsBackupReport, SkillsRestoreStage, SkillsRestoreApply } from './ipc/contract.js'
 import { SyncEngine, type WebdavConfig, type SyncReport } from './sync/engine.js'
 
-export const APP_VERSION = '1.2.0'
+export const APP_VERSION = '1.3.0'
 
 export type { McpServerCfg } from './mcp/parse.js'
 export { buildPaths, ensureDirs, jeffRoot } from './paths.js'
@@ -214,6 +214,108 @@ export class JeffCore extends EventEmitter {
       '【长期记忆与规则（Jeff）】以下是关于用户/项目的持久记忆与 AGENTS.md 规则，供你参考；如与当前对话冲突，以对话为准，记忆可用 jeff_memory 工具更新。',
       ...blocks,
     ].join('\n')
+  }
+
+  // ---------- 历史会话（聊天记录抽屉） ----------
+  /** 某智能体的全部会话（opencode 会话列表按 agent slug/标题过滤 + 当前会话标记） */
+  async listAgentSessions(agentId: string): Promise<Array<{ id: string; title: string; updatedAt: number; active: boolean; agentId: string; agentName: string }>> {
+    const agent = agentRepo(this.db).get(agentId)
+    if (!agent) throw new Error('智能体不存在')
+    const slug = agentSlug(agentId)
+    const current = this.privateChat.getSessionId(agentId)
+    const all = await this.oc.listSessions()
+    const prefix = `与 ${agent.name} 的聊天`
+    return all
+      .filter((s) => {
+        if (s.id === current) return true
+        const info = s as { agent?: string; title?: string; time?: { updated?: number } }
+        return info.agent === slug || (typeof info.title === 'string' && info.title.startsWith(prefix))
+      })
+      .map((s) => ({
+        id: s.id,
+        title: s.title || '（未命名会话）',
+        updatedAt: (s as { time?: { updated?: number } }).time?.updated || 0,
+        active: s.id === current,
+        agentId,
+        agentName: agent.name,
+      }))
+      .sort((a, b) => b.updatedAt - a.updatedAt)
+  }
+
+  /** 项目群的历史会话（按成员分组；含 opencode 目录会话与 kv 已知会话） */
+  async listGroupSessions(projectId: string): Promise<Array<{ id: string; title: string; updatedAt: number; active: boolean; agentId: string; agentName: string }>> {
+    const project = projectRepo(this.db).get(projectId)
+    if (!project) throw new Error('项目不存在')
+    const members = projectAgentRepo(this.db).listByProject(projectId)
+    const out: Array<{ id: string; title: string; updatedAt: number; active: boolean; agentId: string; agentName: string }> = []
+    const dir = project.workspace_dir || undefined
+    let remote: SessionInfo[] = []
+    try {
+      remote = await this.oc.listSessions(dir)
+    } catch {
+      remote = []
+    }
+    const known = new Set<string>()
+    for (const m of members) {
+      const agent = agentRepo(this.db).get(m.agent_id)
+      const slug = agent ? agentSlug(m.agent_id) : ''
+      const current = this.groupChat.getSessionId(projectId, m.agent_id)
+      const rows = remote.filter((s) => {
+        if (known.has(s.id) && s.id !== current) return false
+        return (slug && (s as { agent?: string }).agent === slug) || s.id === current
+      })
+      // 该成员没有任何远端会话时，至少显示 kv 指向的当前会话
+      const fallback = rows.length === 0 && current ? [{ id: current, title: '', time: { updated: 0 } } as unknown as SessionInfo] : rows
+      for (const s of fallback) {
+        if (known.has(s.id)) continue
+        known.add(s.id)
+        out.push({
+          id: s.id,
+          title: s.title || `群「${project.title}」· ${agent?.name || m.agent_id}`,
+          updatedAt: (s as { time?: { updated?: number } }).time?.updated || 0,
+          active: s.id === current,
+          agentId: m.agent_id,
+          agentName: agent?.name || m.agent_id,
+        })
+      }
+    }
+    return out.sort((a, b) => b.updatedAt - a.updatedAt)
+  }
+
+  /** 预览任意会话完整历史 */
+  async previewSession(sessionId: string) {
+    return this.privateChat.mapSessionMessages(sessionId)
+  }
+
+  /** 切换当前会话（私聊：该 agent；群聊：项目内指定成员） */
+  activateSession(scope: 'private' | 'group', agentId: string, sessionId: string, projectId?: string): void {
+    const kv = this.kv()
+    if (scope === 'group' && projectId) {
+      kv.set(`session:group:${projectId}:${agentId}`, sessionId)
+    } else {
+      kv.set(`session:private:${agentId}`, sessionId)
+    }
+  }
+
+  /** 删除会话；若是某处的当前会话则清掉指针（避免悬空） */
+  async deleteSession(sessionId: string): Promise<void> {
+    await this.oc.deleteSession(sessionId)
+    const kv = this.kv()
+    const rows = kv.prefixScan('session:')
+    for (const [key, value] of rows) {
+      if (value === sessionId) kv.delete(key)
+    }
+  }
+
+  /** 已配置模型选项（只含启用提供商的模型；composer/智能体表单共用） */
+  configuredModels() {
+    return configuredModelOptions(this.listProviders())
+  }
+
+  /** 停止群聊当前生成（abort 最近路由的会话） */
+  async abortGroup(projectId: string): Promise<void> {
+    const sessionId = this.kv().get(`session:group:last:${projectId}`)
+    if (sessionId) await this.oc.abortSession(sessionId)
   }
 
   /** AGENTS.md 注入块：用户级（<data>/AGENTS.md）+ 项目级（工作空间目录下 AGENTS.md，存在才注入） */
@@ -445,7 +547,8 @@ export class JeffCore extends EventEmitter {
   }
 
   /** SSE 事件 → bus（UI 刷新信号 + 流式增量） */
-  private streamParts = new Map<string, { text: string }>() // key: sessionId:messageId:partId
+  private streamParts = new Map<string, { text: string; reasoning: string }>() // key: sessionId:messageId:partId
+  private streamTools = new Map<string, Map<string, { tool: string; status?: string }>>() // key: sessionId:messageId → partId → tool
   private msgRoles = new Map<string, string>() // messageId → role（过滤用户消息的 part 回显）
 
   private handleOcEvent(evt: { type?: string; properties?: Record<string, unknown> }): void {
@@ -466,28 +569,46 @@ export class JeffCore extends EventEmitter {
       }
     }
 
-    // 流式：text part 增量（field==='text' 才是正文）
+    // 流式：text / reasoning part 增量（field==='text' 正文，'reasoning' 思考）
     if (evt.type === 'message.part.delta') {
       const { messageID, partID, field, delta } = props as { messageID?: string; partID?: string; field?: string; delta?: string }
-      if (!messageID || !partID || field !== 'text' || !delta) return
+      if (!messageID || !partID || !delta) return
+      if (field !== 'text' && field !== 'reasoning') return
       if (this.msgRoles.get(messageID) && this.msgRoles.get(messageID) !== 'assistant') return
       const key = `${sessionId}:${messageID}:${partID}`
-      const cur = this.streamParts.get(key) || { text: '' }
-      cur.text += delta
+      const cur = this.streamParts.get(key) || { text: '', reasoning: '' }
+      if (field === 'text') cur.text += delta
+      else cur.reasoning += delta
       this.streamParts.set(key, cur)
       this.emitStream(sessionId, messageID)
       return
     }
 
-    // 流式纠偏：part.updated 带全量文本，比增量拼接长则以它为准
+    // 流式纠偏：part.updated 带全量文本，比增量拼接长则以它为准；tool part 更新运行状态
     if (evt.type === 'message.part.updated') {
-      const part = props.part as { id?: string; messageID?: string; type?: string; text?: string } | undefined
-      if (part?.type === 'text' && part.id && part.messageID && typeof part.text === 'string') {
-        if (this.msgRoles.get(part.messageID) && this.msgRoles.get(part.messageID) !== 'assistant') return
+      const part = props.part as { id?: string; messageID?: string; type?: string; text?: string; tool?: string; state?: { status?: string } } | undefined
+      if (!part?.id || !part.messageID) return
+      if (this.msgRoles.get(part.messageID) && this.msgRoles.get(part.messageID) !== 'assistant') return
+      if (part.type === 'text' && typeof part.text === 'string') {
         const key = `${sessionId}:${part.messageID}:${part.id}`
         const cur = this.streamParts.get(key)
         if (cur && part.text.length >= cur.text.length) cur.text = part.text
-        else if (!cur && part.text) this.streamParts.set(key, { text: part.text })
+        else if (!cur && part.text) this.streamParts.set(key, { text: part.text, reasoning: '' })
+        this.emitStream(sessionId, part.messageID)
+        return
+      }
+      if (part.type === 'reasoning' && typeof part.text === 'string') {
+        const key = `${sessionId}:${part.messageID}:${part.id}`
+        const cur = this.streamParts.get(key)
+        if (cur && part.text.length >= cur.reasoning.length) cur.reasoning = part.text
+        else if (!cur && part.text) this.streamParts.set(key, { text: '', reasoning: part.text })
+        this.emitStream(sessionId, part.messageID)
+        return
+      }
+      if (part.type === 'tool' && part.tool) {
+        const tools = this.streamTools.get(`${sessionId}:${part.messageID}`) || new Map()
+        tools.set(part.id, { tool: part.tool, status: part.state?.status })
+        this.streamTools.set(`${sessionId}:${part.messageID}`, tools)
         this.emitStream(sessionId, part.messageID)
       }
       return
@@ -501,6 +622,9 @@ export class JeffCore extends EventEmitter {
       const resolved = this.resolveSession(sessionId)
       for (const key of Array.from(this.streamParts.keys())) {
         if (key.startsWith(`${sessionId}:`)) this.streamParts.delete(key)
+      }
+      for (const key of Array.from(this.streamTools.keys())) {
+        if (key.startsWith(`${sessionId}:`)) this.streamTools.delete(key)
       }
       if (!resolved) return
       if (resolved.kind === 'group') {
@@ -523,14 +647,21 @@ export class JeffCore extends EventEmitter {
       }
       return
     }
-    let text = ''
+    const texts: string[] = []
+    const reasonings: string[] = []
     for (const [key, v] of this.streamParts) {
-      if (key.startsWith(`${sessionId}:${messageId}:`)) text += (text ? '\n' : '') + v.text
+      if (!key.startsWith(`${sessionId}:${messageId}:`)) continue
+      if (v.text) texts.push(v.text)
+      if (v.reasoning) reasonings.push(v.reasoning)
     }
+    const text = texts.join('\n')
+    const reasoning = reasonings.join('\n')
+    const tools = this.streamTools.get(`${sessionId}:${messageId}`)
+    const toolList = tools ? Array.from(tools.values()) : undefined
     if (resolved.kind === 'group') {
-      this.bus.emit('chat-stream', { kind: 'group', projectId: resolved.projectId, agentId: resolved.agentId, messageId, text, done: false })
+      this.bus.emit('chat-stream', { kind: 'group', projectId: resolved.projectId, agentId: resolved.agentId, messageId, text, reasoning: reasoning || undefined, tools: toolList, done: false })
     } else {
-      this.bus.emit('chat-stream', { kind: 'private', agentId: resolved.agentId, messageId, text, done: false })
+      this.bus.emit('chat-stream', { kind: 'private', agentId: resolved.agentId, messageId, text, reasoning: reasoning || undefined, tools: toolList, done: false })
     }
   }
 
@@ -711,7 +842,7 @@ export { registerProjectTools, taskCardMessage } from './tools/projectTools.js'
 export { MemoryStore, parseEntries, matchUnique, type MemoryScope, type MemoryOp, type MemoryResult } from './memory/store.js'
 export { SyncEngine, type WebdavConfig, type SyncReport } from './sync/engine.js'
 export { probeMcpServer, probeMcpAll, type McpProbe } from './mcp/probe.js'
-export { migrateProviders, firstEnabledModel, thinkingVariant, API_FORMAT_NPM, ANTHROPIC_BUDGET } from './oc/configWriter.js'
+export { migrateProviders, firstEnabledModel, configuredModelOptions, thinkingVariant, API_FORMAT_NPM, ANTHROPIC_BUDGET, type ConfiguredModelOption } from './oc/configWriter.js'
 
 export { SessionIndex, cjkSplit, buildMatchQuery } from './memory/indexer.js'
 export { parseMcpServerJson } from './mcp/parse.js'

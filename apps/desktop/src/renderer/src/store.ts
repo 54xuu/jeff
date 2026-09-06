@@ -14,6 +14,10 @@ export interface StreamState {
   senderName: string
   senderAvatar: string
   text: string
+  /** 思考过程（流式累积） */
+  reasoning?: string
+  /** 流式中出现的工具调用（part.updated 推送） */
+  tools?: Array<{ tool: string; status?: string }>
 }
 
 interface JeffState {
@@ -43,6 +47,7 @@ interface JeffState {
   sendGroup: (projectId: string, text: string, model?: { providerID: string; modelID: string }, images?: ChatImage[], variant?: string) => Promise<void>
   newAgentSession: (agentId: string) => Promise<void>
   stopAgent: (agentId: string) => Promise<void>
+  stopGroup: (projectId: string) => Promise<void>
   refreshAppInfo: () => Promise<void>
   refreshSettings: () => Promise<void>
   refreshCatalog: () => Promise<void>
@@ -162,6 +167,10 @@ export const useStore = create<JeffState>((set, get) => ({
     await api.invoke(IPC.chatStop, { agentId })
   },
 
+  stopGroup: async (projectId) => {
+    await api.invoke(IPC.groupStop, { projectId })
+  },
+
   refreshAppInfo: async () => {
     const appInfo = await api.invoke<AppInfo>(IPC.appInfo)
     set({ appInfo })
@@ -192,7 +201,7 @@ export const useStore = create<JeffState>((set, get) => ({
   handlePush: (what, payload) => {
     const { active } = get()
     if (what === 'chat-stream') {
-      const p = (payload || {}) as { kind: 'private' | 'group'; agentId: string; projectId?: string; text: string; done: boolean }
+      const p = (payload || {}) as { kind: 'private' | 'group'; agentId: string; projectId?: string; text: string; reasoning?: string; tools?: Array<{ tool: string; status?: string }>; done: boolean }
       const key = p.kind === 'group' ? `group:${p.projectId}` : `agent:${p.agentId}`
       if (p.done) {
         set((s) => {
@@ -206,9 +215,29 @@ export const useStore = create<JeffState>((set, get) => ({
         set((s) => ({
           streaming: {
             ...s.streaming,
-            [key]: { agentId: p.agentId, projectId: p.projectId, senderName: agent?.name || '对方', senderAvatar: agent?.avatar || '🤖', text: p.text },
+            [key]: { agentId: p.agentId, projectId: p.projectId, senderName: agent?.name || '对方', senderAvatar: agent?.avatar || '🤖', text: p.text, ...(p.reasoning ? { reasoning: p.reasoning } : {}), ...(p.tools?.length ? { tools: p.tools } : {}) },
           },
         }))
+      }
+    } else if (what === 'menu-action') {
+      // 应用菜单动作（主进程转发）
+      const { action, value } = (payload || {}) as { action: string; value?: string }
+      if (action === 'settings') {
+        set({ tab: 'settings' })
+      } else if (action === 'theme' && (value === 'light' || value === 'dark' || value === 'system')) {
+        void api.invoke(IPC.settingsSet, { theme: value })
+        applyTheme(value)
+        void get().refreshSettings()
+      } else if (action === 'new-session') {
+        const { active } = get()
+        if (active?.kind === 'agent') void get().newAgentSession(active.id)
+      } else if (action === 'new-group') {
+        window.dispatchEvent(new CustomEvent('jeff:new-group'))
+      } else if (action === 'usage') {
+        const xiaojie = get().agents.find((a) => a.builtin)
+        if (xiaojie) {
+          set({ tab: 'chats', active: { kind: 'agent', id: xiaojie.id } })
+        }
       }
     } else if (what === 'chat-updated') {
       const { agentId } = (payload || {}) as { agentId?: string; sessionId?: string }

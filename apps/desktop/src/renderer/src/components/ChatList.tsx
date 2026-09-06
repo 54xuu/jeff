@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useStore } from '../store'
 import Avatar from './Avatar'
 import CreateGroupModal from './CreateGroupModal'
@@ -9,6 +9,13 @@ export default function ChatList(): React.JSX.Element {
   const [menuOpen, setMenuOpen] = useState(false)
   const xiaojie = agents.find((a) => a.builtin)
   const others = agents.filter((a) => !a.builtin)
+
+  // 应用菜单「发起群聊…」→ 打开建群弹窗
+  useEffect(() => {
+    const open = () => setCreating(true)
+    window.addEventListener('jeff:new-group', open)
+    return () => window.removeEventListener('jeff:new-group', open)
+  }, [])
 
   return (
     <div className="chat-list">

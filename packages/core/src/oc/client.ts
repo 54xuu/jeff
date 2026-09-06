@@ -41,8 +41,9 @@ export class OcClient extends EventEmitter {
     return this.req('GET', `/session/${sessionId}`)
   }
 
-  async listSessions(): Promise<SessionInfo[]> {
-    return this.req('GET', '/session')
+  async listSessions(directory?: string): Promise<SessionInfo[]> {
+    const qs = directory ? `?directory=${encodeURIComponent(directory)}` : ''
+    return this.req('GET', `/session${qs}`)
   }
 
   async deleteSession(sessionId: string): Promise<void> {

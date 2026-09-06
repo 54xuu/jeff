@@ -45,9 +45,15 @@ export const IPC = {
   taskDelete: 'task:delete',
   groupHistory: 'group:history',
   groupSend: 'group:send',
+  groupStop: 'group:stop',
   providersList: 'providers:list',
   providersSave: 'providers:save',
   providersCatalog: 'providers:catalog',
+  modelsConfigured: 'models:configured',
+  sessionsList: 'sessions:list',
+  sessionPreview: 'session:preview',
+  sessionActivate: 'session:activate',
+  sessionDelete: 'session:delete',
   settingsGet: 'settings:get',
   settingsSet: 'settings:set',
   mcpList: 'mcp:list',
@@ -148,6 +154,19 @@ export interface ProviderCatalogItem {
   id: string
   name: string
   models: ModelOption[]
+}
+
+/** 历史会话简要（聊天记录抽屉） */
+export interface SessionBrief {
+  id: string
+  title: string
+  /** 最近更新时间（ms） */
+  updatedAt: number
+  /** 是否为当前会话 */
+  active: boolean
+  /** 归属 agent（群聊抽屉分组用） */
+  agentId: string
+  agentName: string
 }
 
 export interface AppSettings {
@@ -261,9 +280,15 @@ export type InvokeMap = {
   [IPC.taskDelete]: { id: string }
   [IPC.groupHistory]: { projectId: string }
   [IPC.groupSend]: { projectId: string; text: string; model?: { providerID: string; modelID: string }; variant?: string; images?: ChatImage[] }
+  [IPC.groupStop]: { projectId: string }
   [IPC.providersList]: void
   [IPC.providersSave]: { providers: ProviderSetting[] }
   [IPC.providersCatalog]: void
+  [IPC.modelsConfigured]: void
+  [IPC.sessionsList]: { agentId?: string; projectId?: string }
+  [IPC.sessionPreview]: { sessionId: string }
+  [IPC.sessionActivate]: { scope: 'private' | 'group'; agentId: string; projectId?: string; sessionId: string }
+  [IPC.sessionDelete]: { sessionId: string }
   [IPC.settingsGet]: void
   [IPC.settingsSet]: { theme?: AppSettings['theme'] }
   [IPC.mcpList]: void
@@ -296,5 +321,5 @@ export type EventPayloads = {
   [IPC.evDataChanged]: { what: 'agents' | 'projects' | 'tasks' | 'settings' }
   [IPC.evGroupUpdated]: { projectId: string }
   [IPC.evSync]: { state: string; detail?: string }
-  [IPC.evChatStream]: { kind: 'private' | 'group'; agentId: string; projectId?: string; messageId: string; text: string; done: boolean }
+  [IPC.evChatStream]: { kind: 'private' | 'group'; agentId: string; projectId?: string; messageId: string; text: string; reasoning?: string; currentTool?: string; tools?: Array<{ tool: string; status?: string }>; done: boolean }
 }

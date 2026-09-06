@@ -10,6 +10,8 @@ export interface ChatMsg {
   agentId?: string
   text: string
   time: number
+  /** 思考过程（reasoning parts，按顺序拼接的段落） */
+  reasoning?: string[]
   tools?: Array<{ tool: string; status?: string; output?: string; error?: string }>
   /** 消息携带的图片（用户发送或历史回放） */
   images?: Array<{ mime: string; dataUrl: string }>
@@ -105,11 +107,14 @@ export class PrivateChat {
       const role = info.role === 'user' ? 'user' : info.role === 'assistant' ? 'assistant' : 'system'
       const parts = m.parts || (info as { parts?: unknown[] }).parts || []
       let text = ''
+      const reasoning: string[] = []
       const tools: NonNullable<ChatMsg['tools']> = []
       const images: NonNullable<ChatMsg['images']> = []
       for (const p of parts as Array<Record<string, unknown>>) {
         if (p.type === 'text' && !p.synthetic && typeof p.text === 'string' && p.text.trim()) {
           text += (text ? '\n' : '') + p.text
+        } else if (p.type === 'reasoning' && typeof p.text === 'string' && p.text.trim()) {
+          reasoning.push(p.text)
         } else if (p.type === 'file' && typeof p.url === 'string' && p.url.startsWith('data:')) {
           images.push({ mime: String(p.mime || 'image/png'), dataUrl: p.url })
         } else if (p.type === 'tool') {
@@ -124,6 +129,7 @@ export class PrivateChat {
         agentId: info.agent,
         text,
         time: info.time?.created || 0,
+        ...(reasoning.length ? { reasoning } : {}),
         ...(tools.length ? { tools } : {}),
         ...(images.length ? { images } : {}),
       })

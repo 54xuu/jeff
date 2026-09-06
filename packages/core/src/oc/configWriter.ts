@@ -79,6 +79,40 @@ export function firstEnabledModel(providers: ProviderSetting[]): { providerID: s
   return null
 }
 
+/** UI 侧模型选项（聊天 composer / 智能体表单共用） */
+export interface ConfiguredModelOption {
+  providerID: string
+  modelID: string
+  /** 「{提供商名称} / {模型ID}」 */
+  label: string
+  providerName: string
+  attachment?: boolean
+  contextLimit?: number
+  outputLimit?: number
+  thinkingTiers: string[]
+}
+
+/** 从供应商配置生成模型选项（只含启用提供商的模型；不调 opencode 平台接口） */
+export function configuredModelOptions(providers: ProviderSetting[]): ConfiguredModelOption[] {
+  const out: ConfiguredModelOption[] = []
+  for (const p of providers) {
+    if (!p.enabled) continue
+    for (const m of p.models) {
+      out.push({
+        providerID: p.id,
+        modelID: m.id,
+        label: `${p.name || p.id} / ${m.id}`,
+        providerName: p.name || p.id,
+        ...(m.attachment ? { attachment: true } : {}),
+        ...(m.contextLimit ? { contextLimit: m.contextLimit } : {}),
+        ...(m.outputLimit ? { outputLimit: m.outputLimit } : {}),
+        thinkingTiers: m.thinkingTiers ?? [],
+      })
+    }
+  }
+  return out
+}
+
 /** 单个模型的思考 variant 配置（按 API 格式映射） */
 export function thinkingVariant(apiFormat: ApiFormat, tier: ThinkingTier): Record<string, unknown> | undefined {
   if (tier === 'none') {

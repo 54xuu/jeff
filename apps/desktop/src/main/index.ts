@@ -62,16 +62,59 @@ if (!gotLock) {
   })
 }
 
-/** 中文应用菜单（不设置则显示 Electron 默认英文菜单） */
+/** 菜单动作 → 渲染层（新会话/发起群聊/设置/主题/使用说明） */
+function menuAction(action: string, value?: string): void {
+  broadcast('menu-action', { action, value })
+}
+
+/** agent 应用型菜单（参考 Codex / opencode desktop 的精简风格，去掉编辑器式的窗口组） */
 function setupAppMenu(): void {
   const template: MenuItemConstructorOptions[] = [
     {
-      label: '文件',
+      label: 'Jeff',
       submenu: [
+        {
+          label: '关于 Jeff',
+          click: () => {
+            void dialog.showMessageBox({
+              type: 'info',
+              title: '关于 Jeff',
+              message: `Jeff ${app.getVersion()}`,
+              detail: '个人「Code + Work」agent 工作台\nVibe Coding · 项目管理 · 文档产出\n引擎：opencode sidecar',
+            })
+          },
+        },
+        {
+          label: '设置…',
+          accelerator: 'CmdOrCtrl+,',
+          click: () => menuAction('settings'),
+        },
+        { type: 'separator' },
         {
           label: '退出 Jeff',
           accelerator: 'CmdOrCtrl+Q',
           click: () => app.quit(),
+        },
+      ],
+    },
+    {
+      label: '文件',
+      submenu: [
+        {
+          label: '新建会话',
+          accelerator: 'CmdOrCtrl+N',
+          click: () => menuAction('new-session'),
+        },
+        {
+          label: '发起群聊…',
+          accelerator: 'CmdOrCtrl+Shift+N',
+          click: () => menuAction('new-group'),
+        },
+        { type: 'separator' },
+        {
+          label: '打开小杰',
+          accelerator: 'CmdOrCtrl+1',
+          click: () => menuAction('usage'),
         },
       ],
     },
@@ -88,13 +131,25 @@ function setupAppMenu(): void {
       ],
     },
     {
-      label: '视图',
+      label: '显示',
       submenu: [
-        { label: '重新加载', accelerator: 'CmdOrCtrl+R', role: 'reload' },
-        { label: '强制刷新', accelerator: 'CmdOrCtrl+Shift+R', role: 'forceReload' },
+        {
+          label: '亮色主题',
+          accelerator: 'CmdOrCtrl+Shift+L',
+          click: () => menuAction('theme', 'light'),
+        },
+        {
+          label: '深夜主题',
+          accelerator: 'CmdOrCtrl+Shift+D',
+          click: () => menuAction('theme', 'dark'),
+        },
+        {
+          label: '跟随系统',
+          click: () => menuAction('theme', 'system'),
+        },
         { type: 'separator' },
-        { label: '放大', role: 'zoomIn' },
-        { label: '缩小', role: 'zoomOut' },
+        { label: '放大', accelerator: 'CmdOrCtrl+=', role: 'zoomIn' },
+        { label: '缩小', accelerator: 'CmdOrCtrl+-', role: 'zoomOut' },
         { label: '重置缩放', role: 'resetZoom' },
         { type: 'separator' },
         { label: '全屏', role: 'togglefullscreen' },
@@ -102,25 +157,16 @@ function setupAppMenu(): void {
       ],
     },
     {
-      label: '窗口',
-      submenu: [
-        { label: '最小化', role: 'minimize' },
-        { label: '关闭窗口', accelerator: 'CmdOrCtrl+W', role: 'close' },
-      ],
-    },
-    {
       label: '帮助',
       submenu: [
         {
-          label: '关于 Jeff',
-          click: () => {
-            void dialog.showMessageBox({
-              type: 'info',
-              title: '关于 Jeff',
-              message: `Jeff ${app.getVersion()}`,
-              detail: '个人「开发 + 项目管理」agent 桌面应用\n引擎：opencode sidecar',
-            })
-          },
+          label: '使用说明',
+          accelerator: 'CmdOrCtrl+/',
+          click: () => menuAction('usage'),
+        },
+        {
+          label: 'GitHub 仓库',
+          click: () => void shell.openExternal('https://github.com/54xuu/jeff'),
         },
       ],
     },

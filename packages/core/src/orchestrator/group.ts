@@ -124,8 +124,9 @@ export class GroupChat {
     const target = agents.get(targetId)
     if (!target) throw new Error(`路由目标不存在: ${targetId}`)
 
-    // 3. 会话发送（system 注入群上下文）
+    // 3. 会话发送（system 注入群上下文）；记录 last 会话供「停止生成」abort
     const sessionId = await this.ensureSession(projectId, targetId)
+    kvRepo(this.db).set(`session:group:last:${projectId}`, sessionId)
     let reply: AssistantInfo
     const memoryBlock = this.hooks?.buildMemory?.(targetId, projectId)
     const system = memoryBlock ? `${this.buildBriefing(projectId, targetId)}\n\n${memoryBlock}` : this.buildBriefing(projectId, targetId)
@@ -140,28 +141,45 @@ export class GroupChat {
         ...(input.variant ? { variant: input.variant } : {}),
       })
     } catch (err) {
+      const msg = String((err as Error)?.message || err)
+      const stopped = /abort/i.test(msg)
       chatMessageRepo(this.db).add({
         scope,
         sender_type: 'system',
-        content: `⚠️ ${target.name} 处理消息失败：${String((err as Error)?.message || err).slice(0, 200)}`,
+        content: stopped ? '⏹️ 已停止生成' : `⚠️ ${target.name} 处理消息失败：${msg.slice(0, 200)}`,
       })
-      throw err
+      if (!stopped) throw err
+      return { routedTo: targetId }
     }
 
-    // 4. 回帖（提取文本 + 工具摘要）
+    // 4. 回帖（文本 + 思考/工具入 meta，气泡内折叠区展示）
     const textParts = (reply.parts || []).filter((p) => p.type === 'text') as Array<{ type: 'text'; text: string }>
-    const toolParts = (reply.parts || []).filter((p) => p.type === 'tool') as Array<{ type: 'tool'; tool: string; state?: { output?: string } }>
-    let content = textParts.map((p) => p.text).join('\n')
-    if (toolParts.length > 0) {
-      const toolLine = toolParts.map((t) => `🔧 ${t.tool}`).join('、')
-      content = `${toolLine}\n${content}`
-    }
+    const reasoningParts = (reply.parts || [])
+      .filter((p) => p.type === 'reasoning')
+      .map((p) => (p as { text?: string }).text || '')
+      .filter(Boolean)
+    const toolParts = (reply.parts || []).filter((p) => p.type === 'tool') as Array<{ type: 'tool'; tool: string; state?: { status?: string; output?: string; error?: string } }>
+    const content = textParts.map((p) => p.text).join('\n')
     chatMessageRepo(this.db).add({
       scope,
       sender_type: 'agent',
       sender_id: targetId,
       content,
-      meta: { sessionId, messageId: reply.id },
+      meta: {
+        sessionId,
+        messageId: reply.id,
+        ...(reasoningParts.length ? { reasoning: reasoningParts } : {}),
+        ...(toolParts.length
+          ? {
+              tools: toolParts.map((t) => ({
+                tool: t.tool,
+                status: t.state?.status,
+                output: (t.state?.output || '').slice(0, 2000),
+                error: t.state?.error,
+              })),
+            }
+          : {}),
+      },
     })
     this.hooks?.afterReply?.({ kind: 'group', projectId, agentId: targetId })
     return { routedTo: targetId }
@@ -178,6 +196,12 @@ export class GroupChat {
       const metaImages = Array.isArray(meta.images)
         ? meta.images.filter((x): x is { mime: string; dataUrl: string } => !!x && typeof x === 'object' && typeof (x as { dataUrl?: unknown }).dataUrl === 'string')
         : undefined
+      const metaReasoning = Array.isArray(meta.reasoning) ? (meta.reasoning as string[]).filter((x) => typeof x === 'string' && x.trim()) : undefined
+      const metaTools = Array.isArray(meta.tools)
+        ? (meta.tools as Array<{ tool?: string; status?: string; output?: string; error?: string }>)
+            .filter((t) => t && typeof t.tool === 'string')
+            .map((t) => ({ tool: t.tool as string, status: t.status, output: t.output, error: t.error }))
+        : undefined
       return {
         id: r.id,
         role: r.sender_type === 'user' ? 'user' : r.sender_type === 'agent' ? 'assistant' : 'system',
@@ -185,6 +209,8 @@ export class GroupChat {
         text: r.content,
         time: r.created_at,
         meta,
+        ...(metaReasoning?.length ? { reasoning: metaReasoning } : {}),
+        ...(metaTools?.length ? { tools: metaTools } : {}),
         ...(metaImages && metaImages.length ? { images: metaImages } : {}),
         sender_name: r.sender_type === 'user' ? '我' : a?.name || '系统',
         sender_avatar: r.sender_type === 'user' ? '🧑' : a?.avatar || '⚙️',

@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useStore } from '../store'
-import { api } from '../api'
 import { IPC, type ChatMsg, type ModelOption, type ProviderCatalogItem } from '@jeff/core'
 import Avatar from './Avatar'
 import { Markdown } from './Markdown'
-import { useImages, ImagePreviews, MsgImages } from './ChatShared'
+import { useImages, ImagePreviews, MsgImages, AssistantExtras } from './ChatShared'
+import ChatHistoryDrawer from './ChatHistoryDrawer'
 
 export default function ChatWindow(props: { agentId: string }): React.JSX.Element {
   const { agents, messages, sending, streaming, loadHistory, sendAgent, newAgentSession, stopAgent, catalog, settings } = useStore()
@@ -17,7 +17,9 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
   const [modelOverride, setModelOverride] = useState<{ providerID: string; modelID: string } | null>(null)
   const [variant, setVariant] = useState<string>('')
   const [modelOpen, setModelOpen] = useState(false)
+  const [modelFilter, setModelFilter] = useState('')
   const [variantOpen, setVariantOpen] = useState(false)
+  const [historyOpen, setHistoryOpen] = useState(false)
   const [dragOver, setDragOver] = useState(false)
   const attachments = useImages()
   const bodyRef = useRef<HTMLDivElement>(null)
@@ -33,6 +35,11 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
   }, [msgs.length, sendingNow, stream?.text])
 
   const allModels: ModelOption[] = useMemo(() => catalog.flatMap((c) => c.models), [catalog])
+  const filteredModels = useMemo(() => {
+    const q = modelFilter.trim().toLowerCase()
+    if (!q) return allModels
+    return allModels.filter((m) => m.label.toLowerCase().includes(q) || m.modelID.toLowerCase().includes(q))
+  }, [allModels, modelFilter])
   const currentModel = modelOverride || (agent?.model_provider && agent?.model_id ? { providerID: agent.model_provider, modelID: agent.model_id } : settings?.defaultModel || null)
   // 当前模型的思考档位（来自供应商配置）；切模型时档位复位
   const tiers = useMemo(() => {
@@ -62,14 +69,15 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
           <span className="chat-header-sub">{agent.builtin ? 'Jeff 内置管家' : agent.description || '智能体'}</span>
         </div>
         <div className="chat-header-actions">
-          <button className="text-btn" onClick={() => void newAgentSession(agent.id)} title="开启新会话（旧会话保留）">
+          <button className="text-btn" onClick={() => void newAgentSession(agent.id)} title="开启新会话（旧会话保留在聊天记录里）">
             新会话
           </button>
-          {sendingNow && (
-            <button className="text-btn danger" onClick={() => void stopAgent(agent.id)}>
-              停止
-            </button>
-          )}
+          <button className="icon-btn" title="聊天记录" onClick={() => setHistoryOpen(true)}>
+            <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="9" />
+              <path d="M12 7v5l3.5 2" />
+            </svg>
+          </button>
         </div>
       </div>
 
@@ -100,6 +108,7 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
             <div className="msg-stack">
               <div className="msg-sender">{agent.name}</div>
               <div className="bubble assistant">
+                <AssistantExtras reasoning={stream.reasoning ? [stream.reasoning] : undefined} tools={stream.tools} live />
                 <Markdown text={stream.text || '…'} />
                 <span className="stream-caret" />
               </div>
@@ -111,7 +120,7 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
       <div className="composer">
         <div className="composer-toolbar">
           <div className="model-select">
-            <button className="chip" onClick={() => setModelOpen((v) => !v)}>
+            <button className="chip" onClick={() => { setModelOpen((v) => !v); setModelFilter('') }}>
               <span className="chip-dot" />
               {currentModel ? modelLabel(currentModel, catalog) : '未配置模型 — 去设置添加 provider'}
               <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
@@ -120,8 +129,19 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
             </button>
             {modelOpen && (
               <div className="model-menu">
-                {allModels.length === 0 && <div className="model-menu-empty">暂无可用模型：请到「设置 → 模型供应商」添加并保存</div>}
-                {allModels.map((m) => (
+                <input
+                  className="model-menu-search"
+                  autoFocus
+                  placeholder="搜索模型（提供商 / 模型ID）…"
+                  value={modelFilter}
+                  onChange={(e) => setModelFilter(e.target.value)}
+                />
+                {filteredModels.length === 0 && (
+                  <div className="model-menu-empty">
+                    {allModels.length === 0 ? '暂无可用模型：请到「设置 → 模型供应商」添加并保存' : '没有匹配的模型'}
+                  </div>
+                )}
+                {filteredModels.map((m) => (
                   <button
                     key={`${m.providerID}/${m.modelID}`}
                     className={`model-menu-item ${currentModel?.providerID === m.providerID && currentModel?.modelID === m.modelID ? 'on' : ''}`}
@@ -210,11 +230,21 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
               }
             }}
           />
-          <button className="send-btn" onClick={() => void doSend()} disabled={(!draft.trim() && attachments.images.length === 0) || sendingNow}>
-            发送
-          </button>
+          {sendingNow ? (
+            <button className="send-btn stop" title="停止生成" onClick={() => void stopAgent(agent.id)}>
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+                <rect x="6" y="6" width="12" height="12" rx="2" />
+              </svg>
+            </button>
+          ) : (
+            <button className="send-btn" onClick={() => void doSend()} disabled={!draft.trim() && attachments.images.length === 0}>
+              发送
+            </button>
+          )}
         </div>
       </div>
+
+      {historyOpen && <ChatHistoryDrawer agentId={agent.id} onClose={() => setHistoryOpen(false)} />}
     </div>
   )
 }
@@ -237,6 +267,7 @@ export function MessageBubble(props: { msg: ChatMsg; agentName: string; agentAva
       <div className="msg-stack">
         {!mine && <div className="msg-sender">{agentName}</div>}
         <div className={`bubble ${mine ? 'user' : 'assistant'}`}>
+          {isMarkdown && <AssistantExtras reasoning={msg.reasoning} tools={msg.tools} />}
           <MsgImages images={msg.images || []} />
           {isMarkdown ? (
             <Markdown text={msg.text} />
@@ -245,15 +276,6 @@ export function MessageBubble(props: { msg: ChatMsg; agentName: string; agentAva
               <p key={i}>{line || ' '}</p>
             ))
           )}
-          {msg.tools?.map((t, i) => (
-            <details key={i} className="tool-block">
-              <summary>
-                <span className="tool-tag">工具</span>
-                {t.tool} {t.status ? `· ${t.status}` : ''}
-              </summary>
-              <pre>{t.error ? `错误: ${t.error}` : t.output || '(无输出)'}</pre>
-            </details>
-          ))}
         </div>
       </div>
       {mine && <div className="self-avatar">🧑</div>}
