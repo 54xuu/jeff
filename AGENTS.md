@@ -41,6 +41,23 @@ sudo dpkg -i apps/desktop/release/jeff-desktop_<version>_amd64.deb
 # 然后退出并重新打开 Jeff，在「设置 → 关于」确认版本号
 ```
 
+### 本机打 Windows 安装包（无需 GitHub Actions）
+
+本项目没有原生 Node 模块，Windows 版 `opencode.exe` 由 `scripts/fetch-opencode.mjs` 下载官方预编译二进制（本地已缓存），因此在 Ubuntu 上打 NSIS 安装包的唯一前置是 **wine**（electron-builder 在 Linux 上用它修改 PE 资源）：
+
+```bash
+sudo apt install -y wine64          # 仅首次需要；如索引过期先 apt-get update
+npm run package:win
+# 产物：apps/desktop/release/jeff-Setup-<version>.exe
+```
+
+冒烟验证（可选，不实际安装）：
+
+```bash
+wine64 apps/desktop/release/jeff-Setup-<version>.exe
+# 弹出「Jeff Setup」安装向导即说明包有效；验证后关闭窗口即可
+```
+
 推送 `v*` tag 会触发 GitHub Actions 构建 Windows / Linux 安装包并发布到 Releases。Tag 应与三处 `package.json` 版本一致（如 `v1.7.1`）。
 
 ## 产品心智模型
