@@ -74,3 +74,16 @@ sudo dpkg -i /home/xujian/cdbox/jeff/apps/desktop/release/jeff-desktop_1.3.0_amd
 
 1. **「上一轮同步仍在进行」**：`configureSync` 在 `autoSync` 时会异步 `syncNow`，UI「保存并同步」紧接着再调一次 → 撞重入锁。已改为 configure 只写配置，由 UI 单独触发 sync。
 2. **假 401**：账号密码正确；`webdav` 库的 `createDirectory({ recursive: true })` 与无尾斜杠 `stat('/jeff')` 在该 Apache 上会误回 401。已改为逐级非 recursive MKCOL，存在性检查优先 `stat('/jeff/')`。
+
+## 后续：「立即同步」仍报进行中（同日）
+
+**根因**：`~/.agents/skills` 约 800+ 文件；`backupSkills` 在持有 `syncing` 锁时对每个文件远端 GET。请求挂起或极慢时锁不释放，之后每次「立即同步」都被跳过。本机 `sync:skills:hashes` 为空，等于每轮全量探测。
+
+**修复**（`packages/core/src/sync/engine.ts`）：
+
+1. 实体同步结束后**释放锁**，skills 改为锁外后台 `scheduleSkillsBackup`（不挡「立即同步」返回）。
+2. 本地 hash 未变 → 跳过；**从未备份过**的文件直接 PUT、不做 GET。
+3. 单文件请求加 `AbortSignal.timeout`；手动同步可等待上一轮最多 60s；卡住 >120s 强制解锁。
+4. `listMemoryFiles` 改用带尾斜杠目录路径。
+
+**验证**：`vitest run tests/sync.test.ts` 5/5 通过。需重启 Jeff（旧进程锁状态无法热修）。

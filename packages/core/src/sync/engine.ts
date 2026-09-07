@@ -73,8 +73,16 @@ export interface SyncReport {
  */
 export class SyncEngine {
   private davClient: WebDAVClient | null = null
-  /** 重入锁：同一时刻只允许一个 sync 在跑（自动定时器与手动按钮并发会交叉读写远端） */
+  /** 重入锁：同一时刻只允许一个 sync 在跑 */
   private syncing = false
+  private syncStartedAt = 0
+  private idleWaiters: Array<() => void> = []
+  /** skills 备份独立跑，不占用 sync 锁 */
+  private skillsBusy = false
+  /** 卡住超过此时长则强制释放锁（毫秒） */
+  private static readonly STUCK_MS = 120_000
+  /** 手动同步等待上一轮结束的最长时间 */
+  private static readonly WAIT_MS = 60_000
 
   constructor(
     private db: DB,
@@ -114,6 +122,82 @@ export class SyncEngine {
 
   private base(): string {
     return normalizeWebdavBasePath(this.cfg().basePath)
+  }
+
+  private notifyIdle(): void {
+    const waiters = this.idleWaiters.splice(0)
+    for (const w of waiters) w()
+  }
+
+  private waitUntilIdle(ms: number): Promise<boolean> {
+    if (!this.syncing) return Promise.resolve(true)
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        const idx = this.idleWaiters.indexOf(done)
+        if (idx >= 0) this.idleWaiters.splice(idx, 1)
+        resolve(false)
+      }, ms)
+      const done = () => {
+        clearTimeout(timer)
+        resolve(true)
+      }
+      this.idleWaiters.push(done)
+    })
+  }
+
+  async sync(): Promise<SyncReport> {
+    // 卡住看门狗：上一轮异常挂起时强制解锁
+    if (this.syncing && this.syncStartedAt > 0 && Date.now() - this.syncStartedAt > SyncEngine.STUCK_MS) {
+      this.syncing = false
+      this.notifyIdle()
+    }
+    if (this.syncing) {
+      const freed = await this.waitUntilIdle(SyncEngine.WAIT_MS)
+      if (!freed || this.syncing) {
+        // 再等一轮看门狗
+        if (this.syncing && Date.now() - this.syncStartedAt > SyncEngine.STUCK_MS) {
+          this.syncing = false
+          this.notifyIdle()
+        }
+      }
+      if (this.syncing) {
+        const skipped: SyncReport = {
+          ok: false,
+          at: Date.now(),
+          uploaded: 0,
+          downloaded: 0,
+          conflicts: [],
+          error: '上一轮同步仍在进行，请稍后再试（若长时间卡住请重启 Jeff）',
+        }
+        this.onReport(skipped)
+        return skipped
+      }
+    }
+    this.syncing = true
+    this.syncStartedAt = Date.now()
+    let report: SyncReport
+    try {
+      report = await this.doSync()
+    } finally {
+      this.syncing = false
+      this.syncStartedAt = 0
+      this.notifyIdle()
+    }
+    // skills 在锁外后台跑：避免数百文件 PUT/GET 拖死「立即同步」
+    if (report.ok) this.scheduleSkillsBackup()
+    return report
+  }
+
+  private scheduleSkillsBackup(): void {
+    if (this.skillsBusy) return
+    this.skillsBusy = true
+    void this.backupSkills()
+      .catch(() => {
+        /* backupSkills 内部已写 kv */
+      })
+      .finally(() => {
+        this.skillsBusy = false
+      })
   }
 
   /**
@@ -162,21 +246,6 @@ export class SyncEngine {
       }
     }
     return false
-  }
-
-  async sync(): Promise<SyncReport> {
-    // 重入保护：跳过并发调用（不排队，等下一轮防抖/手动触发）
-    if (this.syncing) {
-      const skipped: SyncReport = { ok: false, at: Date.now(), uploaded: 0, downloaded: 0, conflicts: [], error: '上一轮同步仍在进行，本次跳过' }
-      this.onReport(skipped)
-      return skipped
-    }
-    this.syncing = true
-    try {
-      return await this.doSync()
-    } finally {
-      this.syncing = false
-    }
   }
 
   private async doSync(): Promise<SyncReport> {
@@ -243,14 +312,7 @@ export class SyncEngine {
       // 5. 推远端
       report.uploaded += await this.pushToRemote(merged)
 
-      // 5.5 skills 单向备份（独立于实体同步：失败不拖垮整体，也不写进 report 计数）
-      try {
-        await this.backupSkills()
-      } catch {
-        /* backupSkills 内部已记录失败详情到 kv */
-      }
-
-      // 6. 记录状态
+      // 6. 记录状态（skills 备份由 sync() 在锁外 schedule）
       const nextLast: Record<string, number> = {}
       for (const [id, rec] of merged) nextLast[id] = rec.updatedAt
       this.kvSetJSON('sync:laststate', nextLast)
@@ -450,18 +512,17 @@ export class SyncEngine {
 
   private async listMemoryFiles(base: string, client: WebDAVClient): Promise<string[]> {
     try {
-      const stat = await client.stat(`${base}/memory`)
-      if (!stat) return []
-      const items = (await client.getDirectoryContents(`${base}/memory`)) as Array<{ filename: string; basename: string; type: string }>
+      const dir = `${base}/memory/`
+      const items = (await client.getDirectoryContents(dir)) as Array<{ filename: string; basename: string; type: string }>
       return items.filter((i) => i.type === 'file' && i.basename.endsWith('.md')).map((i) => `memory/${i.basename}`)
     } catch {
       return []
     }
   }
 
-  private async remoteMtime(path: string): Promise<number> {
+  private async remoteMtime(filePath: string): Promise<number> {
     try {
-      const stat = (await this.client().stat(path)) as { lastmod?: string; mtime?: number | Date }
+      const stat = (await this.client().stat(filePath)) as { lastmod?: string; mtime?: number | Date }
       const m = stat?.mtime
       if (typeof m === 'number') return Math.floor(m)
       if (m instanceof Date) return Math.floor(m.getTime())
@@ -516,14 +577,32 @@ export class SyncEngine {
       const files = this.listSkillFiles(root)
       const lastHashes = this.skillsKv<Record<string, string>>('hashes', {})
       const hashes: Record<string, string> = {}
+      const timeoutMs = this.cfg().timeoutMs && this.cfg().timeoutMs > 0 ? this.cfg().timeoutMs : 60_000
       for (const rel of files) {
         const content = fs.readFileSync(path.join(root, rel))
         const hash = contentHash(content)
         hashes[rel] = hash
-        // 远端当前内容（仅当上次备份后有变化才拉取对比，减少请求）
+        // 本地相对上次成功备份未变 → 跳过远端（skills 可达数百/上千文件）
+        if (lastHashes[rel] === hash) {
+          report.skipped += 1
+          continue
+        }
+        const reqOpts = { signal: AbortSignal.timeout(timeoutMs) }
+        const remotePath = `${base}/skills/${rel}`
+        const fileDir = remotePath.slice(0, remotePath.lastIndexOf('/'))
+        if (fileDir !== `${base}/skills`) await this.ensureCollection(fileDir)
+
+        // 从未备份过该文件：直接 PUT，不做远端 GET（首次全量探测会拖死 sync 锁）
+        if (!(rel in lastHashes)) {
+          await client.putFileContents(remotePath, content, { overwrite: true, ...reqOpts })
+          report.uploaded += 1
+          continue
+        }
+
+        // 内容相对上次备份有变：先拉远端旧版归档，再覆盖
         let remoteContent: Buffer | null = null
         try {
-          remoteContent = (await client.getFileContents(`${base}/skills/${rel}`)) as Buffer
+          remoteContent = (await client.getFileContents(remotePath, reqOpts)) as Buffer
         } catch {
           remoteContent = null
         }
@@ -532,16 +611,13 @@ export class SyncEngine {
           continue
         }
         if (remoteContent && remoteContent.length > 0) {
-          // 归档远端旧版本（按相对路径 + 时间戳），永不覆盖 versions
           const verPath = `${base}/skills-versions/${rel}/${Date.now()}`
           const verDir = verPath.slice(0, verPath.lastIndexOf('/'))
           await this.ensureCollection(verDir)
-          await client.putFileContents(verPath, remoteContent, { overwrite: false }).catch(() => {})
+          await client.putFileContents(verPath, remoteContent, { overwrite: false, ...reqOpts }).catch(() => {})
           report.archived += 1
         }
-        const fileDir = `${base}/skills/${rel}`.slice(0, `${base}/skills/${rel}`.lastIndexOf('/'))
-        if (fileDir !== `${base}/skills`) await this.ensureCollection(fileDir)
-        await client.putFileContents(`${base}/skills/${rel}`, content, { overwrite: true })
+        await client.putFileContents(remotePath, content, { overwrite: true, ...reqOpts })
         report.uploaded += 1
       }
       hashes.__uploadedAt = String(Date.now())
