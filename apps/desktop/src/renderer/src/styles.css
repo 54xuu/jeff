@@ -36,9 +36,11 @@
   --space-2: 8px;
   --space-3: 12px;
   --space-4: 16px;
-  --radius-sm: 4px;
+  --radius-xs: 4px;
+  --radius-sm: 6px;
   --radius-md: 8px;
   --radius-lg: 12px;
+  --radius-pill: 999px;
   --btn-h: 36px;
   --input-h: 36px;
 }
@@ -108,7 +110,7 @@ body {
   border: none;
   background: transparent;
   color: var(--rail-text);
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -160,7 +162,7 @@ body {
   color: var(--text-2);
   cursor: pointer;
   padding: 4px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   display: flex;
 }
 
@@ -251,7 +253,7 @@ body {
   font-size: 10px;
   color: var(--text-2);
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   padding: 1px 4px;
 }
 
@@ -343,7 +345,7 @@ body {
   font-size: 12px;
   cursor: pointer;
   padding: 4px 8px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
 }
 
 .text-btn:hover {
@@ -415,7 +417,7 @@ body {
 .self-avatar {
   width: 34px;
   height: 34px;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: color-mix(in srgb, var(--green) 18%, transparent);
   display: flex;
   align-items: center;
@@ -426,7 +428,7 @@ body {
 
 .bubble {
   padding: 9px 12px;
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   font-size: 14px;
   line-height: 1.55;
   word-break: break-word;
@@ -499,7 +501,7 @@ body {
   font-size: 10px;
   background: color-mix(in srgb, var(--green) 15%, transparent);
   color: var(--green);
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   padding: 1px 5px;
 }
 
@@ -508,7 +510,7 @@ body {
   white-space: pre-wrap;
   word-break: break-word;
   background: color-mix(in srgb, var(--text) 5%, transparent);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   padding: 6px 8px;
   max-height: 200px;
   overflow: auto;
@@ -517,7 +519,33 @@ body {
 /* ===== 输入区 ===== */
 .composer {
   border-top: 1px solid var(--border);
-  padding: 8px 16px 12px;
+  padding: 0 16px 12px;
+  flex-shrink: 0;
+}
+
+.composer-resize-handle {
+  height: 14px;
+  margin: 0 -16px 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: ns-resize;
+  touch-action: none;
+}
+
+.composer-resize-handle span {
+  width: 42px;
+  height: 4px;
+  border-radius: var(--radius-pill);
+  background: var(--border);
+  transition: background 120ms ease, width 120ms ease;
+}
+
+.composer-resize-handle:hover span,
+.composer-resize-handle:active span,
+.composer-resizing .composer-resize-handle span {
+  width: 56px;
+  background: var(--green);
 }
 
 .composer-toolbar {
@@ -535,7 +563,7 @@ body {
   color: var(--text-2);
   background: transparent;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   padding: 3px 10px;
   cursor: pointer;
 }
@@ -565,7 +593,7 @@ body {
   overflow: auto;
   background: var(--bg-panel);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   box-shadow: var(--shadow);
   z-index: 30;
   padding: 4px;
@@ -580,7 +608,7 @@ body {
   padding: 8px 10px;
   font-size: 13px;
   color: var(--text);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   cursor: pointer;
 }
 
@@ -608,17 +636,29 @@ body {
 .composer-input textarea {
   flex: 1;
   resize: none;
-  border: none;
+  border: 1px solid var(--border);
   background: var(--bg-list);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   padding: 10px 12px;
   font-size: 14px;
   color: var(--text);
-  min-height: 40px;
-  max-height: 140px;
+  min-height: var(--input-h);
+  max-height: 320px;
   outline: none;
   font-family: inherit;
   user-select: text;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.composer-input textarea:focus {
+  border-color: var(--green);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--green) 18%, transparent);
+}
+
+body.composer-resizing,
+body.composer-resizing * {
+  cursor: ns-resize !important;
+  user-select: none !important;
 }
 
 .send-btn {
@@ -627,7 +667,7 @@ body {
   color: #fff;
   font-size: 13px;
   padding: 9px 18px;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   cursor: pointer;
 }
 
@@ -642,7 +682,7 @@ body {
 
 /* ===== 头像 ===== */
 .avatar {
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: color-mix(in srgb, var(--green) 14%, transparent);
   display: flex;
   align-items: center;
@@ -667,7 +707,7 @@ body {
   max-height: 80%;
   overflow: auto;
   background: var(--bg-panel);
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   box-shadow: var(--shadow);
   padding: 18px 20px;
 }
@@ -699,7 +739,7 @@ body {
   line-height: 1.6;
   white-space: pre-wrap;
   background: color-mix(in srgb, var(--text) 5%, transparent);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   padding: 10px;
   user-select: text;
 }
@@ -786,7 +826,7 @@ body {
   border: 1px solid var(--border);
   background: var(--bg-list);
   color: var(--text);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   padding: 8px 10px;
   font-size: 13px;
   outline: none;
@@ -804,7 +844,7 @@ body {
 .seg {
   display: inline-flex;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   overflow: hidden;
   margin-bottom: 8px;
 }
@@ -854,7 +894,7 @@ body {
   margin: 0;
   padding: 8px 10px;
   border: 1px solid color-mix(in srgb, #c45656 35%, var(--border));
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: color-mix(in srgb, #c45656 8%, var(--bg));
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 12px;
@@ -869,7 +909,7 @@ body {
   gap: 10px;
   padding: 10px 12px;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   margin-bottom: 8px;
 }
 
@@ -911,7 +951,7 @@ body {
 
 ::-webkit-scrollbar-thumb {
   background: color-mix(in srgb, var(--text) 18%, transparent);
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
 }
 
 ::-webkit-scrollbar-thumb:hover {
@@ -934,7 +974,7 @@ body {
   font-size: 11px;
   color: var(--text-2);
   background: color-mix(in srgb, var(--text) 6%, transparent);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   padding: 3px 10px;
 }
 
@@ -944,7 +984,7 @@ body {
   gap: 8px;
   border: 1px solid var(--border);
   background: var(--bg-list);
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   padding: 8px 12px;
   font-size: 13px;
   color: var(--text);
@@ -983,7 +1023,7 @@ body {
   width: 300px;
   background: var(--bg-panel);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   box-shadow: var(--shadow);
   z-index: 40;
   padding: 4px;
@@ -999,7 +1039,7 @@ body {
   background: transparent;
   color: var(--text);
   padding: 8px 10px;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   cursor: pointer;
   font-size: 13px;
 }
@@ -1053,7 +1093,7 @@ body {
   overflow-y: auto;
   max-height: 420px;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   padding: 6px;
 }
 
@@ -1082,7 +1122,7 @@ body {
   min-width: 0;
   font-size: 13px;
   padding: 2px 6px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--accent, #07c160);
   background: var(--bg);
   color: var(--text);
@@ -1132,7 +1172,7 @@ body {
   align-items: center;
   gap: 8px;
   padding: 4px 6px;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
 }
 
 .member-row:hover {
@@ -1153,7 +1193,7 @@ body {
 .kanban-col {
   background: var(--bg-list);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   padding: 8px;
   min-height: 160px;
   display: flex;
@@ -1214,7 +1254,7 @@ body {
   border: 1px solid var(--border);
   background: transparent;
   color: var(--text);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   font-size: 12px;
   padding: 5px 12px;
   cursor: pointer;
@@ -1251,7 +1291,7 @@ body {
   background: transparent;
   color: var(--text);
   padding: 9px 10px;
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   cursor: pointer;
   text-align: left;
 }
@@ -1339,7 +1379,7 @@ body {
 
 .empty-card {
   border: 1px dashed var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   padding: 16px;
   font-size: 13px;
   color: var(--text-2);
@@ -1393,7 +1433,7 @@ body {
   border: 1px solid var(--border);
   background: transparent;
   color: var(--text);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   font-size: 12px;
   padding: 6px 10px;
   cursor: pointer;
@@ -1441,7 +1481,7 @@ body {
   border: 1px solid var(--border);
   background: var(--bg-list);
   color: var(--text);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   padding: 10px;
   outline: none;
   resize: vertical;
@@ -1480,7 +1520,7 @@ body {
 
 .appearance-preview {
   height: 84px;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   border: 1px solid var(--border);
   display: flex;
   flex-direction: column;
@@ -1643,7 +1683,7 @@ body {
   font-family: ui-monospace, Menlo, Consolas, monospace;
   font-size: 12.5px;
   background: color-mix(in srgb, var(--text) 8%, transparent);
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   padding: 1px 5px;
 }
 
@@ -1655,13 +1695,13 @@ body {
 
 .md-body img {
   max-width: 100%;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
 }
 
 .md-code {
   margin: 8px 0;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   overflow: hidden;
 }
 
@@ -1682,7 +1722,7 @@ body {
   font-size: 11px;
   cursor: pointer;
   padding: 1px 6px;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
 }
 
 .md-copy-btn:hover {
@@ -1747,7 +1787,7 @@ body {
 .msg-images img {
   max-width: 200px;
   max-height: 160px;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   cursor: zoom-in;
   border: 1px solid var(--border);
   display: block;
@@ -1763,7 +1803,7 @@ body {
   color: var(--text-2);
   cursor: pointer;
   padding: 4px 6px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   display: flex;
   align-items: center;
 }
@@ -1784,7 +1824,7 @@ body {
   position: relative;
   width: 64px;
   height: 64px;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   overflow: hidden;
   border: 1px solid var(--border);
 }
@@ -1817,7 +1857,7 @@ body {
 .composer-input.drag-over {
   outline: 2px dashed var(--green);
   outline-offset: -2px;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
 }
 
 /* 图片预览大图 */
@@ -1835,7 +1875,7 @@ body {
 .img-viewer-mask img {
   max-width: 90%;
   max-height: 90%;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
 }
 
 /* ===== v1.1：流式输出 ===== */
@@ -1870,7 +1910,7 @@ body {
   flex-wrap: wrap;
   padding: 6px;
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   background: color-mix(in srgb, var(--text) 3%, transparent);
   margin-bottom: 14px;
 }
@@ -1881,7 +1921,7 @@ body {
   gap: 6px;
   padding: 6px 12px;
   border: 1px solid transparent;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: transparent;
   color: var(--text-2);
   font-size: 13px;
@@ -1903,7 +1943,7 @@ body {
 
 .pv-detail {
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   padding: 12px;
   margin-bottom: 12px;
 }
@@ -1924,7 +1964,7 @@ body {
 
 .toggle {
   padding: 4px 10px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   border: 1px solid var(--line);
   background: transparent;
   font-size: 12px;
@@ -1945,7 +1985,7 @@ body {
   min-width: 180px;
   background: var(--bg-2, var(--bg));
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   box-shadow: 0 8px 24px rgb(0 0 0 / 12%);
   padding: 4px;
   display: flex;
@@ -1988,7 +2028,7 @@ body {
   flex: 1;
   max-width: 320px;
   height: 6px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: color-mix(in srgb, var(--text) 8%, transparent);
   overflow: hidden;
 }
@@ -2003,7 +2043,7 @@ body {
   gap: 8px;
   padding: 6px 8px;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   font-size: 12px;
 }
 .memory-entry-text { flex: 1; white-space: pre-wrap; word-break: break-word; }
@@ -2019,7 +2059,7 @@ body {
   max-height: 260px;
   overflow: auto;
   background: color-mix(in srgb, var(--text) 4%, transparent);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   font-size: 11px;
   line-height: 1.5;
   white-space: pre-wrap;
@@ -2045,7 +2085,7 @@ body {
 }
 .msg-extra {
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: color-mix(in srgb, var(--text) 3%, transparent);
   font-size: 12px;
   overflow: hidden;
@@ -2133,7 +2173,7 @@ body {
   gap: 8px;
   padding: 8px 11px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   background: var(--bg-list);
   color: var(--text);
   font-size: 13px;
@@ -2152,7 +2192,7 @@ body {
   overflow-y: auto;
   background: var(--bg-panel);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   box-shadow: var(--shadow);
   padding: 4px;
 }
@@ -2225,7 +2265,7 @@ body {
 }
 .history-item {
   padding: 8px 10px;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   cursor: pointer;
 }
 .history-item:hover { background: color-mix(in srgb, var(--text) 5%, transparent); }
@@ -2248,14 +2288,14 @@ body {
 .history-msg.assistant .history-msg-text,
 .history-msg.assistant {
   background: color-mix(in srgb, var(--text) 4%, transparent);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   padding: 8px 10px;
 }
 .history-msg.user .history-msg-text {
   margin: 0;
   background: var(--green);
   color: #fff;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   padding: 8px 10px;
   white-space: pre-wrap;
   word-break: break-word;
@@ -2366,7 +2406,7 @@ body {
   font-size: 11px;
   cursor: pointer;
   padding: 3px 8px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   max-width: 160px;
 }
 .ctx-usage:hover { border-color: var(--green); color: var(--green); }
@@ -2428,7 +2468,7 @@ body {
   padding: 10px 12px;
   background: var(--bg-2, rgba(0,0,0,0.03));
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   font-size: 12px;
   white-space: pre-wrap;
   word-break: break-word;

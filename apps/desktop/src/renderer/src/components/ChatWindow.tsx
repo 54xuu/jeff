@@ -4,7 +4,7 @@ import { api } from '../api'
 import { IPC, modelDisplayLabel, type ChatMsg, type ContextPreviewInfo } from '@jeff/core'
 import Avatar from './Avatar'
 import { Markdown } from './Markdown'
-import { useImages, ImagePreviews, MsgImages, AssistantExtras } from './ChatShared'
+import { useImages, ImagePreviews, MsgImages, AssistantExtras, useComposerResize } from './ChatShared'
 import ChatHistoryDrawer from './ChatHistoryDrawer'
 import ContextDrawer, { ContextUsageBar, fetchContextPreview } from './ContextDrawer'
 import AgentProfileDrawer from './AgentProfileDrawer'
@@ -26,7 +26,9 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
   const [dragOver, setDragOver] = useState(false)
   const attachments = useImages()
   const bodyRef = useRef<HTMLDivElement>(null)
+  const composerRef = useRef<HTMLDivElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
+  const composerResize = useComposerResize(composerRef)
 
   useEffect(() => {
     void loadHistory(key)
@@ -153,7 +155,17 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
         )}
       </div>
 
-      <div className="composer">
+      <div className="composer" ref={composerRef}>
+        <div
+          className="composer-resize-handle"
+          data-testid="chat-resize-handle"
+          role="separator"
+          aria-label="调整输入框高度"
+          aria-orientation="horizontal"
+          onPointerDown={composerResize.onPointerDown}
+        >
+          <span />
+        </div>
         <div className="composer-toolbar">
           <button
             type="button"
@@ -200,6 +212,7 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
           </button>
           <textarea
             value={draft}
+            style={{ height: composerResize.height }}
             data-testid="chat-draft"
             placeholder={agent.builtin ? '跟小杰说点什么…（例如：帮我创建一个「架构师阿伟」）' : `发消息给 ${agent.name}…（支持粘贴/拖拽图片）`}
             onChange={(e) => setDraft(e.target.value)}

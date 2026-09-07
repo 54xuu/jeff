@@ -1,5 +1,55 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ChatImage } from '@jeff/core'
+
+const COMPOSER_MIN_HEIGHT = 40
+const COMPOSER_MAX_HEIGHT = 320
+
+/** 聊天输入区顶部拖拽调高/调低，限制在聊天窗口高度的一半以内。 */
+export function useComposerResize(containerRef: React.RefObject<HTMLElement | null>) {
+  const [height, setHeight] = useState(COMPOSER_MIN_HEIGHT)
+  const dragRef = useRef<{ startY: number; startHeight: number } | null>(null)
+
+  const getMaxHeight = useCallback(() => {
+    const containerHeight = containerRef.current?.parentElement?.getBoundingClientRect().height ?? window.innerHeight
+    return Math.max(COMPOSER_MIN_HEIGHT, Math.min(COMPOSER_MAX_HEIGHT, Math.floor(containerHeight * 0.5)))
+  }, [containerRef])
+
+  useEffect(() => {
+    const clampHeight = () => setHeight((current) => Math.min(current, getMaxHeight()))
+    const onPointerMove = (event: PointerEvent) => {
+      const drag = dragRef.current
+      if (!drag) return
+      const next = drag.startHeight + drag.startY - event.clientY
+      setHeight(Math.max(COMPOSER_MIN_HEIGHT, Math.min(getMaxHeight(), next)))
+    }
+    const onPointerUp = () => {
+      dragRef.current = null
+      document.body.classList.remove('composer-resizing')
+    }
+    window.addEventListener('resize', clampHeight)
+    window.addEventListener('pointermove', onPointerMove)
+    window.addEventListener('pointerup', onPointerUp)
+    return () => {
+      window.removeEventListener('resize', clampHeight)
+      window.removeEventListener('pointermove', onPointerMove)
+      window.removeEventListener('pointerup', onPointerUp)
+      document.body.classList.remove('composer-resizing')
+    }
+  }, [getMaxHeight])
+
+  const onPointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    event.preventDefault()
+    dragRef.current = { startY: event.clientY, startHeight: height }
+    document.body.classList.add('composer-resizing')
+    event.currentTarget.setPointerCapture?.(event.pointerId)
+  }, [height])
+
+  return { height, onPointerDown }
+}
+
+export const COMPOSER_MIN_HEIGHT_PX = COMPOSER_MIN_HEIGHT
+export const COMPOSER_MAX_HEIGHT_PX = COMPOSER_MAX_HEIGHT
+
 
 /** 读取 File 为 dataURL（图片附件用） */
 export function fileToDataUrl(file: File): Promise<ChatImage | null> {

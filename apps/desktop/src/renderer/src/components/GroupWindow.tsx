@@ -5,7 +5,7 @@ import { IPC, type ContextPreviewInfo, type GroupMessage } from '@jeff/core'
 import Avatar from './Avatar'
 import GroupInfoDrawer from './GroupInfoDrawer'
 import { Markdown } from './Markdown'
-import { useImages, ImagePreviews, MsgImages, AssistantExtras } from './ChatShared'
+import { useImages, ImagePreviews, MsgImages, AssistantExtras, useComposerResize } from './ChatShared'
 import ContextDrawer, { ContextUsageBar, fetchContextPreview } from './ContextDrawer'
 
 /** 项目群聊天窗口（= 微信群） */
@@ -27,8 +27,10 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
   const [dragOver, setDragOver] = useState(false)
   const attachments = useImages()
   const bodyRef = useRef<HTMLDivElement>(null)
+  const composerRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
+  const composerResize = useComposerResize(composerRef)
 
   useEffect(() => {
     void loadGroupHistory(props.projectId)
@@ -208,7 +210,17 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
         )}
       </div>
 
-      <div className="composer">
+      <div className="composer" ref={composerRef}>
+        <div
+          className="composer-resize-handle"
+          data-testid="chat-resize-handle"
+          role="separator"
+          aria-label="调整输入框高度"
+          aria-orientation="horizontal"
+          onPointerDown={composerResize.onPointerDown}
+        >
+          <span />
+        </div>
         <div className="composer-toolbar">
           <span className="composer-hint">默认由群主处理 · @成员名 直达 · 模型/思考用各智能体自己的设置</span>
         </div>
@@ -258,6 +270,7 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
           <textarea
             ref={inputRef}
             value={draft}
+            style={{ height: composerResize.height }}
             data-testid="chat-draft"
             placeholder={`在「${project.title}」群里说话…（@某成员 直接指名，支持图片）`}
             onChange={(e) => onDraftChange(e.target.value)}
