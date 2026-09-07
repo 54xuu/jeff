@@ -88,10 +88,11 @@ export function registerIpc(core: JeffCore): void {
       return core.privateChat.history(agentId)
     },
     [IPC.chatSend]: async (p): Promise<{ ok: boolean }> => {
-      const { agentId, text, model, variant, images } = p as { agentId: string; text: string; model?: { providerID: string; modelID: string }; variant?: string; images?: Array<{ mime: string; dataUrl: string }> }
+      const { agentId, text, images } = p as { agentId: string; text: string; images?: Array<{ mime: string; dataUrl: string }> }
       const row = core.agents.get(agentId)
       if (!row) throw new Error('智能体不存在')
-      await core.privateChat.send(agentId, row.name, text, model, images, variant || undefined)
+      // 模型/思考由智能体资料决定，忽略前端覆盖
+      await core.privateChat.send(agentId, row.name, text, undefined, images)
       return { ok: true }
     },
     [IPC.chatNew]: async (p): Promise<{ sessionId: string }> => {
@@ -467,8 +468,9 @@ export function registerIpc(core: JeffCore): void {
       return core.groupChat.history(projectId)
     },
     [IPC.groupSend]: async (p): Promise<{ routedTo: string }> => {
-      const { projectId, text, model, variant, images } = p as { projectId: string; text: string; model?: { providerID: string; modelID: string }; variant?: string; images?: Array<{ mime: string; dataUrl: string }> }
-      return core.groupChat.send({ projectId, text, model, variant: variant || undefined, images })
+      const { projectId, text, images } = p as { projectId: string; text: string; images?: Array<{ mime: string; dataUrl: string }> }
+      // 模型/思考由路由目标智能体资料决定，忽略前端覆盖
+      return core.groupChat.send({ projectId, text, images })
     },
     [IPC.groupStop]: async (p): Promise<{ ok: boolean }> => {
       const { projectId } = p as { projectId: string }

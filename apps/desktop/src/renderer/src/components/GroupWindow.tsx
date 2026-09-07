@@ -1,28 +1,22 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useStore } from '../store'
 import { api } from '../api'
-import { IPC, modelDisplayLabel, type ContextPreviewInfo, type GroupMessage, type ModelOption, type ProviderCatalogItem } from '@jeff/core'
+import { IPC, type ContextPreviewInfo, type GroupMessage } from '@jeff/core'
 import Avatar from './Avatar'
 import GroupInfoDrawer from './GroupInfoDrawer'
 import { Markdown } from './Markdown'
 import { useImages, ImagePreviews, MsgImages, AssistantExtras } from './ChatShared'
 import ContextDrawer, { ContextUsageBar, fetchContextPreview } from './ContextDrawer'
-import { useDismissable } from '../hooks/useDismissable'
 
 /** 项目群聊天窗口（= 微信群） */
 export default function GroupWindow(props: { projectId: string }): React.JSX.Element {
-  const { projects, groupMessages, sending, streaming, loadGroupHistory, sendGroup, stopGroup, catalog, settings } = useStore()
+  const { projects, agents, groupMessages, sending, streaming, loadGroupHistory, sendGroup, stopGroup, settings } = useStore()
   const project = projects.find((p) => p.id === props.projectId)
   const msgs = groupMessages[props.projectId] || []
   const busy = !!sending[`group:${props.projectId}`]
   const stream = streaming[`group:${props.projectId}`]
   const [draft, setDraft] = useState('')
   const [drawer, setDrawer] = useState(false)
-  const [modelOverride, setModelOverride] = useState<{ providerID: string; modelID: string } | null>(null)
-  const [variant, setVariant] = useState<string>('')
-  const [modelOpen, setModelOpen] = useState(false)
-  const [modelFilter, setModelFilter] = useState('')
-  const [variantOpen, setVariantOpen] = useState(false)
   const [contextOpen, setContextOpen] = useState(false)
   const [ctxPreview, setCtxPreview] = useState<ContextPreviewInfo | null>(null)
   const [ctxLoading, setCtxLoading] = useState(false)
@@ -35,10 +29,6 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
   const bodyRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
-  const modelMenuRef = useRef<HTMLDivElement>(null)
-  const variantMenuRef = useRef<HTMLDivElement>(null)
-  useDismissable(modelOpen, () => setModelOpen(false), modelMenuRef)
-  useDismissable(variantOpen, () => setVariantOpen(false), variantMenuRef)
 
   useEffect(() => {
     void loadGroupHistory(props.projectId)
@@ -64,8 +54,11 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
     if (el) el.scrollTop = el.scrollHeight
   }, [msgs.length, busy, stream?.text])
 
-  const allModels: ModelOption[] = useMemo(() => catalog.flatMap((c) => c.models), [catalog])
-  const currentModel = modelOverride || settings?.defaultModel || null
+  const ctxAgent = agents.find((a) => a.id === ctxAgentId)
+  const currentModel =
+    ctxAgent?.model_provider && ctxAgent?.model_id
+      ? { providerID: ctxAgent.model_provider, modelID: ctxAgent.model_id }
+      : settings?.defaultModel || null
 
   useEffect(() => {
     if (!ctxAgentId) {
@@ -84,18 +77,6 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
       cancelled = true
     }
   }, [ctxAgentId, props.projectId, currentModel?.providerID, currentModel?.modelID, msgs.length, busy])
-
-  const tiers = useMemo(() => {
-    if (!currentModel) return []
-    return allModels.find((m) => m.providerID === currentModel.providerID && m.modelID === currentModel.modelID)?.thinkingTiers ?? []
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentModel?.providerID, currentModel?.modelID, allModels])
-  useEffect(() => setVariant(''), [currentModel?.providerID, currentModel?.modelID])
-  const filteredModels = useMemo(() => {
-    const q = modelFilter.trim().toLowerCase()
-    if (!q) return allModels
-    return allModels.filter((m) => m.label.toLowerCase().includes(q) || m.modelID.toLowerCase().includes(q))
-  }, [allModels, modelFilter])
 
   // @ 自动补全：光标前最近的 @xx
   const mentionCandidates = useMemo(() => {
@@ -137,7 +118,7 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
     setMention(null)
     const images = attachments.images
     attachments.clear()
-    await sendGroup(project.id, text, modelOverride || undefined, images, variant || undefined)
+    await sendGroup(project.id, text, images)
   }
 
   const doCompress = async () => {
@@ -229,64 +210,7 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
 
       <div className="composer">
         <div className="composer-toolbar">
-          <div className="model-select" ref={modelMenuRef}>
-            <button className="chip" data-testid="group-model-chip" onClick={() => { setModelOpen((v) => !v); setModelFilter('') }}>
-              <span className="chip-dot" />
-              {currentModel ? modelDisplayLabel(currentModel, catalog) : '未配置模型 — 去设置添加 provider'}
-              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                <path d="M6 9l6 6 6-6" />
-              </svg>
-            </button>
-            {modelOpen && (
-              <div className="model-menu">
-                <input
-                  className="model-menu-search"
-                  autoFocus
-                  placeholder="搜索模型（提供商 / 模型ID）…"
-                  value={modelFilter}
-                  onChange={(e) => setModelFilter(e.target.value)}
-                />
-                {filteredModels.length === 0 && (
-                  <div className="model-menu-empty">
-                    {allModels.length === 0 ? '暂无可用模型：请到「设置 → 模型供应商」添加并保存' : '没有匹配的模型'}
-                  </div>
-                )}
-                {filteredModels.map((m) => (
-                  <button
-                    key={`${m.providerID}/${m.modelID}`}
-                    className={`model-menu-item ${currentModel?.providerID === m.providerID && currentModel?.modelID === m.modelID ? 'on' : ''}`}
-                    onClick={() => {
-                      setModelOverride({ providerID: m.providerID, modelID: m.modelID })
-                      setModelOpen(false)
-                    }}
-                  >
-                    {m.label}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-          {tiers.length > 0 && (
-            <div className="model-select" ref={variantMenuRef}>
-              <button className="chip chip-variant" onClick={() => setVariantOpen((v) => !v)} title="思考程度">
-                {variant ? TIER_LABEL[variant] || variant : '思考: 默认'}
-                <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                  <path d="M6 9l6 6 6-6" />
-                </svg>
-              </button>
-              {variantOpen && (
-                <div className="model-menu">
-                  <button className={`model-menu-item ${variant === '' ? 'on' : ''}`} onClick={() => { setVariant(''); setVariantOpen(false) }}>默认（跟随模型配置）</button>
-                  {tiers.map((t) => (
-                    <button key={t} className={`model-menu-item ${variant === t ? 'on' : ''}`} onClick={() => { setVariant(t); setVariantOpen(false) }}>
-                      {TIER_LABEL[t] || t}（{t}）
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-          <span className="composer-hint">默认由群主处理 · @成员名 直达</span>
+          <span className="composer-hint">默认由群主处理 · @成员名 直达 · 模型/思考用各智能体自己的设置</span>
         </div>
         <ImagePreviews images={attachments.images} onRemove={attachments.remove} />
         <div
@@ -382,12 +306,6 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
     </div>
   )
 }
-
-export function modelLabel(m: { providerID: string; modelID: string }, catalog: ProviderCatalogItem[]): string {
-  return modelDisplayLabel(m, catalog)
-}
-
-const TIER_LABEL: Record<string, string> = { none: '无思考', low: '低', high: '高', max: '最大' }
 
 function GroupBubble(props: { msg: GroupMessage }): React.JSX.Element {
   const { msg } = props

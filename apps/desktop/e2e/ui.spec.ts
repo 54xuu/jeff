@@ -128,18 +128,11 @@ test.describe('Jeff UI 封闭清单', () => {
       await expect(page.getByTestId('agent-profile-drawer')).toHaveCount(0)
 
       await page.getByTestId('chat-model-chip').click()
-      await expect(page.getByTestId('chat-model-menu')).toBeVisible({ timeout: 15000 })
-      await page.keyboard.press('Escape')
+      await expect(page.getByTestId('agent-profile-drawer')).toBeVisible({ timeout: 15000 })
       await expect(page.getByTestId('chat-model-menu')).toHaveCount(0)
-
-      const thinkChip = page.getByTestId('chat-thinking-chip')
-      if ((await thinkChip.count()) > 0) {
-        await thinkChip.click()
-        await expect(page.getByTestId('chat-thinking-menu')).toBeVisible()
-        const high = page.getByTestId('thinking-high')
-        if ((await high.count()) > 0) await high.click()
-        else await page.keyboard.press('Escape')
-      }
+      await expect(page.getByTestId('chat-thinking-chip')).toHaveCount(0)
+      await page.getByTestId('agent-profile-drawer').locator('.drawer-head .icon-btn').click()
+      await expect(page.getByTestId('agent-profile-drawer')).toHaveCount(0)
 
       await page.getByTestId('chat-draft').fill('你好，这是 E2E 冒烟，请只回复「收到」两个字。')
       await page.getByTestId('chat-send').click()
@@ -158,6 +151,7 @@ test.describe('Jeff UI 封闭清单', () => {
       await expect(page.getByTestId('create-group-modal')).toHaveCount(0, { timeout: 15000 })
       await expect(page.getByTestId('chat-group-E2E测试群')).toBeVisible({ timeout: 15000 })
       await page.getByTestId('chat-group-E2E测试群').click()
+      await expect(page.getByTestId('group-model-chip')).toHaveCount(0)
 
       // ---- 群资料设置 ----
       await page.getByTestId('group-info-btn').click()

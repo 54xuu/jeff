@@ -96,6 +96,47 @@ describe('GroupChat', () => {
     expect(history[3].sender_name).toBe('开发')
   })
 
+  it('send：@成员使用该成员的 model/variant，忽略入参覆盖', async () => {
+    const agents = agentRepo(db)
+    const p = projectRepo(db).list()[0]
+    const leader = agents.list().find((a) => a.name === '架构师')!
+    const dev = agents.list().find((a) => a.name === '开发')!
+    agents.update(leader.id, { model_provider: 'prov-leader', model_id: 'model-l', thinking: 'low' })
+    agents.update(dev.id, { model_provider: 'prov-dev', model_id: 'model-d', thinking: 'high' })
+
+    const sent: Array<{ model?: { providerID: string; modelID: string }; variant?: string; agent?: string }> = []
+    const ocStub = {
+      getSession: async () => ({ id: 'x' }),
+      createSession: async () => ({ id: 'ses_model' }),
+      sendMessage: async (input: { model?: { providerID: string; modelID: string }; variant?: string; agent?: string }) => {
+        sent.push(input)
+        return { id: 'msg_m', parts: [{ type: 'text', text: 'ok' }] }
+      },
+    } as unknown as OcClient
+    group = new GroupChat(db, () => ocStub, {
+      defaultModel: () => ({ providerID: 'fallback', modelID: 'fb' }),
+    })
+
+    await group.send({
+      projectId: p.id,
+      text: '排期',
+      model: { providerID: 'hack', modelID: 'ignored' },
+      variant: 'max',
+    })
+    expect(sent[0].model).toEqual({ providerID: 'prov-leader', modelID: 'model-l' })
+    expect(sent[0].variant).toBe('low')
+
+    await group.send({
+      projectId: p.id,
+      text: '@开发 改登录',
+      model: { providerID: 'hack', modelID: 'ignored' },
+      variant: 'none',
+    })
+    expect(sent[1].model).toEqual({ providerID: 'prov-dev', modelID: 'model-d' })
+    expect(sent[1].variant).toBe('high')
+    expect(sent[1].agent).toBe(agentSlug(dev.id))
+  })
+
   it('send：未设 leader 报错', async () => {
     const p2 = projectRepo(db).create({ title: '无主群', leader_agent_id: null })
     await expect(group.send({ projectId: p2.id, text: 'hi' })).rejects.toThrow('群主')

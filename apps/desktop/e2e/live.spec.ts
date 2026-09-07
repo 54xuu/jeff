@@ -69,13 +69,8 @@ async function waitReplyDone(page: import('@playwright/test').Page, prevAssistan
       await agentItem.click()
       await expect(page.getByTestId('chat-window')).toBeVisible()
 
-      const thinkChip = page.getByTestId('chat-thinking-chip')
-      if ((await thinkChip.count()) > 0) {
-        await thinkChip.click()
-        const high = page.getByTestId('thinking-high')
-        if ((await high.count()) > 0) await high.click()
-        else await page.keyboard.press('Escape')
-      }
+      // 模型/思考在智能体资料里配置，聊天栏不再切换
+      await expect(page.getByTestId('chat-thinking-chip')).toHaveCount(0)
 
       // ---- Skill：豆包搜索（只看 assistant 气泡 + 工具区）----
       let skillOk = false

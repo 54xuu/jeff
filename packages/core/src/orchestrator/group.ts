@@ -3,6 +3,7 @@ import { chatMessageRepo, projectAgentRepo, projectRepo, agentRepo, kvRepo, type
 import { agentSlug } from '../agents/registry.js'
 import type { OcClient, AssistantInfo } from '../oc/client.js'
 import type { GroupMessage } from '../ipc/contract.js'
+import { agentPromptOpts } from '../util/modelKey.js'
 import { GroupThreadStore, groupMsgScope } from './groupThreads.js'
 
 export interface GroupChatHooks {
@@ -11,6 +12,8 @@ export interface GroupChatHooks {
   /** 群消息的记忆块注入（追加在 briefing 之后） */
   buildMemory?: (agentId: string, projectId: string) => string | undefined
   afterReply?: (scope: { kind: 'private'; agentId: string } | { kind: 'group'; projectId: string; agentId: string }) => void
+  /** 智能体未绑定模型时的会话兜底 */
+  defaultModel?: () => { providerID: string; modelID: string } | null
 }
 
 /**
@@ -109,6 +112,9 @@ export class GroupChat {
     ].join('\n')
   }
 
+  /**
+   * 发送群消息。模型/思考取路由目标智能体自己的设置；入参 model/variant 忽略。
+   */
   async send(input: { projectId: string; text: string; model?: { providerID: string; modelID: string }; variant?: string; images?: Array<{ mime: string; dataUrl: string }> }): Promise<{ routedTo: string }> {
     const { projectId, text } = input
     const project = projectRepo(this.db).get(projectId)
@@ -138,6 +144,7 @@ export class GroupChat {
     let reply: AssistantInfo
     const memoryBlock = this.hooks?.buildMemory?.(targetId, projectId)
     const system = memoryBlock ? `${this.buildBriefing(projectId, targetId)}\n\n${memoryBlock}` : this.buildBriefing(projectId, targetId)
+    const opts = agentPromptOpts(target, this.hooks?.defaultModel?.() ?? null)
     try {
       reply = await this.getOc().sendMessage({
         sessionId,
@@ -145,8 +152,7 @@ export class GroupChat {
         ...(input.images && input.images.length ? { images: input.images } : {}),
         agent: agentSlug(targetId),
         system,
-        ...(input.model && input.model.providerID && input.model.modelID ? { model: input.model } : {}),
-        ...(input.variant ? { variant: input.variant } : {}),
+        ...opts,
       })
     } catch (err) {
       const msg = String((err as Error)?.message || err)

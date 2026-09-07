@@ -1,7 +1,8 @@
 import type { DB } from '../db/db.js'
-import { kvRepo } from '../db/repos.js'
+import { agentRepo, kvRepo } from '../db/repos.js'
 import { agentSlug } from '../agents/registry.js'
 import type { OcClient, AssistantInfo } from '../oc/client.js'
+import { agentPromptOpts } from '../util/modelKey.js'
 
 /** UI 侧聊天消息（私聊与群聊共用形状） */
 export interface ChatMsg {
@@ -29,6 +30,8 @@ export interface PrivateChatHooks {
   buildSystem?: (agentId: string, projectId?: string) => string | undefined
   /** 回复完成后（索引 + nudge） */
   afterReply?: (scope: { kind: 'private'; agentId: string } | { kind: 'group'; projectId: string; agentId: string }) => void
+  /** 智能体未绑定模型时的会话兜底 */
+  defaultModel?: () => { providerID: string; modelID: string } | null
 }
 
 /** 私聊（agent = 微信好友）：每个 agent 一条持续会话 */
@@ -69,24 +72,28 @@ export class PrivateChat {
     return kvRepo(this.db).get(SESSION_KEY(agentId))
   }
 
-  /** 发送消息并等待回复完成 */
+  /**
+   * 发送消息并等待回复完成。
+   * 模型/思考以智能体资料为准；入参 model/variant 忽略（兼容旧调用方）。
+   */
   async send(
     agentId: string,
     agentName: string,
     text: string,
-    model?: { providerID: string; modelID: string },
+    _model?: { providerID: string; modelID: string },
     images?: Array<{ mime: string; dataUrl: string }>,
-    variant?: string,
+    _variant?: string,
   ): Promise<AssistantInfo> {
     const sessionId = await this.ensureSession(agentId, agentName)
+    const agent = agentRepo(this.db).get(agentId)
+    const opts = agentPromptOpts(agent, this.hooks?.defaultModel?.() ?? null)
     const reply = await this.getOc().sendMessage({
       sessionId,
       text,
       ...(images && images.length ? { images } : {}),
       agent: agentSlug(agentId),
       system: this.hooks?.buildSystem?.(agentId),
-      ...(model && model.providerID && model.modelID ? { model } : {}),
-      ...(variant ? { variant } : {}),
+      ...opts,
     })
     this.hooks?.afterReply?.({ kind: 'private', agentId })
     return reply

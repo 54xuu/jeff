@@ -782,7 +782,7 @@ body {
 .field input,
 .field textarea,
 .field select,
-.model-picker {
+.combo-trigger {
   border: 1px solid var(--border);
   background: var(--bg-list);
   color: var(--text);
@@ -796,7 +796,8 @@ body {
 
 .field input:focus,
 .field textarea:focus,
-.field select:focus {
+.field select:focus,
+.combo-trigger:focus {
   border-color: var(--green);
 }
 
@@ -2122,7 +2123,7 @@ body {
 }
 .model-menu-search:focus { border-color: var(--green); }
 
-/* 可搜索模型下拉（智能体表单） */
+/* 可搜索模型下拉（智能体表单；边框/底色对齐 .field select） */
 .combo { position: relative; }
 .combo-trigger {
   width: 100%;
@@ -2131,13 +2132,14 @@ body {
   justify-content: space-between;
   gap: 8px;
   padding: 8px 11px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--border);
   border-radius: 8px;
-  background: transparent;
+  background: var(--bg-list);
   color: var(--text);
   font-size: 13px;
   cursor: pointer;
   text-align: left;
+  user-select: none;
 }
 .combo-trigger:hover { border-color: var(--green); }
 .combo-menu {
@@ -2148,10 +2150,10 @@ body {
   z-index: 40;
   max-height: 300px;
   overflow-y: auto;
-  background: var(--bg-2, var(--bg));
-  border: 1px solid var(--line);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
   border-radius: 10px;
-  box-shadow: 0 8px 24px rgb(0 0 0 / 14%);
+  box-shadow: var(--shadow);
   padding: 4px;
 }
 .combo-group {

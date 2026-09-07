@@ -3,6 +3,7 @@ import type { DB } from '../db/db.js'
 import { agentRepo, projectAgentRepo, projectRepo, chatMessageRepo } from '../db/repos.js'
 import { agentSlug } from '../agents/registry.js'
 import type { OcClient } from '../oc/client.js'
+import { agentPromptOpts } from '../util/modelKey.js'
 import type { GroupChat } from './group.js'
 import { groupMsgScope } from './groupThreads.js'
 
@@ -103,15 +104,17 @@ export class Delegator {
       })
       this.notify(ctx.projectId)
 
-      // 2. 成员执行（独立会话，注入群上下文 + 指派说明）
+      // 2. 成员执行（独立会话，注入群上下文 + 指派说明；模型/思考用成员自己的设置）
       const sessionId = await this.groupChat.ensureSession(ctx.projectId, memberId, threadId)
       const instructionText = `【群主 ${leaderName} 指派】${instruction}`
+      const opts = agentPromptOpts(member)
       const reply = await this.getOc().sendMessage({
         sessionId,
         text: instructionText,
         agent: agentSlug(memberId),
         system: this.memberBriefing(ctx.projectId, memberId, leaderName),
         timeoutMs: DELEGATE_TIMEOUT_MS,
+        ...opts,
       })
       const parts = (reply.parts || []).filter((p) => p.type === 'text') as Array<{ type: 'text'; text: string }>
       const resultText = parts.map((p) => p.text).join('\n') || '（成员没有返回文本内容）'

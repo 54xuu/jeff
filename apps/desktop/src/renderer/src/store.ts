@@ -43,8 +43,8 @@ interface JeffState {
   loadHistory: (key: string) => Promise<void>
   loadGroupHistory: (projectId: string) => Promise<void>
   loadTasks: (projectId: string) => Promise<void>
-  sendAgent: (agentId: string, text: string, model?: { providerID: string; modelID: string }, images?: ChatImage[], variant?: string) => Promise<void>
-  sendGroup: (projectId: string, text: string, model?: { providerID: string; modelID: string }, images?: ChatImage[], variant?: string) => Promise<void>
+  sendAgent: (agentId: string, text: string, images?: ChatImage[]) => Promise<void>
+  sendGroup: (projectId: string, text: string, images?: ChatImage[]) => Promise<void>
   newAgentSession: (agentId: string) => Promise<void>
   stopAgent: (agentId: string) => Promise<void>
   stopGroup: (projectId: string) => Promise<void>
@@ -101,7 +101,7 @@ export const useStore = create<JeffState>((set, get) => ({
     set((s) => ({ tasks: { ...s.tasks, [projectId]: tasks } }))
   },
 
-  sendAgent: async (agentId, text, model, images, variant) => {
+  sendAgent: async (agentId, text, images) => {
     const key = `agent:${agentId}`
     const now = Date.now()
     set((s) => ({ sending: { ...s.sending, [key]: true } }))
@@ -112,7 +112,7 @@ export const useStore = create<JeffState>((set, get) => ({
       },
     }))
     try {
-      await api.invoke(IPC.chatSend, { agentId, text, model, ...(variant ? { variant } : {}), ...(images && images.length ? { images } : {}) })
+      await api.invoke(IPC.chatSend, { agentId, text, ...(images && images.length ? { images } : {}) })
     } catch (err) {
       set((s) => ({
         messages: {
@@ -126,7 +126,7 @@ export const useStore = create<JeffState>((set, get) => ({
     }
   },
 
-  sendGroup: async (projectId, text, model, images, variant) => {
+  sendGroup: async (projectId, text, images) => {
     const key = projectId
     const now = Date.now()
     set((s) => ({ sending: { ...s.sending, [`group:${key}`]: true } }))
@@ -140,7 +140,7 @@ export const useStore = create<JeffState>((set, get) => ({
       },
     }))
     try {
-      await api.invoke(IPC.groupSend, { projectId, text, model, ...(variant ? { variant } : {}), ...(images && images.length ? { images } : {}) })
+      await api.invoke(IPC.groupSend, { projectId, text, ...(images && images.length ? { images } : {}) })
     } catch (err) {
       set((s) => ({
         groupMessages: {

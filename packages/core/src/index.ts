@@ -222,6 +222,8 @@ export class JeffCore extends EventEmitter {
         this.kv().setJSON(sesMetaKey(sessionId), meta)
       },
       buildSystem: (agentId: string, projectId?: string) => this.buildMemorySystem(agentId, projectId),
+      buildMemory: (agentId: string, projectId: string) => this.buildMemorySystem(agentId, projectId),
+      defaultModel: () => this.defaultModel(),
       afterReply: (scope: { kind: 'private'; agentId: string } | { kind: 'group'; projectId: string; agentId: string }) => {
         this.onReplyDone(scope)
       },
@@ -372,9 +374,8 @@ export class JeffCore extends EventEmitter {
     return configuredModelOptions(this.listProviders())
   }
 
-  /** 解析当前会话使用的模型（覆盖 → agent 绑定 → 全局默认） */
-  resolveModel(agentId: string, override?: { providerID: string; modelID: string } | null): { providerID: string; modelID: string } | null {
-    if (override?.providerID && override?.modelID) return override
+  /** 解析会话模型（智能体绑定 → 全局默认；忽略覆盖参数，以智能体设置为准） */
+  resolveModel(agentId: string, _override?: { providerID: string; modelID: string } | null): { providerID: string; modelID: string } | null {
     const agent = agentRepo(this.db).get(agentId)
     if (agent?.model_provider && agent?.model_id) return { providerID: agent.model_provider, modelID: agent.model_id }
     return this.defaultModel()
@@ -951,7 +952,7 @@ Jeff 把「开发 + 项目管理」组织成三个概念（微信心智模型）
 - **记忆**：每个智能体有自己的长期记忆；项目群有共享记忆；全局用户画像由小杰维护（用 jeff_memory 工具读写，用户说「记住/忘记/整理记忆」即可）。设置页可人工查看、删除单条；每个范围有字符预算防止 token 浪费。
 - **AGENTS.md**：用户级（数据目录 AGENTS.md）与项目级（工作空间目录 AGENTS.md）规则文件，每轮对话自动注入；设置 → 记忆页可编辑。
 - **会话搜索**：所有历史对话全文可搜（jeff_session_search）。
-- **模型提供商**：设置页配置自定义提供商（Chat / Responses / Anthropic 三种 API 格式），每个模型可配上下文/最大输出/图片输入/思考档位（none/low/high/max）；聊天输入框可切换模型与思考程度。新会话默认用第一个启用提供商的第一个模型。
+- **模型提供商**：设置页配置自定义提供商（Chat / Responses / Anthropic 三种 API 格式），每个模型可配上下文/最大输出/图片输入/思考档位（none/low/high/max）；模型与思考程度在智能体资料（通讯录 / 私聊「资料」）里配置，聊天输入框不再切换。新会话默认用第一个启用提供商的第一个模型。
 - **MCP**：设置页粘贴 JSON 导入（支持 mcpServers 包裹格式），可查看每个服务的连接状态与工具清单（请到设置配置，小杰无 MCP 工具）。
 - **图片消息**：聊天输入框支持上传/粘贴/拖拽图片（需模型支持图片输入），智能体能看图回答。
 - **项目群工作空间**：发起群聊可选工作空间目录，群内产出的文件默认保存到该目录。
@@ -1037,5 +1038,5 @@ export { migrateProviders, firstEnabledModel, configuredModelOptions, thinkingVa
 export { SessionIndex, cjkSplit, buildMatchQuery } from './memory/indexer.js'
 export { parseMcpServerJson } from './mcp/parse.js'
 export { MEMORY_TOOL, SEARCH_TOOL, DELEGATE_TOOL, type SessionScopeCtx, type ToolCtx } from './tools/memoryTools.js'
-export { formatModelKey, parseModelKey, modelDisplayLabel } from './util/modelKey.js'
+export { formatModelKey, parseModelKey, modelDisplayLabel, agentPromptOpts } from './util/modelKey.js'
 export { normalizeProjectRole, projectRoleLabel, PROJECT_ROLES, type ProjectRole } from './util/projectRole.js'

@@ -25,3 +25,20 @@ export function modelDisplayLabel(
   const hit = catalog.find((c) => c.id === m.providerID)
   return `${hit?.name || m.providerID} / ${m.modelID}`
 }
+
+/** 发消息用：智能体绑定模型（否则兜底）+ thinking 非空则作为 variant */
+export function agentPromptOpts(
+  agent: { model_provider?: string; model_id?: string; thinking?: string } | null | undefined,
+  defaultModel?: { providerID: string; modelID: string } | null,
+): { model?: { providerID: string; modelID: string }; variant?: string } {
+  const bound =
+    agent?.model_provider && agent?.model_id
+      ? { providerID: agent.model_provider, modelID: agent.model_id }
+      : null
+  const model = bound || (defaultModel?.providerID && defaultModel?.modelID ? defaultModel : null)
+  const variant = (agent?.thinking || '').trim() || undefined
+  return {
+    ...(model ? { model } : {}),
+    ...(variant ? { variant } : {}),
+  }
+}
