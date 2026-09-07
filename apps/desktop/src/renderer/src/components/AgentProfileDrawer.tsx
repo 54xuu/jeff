@@ -11,6 +11,8 @@ export default function AgentProfileDrawer(props: { agent: AgentInfo; onClose: (
   const save = async (d: AgentEditorSave) => {
     await api.invoke<AgentInfo>(IPC.agentsUpsert, d)
     await refreshAgents()
+    // 稍停让「✅ 已保存」可见，再关抽屉
+    await new Promise((r) => setTimeout(r, 600))
     props.onClose()
   }
 

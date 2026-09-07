@@ -65,7 +65,7 @@ export default function McpSettings(): React.JSX.Element {
       </div>
 
       {!loaded && <p className="settings-tip">加载中…</p>}
-      {loaded && names.length === 0 && <div className="empty-card">还没有 MCP 连接器。点「导入 JSON…」粘贴配置，或在对话里让小杰帮你配置。</div>}
+      {loaded && names.length === 0 && <div className="empty-card">还没有 MCP 连接器。点「导入 JSON…」粘贴 Claude Desktop / Cursor / opencode 格式配置。</div>}
 
       {names.map((name) => {
         const cfg = servers[name]

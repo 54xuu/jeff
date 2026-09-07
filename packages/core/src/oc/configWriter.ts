@@ -113,16 +113,23 @@ export function configuredModelOptions(providers: ProviderSetting[]): Configured
   return out
 }
 
-/** 单个模型的思考 variant 配置（按 API 格式映射） */
+/** 单个模型的思考 variant 配置（按 API 格式映射；对齐 DeepSeek 思考模式文档） */
 export function thinkingVariant(apiFormat: ApiFormat, tier: ThinkingTier): Record<string, unknown> | undefined {
   if (tier === 'none') {
-    return apiFormat === 'anthropic' ? { thinking: { type: 'disabled' } } : { reasoningEffort: 'none' }
+    // Chat：thinking.type=disabled；Responses：effort none；Anthropic：thinking disabled
+    if (apiFormat === 'chat') return { thinking: { type: 'disabled' } }
+    if (apiFormat === 'responses') return { reasoningEffort: 'none' }
+    return { thinking: { type: 'disabled' } }
   }
   if (apiFormat === 'anthropic') {
     return { thinking: { type: 'enabled', budgetTokens: ANTHROPIC_BUDGET[tier] } }
   }
-  // OpenAI 系（chat / responses）：max 映射到 high（reasoningEffort 无 max 档）
-  return { reasoningEffort: tier === 'max' ? 'high' : tier }
+  if (apiFormat === 'chat') {
+    // OpenAI 兼容 Chat：开关 + 强度（reasoning_effort 无 none）
+    return { thinking: { type: 'enabled' }, reasoningEffort: tier }
+  }
+  // Responses：仅 effort（含 max）
+  return { reasoningEffort: tier }
 }
 
 /** 单个模型在 opencode.json 里的 models 条目 */

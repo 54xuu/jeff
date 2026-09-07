@@ -93,6 +93,14 @@ function setupAppMenu(): void {
         },
         { type: 'separator' },
         {
+          label: '重启 Jeff',
+          accelerator: 'CmdOrCtrl+Shift+R',
+          click: () => {
+            app.relaunch()
+            app.quit()
+          },
+        },
+        {
           label: '退出 Jeff',
           accelerator: 'CmdOrCtrl+Q',
           click: () => app.quit(),
@@ -193,6 +201,13 @@ function setupTray(): void {
             } else {
               createWindow()
             }
+          },
+        },
+        {
+          label: '重启 Jeff',
+          click: () => {
+            app.relaunch()
+            app.quit()
           },
         },
         { type: 'separator' },

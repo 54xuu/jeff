@@ -43,10 +43,16 @@ describe('firstEnabledModel（会话兜底模型解析）', () => {
 })
 
 describe('thinkingVariant（思考档位跨厂商映射）', () => {
-  it('OpenAI 系：max→high，none→reasoningEffort none', () => {
-    expect(thinkingVariant('chat', 'max')).toEqual({ reasoningEffort: 'high' })
+  it('Chat：none→thinking.disabled；强度带 enabled + reasoningEffort（max 保留）', () => {
+    expect(thinkingVariant('chat', 'none')).toEqual({ thinking: { type: 'disabled' } })
+    expect(thinkingVariant('chat', 'low')).toEqual({ thinking: { type: 'enabled' }, reasoningEffort: 'low' })
+    expect(thinkingVariant('chat', 'high')).toEqual({ thinking: { type: 'enabled' }, reasoningEffort: 'high' })
+    expect(thinkingVariant('chat', 'max')).toEqual({ thinking: { type: 'enabled' }, reasoningEffort: 'max' })
+  })
+  it('Responses：none→reasoningEffort none；强度保留 max', () => {
+    expect(thinkingVariant('responses', 'none')).toEqual({ reasoningEffort: 'none' })
     expect(thinkingVariant('responses', 'low')).toEqual({ reasoningEffort: 'low' })
-    expect(thinkingVariant('chat', 'none')).toEqual({ reasoningEffort: 'none' })
+    expect(thinkingVariant('responses', 'max')).toEqual({ reasoningEffort: 'max' })
   })
   it('Anthropic：budgetTokens low=4096 high=16384 max=32768，none 显式禁用', () => {
     expect(thinkingVariant('anthropic', 'low')).toEqual({ thinking: { type: 'enabled', budgetTokens: 4096 } })
@@ -86,9 +92,9 @@ describe('writeSidecarConfig（v1.2 三格式 + variants）', () => {
     expect(pv['myproxy']?.options?.baseURL).toBe('http://x/v1')
     const m1 = pv['myproxy']?.models?.['m1']
     expect(m1?.limit).toEqual({ context: 128000, output: 8192 })
-    expect(m1?.variants?.['low']).toEqual({ reasoningEffort: 'low' })
-    expect(m1?.variants?.['max']).toEqual({ reasoningEffort: 'high' }) // max→high
-    expect(m1?.variants?.['none']).toEqual({ reasoningEffort: 'none' })
+    expect(m1?.variants?.['low']).toEqual({ thinking: { type: 'enabled' }, reasoningEffort: 'low' })
+    expect(m1?.variants?.['max']).toEqual({ thinking: { type: 'enabled' }, reasoningEffort: 'max' })
+    expect(m1?.variants?.['none']).toEqual({ thinking: { type: 'disabled' } })
     expect(m1?.variants?.['high']).toBeUndefined() // 未选中的档位不生成
     expect(pv['myproxy']?.models?.['m2']?.attachment).toBe(true)
     // skills 挂载 ~/.agents/skills

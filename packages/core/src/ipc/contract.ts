@@ -9,7 +9,7 @@ export type { McpServerCfg } from '../mcp/parse.js'
 /** 内置小杰（管家）agent id —— 渲染进程也要用，放契约里（无 node 依赖） */
 export const XIAOJIE_ID = 'agt_xiaojie'
 
-/** 模型思考档位（跨厂商统一：OpenAI 系映射 reasoningEffort，max→high；Anthropic 映射 thinking budget） */
+/** 模型思考档位（跨厂商统一：见 thinkingVariant；Chat 关思考用 thinking.type=disabled） */
 export type ThinkingTier = 'none' | 'low' | 'high' | 'max'
 export const THINKING_TIERS: ThinkingTier[] = ['none', 'low', 'high', 'max']
 

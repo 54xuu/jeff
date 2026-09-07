@@ -96,6 +96,15 @@ export function registerProjectTools(reg: ToolBridge, deps: ProjectToolDeps): vo
     return { removed: true }
   })
 
+  reg.register('jeff_project_delete', async (args: { id?: string }) => {
+    if (!args.id) throw new Error('id 不能为空')
+    if (!projects.get(args.id)) throw new Error(`项目不存在: ${args.id}`)
+    const ok = projects.softDelete(args.id)
+    if (!ok) throw new Error(`解散失败: ${args.id}`)
+    deps.onProjectChanged()
+    return { deleted: true, id: args.id }
+  })
+
   reg.register('jeff_task_create', async (args: {
     project_id?: string
     title?: string

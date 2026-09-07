@@ -69,13 +69,16 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
     if (el) el.scrollTop = el.scrollHeight
   }, [msgs.length, sendingNow, stream?.text])
 
-  // 当前模型的思考档位（来自供应商配置）；切模型时档位复位
+  // 当前模型的思考档位（来自供应商配置）；切模型时复位，优先用智能体默认 thinking
   const tiers = useMemo(() => {
     if (!currentModel) return []
     return allModels.find((m) => m.providerID === currentModel.providerID && m.modelID === currentModel.modelID)?.thinkingTiers ?? []
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentModel?.providerID, currentModel?.modelID, allModels])
-  useEffect(() => setVariant(''), [currentModel?.providerID, currentModel?.modelID])
+  useEffect(() => {
+    const preferred = agent?.thinking || ''
+    setVariant(preferred && tiers.includes(preferred as (typeof tiers)[number]) ? preferred : '')
+  }, [currentModel?.providerID, currentModel?.modelID, agent?.thinking, tiers])
 
   if (!agent) return <div className="empty-hint">智能体不存在</div>
 

@@ -1,6 +1,6 @@
 {
   "name": "@jeff/core",
-  "version": "1.7.0",
+  "version": "1.7.1",
   "private": true,
   "type": "module",
   "description": "Jeff 核心：数据库、sidecar 管理、opencode 客户端、编排、记忆、同步",

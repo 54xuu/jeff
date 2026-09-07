@@ -1,12 +1,12 @@
-import { useState } from 'react'
-import { formatModelKey, parseModelKey, type AgentInfo, type ModelOption } from '@jeff/core'
+import { useEffect, useMemo, useState } from 'react'
+import { formatModelKey, parseModelKey, type AgentInfo, type ModelOption, type ThinkingTier } from '@jeff/core'
 import Avatar from './Avatar'
 import ModelPickerCombo from './ModelPickerCombo'
 import { Button } from './ui/Button'
 import { Field } from './ui/Field'
 import { Toast } from './ui/Toast'
 
-export type ThinkingTierOpt = '' | 'none' | 'low' | 'high' | 'max'
+export type ThinkingTierOpt = '' | ThinkingTier
 
 export type AgentEditorSave = {
   id?: string
@@ -17,6 +17,13 @@ export type AgentEditorSave = {
   model_provider: string
   model_id: string
   thinking: string
+}
+
+const TIER_LABELS: Record<ThinkingTier, string> = {
+  none: '关闭思考（none）',
+  low: '低（low）',
+  high: '高（high）',
+  max: '最大（max）',
 }
 
 /** 智能体编辑表单（通讯录 / 私聊资料抽屉共用；小杰：名称/头像/指令锁定，仅模型与思考程度可改） */
@@ -39,12 +46,26 @@ export default function AgentEditor(props: {
   const [modelKey, setModelKey] = useState(a.model_provider && a.model_id ? formatModelKey(a.model_provider, a.model_id) : '')
   const [thinking, setThinking] = useState<ThinkingTierOpt>((a.thinking as ThinkingTierOpt) || '')
   const [saving, setSaving] = useState(false)
+  const [savedAt, setSavedAt] = useState<number | null>(null)
   const [error, setError] = useState<string | null>(null)
+
+  const tiers = useMemo(() => {
+    const parsed = parseModelKey(modelKey)
+    if (!parsed) return [] as ThinkingTier[]
+    return (
+      props.models.find((m) => m.providerID === parsed.providerID && m.modelID === parsed.modelID)?.thinkingTiers ?? []
+    )
+  }, [modelKey, props.models])
+
+  useEffect(() => {
+    if (thinking && !tiers.includes(thinking as ThinkingTier)) setThinking('')
+  }, [tiers, thinking])
 
   const submit = async () => {
     if (!locked && !name.trim()) return
     setSaving(true)
     setError(null)
+    setSavedAt(null)
     try {
       const parsed = parseModelKey(modelKey)
       await props.onSave({
@@ -57,6 +78,7 @@ export default function AgentEditor(props: {
         model_id: parsed?.modelID || '',
         thinking,
       })
+      setSavedAt(Date.now())
     } catch (e) {
       setError(String((e as Error)?.message || e))
     } finally {
@@ -105,13 +127,14 @@ export default function AgentEditor(props: {
         <Field label="模型（留空 = 默认用第一个启用提供商的第一个模型）" span>
           <ModelPickerCombo value={modelKey} onChange={setModelKey} placeholderEmpty="跟随默认" />
         </Field>
-        <Field label="思考程度（默认 = 跟随模型配置）">
+        <Field label="思考程度（默认 = 跟随模型配置；选项来自该模型在供应商里勾选的档位）">
           <select value={thinking} onChange={(e) => setThinking(e.target.value as ThinkingTierOpt)} data-testid="agent-thinking">
             <option value="">默认</option>
-            <option value="none">无思考（none）</option>
-            <option value="low">低（low）</option>
-            <option value="high">高（high）</option>
-            <option value="max">最大（max）</option>
+            {tiers.map((t) => (
+              <option key={t} value={t}>
+                {TIER_LABELS[t] || t}
+              </option>
+            ))}
           </select>
         </Field>
         {!locked && (
@@ -128,6 +151,11 @@ export default function AgentEditor(props: {
           {saving ? '保存中…' : '保存'}
         </Button>
         <Button onClick={props.onCancel}>取消</Button>
+        {savedAt && !saving && !error && (
+          <span className="settings-tip" style={{ alignSelf: 'center' }} data-testid="agent-saved">
+            ✅ 已保存（{new Date(savedAt).toLocaleTimeString()}）
+          </span>
+        )}
       </div>
     </div>
   )

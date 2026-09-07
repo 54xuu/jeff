@@ -104,6 +104,11 @@ export function allToolDefs(): ToolDef[] {
       args: { project_id: { type: 'string', description: '项目 id' }, agent_id: { type: 'string', description: '智能体 id' } },
     },
     {
+      name: 'jeff_project_delete',
+      description: '解散/软删除项目群（任务与群聊记录随软删除保留，可从同步历史恢复）。删除前必须先跟用户确认。',
+      args: { id: { type: 'string', description: '项目 id' } },
+    },
+    {
       name: 'jeff_task_create',
       description: '在项目里创建任务（编号自动生成 JEF-n）。可指定指派对象（智能体）、优先级。',
       args: {
@@ -144,11 +149,16 @@ export function allToolDefs(): ToolDef[] {
     {
       name: 'jeff_memory',
       description:
-        '读写你自己的长期记忆（会在每次对话时注入你的 system prompt，请保持精炼）。' +
+        '读写长期记忆（会在每次对话时注入 system prompt，请保持精炼）。' +
         'action: list 查看 / add 新增（与现有条目重复则不重复添加）/ replace 用 new_text 替换 old_text 唯一匹配的条目 / remove 删除 old_text 唯一匹配的条目 / batch 原子执行一组操作（用于腾空间时合并整理）。' +
+        'scope（可选）：省略=写自己的 agent 记忆；user=全局用户画像；project:<projectId>=项目群记忆。' +
         '适合记：用户偏好、环境事实、被纠正的错误、长期惯例；不要记：可随时重查的信息、当前会话临时内容。',
       args: {
         action: { type: 'string', description: '操作', enum: ['list', 'add', 'replace', 'remove', 'batch'] },
+        scope: {
+          type: 'string',
+          description: "记忆域：省略=self；user=用户画像；project:<projectId>=项目记忆（内置管家还可写 user）",
+        },
         text: { type: 'string', description: 'add 的新条目内容' },
         old_text: { type: 'string', description: 'replace/remove 的唯一子串匹配' },
         new_text: { type: 'string', description: 'replace 的替换内容' },
