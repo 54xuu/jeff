@@ -117,35 +117,51 @@ export class SyncEngine {
   }
 
   /**
-   * 确保远端目录存在：MKCOL；405/409 时再 PROPFIND/stat 确认。
-   * 不再静默吞掉失败——否则后续 PUT 会落到含糊的 403。
+   * 确保远端目录存在（逐级 MKCOL，不用 recursive）。
+   * 部分 Apache/istio WebDAV 对 recursive MKCOL 或无尾斜杠的 PROPFIND/stat 会误回 401。
    */
   private async ensureCollection(path: string): Promise<void> {
-    const client = this.client()
-    const dir = path.endsWith('/') ? path : `${path}/`
-    try {
-      await client.createDirectory(path, { recursive: true })
-      return
-    } catch (err) {
-      const msg = String((err as Error)?.message || err)
-      // 已存在 / 方法不允许：多数 WebDAV 对已有 collection 返回 405
-      if (!/405|409|Method Not Allowed|Conflict/i.test(msg)) {
-        throw new Error(`无法创建远端目录 ${path}: ${formatWebdavError(err)}`)
+    const normalized = path.replace(/\/+$/, '') || '/'
+    const parts = normalized.split('/').filter(Boolean)
+    let cur = ''
+    for (const part of parts) {
+      cur += `/${part}`
+      if (await this.collectionExists(cur)) continue
+      try {
+        await this.client().createDirectory(cur)
+      } catch (err) {
+        const msg = String((err as Error)?.message || err)
+        // 已存在
+        if (/405|409|Method Not Allowed|Conflict/i.test(msg)) continue
+        if (await this.collectionExists(cur)) continue
+        throw new Error(`无法创建远端目录 ${cur}: ${formatWebdavError(err)}`)
+      }
+      if (!(await this.collectionExists(cur))) {
+        throw new Error(`远端目录创建后仍不可访问：${cur}`)
       }
     }
-    try {
-      const st = (await client.stat(path)) as { type?: string }
-      if (st && (st.type === 'directory' || st.type === 'collection' || !st.type)) return
-    } catch {
-      /* fallthrough */
+  }
+
+  /** 目录是否存在；优先带尾斜杠（避免 Apache 301 后部分客户端丢认证变 401） */
+  private async collectionExists(path: string): Promise<boolean> {
+    const client = this.client()
+    const bare = path.replace(/\/+$/, '') || '/'
+    const withSlash = bare === '/' ? '/' : `${bare}/`
+    for (const p of [withSlash, bare]) {
+      try {
+        const st = (await client.stat(p)) as { type?: string }
+        if (st) return true
+      } catch {
+        /* try next */
+      }
+      try {
+        await client.getDirectoryContents(p)
+        return true
+      } catch {
+        /* try next */
+      }
     }
-    // 部分服务 stat 用无尾斜杠失败，再试带 /
-    try {
-      await client.stat(dir.replace(/\/+$/, '') || path)
-      return
-    } catch (err) {
-      throw new Error(`远端目录不存在且无法创建：${path}（${formatWebdavError(err)}）`)
-    }
+    return false
   }
 
   async sync(): Promise<SyncReport> {

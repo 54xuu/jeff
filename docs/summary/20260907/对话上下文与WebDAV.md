@@ -59,13 +59,7 @@ sudo dpkg -i /home/xujian/cdbox/jeff/apps/desktop/release/jeff-desktop_1.3.0_amd
 /usr/bin/jeff-desktop &
 ```
 
-## 后续：WebDAV 403 与错误可选中（同日）
+## 后续：保存并同步重入 + 假 401（同日）
 
-**原因**：用户 `basePath` 配成了 `jeff`（缺前导 `/`）。同步时 `createDirectory` 失败被 `.catch(() => {})` 吞掉，`memory/` 未建成就 PUT，Apache WebDAV 返回 `403 Forbidden`。根目录直写文件其实是通的。
-
-**修复**：
-
-- `normalizeWebdavBasePath`：自动补 `/`
-- `ensureCollection`：MKCOL 失败且目录确不存在时抛出可读错误，不再静默
-- `formatWebdavError`：把 401/403 等翻成中文说明
-- 设置页同步/备份错误用可选中的 `<pre class="sync-error-text">`；`settings-content` 允许 `user-select: text`
+1. **「上一轮同步仍在进行」**：`configureSync` 在 `autoSync` 时会异步 `syncNow`，UI「保存并同步」紧接着再调一次 → 撞重入锁。已改为 configure 只写配置，由 UI 单独触发 sync。
+2. **假 401**：账号密码正确；`webdav` 库的 `createDirectory({ recursive: true })` 与无尾斜杠 `stat('/jeff')` 在该 Apache 上会误回 401。已改为逐级非 recursive MKCOL，存在性检查优先 `stat('/jeff/')`。

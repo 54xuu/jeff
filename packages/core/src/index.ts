@@ -178,7 +178,7 @@ export class JeffCore extends EventEmitter {
     return this.sync.sync()
   }
 
-  /** 配置 WebDAV（密码存本地 kv；password 空串则保留已存密码） */
+  /** 配置 WebDAV（密码存本地 kv；password 空串则保留已存密码）。不自动 sync——由 UI「保存并同步」/「立即同步」或防抖触发，避免与紧随其后的 syncNow 撞重入锁。 */
   async configureSync(cfg: WebdavConfig): Promise<void> {
     const prev = this.kv().getJSON<WebdavConfig | null>('settings:webdav', null)
     const next: WebdavConfig = {
@@ -192,7 +192,6 @@ export class JeffCore extends EventEmitter {
     }
     this.kv().setJSON('settings:webdav', next)
     this.sync.resetClient()
-    if (next.autoSync) void this.syncNow().catch(() => {})
   }
 
   syncConfig(): Omit<WebdavConfig, 'password'> | null {
