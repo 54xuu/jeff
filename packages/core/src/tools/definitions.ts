@@ -21,11 +21,12 @@ export function allToolDefs(): ToolDef[] {
         instructions: { type: 'string', description: '身份指令/系统提示（它擅长什么、怎么干活的规矩）' },
         model_provider: { type: 'string', description: '默认模型 provider id，可留空' },
         model_id: { type: 'string', description: '默认模型 id，可留空' },
+        thinking: { type: 'string', description: "默认思考档位：空串=跟随模型；none/low/high/max", enum: ['', 'none', 'low', 'high', 'max'] },
       },
     },
     {
       name: ADMIN_TOOL_NAMES[1], // jeff_agent_update
-      description: '修改智能体信息（名字/头像/简介/指令/默认模型/归档）。内置管家小杰不可修改。',
+      description: '修改智能体信息（名字/头像/简介/指令/默认模型/思考程度/归档）。内置管家小杰不可修改。',
       args: {
         id: { type: 'string', description: '智能体 id' },
         name: { type: 'string', description: '新名字（可选）' },
@@ -34,6 +35,7 @@ export function allToolDefs(): ToolDef[] {
         instructions: { type: 'string', description: '新指令（可选）' },
         model_provider: { type: 'string', description: '模型 provider（可选）' },
         model_id: { type: 'string', description: '模型 id（可选）' },
+        thinking: { type: 'string', description: "思考档位：空串=跟随模型；none/low/high/max", enum: ['', 'none', 'low', 'high', 'max'] },
         archived: { type: 'boolean', description: '归档/取消归档（可选）' },
       },
     },
@@ -62,6 +64,7 @@ export function allToolDefs(): ToolDef[] {
         icon: { type: 'string', description: '群图标 emoji' },
         description: { type: 'string', description: '群简介' },
         leader_agent_id: { type: 'string', description: '群主智能体 id（必须已存在）' },
+        workspace_dir: { type: 'string', description: '工作空间目录（可选；空=Jeff 默认工作区；群内产出默认落此目录）' },
         members: {
           type: 'array',
           description: '工作者列表（role 忽略，一律存为 worker），每项 {agentId}',
@@ -71,7 +74,7 @@ export function allToolDefs(): ToolDef[] {
     },
     {
       name: 'jeff_project_update',
-      description: '修改项目群（名称/简介/图标/状态/群主）。',
+      description: '修改项目群（名称/简介/图标/状态/群主/工作空间目录）。',
       args: {
         id: { type: 'string', description: '项目 id' },
         title: { type: 'string', description: '新群名（可选）' },
@@ -79,6 +82,7 @@ export function allToolDefs(): ToolDef[] {
         icon: { type: 'string', description: '新图标（可选）' },
         status: { type: 'string', description: '状态', enum: [...PROJECT_STATUSES] },
         leader_agent_id: { type: 'string', description: '新群主 id（可选）' },
+        workspace_dir: { type: 'string', description: '工作空间目录（可选；传空串清除为默认工作区）' },
       },
     },
     {

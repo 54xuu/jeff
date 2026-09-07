@@ -97,7 +97,7 @@ describe('SyncEngine skills 单向备份（安全模型）', () => {
     expect(fs.readFileSync(path.join(skillsDir, 'local-only.md'), 'utf8')).toBe('keep me') // 不删除
   })
 
-  it('重入锁：并发 sync 时后到者被跳过（不交叉执行）', async () => {
+  it('重入锁：并发 sync 时后到者等待上一轮结束（不交叉执行）', async () => {
     // 起一个响应 400ms 的假 DAV：保证第一个 sync 还在跑时第二个就到
     const delay = http.createServer((req, res) => {
       setTimeout(() => {
@@ -117,8 +117,9 @@ describe('SyncEngine skills 单向备份（安全模型）', () => {
         autoSync: false,
       }))
       const [a, b] = await Promise.all([eng.sync(), eng.sync()])
-      const skipped = [a, b].filter((r) => !r.ok && r.error?.includes('跳过'))
-      expect(skipped.length).toBe(1)
+      // 现行为：后到者 waitUntilIdle，上一轮结束后再跑；短任务下两者都 ok。超时仍在进行则返回可读错误。
+      expect([a, b].every((r) => r.ok || !!r.error?.includes('仍在进行'))).toBe(true)
+      expect([a, b].filter((r) => r.ok).length).toBeGreaterThanOrEqual(1)
       db.close()
     } finally {
       delay.close()

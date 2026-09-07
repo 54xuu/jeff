@@ -185,7 +185,7 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
               <path d="M12 7v5l3.5 2" />
             </svg>
           </button>
-          <button className="text-btn" onClick={() => setDrawer(true)}>
+          <button className="text-btn" data-testid="group-info-btn" onClick={() => setDrawer(true)}>
             群资料与任务
           </button>
         </div>

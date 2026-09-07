@@ -21,6 +21,7 @@ export function registerProjectTools(reg: ToolBridge, deps: ProjectToolDeps): vo
     icon?: string
     description?: string
     leader_agent_id?: string
+    workspace_dir?: string
     members?: Array<{ agentId?: string; agent_id?: string; role?: string }>
   }) => {
     const title = (args.title || '').trim()
@@ -28,7 +29,13 @@ export function registerProjectTools(reg: ToolBridge, deps: ProjectToolDeps): vo
     const leaderId = args.leader_agent_id
     if (!leaderId) throw new Error('必须指定群主 leader_agent_id（一个 agent）')
     if (!agents.get(leaderId)) throw new Error(`群主智能体不存在: ${leaderId}`)
-    const p = projects.create({ title, icon: args.icon || '👥', description: args.description || '', leader_agent_id: leaderId })
+    const p = projects.create({
+      title,
+      icon: args.icon || '👥',
+      description: args.description || '',
+      leader_agent_id: leaderId,
+      workspace_dir: (args.workspace_dir || '').trim(),
+    })
     members.add(p.id, leaderId, 'leader', 0)
     for (const m of args.members || []) {
       const id = m.agentId || m.agent_id
@@ -37,10 +44,10 @@ export function registerProjectTools(reg: ToolBridge, deps: ProjectToolDeps): vo
       members.add(p.id, id, 'worker')
     }
     deps.onProjectChanged()
-    return { id: p.id, title: p.title, leader_agent_id: p.leader_agent_id }
+    return { id: p.id, title: p.title, leader_agent_id: p.leader_agent_id, workspace_dir: p.workspace_dir || '' }
   })
 
-  reg.register('jeff_project_update', async (args: { id?: string; title?: string; description?: string; icon?: string; status?: string; leader_agent_id?: string }) => {
+  reg.register('jeff_project_update', async (args: { id?: string; title?: string; description?: string; icon?: string; status?: string; leader_agent_id?: string; workspace_dir?: string }) => {
     if (!args.id) throw new Error('id 不能为空')
     const row = projects.update(args.id, {
       ...(args.title !== undefined ? { title: args.title } : {}),
@@ -48,11 +55,12 @@ export function registerProjectTools(reg: ToolBridge, deps: ProjectToolDeps): vo
       ...(args.icon !== undefined ? { icon: args.icon } : {}),
       ...(args.status !== undefined ? { status: args.status } : {}),
       ...(args.leader_agent_id !== undefined ? { leader_agent_id: args.leader_agent_id } : {}),
+      ...(args.workspace_dir !== undefined ? { workspace_dir: String(args.workspace_dir).trim() } : {}),
     })
     if (!row) throw new Error(`项目不存在: ${args.id}`)
     if (args.leader_agent_id) members.add(args.id, args.leader_agent_id, 'leader')
     deps.onProjectChanged()
-    return { id: row.id, title: row.title }
+    return { id: row.id, title: row.title, workspace_dir: row.workspace_dir || '' }
   })
 
   reg.register('jeff_project_list', async () => {
@@ -63,6 +71,7 @@ export function registerProjectTools(reg: ToolBridge, deps: ProjectToolDeps): vo
       status: p.status,
       description: p.description,
       leader_agent_id: p.leader_agent_id,
+      workspace_dir: p.workspace_dir || '',
       members: members.listByProject(p.id).map((m) => ({ agentId: m.agent_id, role: m.role })),
     }))
   })
@@ -182,4 +191,4 @@ export function statusLabel(status: string): string {
 }
 
 /** 供小杰指令参考：项目群/任务工具提示文本 */
-export const PROJECT_TOOL_HINT = `项目群工具（jeff_project_*）用于建群、配成员与群主；任务工具（jeff_task_*）用于创建/流转任务，任务会以卡片形式出现在对应项目群里。创建项目群时必须先想好：群名、谁当群主（leader，统筹一切的智能体）、有哪些工作者（worker，统一角色，不做开发/产品等细分类）。`
+export const PROJECT_TOOL_HINT = `项目群工具（jeff_project_*）用于建群、改群资料（含工作空间目录 workspace_dir）、配成员与群主；任务工具（jeff_task_*）用于创建/流转任务，任务会以卡片形式出现在对应项目群里。创建项目群时必须先想好：群名、谁当群主（leader，统筹一切的智能体）、有哪些工作者（worker，统一角色，不做开发/产品等细分类）、工作空间目录（可选）。`

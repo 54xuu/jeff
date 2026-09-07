@@ -101,7 +101,8 @@ export class SyncEngine {
   private client(): WebDAVClient {
     if (!this.davClient) {
       const cfg = this.cfg()
-      const timeoutMs = cfg.timeoutMs && cfg.timeoutMs > 0 ? cfg.timeoutMs : 60_000
+      const rawTimeout = cfg.timeoutMs
+      const timeoutMs = typeof rawTimeout === 'number' && rawTimeout > 0 ? rawTimeout : 60_000
       const tlsVerify = cfg.tlsVerify !== false
       this.davClient = createClient(cfg.url, {
         username: cfg.username,
@@ -577,7 +578,8 @@ export class SyncEngine {
       const files = this.listSkillFiles(root)
       const lastHashes = this.skillsKv<Record<string, string>>('hashes', {})
       const hashes: Record<string, string> = {}
-      const timeoutMs = this.cfg().timeoutMs && this.cfg().timeoutMs > 0 ? this.cfg().timeoutMs : 60_000
+      const rawTimeout = this.cfg().timeoutMs
+      const timeoutMs = typeof rawTimeout === 'number' && rawTimeout > 0 ? rawTimeout : 60_000
       for (const rel of files) {
         const content = fs.readFileSync(path.join(root, rel))
         const hash = contentHash(content)

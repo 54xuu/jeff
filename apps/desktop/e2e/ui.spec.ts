@@ -121,6 +121,12 @@ test.describe('Jeff UI 封闭清单', () => {
       await page.getByTestId('nav-chats').click()
       await page.getByTestId('chat-agent-小杰').click()
       await expect(page.getByTestId('chat-window')).toBeVisible()
+      await page.getByTestId('chat-profile').click()
+      await expect(page.getByTestId('agent-profile-drawer')).toBeVisible()
+      await expect(page.getByTestId('agent-save')).toBeVisible()
+      await page.getByTestId('agent-profile-drawer').locator('.drawer-head .icon-btn').click()
+      await expect(page.getByTestId('agent-profile-drawer')).toHaveCount(0)
+
       await page.getByTestId('chat-model-chip').click()
       await expect(page.getByTestId('chat-model-menu')).toBeVisible({ timeout: 15000 })
       await page.keyboard.press('Escape')
@@ -152,6 +158,18 @@ test.describe('Jeff UI 封闭清单', () => {
       await expect(page.getByTestId('create-group-modal')).toHaveCount(0, { timeout: 15000 })
       await expect(page.getByTestId('chat-group-E2E测试群')).toBeVisible({ timeout: 15000 })
       await page.getByTestId('chat-group-E2E测试群').click()
+
+      // ---- 群资料设置 ----
+      await page.getByTestId('group-info-btn').click()
+      await expect(page.getByTestId('group-info-drawer')).toBeVisible()
+      await expect(page.getByTestId('group-settings')).toBeVisible()
+      await page.getByTestId('group-settings-title').fill('E2E改名群')
+      await page.getByTestId('group-settings-save').click()
+      await expect(page.getByText('已保存')).toBeVisible({ timeout: 10000 })
+      await page.getByTestId('group-info-drawer').locator('.drawer-head .icon-btn').click()
+      await expect(page.getByTestId('group-info-drawer')).toHaveCount(0)
+      await expect(page.getByTestId('chat-group-E2E改名群')).toBeVisible({ timeout: 15000 })
+
       await page.getByTestId('chat-draft').fill('群聊 E2E：只回「收到」。')
       await page.getByTestId('chat-send').click()
       await expect(page.getByTestId('chat-draft')).toHaveValue('', { timeout: 10000 })

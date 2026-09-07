@@ -7,6 +7,7 @@ import { Markdown } from './Markdown'
 import { useImages, ImagePreviews, MsgImages, AssistantExtras } from './ChatShared'
 import ChatHistoryDrawer from './ChatHistoryDrawer'
 import ContextDrawer, { ContextUsageBar, fetchContextPreview } from './ContextDrawer'
+import AgentProfileDrawer from './AgentProfileDrawer'
 import { useDismissable } from '../hooks/useDismissable'
 
 export default function ChatWindow(props: { agentId: string }): React.JSX.Element {
@@ -23,6 +24,7 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
   const [modelFilter, setModelFilter] = useState('')
   const [variantOpen, setVariantOpen] = useState(false)
   const [historyOpen, setHistoryOpen] = useState(false)
+  const [profileOpen, setProfileOpen] = useState(false)
   const [contextOpen, setContextOpen] = useState(false)
   const [ctxPreview, setCtxPreview] = useState<ContextPreviewInfo | null>(null)
   const [ctxLoading, setCtxLoading] = useState(false)
@@ -129,6 +131,9 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
               <circle cx="12" cy="12" r="9" />
               <path d="M12 7v5l3.5 2" />
             </svg>
+          </button>
+          <button className="text-btn" data-testid="chat-profile" onClick={() => setProfileOpen(true)} title="查看 / 编辑智能体资料">
+            资料
           </button>
         </div>
       </div>
@@ -298,6 +303,7 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
       </div>
 
       {historyOpen && <ChatHistoryDrawer agentId={agent.id} onClose={() => setHistoryOpen(false)} />}
+      {profileOpen && <AgentProfileDrawer agent={agent} onClose={() => setProfileOpen(false)} />}
       {contextOpen && (
         <ContextDrawer
           agentId={agent.id}

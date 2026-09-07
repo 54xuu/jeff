@@ -239,10 +239,11 @@ export function registerIpc(core: JeffCore): void {
       for (const [name, r] of Object.entries(raw)) {
         out[name] = {
           name,
-          status: r.ok ? 'ok' : 'error',
+          status: r.error === '已停用' ? 'disabled' : r.ok ? 'ok' : 'error',
           tools: r.tools || [],
           toolCount: (r.tools || []).length,
           error: r.error,
+          elapsedMs: r.elapsedMs,
         }
       }
       return out
