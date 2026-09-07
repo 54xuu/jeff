@@ -141,6 +141,7 @@ export function registerIpc(core: JeffCore): void {
     // ---------- 历史会话（聊天记录） ----------
     [IPC.sessionsList]: async (p) => {
       const d = p as { agentId?: string; projectId?: string }
+      // 群侧改用 groupThreadsList；此处仅私聊
       if (d.projectId) return { sessions: await core.listGroupSessions(d.projectId) }
       if (d.agentId) return { sessions: await core.listAgentSessions(d.agentId) }
       throw new Error('agentId 与 projectId 至少提供一个')
@@ -163,12 +164,35 @@ export function registerIpc(core: JeffCore): void {
       const d = p as { sessionId: string; title: string }
       return core.renameSession(d.sessionId, d.title)
     },
-    [IPC.groupNewSession]: async (p) => {
-      const d = p as { projectId: string; agentId: string }
-      if (!d.projectId || !d.agentId) throw new Error('projectId 与 agentId 必填')
-      const r = await core.newGroupSession(d.projectId, d.agentId)
+    [IPC.groupThreadsList]: async (p) => {
+      const { projectId } = p as { projectId: string }
+      return { threads: core.listGroupThreads(projectId) }
+    },
+    [IPC.groupThreadNew]: async (p) => {
+      const d = p as { projectId: string; title?: string }
+      const r = core.newGroupThread(d.projectId, d.title)
       core.bus.emit('group-updated', { projectId: d.projectId })
       return r
+    },
+    [IPC.groupThreadActivate]: async (p) => {
+      const d = p as { projectId: string; threadId: string }
+      core.activateGroupThread(d.projectId, d.threadId)
+      core.bus.emit('group-updated', { projectId: d.projectId })
+      return { ok: true }
+    },
+    [IPC.groupThreadRename]: async (p) => {
+      const d = p as { projectId: string; threadId: string; title: string }
+      return core.renameGroupThread(d.projectId, d.threadId, d.title)
+    },
+    [IPC.groupThreadDelete]: async (p) => {
+      const d = p as { projectId: string; threadId: string }
+      await core.deleteGroupThread(d.projectId, d.threadId)
+      core.bus.emit('group-updated', { projectId: d.projectId })
+      return { ok: true }
+    },
+    [IPC.groupThreadPreview]: async (p) => {
+      const d = p as { projectId: string; threadId: string }
+      return { messages: core.previewGroupThread(d.projectId, d.threadId) }
     },
     [IPC.settingsGet]: async (): Promise<AppSettings> => {
       const kv = core.kv()

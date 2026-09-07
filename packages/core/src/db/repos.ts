@@ -334,4 +334,13 @@ export const chatMessageRepo = (db: DB) => ({
     ).run(rec as unknown as Record<string, never>)
     return rec
   },
+  /** 把旧 scope 整批迁到新 scope（群 thread 迁移） */
+  reScope(fromScope: string, toScope: string): number {
+    const r = db.prepare('UPDATE chat_message SET scope = ? WHERE scope = ?').run(toScope, fromScope)
+    return Number(r.changes || 0)
+  },
+  deleteByScope(scope: string): number {
+    const r = db.prepare('DELETE FROM chat_message WHERE scope = ?').run(scope)
+    return Number(r.changes || 0)
+  },
 })

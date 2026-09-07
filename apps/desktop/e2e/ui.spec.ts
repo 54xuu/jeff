@@ -167,7 +167,8 @@ test.describe('Jeff UI 封闭清单', () => {
       // 简介应是多行 textarea，且无看板
       await expect(page.getByTestId('group-settings-desc')).toHaveJSProperty('tagName', 'TEXTAREA')
       await expect(page.getByText('任务看板')).toHaveCount(0)
-      await expect(page.getByTestId('group-task-sessions')).toBeVisible()
+      await expect(page.getByText('每个成员下的会话')).toHaveCount(0)
+      await expect(page.getByTestId('group-chat-history')).toBeVisible()
       await page.getByTestId('group-settings-title').fill('E2E改名群')
       await page.getByTestId('group-settings-desc').fill('E2E 项目背景：验证群简介注入。')
       await page.getByTestId('group-settings-save').click()
@@ -175,6 +176,10 @@ test.describe('Jeff UI 封闭清单', () => {
       await page.getByTestId('group-info-drawer').locator('.drawer-head .icon-btn').click()
       await expect(page.getByTestId('group-info-drawer')).toHaveCount(0)
       await expect(page.getByTestId('chat-group-E2E改名群')).toBeVisible({ timeout: 15000 })
+
+      // ---- 新会话清空主窗 ----
+      await page.getByTestId('group-new-session').click()
+      await expect(page.getByText(/这是项目/)).toBeVisible({ timeout: 10000 })
 
       // ---- 私聊历史可改名入口 ----
       await page.getByTestId('chat-agent-小杰').click()

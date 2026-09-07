@@ -55,7 +55,12 @@ export const IPC = {
   sessionActivate: 'session:activate',
   sessionDelete: 'session:delete',
   sessionRename: 'session:rename',
-  groupNewSession: 'group:newSession',
+  groupThreadsList: 'group:threadsList',
+  groupThreadNew: 'group:threadNew',
+  groupThreadActivate: 'group:threadActivate',
+  groupThreadRename: 'group:threadRename',
+  groupThreadDelete: 'group:threadDelete',
+  groupThreadPreview: 'group:threadPreview',
   settingsGet: 'settings:get',
   settingsSet: 'settings:set',
   mcpList: 'mcp:list',
@@ -160,7 +165,7 @@ export interface ProviderCatalogItem {
   models: ModelOption[]
 }
 
-/** 历史会话简要（聊天记录抽屉） */
+/** 历史会话简要（私聊聊天记录抽屉） */
 export interface SessionBrief {
   id: string
   title: string
@@ -168,9 +173,20 @@ export interface SessionBrief {
   updatedAt: number
   /** 是否为当前会话 */
   active: boolean
-  /** 归属 agent（群聊抽屉分组用） */
+  /** 归属 agent（私聊） */
   agentId: string
   agentName: string
+}
+
+/** 项目群话题（一段群聊历史，类微信） */
+export interface GroupThreadBrief {
+  id: string
+  title: string
+  updatedAt: number
+  createdAt: number
+  active: boolean
+  /** 消息条数（可选展示） */
+  messageCount?: number
 }
 
 export interface AppSettings {
@@ -322,7 +338,12 @@ export type InvokeMap = {
   [IPC.sessionActivate]: { scope: 'private' | 'group'; agentId: string; projectId?: string; sessionId: string }
   [IPC.sessionDelete]: { sessionId: string }
   [IPC.sessionRename]: { sessionId: string; title: string }
-  [IPC.groupNewSession]: { projectId: string; agentId: string }
+  [IPC.groupThreadsList]: { projectId: string }
+  [IPC.groupThreadNew]: { projectId: string; title?: string }
+  [IPC.groupThreadActivate]: { projectId: string; threadId: string }
+  [IPC.groupThreadRename]: { projectId: string; threadId: string; title: string }
+  [IPC.groupThreadDelete]: { projectId: string; threadId: string }
+  [IPC.groupThreadPreview]: { projectId: string; threadId: string }
   [IPC.settingsGet]: void
   [IPC.settingsSet]: { theme?: AppSettings['theme']; themePack?: AppSettings['themePack'] }
   [IPC.mcpList]: void

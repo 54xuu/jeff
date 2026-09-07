@@ -157,13 +157,8 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
     }
   }
 
-  const doNewTask = async () => {
-    const leader = project.leader_agent_id
-    if (!leader) {
-      alert('请先在群资料里设置群主')
-      return
-    }
-    await api.invoke(IPC.groupNewSession, { projectId: project.id, agentId: leader })
+  const doNewThread = async () => {
+    await api.invoke(IPC.groupThreadNew, { projectId: project.id })
     await loadGroupHistory(project.id)
   }
 
@@ -185,8 +180,8 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
           >
             {compressing ? '压缩中…' : '压缩'}
           </button>
-          <button className="text-btn" data-testid="group-new-task" disabled={busy || !project.leader_agent_id} onClick={() => void doNewTask()} title="给群主开新任务会话">
-            新任务
+          <button className="text-btn" data-testid="group-new-session" disabled={busy} onClick={() => void doNewThread()} title="开启新会话（旧记录保留在群资料 → 聊天记录）">
+            新会话
           </button>
           <button className="text-btn" data-testid="group-info-btn" onClick={() => setDrawer(true)}>
             群资料

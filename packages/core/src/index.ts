@@ -5,7 +5,7 @@ import { buildPaths, ensureDirs, jeffRoot, type JeffPaths } from './paths.js'
 import { openDb, type DB } from './db/db.js'
 import { agentRepo, kvRepo, chatMessageRepo, projectRepo, projectAgentRepo, type AgentRow } from './db/repos.js'
 import { SidecarManager } from './sidecar/manager.js'
-import { OcClient, type SessionInfo } from './oc/client.js'
+import { OcClient } from './oc/client.js'
 import { writeSidecarConfig, migrateProviders, firstEnabledModel, configuredModelOptions, type ProviderSetting } from './oc/configWriter.js'
 import { AgentRegistry, XIAOJIE_INSTRUCTIONS, agentSlug } from './agents/registry.js'
 import { XIAOJIE_ID } from './ipc/contract.js'
@@ -263,44 +263,59 @@ export class JeffCore extends EventEmitter {
       .sort((a, b) => b.updatedAt - a.updatedAt)
   }
 
-  /** 项目群的历史会话（按成员分组；含 opencode 目录会话与 kv 已知会话） */
+  /** 项目群话题列表（扁平聊天记录） */
+  listGroupThreads(projectId: string): Array<{ id: string; title: string; updatedAt: number; createdAt: number; active: boolean; messageCount: number }> {
+    if (!projectRepo(this.db).get(projectId)) throw new Error('项目不存在')
+    const active = this.groupChat.threads.ensureActiveThread(projectId)
+    return this.groupChat.threads.listThreads(projectId).map((t) => ({
+      id: t.id,
+      title: t.title,
+      updatedAt: t.updatedAt,
+      createdAt: t.createdAt,
+      active: t.id === active,
+      messageCount: this.groupChat.history(projectId, t.id).length,
+    }))
+  }
+
+  /** 预览某段群话题的消息 */
+  previewGroupThread(projectId: string, threadId: string) {
+    return this.groupChat.history(projectId, threadId)
+  }
+
+  newGroupThread(projectId: string, title?: string): { threadId: string; title: string } {
+    if (!projectRepo(this.db).get(projectId)) throw new Error('项目不存在')
+    const t = this.groupChat.threads.createThread(projectId, title)
+    return { threadId: t.id, title: t.title }
+  }
+
+  activateGroupThread(projectId: string, threadId: string): void {
+    this.groupChat.threads.setActive(projectId, threadId)
+  }
+
+  renameGroupThread(projectId: string, threadId: string, title: string): { id: string; title: string } {
+    const t = this.groupChat.threads.rename(projectId, threadId, title)
+    return { id: t.id, title: t.title }
+  }
+
+  async deleteGroupThread(projectId: string, threadId: string): Promise<{ ok: boolean }> {
+    const { ocSessionIds } = this.groupChat.threads.deleteThread(projectId, threadId)
+    for (const sid of ocSessionIds) {
+      await this.oc.deleteSession(sid).catch(() => {})
+    }
+    return { ok: true }
+  }
+
+  /** @deprecated 保留给旧 IPC；群侧请用 listGroupThreads */
   async listGroupSessions(projectId: string): Promise<Array<{ id: string; title: string; updatedAt: number; active: boolean; agentId: string; agentName: string }>> {
-    const project = projectRepo(this.db).get(projectId)
-    if (!project) throw new Error('项目不存在')
-    const members = projectAgentRepo(this.db).listByProject(projectId)
-    const out: Array<{ id: string; title: string; updatedAt: number; active: boolean; agentId: string; agentName: string }> = []
-    const dir = project.workspace_dir || undefined
-    let remote: SessionInfo[] = []
-    try {
-      remote = await this.oc.listSessions(dir)
-    } catch {
-      remote = []
-    }
-    const known = new Set<string>()
-    for (const m of members) {
-      const agent = agentRepo(this.db).get(m.agent_id)
-      const slug = agent ? agentSlug(m.agent_id) : ''
-      const current = this.groupChat.getSessionId(projectId, m.agent_id)
-      const rows = remote.filter((s) => {
-        if (known.has(s.id) && s.id !== current) return false
-        return (slug && (s as { agent?: string }).agent === slug) || s.id === current
-      })
-      // 该成员没有任何远端会话时，至少显示 kv 指向的当前会话
-      const fallback = rows.length === 0 && current ? [{ id: current, title: '', time: { updated: 0 } } as unknown as SessionInfo] : rows
-      for (const s of fallback) {
-        if (known.has(s.id)) continue
-        known.add(s.id)
-        out.push({
-          id: s.id,
-          title: s.title || `群「${project.title}」· ${agent?.name || m.agent_id}`,
-          updatedAt: (s as { time?: { updated?: number } }).time?.updated || 0,
-          active: s.id === current,
-          agentId: m.agent_id,
-          agentName: agent?.name || m.agent_id,
-        })
-      }
-    }
-    return out.sort((a, b) => b.updatedAt - a.updatedAt)
+    const threads = this.listGroupThreads(projectId)
+    return threads.map((t) => ({
+      id: t.id,
+      title: t.title,
+      updatedAt: t.updatedAt,
+      active: t.active,
+      agentId: '',
+      agentName: '群',
+    }))
   }
 
   /** 预览任意会话完整历史 */
@@ -308,11 +323,17 @@ export class JeffCore extends EventEmitter {
     return this.privateChat.mapSessionMessages(sessionId)
   }
 
-  /** 切换当前会话（私聊：该 agent；群聊：项目内指定成员） */
+  /** 切换当前会话（私聊） */
   activateSession(scope: 'private' | 'group', agentId: string, sessionId: string, projectId?: string): void {
     const kv = this.kv()
     if (scope === 'group' && projectId) {
-      kv.set(`session:group:${projectId}:${agentId}`, sessionId)
+      // 群侧请用 activateGroupThread；此处兼容：若 sessionId 是 threadId
+      try {
+        this.groupChat.threads.setActive(projectId, sessionId)
+      } catch {
+        const tid = this.groupChat.threads.ensureActiveThread(projectId)
+        kv.set(`session:group:${projectId}:${tid}:${agentId}`, sessionId)
+      }
     } else {
       kv.set(`session:private:${agentId}`, sessionId)
     }
@@ -328,18 +349,12 @@ export class JeffCore extends EventEmitter {
     }
   }
 
-  /** 重命名会话标题（私聊 / 群任务共用） */
+  /** 重命名会话标题（私聊 opencode session） */
   async renameSession(sessionId: string, title: string): Promise<{ id: string; title: string }> {
     const t = title.trim()
     if (!t) throw new Error('标题不能为空')
     const s = await this.oc.updateSession(sessionId, { title: t })
     return { id: s.id, title: s.title || t }
-  }
-
-  /** 群内某成员开新任务会话（旧会话保留） */
-  async newGroupSession(projectId: string, agentId: string): Promise<{ sessionId: string }> {
-    const sessionId = await this.groupChat.newSession(projectId, agentId)
-    return { sessionId }
   }
 
   /** 已配置模型选项（只含启用提供商的模型；composer/智能体表单共用） */
@@ -431,18 +446,21 @@ export class JeffCore extends EventEmitter {
 
   /** 群聊最近一次回复的 agent（用于上下文默认成员） */
   lastGroupAgentId(projectId: string): string | null {
-    const sessionId = this.kv().get(`session:group:last:${projectId}`)
+    const sessionId = this.groupChat.threads.getLastOcSession(projectId)
     if (!sessionId) return null
+    const threadId = this.groupChat.threads.getActiveThreadId(projectId)
     const members = projectAgentRepo(this.db).listByProject(projectId)
     for (const m of members) {
-      if (this.groupChat.getSessionId(projectId, m.agent_id) === sessionId) return m.agent_id
+      if (this.groupChat.getSessionId(projectId, m.agent_id, threadId || undefined) === sessionId) return m.agent_id
     }
-    // 回退：扫描 kv
     const rows = this.db.prepare("SELECT key, value FROM kv WHERE key LIKE ?").all(`session:group:${projectId}:%`) as Array<{ key: string; value: string }>
     for (const r of rows) {
       if (r.value === sessionId) {
-        const m = /session:group:[^:]+:(.+)/.exec(r.key)
+        // session:group:projectId:threadId:agentId
+        const m = /session:group:[^:]+:[^:]+:(.+)/.exec(r.key)
         if (m) return m[1]
+        const legacy = /session:group:[^:]+:(.+)/.exec(r.key)
+        if (legacy && !legacy[1].includes(':')) return legacy[1]
       }
     }
     return null
@@ -450,7 +468,7 @@ export class JeffCore extends EventEmitter {
 
   /** 停止群聊当前生成（abort 最近路由的会话） */
   async abortGroup(projectId: string): Promise<void> {
-    const sessionId = this.kv().get(`session:group:last:${projectId}`)
+    const sessionId = this.groupChat.threads.getLastOcSession(projectId)
     if (sessionId) await this.oc.abortSession(sessionId)
   }
 
@@ -675,8 +693,11 @@ export class JeffCore extends EventEmitter {
     const rows = this.db.prepare("SELECT key, value FROM kv WHERE key LIKE 'session:group:%'").all() as unknown as Array<{ key: string; value: string }>
     for (const r of rows) {
       if (r.value === sessionId) {
-        const m = /session:group:([^:]+):(.+)/.exec(r.key)
-        if (m) return { kind: 'group', projectId: m[1], agentId: m[2] }
+        // session:group:projectId:threadId:agentId
+        const withThread = /session:group:([^:]+):([^:]+):(.+)/.exec(r.key)
+        if (withThread) return { kind: 'group', projectId: withThread[1], agentId: withThread[3] }
+        const legacy = /session:group:([^:]+):(.+)/.exec(r.key)
+        if (legacy) return { kind: 'group', projectId: legacy[1], agentId: legacy[2] }
       }
     }
     return null

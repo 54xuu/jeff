@@ -3,37 +3,46 @@ import { chatMessageRepo, projectAgentRepo, projectRepo, agentRepo, kvRepo, type
 import { agentSlug } from '../agents/registry.js'
 import type { OcClient, AssistantInfo } from '../oc/client.js'
 import type { GroupMessage } from '../ipc/contract.js'
-
-const SESSION_KEY = (projectId: string, agentId: string) => `session:group:${projectId}:${agentId}`
+import { GroupThreadStore, groupMsgScope } from './groupThreads.js'
 
 export interface GroupChatHooks {
   beforeEnsure?: () => Promise<void>
-  onSessionCreated?: (sessionId: string, meta: { kind: 'private' | 'group' | 'review'; agentId: string; projectId?: string }) => void
+  onSessionCreated?: (sessionId: string, meta: { kind: 'private' | 'group' | 'review'; agentId: string; projectId?: string; threadId?: string }) => void
   /** 群消息的记忆块注入（追加在 briefing 之后） */
   buildMemory?: (agentId: string, projectId: string) => string | undefined
   afterReply?: (scope: { kind: 'private'; agentId: string } | { kind: 'group'; projectId: string; agentId: string }) => void
 }
 
 /**
- * 群聊（项目）：消息记录在 chat_message，会话语义在 opencode。
- * M2 路由：默认给 leader；@成员名 直达该成员。M3 在此基础上加 leader 委派与防重。
+ * 群聊（项目）：消息按 thread 记在 chat_message；opencode 会话按 (project, thread, agent) 隔离。
+ * 路由：默认 leader；@成员名 直达。界面上 thread = 一段群聊历史（类微信）。
  */
 export class GroupChat {
+  readonly threads: GroupThreadStore
+
   constructor(
     private db: DB,
     private getOc: () => OcClient,
     private hooks?: GroupChatHooks,
-  ) {}
+  ) {
+    this.threads = new GroupThreadStore(db)
+  }
 
-  /** 项目 scope（chat_message 的 scope 值） */
-  static scope(projectId: string): string {
+  /** @deprecated 用 scope(projectId, threadId)；保留给迁移扫描 */
+  static scope(projectId: string, threadId?: string): string {
+    if (threadId) return groupMsgScope(projectId, threadId)
     return `group:${projectId}`
   }
 
-  async ensureSession(projectId: string, agentId: string): Promise<string> {
+  activeThreadId(projectId: string): string {
+    return this.threads.ensureActiveThread(projectId)
+  }
+
+  async ensureSession(projectId: string, agentId: string, threadId?: string): Promise<string> {
     await this.hooks?.beforeEnsure?.()
+    const tid = threadId || this.threads.ensureActiveThread(projectId)
     const kv = kvRepo(this.db)
-    const key = SESSION_KEY(projectId, agentId)
+    const key = this.threads.sessionKey(projectId, tid, agentId)
     const existing = kv.get(key)
     if (existing) {
       try {
@@ -45,41 +54,32 @@ export class GroupChat {
     }
     const project = projectRepo(this.db).get(projectId)
     const agent = agentRepo(this.db).get(agentId)
-    // 会话锚定到项目工作空间目录（opencode 支持 ?directory=；未指定时用 sidecar 全局 workspace）
     const dir = project?.workspace_dir || undefined
-    const when = new Date()
-    const stamp = `${when.getMonth() + 1}/${when.getDate()} ${String(when.getHours()).padStart(2, '0')}:${String(when.getMinutes()).padStart(2, '0')}`
+    const threadMeta = this.threads.getMeta(projectId, tid)
     const s = await this.getOc().createSession({
-      title: `任务 · ${agent?.name || agentId} · ${stamp}`,
+      title: `${threadMeta?.title || '群会话'} · ${agent?.name || agentId}`,
       agent: agentSlug(agentId),
       ...(dir ? { directory: dir } : {}),
     })
     kv.set(key, s.id)
-    this.hooks?.onSessionCreated?.(s.id, { kind: 'group', agentId, projectId })
+    this.hooks?.onSessionCreated?.(s.id, { kind: 'group', agentId, projectId, threadId: tid })
     return s.id
   }
 
-  getSessionId(projectId: string, agentId: string): string | null {
-    return kvRepo(this.db).get(SESSION_KEY(projectId, agentId))
+  getSessionId(projectId: string, agentId: string, threadId?: string): string | null {
+    const tid = threadId || this.threads.getActiveThreadId(projectId)
+    if (!tid) return null
+    return kvRepo(this.db).get(this.threads.sessionKey(projectId, tid, agentId))
   }
 
-  /** 给某成员开全新任务会话（旧会话保留在历史里） */
-  async newSession(projectId: string, agentId: string): Promise<string> {
-    await this.hooks?.beforeEnsure?.()
-    kvRepo(this.db).delete(SESSION_KEY(projectId, agentId))
-    return this.ensureSession(projectId, agentId)
-  }
-
-  /** 解析 @提及：返回命中的成员 agentId（按名字精确匹配优先、包含匹配兜底） */
+  /** 解析 @提及 */
   parseMention(text: string, members: Array<{ agent_id: string; name: string }>): string | null {
     const hits = members.filter((m) => text.includes(`@${m.name}`))
     if (hits.length === 0) return null
-    // 名字最长的优先（避免「开发」匹配到「开发-后端」时误判）
     hits.sort((a, b) => b.name.length - a.name.length)
     return hits[0].agent_id
   }
 
-  /** roster briefing（注入到每条群消息的 system；按接收者 agent 区分 leader/worker 视角） */
   buildBriefing(projectId: string, agentId: string): string {
     const project = projectRepo(this.db).get(projectId)
     if (!project) throw new Error(`项目不存在: ${projectId}`)
@@ -109,34 +109,32 @@ export class GroupChat {
     ].join('\n')
   }
 
-  /** 用户在群里发消息：存储 + 路由（@直达 或 leader）+ 回帖 */
   async send(input: { projectId: string; text: string; model?: { providerID: string; modelID: string }; variant?: string; images?: Array<{ mime: string; dataUrl: string }> }): Promise<{ routedTo: string }> {
     const { projectId, text } = input
     const project = projectRepo(this.db).get(projectId)
     if (!project) throw new Error(`项目不存在: ${projectId}`)
     if (!project.leader_agent_id) throw new Error('项目未设置群主（leader）')
+    const threadId = this.threads.ensureActiveThread(projectId)
     const members = projectAgentRepo(this.db).listByProject(projectId)
     const agents = agentRepo(this.db)
-    const scope = GroupChat.scope(projectId)
+    const scope = groupMsgScope(projectId, threadId)
 
-    // 1. 存用户消息（图片放 meta，历史回放时还原）
     chatMessageRepo(this.db).add({
       scope,
       sender_type: 'user',
       content: text,
       ...(input.images && input.images.length ? { meta: { images: input.images } } : {}),
     })
+    this.threads.touch(projectId, threadId)
 
-    // 2. 路由：@直达 or leader
     const memberInfos = members.map((m) => ({ agent_id: m.agent_id, name: agents.get(m.agent_id)?.name || '' }))
     const mentioned = this.parseMention(text, memberInfos)
     const targetId = mentioned ?? project.leader_agent_id
     const target = agents.get(targetId)
     if (!target) throw new Error(`路由目标不存在: ${targetId}`)
 
-    // 3. 会话发送（system 注入群上下文）；记录 last 会话供「停止生成」abort
-    const sessionId = await this.ensureSession(projectId, targetId)
-    kvRepo(this.db).set(`session:group:last:${projectId}`, sessionId)
+    const sessionId = await this.ensureSession(projectId, targetId, threadId)
+    this.threads.setLastOcSession(projectId, sessionId)
     let reply: AssistantInfo
     const memoryBlock = this.hooks?.buildMemory?.(targetId, projectId)
     const system = memoryBlock ? `${this.buildBriefing(projectId, targetId)}\n\n${memoryBlock}` : this.buildBriefing(projectId, targetId)
@@ -162,7 +160,6 @@ export class GroupChat {
       return { routedTo: targetId }
     }
 
-    // 4. 回帖（文本 + 思考/工具入 meta，气泡内折叠区展示）
     const textParts = (reply.parts || []).filter((p) => p.type === 'text') as Array<{ type: 'text'; text: string }>
     const reasoningParts = (reply.parts || [])
       .filter((p) => p.type === 'reasoning')
@@ -178,6 +175,7 @@ export class GroupChat {
       meta: {
         sessionId,
         messageId: reply.id,
+        threadId,
         ...(reasoningParts.length ? { reasoning: reasoningParts } : {}),
         ...(toolParts.length
           ? {
@@ -195,10 +193,11 @@ export class GroupChat {
     return { routedTo: targetId }
   }
 
-  /** 读取群消息（映射 UI 形状，含发送者信息；用户消息的图片从 meta 还原） */
-  history(projectId: string): GroupMessage[] {
+  /** 读取当前（或指定）thread 的群消息 */
+  history(projectId: string, threadId?: string): GroupMessage[] {
+    const tid = threadId || this.threads.ensureActiveThread(projectId)
     const agents = agentRepo(this.db)
-    const scope = GroupChat.scope(projectId)
+    const scope = groupMsgScope(projectId, tid)
     const rows = chatMessageRepo(this.db).listByScope(scope)
     return rows.map((r: ChatMessageRow) => {
       const a = r.sender_id ? agents.get(r.sender_id) : undefined
@@ -228,14 +227,15 @@ export class GroupChat {
     })
   }
 
-  /** 追加系统消息（任务卡片等） */
   addSystemMessage(projectId: string, content: string, meta?: Record<string, unknown>): void {
+    const threadId = this.threads.ensureActiveThread(projectId)
     chatMessageRepo(this.db).add({
-      scope: GroupChat.scope(projectId),
+      scope: groupMsgScope(projectId, threadId),
       sender_type: 'system',
       content,
       meta,
     })
+    this.threads.touch(projectId, threadId)
   }
 }
 

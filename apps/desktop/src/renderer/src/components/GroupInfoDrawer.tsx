@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useStore } from '../store'
 import { api } from '../api'
-import { IPC, projectRoleLabel, type ChatMsg, type ProjectInfo, type SessionBrief } from '@jeff/core'
+import { IPC, projectRoleLabel, type GroupMessage, type GroupThreadBrief, type ProjectInfo } from '@jeff/core'
 import Avatar from './Avatar'
 import { Markdown } from './Markdown'
 
-/** 群资料抽屉：上段群设置 + 下段按成员分组的会话（任务） */
+/** 群资料抽屉：上段群设置 + 下段项目级扁平聊天记录 */
 export default function GroupInfoDrawer(props: { project: ProjectInfo; onClose: () => void }): React.JSX.Element {
   const { project, onClose } = props
   const agents = useStore((s) => s.agents)
@@ -21,8 +21,8 @@ export default function GroupInfoDrawer(props: { project: ProjectInfo; onClose: 
   const [saving, setSaving] = useState(false)
   const [saveMsg, setSaveMsg] = useState<string | null>(null)
 
-  const [sessions, setSessions] = useState<SessionBrief[] | null>(null)
-  const [preview, setPreview] = useState<{ id: string; msgs: ChatMsg[] } | null>(null)
+  const [threads, setThreads] = useState<GroupThreadBrief[] | null>(null)
+  const [preview, setPreview] = useState<{ id: string; msgs: GroupMessage[] } | null>(null)
   const [previewLoading, setPreviewLoading] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editTitle, setEditTitle] = useState('')
@@ -41,39 +41,23 @@ export default function GroupInfoDrawer(props: { project: ProjectInfo; onClose: 
     setMembers(list)
   }
 
-  const refreshSessions = async () => {
+  const refreshThreads = async () => {
     try {
-      const r = await api.invoke<{ sessions: SessionBrief[] }>(IPC.sessionsList, { projectId: project.id })
-      setSessions(r.sessions)
+      const r = await api.invoke<{ threads: GroupThreadBrief[] }>(IPC.groupThreadsList, { projectId: project.id })
+      setThreads(r.threads)
       setSessionError('')
     } catch (err) {
       setSessionError(String((err as Error).message).slice(0, 160))
-      setSessions([])
+      setThreads([])
     }
   }
 
   useEffect(() => {
     void refreshMembers()
-    void refreshSessions()
+    void refreshThreads()
   }, [project.id])
 
-  const candidateAgents = useMemo(() => {
-    const inGroup = new Set(members.map((m) => m.agent_id))
-    return agents.filter((a) => !inGroup.has(a.id))
-  }, [agents, members])
-
-  const sessionsByMember = useMemo(() => {
-    const map = new Map<string, { agentId: string; agentName: string; list: SessionBrief[] }>()
-    for (const m of members) {
-      map.set(m.agent_id, { agentId: m.agent_id, agentName: m.name, list: [] })
-    }
-    for (const s of sessions || []) {
-      const g = map.get(s.agentId)
-      if (g) g.list.push(s)
-      else map.set(s.agentId, { agentId: s.agentId, agentName: s.agentName, list: [s] })
-    }
-    return Array.from(map.values())
-  }, [members, sessions])
+  const candidateAgents = agents.filter((a) => !members.some((m) => m.agent_id === a.id))
 
   const saveSettings = async () => {
     if (!title.trim() || !leaderId) return
@@ -112,12 +96,12 @@ export default function GroupInfoDrawer(props: { project: ProjectInfo; onClose: 
     onClose()
   }
 
-  const openPreview = async (s: SessionBrief) => {
-    if (preview?.id === s.id) return
+  const openPreview = async (t: GroupThreadBrief) => {
+    if (preview?.id === t.id) return
     setPreviewLoading(true)
     try {
-      const r = await api.invoke<{ messages: ChatMsg[] }>(IPC.sessionPreview, { sessionId: s.id })
-      setPreview({ id: s.id, msgs: r.messages })
+      const r = await api.invoke<{ messages: GroupMessage[] }>(IPC.groupThreadPreview, { projectId: project.id, threadId: t.id })
+      setPreview({ id: t.id, msgs: r.messages })
     } catch (err) {
       setSessionError(String((err as Error).message).slice(0, 160))
     } finally {
@@ -125,41 +109,43 @@ export default function GroupInfoDrawer(props: { project: ProjectInfo; onClose: 
     }
   }
 
-  const activate = async (s: SessionBrief) => {
-    await api.invoke(IPC.sessionActivate, { scope: 'group', agentId: s.agentId, projectId: project.id, sessionId: s.id })
+  const activate = async (t: GroupThreadBrief) => {
+    await api.invoke(IPC.groupThreadActivate, { projectId: project.id, threadId: t.id })
     await loadGroupHistory(project.id)
-    await refreshSessions()
+    await refreshThreads()
     onClose()
   }
 
-  const remove = async (s: SessionBrief) => {
-    if (!confirm(`删除任务「${s.title}」？该操作不可恢复。`)) return
-    await api.invoke(IPC.sessionDelete, { sessionId: s.id })
-    if (preview?.id === s.id) setPreview(null)
-    await refreshSessions()
+  const remove = async (t: GroupThreadBrief) => {
+    if (!confirm(`删除会话「${t.title}」？该段聊天记录不可恢复。`)) return
+    await api.invoke(IPC.groupThreadDelete, { projectId: project.id, threadId: t.id })
+    if (preview?.id === t.id) setPreview(null)
+    await loadGroupHistory(project.id)
+    await refreshThreads()
   }
 
-  const startRename = (s: SessionBrief) => {
-    setEditingId(s.id)
-    setEditTitle(s.title)
+  const startRename = (t: GroupThreadBrief) => {
+    setEditingId(t.id)
+    setEditTitle(t.title)
   }
 
-  const commitRename = async (sessionId: string) => {
-    const t = editTitle.trim()
+  const commitRename = async (threadId: string) => {
+    const next = editTitle.trim()
     setEditingId(null)
-    if (!t) return
+    if (!next) return
     try {
-      await api.invoke(IPC.sessionRename, { sessionId, title: t })
-      await refreshSessions()
+      await api.invoke(IPC.groupThreadRename, { projectId: project.id, threadId, title: next })
+      await refreshThreads()
     } catch (err) {
       setSessionError(String((err as Error).message).slice(0, 160))
     }
   }
 
-  const newTask = async (agentId: string) => {
-    await api.invoke(IPC.groupNewSession, { projectId: project.id, agentId })
+  const newThread = async () => {
+    await api.invoke(IPC.groupThreadNew, { projectId: project.id })
     await loadGroupHistory(project.id)
-    await refreshSessions()
+    await refreshThreads()
+    onClose()
   }
 
   return (
@@ -189,7 +175,7 @@ export default function GroupInfoDrawer(props: { project: ProjectInfo; onClose: 
               value={description}
               data-testid="group-settings-desc"
               onChange={(e) => setDescription(e.target.value)}
-              placeholder="项目背景、约束、验收口径…会作为固定上下文注入每位成员的任务会话"
+              placeholder="项目背景、约束、验收口径…会作为固定上下文注入群聊"
             />
           </label>
           <label className="field">
@@ -258,91 +244,89 @@ export default function GroupInfoDrawer(props: { project: ProjectInfo; onClose: 
           })}
         </div>
 
-        <div className="drawer-sec">任务会话（按成员）</div>
+        <div className="drawer-sec">
+          聊天记录
+          <button className="text-btn" data-testid="group-new-thread" onClick={() => void newThread()}>
+            + 新会话
+          </button>
+        </div>
         <p className="settings-tip" style={{ marginTop: 0 }}>
-          每个成员下的会话就是一个任务；可改标题、继续或新开任务。
+          每一段都是整个项目群的对话历史（可由不同成员执行）；可改标题、继续或新开。
         </p>
         {sessionError && <p className="settings-error">⚠️ {sessionError}</p>}
-        {!sessions && <p className="settings-tip">加载任务中…</p>}
+        {!threads && <p className="settings-tip">加载中…</p>}
 
-        <div className="group-task-layout" data-testid="group-task-sessions">
+        <div className="group-task-layout" data-testid="group-chat-history">
           <div className="group-task-list">
-            {sessionsByMember.map((g) => (
-              <div key={g.agentId} className="group-task-member">
-                <div className="group-task-member-head">
-                  <span>{g.agentName}</span>
-                  <button className="text-btn" data-testid={`group-new-task-${g.agentId}`} onClick={() => void newTask(g.agentId)} title="给该成员开新任务">
-                    + 新任务
-                  </button>
+            {threads?.length === 0 && <div className="kanban-empty">还没有会话</div>}
+            {(threads || []).map((t) => (
+              <div key={t.id} className={`history-item ${preview?.id === t.id ? 'previewing' : ''}`} onClick={() => void openPreview(t)}>
+                <div className="history-item-top">
+                  {editingId === t.id ? (
+                    <input
+                      className="history-rename-input"
+                      data-testid="session-rename-input"
+                      autoFocus
+                      value={editTitle}
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={(e) => setEditTitle(e.target.value)}
+                      onBlur={() => void commitRename(t.id)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault()
+                          void commitRename(t.id)
+                        }
+                        if (e.key === 'Escape') setEditingId(null)
+                      }}
+                    />
+                  ) : (
+                    <span
+                      className="history-item-title"
+                      data-testid={`thread-title-${t.id}`}
+                      title="双击改标题"
+                      onDoubleClick={(e) => {
+                        e.stopPropagation()
+                        startRename(t)
+                      }}
+                    >
+                      {t.title}
+                    </span>
+                  )}
+                  {t.active && <span className="tag tag-green">当前</span>}
                 </div>
-                {g.list.length === 0 && <div className="kanban-empty">还没有任务会话</div>}
-                {g.list.map((s) => (
-                  <div key={s.id} className={`history-item ${preview?.id === s.id ? 'previewing' : ''}`} onClick={() => void openPreview(s)}>
-                    <div className="history-item-top">
-                      {editingId === s.id ? (
-                        <input
-                          className="history-rename-input"
-                          data-testid="session-rename-input"
-                          autoFocus
-                          value={editTitle}
-                          onClick={(e) => e.stopPropagation()}
-                          onChange={(e) => setEditTitle(e.target.value)}
-                          onBlur={() => void commitRename(s.id)}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') {
-                              e.preventDefault()
-                              void commitRename(s.id)
-                            }
-                            if (e.key === 'Escape') setEditingId(null)
-                          }}
-                        />
-                      ) : (
-                        <span
-                          className="history-item-title"
-                          data-testid={`session-title-${s.id}`}
-                          title="双击改标题"
-                          onDoubleClick={(e) => {
-                            e.stopPropagation()
-                            startRename(s)
-                          }}
-                        >
-                          {s.title}
-                        </span>
-                      )}
-                      {s.active && <span className="tag tag-green">当前</span>}
-                    </div>
-                    <div className="history-item-sub">{fmtTime(s.updatedAt)}</div>
-                    <div className="history-item-actions" onClick={(e) => e.stopPropagation()}>
-                      <button className="text-btn" onClick={() => startRename(s)}>
-                        改名
-                      </button>
-                      {!s.active && (
-                        <button className="text-btn" onClick={() => void activate(s)}>
-                          继续
-                        </button>
-                      )}
-                      {!s.active && (
-                        <button className="text-btn danger" onClick={() => void remove(s)}>
-                          删除
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                ))}
+                <div className="history-item-sub">
+                  {fmtTime(t.updatedAt)}
+                  {typeof t.messageCount === 'number' ? ` · ${t.messageCount} 条` : ''}
+                </div>
+                <div className="history-item-actions" onClick={(e) => e.stopPropagation()}>
+                  <button className="text-btn" onClick={() => startRename(t)}>
+                    改名
+                  </button>
+                  {!t.active && (
+                    <button className="text-btn" onClick={() => void activate(t)}>
+                      继续
+                    </button>
+                  )}
+                  {!t.active && (
+                    <button className="text-btn danger" onClick={() => void remove(t)}>
+                      删除
+                    </button>
+                  )}
+                </div>
               </div>
             ))}
           </div>
           <div className="history-preview">
             {previewLoading && <p className="settings-tip history-tip">加载中…</p>}
-            {!previewLoading && !preview && <div className="empty-card">点击左侧任务查看完整历史</div>}
+            {!previewLoading && !preview && <div className="empty-card">点击左侧会话查看完整历史</div>}
             {!previewLoading && preview && (
               <>
                 <div className="history-preview-msgs">
-                  {preview.msgs.length === 0 && <div className="empty-card">该任务还没有消息。</div>}
+                  {preview.msgs.length === 0 && <div className="empty-card">该会话还没有消息。</div>}
                   {preview.msgs.map((m) => (
                     <div key={m.id} className={`history-msg ${m.role}`}>
                       <div className="history-msg-meta">
-                        {m.role === 'user' ? '我' : m.role === 'system' ? '系统' : '对方'} · {fmtTime(m.time)}
+                        {m.role === 'user' ? '我' : m.role === 'system' ? '系统' : m.sender_name || '对方'} · {fmtTime(m.time)}
                       </div>
                       {m.role === 'assistant' ? <Markdown text={m.text || '（无文本）'} /> : <pre className="history-msg-text">{m.text}</pre>}
                     </div>
@@ -350,13 +334,13 @@ export default function GroupInfoDrawer(props: { project: ProjectInfo; onClose: 
                 </div>
                 <div className="history-preview-actions">
                   {(() => {
-                    const s = (sessions || []).find((x) => x.id === preview.id)
-                    return s && !s.active ? (
-                      <button className="btn primary" onClick={() => void activate(s)}>
-                        继续此任务
+                    const t = (threads || []).find((x) => x.id === preview.id)
+                    return t && !t.active ? (
+                      <button className="btn primary" onClick={() => void activate(t)}>
+                        继续此会话
                       </button>
                     ) : (
-                      <span className="settings-tip">这是当前任务</span>
+                      <span className="settings-tip">这是当前会话</span>
                     )
                   })()}
                 </div>

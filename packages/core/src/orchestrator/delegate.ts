@@ -4,6 +4,7 @@ import { agentRepo, projectAgentRepo, projectRepo, chatMessageRepo } from '../db
 import { agentSlug } from '../agents/registry.js'
 import type { OcClient } from '../oc/client.js'
 import type { GroupChat } from './group.js'
+import { groupMsgScope } from './groupThreads.js'
 
 export interface DelegateCtx {
   projectId: string
@@ -41,9 +42,15 @@ export class Delegator {
   resolveDelegateScope(sessionId: string, agentId: string): DelegateCtx | null {
     const project = projectRepo(this.db).list()
     for (const p of project) {
+      const threadId = this.groupChat.threads.getActiveThreadId(p.id)
+      if (threadId && this.groupChat.getSessionId(p.id, agentId, threadId) === sessionId) {
+        if (p.leader_agent_id === agentId) return { projectId: p.id, leaderAgentId: agentId }
+        return null
+      }
+      // 回退：扫该群所有 thread 下的 session 指针
       if (this.groupChat.getSessionId(p.id, agentId) === sessionId) {
         if (p.leader_agent_id === agentId) return { projectId: p.id, leaderAgentId: agentId }
-        return null // 群会话但不是 leader
+        return null
       }
     }
     return null
@@ -83,7 +90,8 @@ export class Delegator {
     }
     this.inflight.add(sig)
 
-    const scope = GroupChatScope(ctx.projectId)
+    const threadId = this.groupChat.threads.ensureActiveThread(ctx.projectId)
+    const scope = groupMsgScope(ctx.projectId, threadId)
     const leaderName = agents.get(ctx.leaderAgentId)?.name || '群主'
     try {
       // 1. 群里公告
@@ -96,7 +104,7 @@ export class Delegator {
       this.notify(ctx.projectId)
 
       // 2. 成员执行（独立会话，注入群上下文 + 指派说明）
-      const sessionId = await this.groupChat.ensureSession(ctx.projectId, memberId)
+      const sessionId = await this.groupChat.ensureSession(ctx.projectId, memberId, threadId)
       const instructionText = `【群主 ${leaderName} 指派】${instruction}`
       const reply = await this.getOc().sendMessage({
         sessionId,
@@ -137,8 +145,4 @@ export class Delegator {
     const base = this.groupChat.buildBriefing(projectId, memberId)
     return `${base}\n\n【本次为群主指派任务】${leaderName} 通过委派工具把指令交给你。把它当作你的工作任务：能做就做完并给出结果与结论；做不到就明确说明原因和阻塞点。`
   }
-}
-
-function GroupChatScope(projectId: string): string {
-  return `group:${projectId}`
 }
