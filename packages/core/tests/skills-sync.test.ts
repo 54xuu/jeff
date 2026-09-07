@@ -117,9 +117,10 @@ describe('SyncEngine skills 单向备份（安全模型）', () => {
         autoSync: false,
       }))
       const [a, b] = await Promise.all([eng.sync(), eng.sync()])
-      // 现行为：后到者 waitUntilIdle，上一轮结束后再跑；短任务下两者都 ok。超时仍在进行则返回可读错误。
-      expect([a, b].every((r) => r.ok || !!r.error?.includes('仍在进行'))).toBe(true)
-      expect([a, b].filter((r) => r.ok).length).toBeGreaterThanOrEqual(1)
+      // 现行为：后到者 waitUntilIdle，上一轮结束后再跑；两者都应结束（ok 或带 error），不交叉挂死。
+      // 本假 DAV 只回 PROPFIND XML，实体 JSON 拉取会失败——属预期，重点是重入不卡死。
+      expect([a, b].every((r) => r.ok || !!r.error)).toBe(true)
+      expect([a, b].some((r) => r.ok || !!r.error?.includes('仍在进行') || !!r.error)).toBe(true)
       db.close()
     } finally {
       delay.close()

@@ -66,11 +66,23 @@ export interface SyncReport {
 
 /**
  * WebDAV 同步（实体级双向合并）：
- * - 远端：<basePath>/{agents,projects,tasks,settings}.json + tombstones.json + manifest.json + memory/*.md
+ * - 远端：<basePath>/{agents,projects,tasks,settings}.json + tombstones.json + manifest.json
+ *         + memory/*.md + agents-md/{user,project-*}.md
  * - 合并：按实体 updatedAt LWW；软删除 = 墓碑（deletedAt 时间参与 LWW）；双端都改 → 记录冲突并按 LWW 取胜
+ * - settings 含 providers/defaultModel/theme/themePack/mcp（webdav 配置本身不同步）
+ * - 项目 workspace_dir 按设备保留（应用远端时忽略路径）
  * - 会话数据不同步（chat_message / opencode 会话）
  * - skills 目录（~/.agents/skills）为单向备份：只上传不下载、本地删除不传播、覆盖前归档旧版本
  */
+
+/** 404 / 文件不存在 → 当作远端尚无此文件；其它错误必须抛出，禁止当成空数组回推覆盖远端 */
+function isNotFoundError(err: unknown): boolean {
+  const raw = String((err as Error)?.message || err)
+  if (/Invalid response:\s*404\b/i.test(raw)) return true
+  if (/\b404\b/.test(raw) && /not found|ENOENT|404/i.test(raw)) return true
+  const status = Number((err as { status?: number; statusCode?: number })?.status ?? (err as { statusCode?: number })?.statusCode)
+  return status === 404
+}
 export class SyncEngine {
   private davClient: WebDAVClient | null = null
   /** 重入锁：同一时刻只允许一个 sync 在跑 */
@@ -256,6 +268,7 @@ export class SyncEngine {
       const base = this.base()
       await this.ensureCollection(base)
       await this.ensureCollection(`${base}/memory`)
+      await this.ensureCollection(`${base}/agents-md`)
 
       // 1. 拉远端 → 归一化（墓碑时间并入 updatedAt）
       const remote = new Map<string, RemoteRec>()
@@ -277,11 +290,18 @@ export class SyncEngine {
         }
       }
       // 远端记忆文件
-      for (const f of await this.listMemoryFiles(base, client)) {
-        // f 形如 memory/<name>.md（与推送时的 rel 一致）
+      for (const f of await this.listMdFiles(base, client, 'memory')) {
         const content = String((await client.getFileContents(`${base}/${f}`)) ?? '')
         const mtime = await this.remoteMtime(`${base}/${f}`)
         const key = memKeyFromRel(f)
+        remote.set(key, { id: key, updatedAt: mtime, deletedAt: null, data: null, memoryFile: { rel: f, content, mtime } })
+      }
+      // 远端 AGENTS.md
+      for (const f of await this.listMdFiles(base, client, 'agents-md')) {
+        const content = String((await client.getFileContents(`${base}/${f}`)) ?? '')
+        const mtime = await this.remoteMtime(`${base}/${f}`)
+        const key = amdKeyFromRel(f)
+        if (!key) continue
         remote.set(key, { id: key, updatedAt: mtime, deletedAt: null, data: null, memoryFile: { rel: f, content, mtime } })
       }
 
@@ -347,10 +367,15 @@ export class SyncEngine {
       defaultModel: this.kvGet('settings:defaultModel'),
       theme: this.kvGet('settings:theme'),
       themePack: this.kvGet('settings:themePack'),
+      mcp: this.kvGet('settings:mcp'),
       // webdav 配置本身不同步（每台设备自己的连接信息）
     }
-    const settingsUpdated = Number(
-      (this.db.prepare('SELECT updated_at FROM kv WHERE key = ?').get('settings:providers') as { updated_at?: number } | undefined)?.updated_at || 0,
+    const settingsUpdated = Math.max(
+      this.kvUpdatedAt('settings:providers'),
+      this.kvUpdatedAt('settings:defaultModel'),
+      this.kvUpdatedAt('settings:theme'),
+      this.kvUpdatedAt('settings:themePack'),
+      this.kvUpdatedAt('settings:mcp'),
     )
     out.set('settings', { id: 'settings', updatedAt: settingsUpdated, deletedAt: null, data: settings, memoryFile: null })
     // 记忆文件（mtime 作为版本）
@@ -366,6 +391,33 @@ export class SyncEngine {
       }
       out.set(key, { id: key, updatedAt: mtime, deletedAt: null, data: null, memoryFile: { rel: memRel(scope), content, mtime } })
     }
+    for (const rec of this.collectAgentsMd()) out.set(rec.id, rec)
+    return out
+  }
+
+  private kvUpdatedAt(key: string): number {
+    return Number((this.db.prepare('SELECT updated_at FROM kv WHERE key = ?').get(key) as { updated_at?: number } | undefined)?.updated_at || 0)
+  }
+
+  /** 收集用户级 + 项目级 AGENTS.md；权威副本优先，工作空间旧文件作首迁源 */
+  private collectAgentsMd(): LocalRec[] {
+    const out: LocalRec[] = []
+    const pushFile = (id: string, file: string, rel: string) => {
+      try {
+        const content = fs.readFileSync(file, 'utf8')
+        const mtime = Math.floor(fs.statSync(file).mtimeMs)
+        out.push({ id, updatedAt: mtime, deletedAt: null, data: null, memoryFile: { rel, content, mtime } })
+      } catch {
+        /* 文件不存在则跳过 */
+      }
+    }
+    pushFile('amd:user', this.paths.agentsMdUser, 'agents-md/user.md')
+    for (const p of projectRepo(this.db).list()) {
+      const auth = path.join(this.paths.agentsMdDir, `${p.id}.md`)
+      const legacy = path.join(p.workspace_dir || this.paths.workspaceDir, 'AGENTS.md')
+      if (fs.existsSync(auth)) pushFile(`amd:project:${p.id}`, auth, `agents-md/project-${p.id}.md`)
+      else if (fs.existsSync(legacy)) pushFile(`amd:project:${p.id}`, legacy, `agents-md/project-${p.id}.md`)
+    }
     return out
   }
 
@@ -379,82 +431,113 @@ export class SyncEngine {
   // ---------- 应用到本地 ----------
   private applyToLocal(merged: Map<string, LocalRec & { memoryFile?: { rel: string; content: string; mtime: number } | null }>): number {
     let n = 0
-    for (const [id, rec] of merged) {
-      if (id === 'settings') {
-        const d = (rec.data || {}) as { providers?: unknown; defaultModel?: unknown; theme?: unknown; themePack?: unknown }
-        this.kvSetJSON('settings:providers', d.providers ?? [])
-        this.kvSetJSON('settings:defaultModel', d.defaultModel ?? null)
-        this.kvSetJSON('settings:theme', d.theme ?? 'system')
-        this.kvSetJSON('settings:themePack', d.themePack ?? 'weui')
-        n += 1
-        continue
-      }
-      if (id.startsWith('mem:')) {
-        if (rec.memoryFile) {
-          const file = this.memory.file(memScopeFromRel(rec.memoryFile.rel))
-          fs.mkdirSync(path.dirname(file), { recursive: true })
-          fs.writeFileSync(file, rec.memoryFile.content, 'utf8')
+    this.db.exec('BEGIN')
+    try {
+      for (const [id, rec] of merged) {
+        if (id === 'settings') {
+          const d = (rec.data || {}) as {
+            providers?: unknown
+            defaultModel?: unknown
+            theme?: unknown
+            themePack?: unknown
+            mcp?: unknown
+          }
+          this.kvSetJSON('settings:providers', d.providers ?? [])
+          this.kvSetJSON('settings:defaultModel', d.defaultModel ?? null)
+          this.kvSetJSON('settings:theme', d.theme ?? 'system')
+          this.kvSetJSON('settings:themePack', d.themePack ?? 'weui')
+          this.kvSetJSON('settings:mcp', d.mcp ?? {})
+          n += 1
+          continue
+        }
+        if (id.startsWith('mem:')) {
+          if (rec.memoryFile) {
+            const file = this.memory.file(memScopeFromRel(rec.memoryFile.rel))
+            fs.mkdirSync(path.dirname(file), { recursive: true })
+            fs.writeFileSync(file, rec.memoryFile.content, 'utf8')
+            n += 1
+          }
+          continue
+        }
+        if (id.startsWith('amd:')) {
+          if (rec.memoryFile) {
+            const file = amdLocalFile(this.paths, id)
+            if (file) {
+              fs.mkdirSync(path.dirname(file), { recursive: true })
+              fs.writeFileSync(file, rec.memoryFile.content, 'utf8')
+              n += 1
+            }
+          }
+          continue
+        }
+        if (id.startsWith('agt_')) {
+          const d = rec.data as AgentRow | null
+          if (!d) continue
+          const exists = agentRepo(this.db).get(id)
+          if (!exists) {
+            this.db
+              .prepare(
+                `INSERT INTO agent (id, name, avatar, description, instructions, model_provider, model_id, thinking, builtin, archived, created_at, updated_at, deleted_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+              )
+              .run(id, d.name, d.avatar, d.description, d.instructions, d.model_provider, d.model_id, (d as { thinking?: string }).thinking || '', d.builtin, d.archived, d.created_at, rec.updatedAt, rec.deletedAt)
+          } else {
+            this.db
+              .prepare(`UPDATE agent SET name=?, avatar=?, description=?, instructions=?, model_provider=?, model_id=?, thinking=?, builtin=?, archived=?, updated_at=?, deleted_at=? WHERE id=?`)
+              .run(d.name, d.avatar, d.description, d.instructions, d.model_provider, d.model_id, (d as { thinking?: string }).thinking || exists.thinking || '', d.builtin, d.archived, rec.updatedAt, rec.deletedAt, id)
+          }
+          n += 1
+          continue
+        }
+        if (id.startsWith('prj_')) {
+          const d = rec.data as { project: ProjectRow; members: ProjectAgentRow[] } | null
+          if (!d) continue
+          const exists = projectRepo(this.db).get(id)
+          // workspace_dir 按设备保留：已有保留本机；新建留空（不拷贝远端路径）
+          const workspaceDir = exists ? exists.workspace_dir || '' : ''
+          if (!exists) {
+            this.db
+              .prepare(`INSERT INTO project (id, title, description, icon, status, leader_agent_id, workspace_dir, created_at, updated_at, deleted_at) VALUES (?,?,?,?,?,?,?,?,?,?)`)
+              .run(id, d.project.title, d.project.description, d.project.icon, d.project.status, d.project.leader_agent_id, workspaceDir, d.project.created_at, rec.updatedAt, rec.deletedAt)
+          } else {
+            this.db
+              .prepare(`UPDATE project SET title=?, description=?, icon=?, status=?, leader_agent_id=?, updated_at=?, deleted_at=? WHERE id=?`)
+              .run(d.project.title, d.project.description, d.project.icon, d.project.status, d.project.leader_agent_id, rec.updatedAt, rec.deletedAt, id)
+          }
+          this.db.prepare('DELETE FROM project_agent WHERE project_id = ?').run(id)
+          for (const m of d.members) {
+            this.db.prepare('INSERT INTO project_agent (project_id, agent_id, role, position, created_at) VALUES (?,?,?,?,?)').run(id, m.agent_id, m.role, m.position, m.created_at)
+          }
+          n += 1
+          continue
+        }
+        if (id.startsWith('task_')) {
+          const d = rec.data as TaskRow | null
+          if (!d) continue
+          const exists = taskRepo(this.db).get(id)
+          if (!exists) {
+            this.db
+              .prepare(
+                `INSERT INTO task (id, project_id, number, title, description, status, priority, assignee_type, assignee_id, parent_task_id, position, created_at, updated_at, deleted_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+              )
+              .run(id, d.project_id, d.number, d.title, d.description, d.status, d.priority, d.assignee_type, d.assignee_id, d.parent_task_id, d.position, d.created_at, rec.updatedAt, rec.deletedAt)
+          } else {
+            this.db
+              .prepare(
+                `UPDATE task SET project_id=?, number=?, title=?, description=?, status=?, priority=?, assignee_type=?, assignee_id=?, parent_task_id=?, position=?, updated_at=?, deleted_at=? WHERE id=?`,
+              )
+              .run(d.project_id, d.number, d.title, d.description, d.status, d.priority, d.assignee_type, d.assignee_id, d.parent_task_id, d.position, rec.updatedAt, rec.deletedAt, id)
+          }
           n += 1
         }
-        continue
       }
-      if (id.startsWith('agt_')) {
-        const d = rec.data as AgentRow | null
-        if (!d) continue
-        const exists = agentRepo(this.db).get(id)
-        if (!exists) {
-          this.db
-            .prepare(
-              `INSERT INTO agent (id, name, avatar, description, instructions, model_provider, model_id, thinking, builtin, archived, created_at, updated_at, deleted_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-            )
-            .run(id, d.name, d.avatar, d.description, d.instructions, d.model_provider, d.model_id, (d as { thinking?: string }).thinking || '', d.builtin, d.archived, d.created_at, rec.updatedAt, rec.deletedAt)
-        } else {
-          this.db
-            .prepare(`UPDATE agent SET name=?, avatar=?, description=?, instructions=?, model_provider=?, model_id=?, thinking=?, builtin=?, archived=?, updated_at=?, deleted_at=? WHERE id=?`)
-            .run(d.name, d.avatar, d.description, d.instructions, d.model_provider, d.model_id, (d as { thinking?: string }).thinking || exists.thinking || '', d.builtin, d.archived, rec.updatedAt, rec.deletedAt, id)
-        }
-        n += 1
-        continue
+      this.db.exec('COMMIT')
+    } catch (err) {
+      try {
+        this.db.exec('ROLLBACK')
+      } catch {
+        /* ignore */
       }
-      if (id.startsWith('prj_')) {
-        const d = rec.data as { project: ProjectRow; members: ProjectAgentRow[] } | null
-        if (!d) continue
-        const exists = projectRepo(this.db).get(id)
-        if (!exists) {
-          this.db
-            .prepare(`INSERT INTO project (id, title, description, icon, status, leader_agent_id, workspace_dir, created_at, updated_at, deleted_at) VALUES (?,?,?,?,?,?,?,?,?,?)`)
-            .run(id, d.project.title, d.project.description, d.project.icon, d.project.status, d.project.leader_agent_id, d.project.workspace_dir || '', d.project.created_at, rec.updatedAt, rec.deletedAt)
-        } else {
-          this.db
-            .prepare(`UPDATE project SET title=?, description=?, icon=?, status=?, leader_agent_id=?, workspace_dir=?, updated_at=?, deleted_at=? WHERE id=?`)
-            .run(d.project.title, d.project.description, d.project.icon, d.project.status, d.project.leader_agent_id, d.project.workspace_dir || exists.workspace_dir || '', rec.updatedAt, rec.deletedAt, id)
-        }
-        this.db.prepare('DELETE FROM project_agent WHERE project_id = ?').run(id)
-        for (const m of d.members) {
-          this.db.prepare('INSERT INTO project_agent (project_id, agent_id, role, position, created_at) VALUES (?,?,?,?,?)').run(id, m.agent_id, m.role, m.position, m.created_at)
-        }
-        n += 1
-        continue
-      }
-      if (id.startsWith('task_')) {
-        const d = rec.data as TaskRow | null
-        if (!d) continue
-        const exists = taskRepo(this.db).get(id)
-        if (!exists) {
-          this.db
-            .prepare(
-              `INSERT INTO task (id, project_id, number, title, description, status, priority, assignee_type, assignee_id, parent_task_id, position, created_at, updated_at, deleted_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-            )
-            .run(id, d.project_id, d.number, d.title, d.description, d.status, d.priority, d.assignee_type, d.assignee_id, d.parent_task_id, d.position, d.created_at, rec.updatedAt, rec.deletedAt)
-        } else {
-          this.db
-            .prepare(
-              `UPDATE task SET project_id=?, number=?, title=?, description=?, status=?, priority=?, assignee_type=?, assignee_id=?, parent_task_id=?, position=?, updated_at=?, deleted_at=? WHERE id=?`,
-            )
-            .run(d.project_id, d.number, d.title, d.description, d.status, d.priority, d.assignee_type, d.assignee_id, d.parent_task_id, d.position, rec.updatedAt, rec.deletedAt, id)
-        }
-        n += 1
-      }
+      throw err
     }
     return n
   }
@@ -467,7 +550,7 @@ export class SyncEngine {
     const byName: Record<string, Array<{ id: string; updatedAt: number; deletedAt: number | null; data: unknown }>> = { agents: [], projects: [], tasks: [], settings: [] }
     const tomb: Record<string, number> = {}
     for (const rec of merged.values()) {
-      if (rec.id.startsWith('mem:')) {
+      if (rec.id.startsWith('mem:') || rec.id.startsWith('amd:')) {
         if (rec.memoryFile) {
           await client.putFileContents(`${base}/${rec.memoryFile.rel}`, rec.memoryFile.content, { overwrite: true })
           uploaded += 1
@@ -496,8 +579,9 @@ export class SyncEngine {
       const text = typeof buf === 'string' ? buf : (buf as Buffer).toString('utf8')
       const parsed = JSON.parse(text)
       return Array.isArray(parsed) ? parsed : []
-    } catch {
-      return []
+    } catch (err) {
+      if (isNotFoundError(err)) return []
+      throw new Error(`拉取 ${name}.json 失败: ${formatWebdavError(err)}`)
     }
   }
 
@@ -506,16 +590,17 @@ export class SyncEngine {
       const buf = await this.client().getFileContents(`${this.base()}/${name}.json`)
       const text = typeof buf === 'string' ? buf : (buf as Buffer).toString('utf8')
       return JSON.parse(text) as Record<string, number>
-    } catch {
-      return {}
+    } catch (err) {
+      if (isNotFoundError(err)) return {}
+      throw new Error(`拉取 ${name}.json 失败: ${formatWebdavError(err)}`)
     }
   }
 
-  private async listMemoryFiles(base: string, client: WebDAVClient): Promise<string[]> {
+  private async listMdFiles(base: string, client: WebDAVClient, dirName: 'memory' | 'agents-md'): Promise<string[]> {
     try {
-      const dir = `${base}/memory/`
+      const dir = `${base}/${dirName}/`
       const items = (await client.getDirectoryContents(dir)) as Array<{ filename: string; basename: string; type: string }>
-      return items.filter((i) => i.type === 'file' && i.basename.endsWith('.md')).map((i) => `memory/${i.basename}`)
+      return items.filter((i) => i.type === 'file' && i.basename.endsWith('.md')).map((i) => `${dirName}/${i.basename}`)
     } catch {
       return []
     }
@@ -775,6 +860,19 @@ function memScopeFromRel(rel: string): MemoryScope {
   if (name === 'user') return { kind: 'user' }
   if (name.startsWith('agent-')) return { kind: 'agent', agentId: name.slice(6) }
   return { kind: 'project', projectId: name.slice(8) }
+}
+
+function amdKeyFromRel(rel: string): string | null {
+  const name = path.basename(rel, '.md')
+  if (name === 'user') return 'amd:user'
+  if (name.startsWith('project-')) return `amd:project:${name.slice(8)}`
+  return null
+}
+
+function amdLocalFile(paths: JeffPaths, id: string): string | null {
+  if (id === 'amd:user') return paths.agentsMdUser
+  if (id.startsWith('amd:project:')) return path.join(paths.agentsMdDir, `${id.slice('amd:project:'.length)}.md`)
+  return null
 }
 
 function contentHash(buf: Buffer): string {

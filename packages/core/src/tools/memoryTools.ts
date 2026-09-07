@@ -22,6 +22,8 @@ export interface MemoryToolDeps {
   indexer: SessionIndex
   /** opencode session → Jeff 会话语义 */
   resolveSession(sessionId: string): SessionScopeCtx | null
+  /** 记忆写入后回调（触发自动同步等） */
+  onChanged?: () => void
 }
 
 /** 内部工具名（bridge handler 名 = opencode 工具名） */
@@ -57,11 +59,25 @@ export function registerMemoryTools(reg: ToolBridge, deps: MemoryToolDeps): void
       return { ok: true, entries, totalChars: entries.join('\n').length, budget: deps.store.budget(memScope), scope: deps.store.label(memScope) }
     }
     if (action === 'batch' && Array.isArray(operations)) {
-      return deps.store.batch(memScope, operations as MemoryOp[])
+      const r = deps.store.batch(memScope, operations as MemoryOp[])
+      if (r.ok) deps.onChanged?.()
+      return r
     }
-    if (action === 'add') return deps.store.add(memScope, String(text || ''))
-    if (action === 'replace') return deps.store.replace(memScope, String(old_text || ''), String(new_text ?? ''))
-    if (action === 'remove') return deps.store.remove(memScope, String(old_text || ''))
+    if (action === 'add') {
+      const r = deps.store.add(memScope, String(text || ''))
+      if (r.ok) deps.onChanged?.()
+      return r
+    }
+    if (action === 'replace') {
+      const r = deps.store.replace(memScope, String(old_text || ''), String(new_text ?? ''))
+      if (r.ok) deps.onChanged?.()
+      return r
+    }
+    if (action === 'remove') {
+      const r = deps.store.remove(memScope, String(old_text || ''))
+      if (r.ok) deps.onChanged?.()
+      return r
+    }
     return { ok: false, error: 'action 必须是 list/add/replace/remove/batch' }
   })
 

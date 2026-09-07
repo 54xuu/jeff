@@ -89,7 +89,7 @@ export default function SyncSettings(): React.JSX.Element {
     <div className="settings-content">
       <h2 className="settings-title">WebDAV 同步</h2>
       <p className="settings-tip">
-        同步智能体、项目群、任务、设置与记忆到你的 WebDAV 服务器（坚果云、Alist 等）；不含会话聊天数据。实体级双向合并，多台机器交替使用不丢数据。
+        同步智能体、项目群、任务、设置（含 MCP）、记忆与 AGENTS.md 到你的 WebDAV 服务器；不含会话聊天数据。同步成功后会刷新通讯录与项目群。实体级双向合并，多台机器交替使用不丢数据。Skills 目录仍需在下方手动备份/恢复。
       </p>
       <div className="sync-grid">
         <label className="field">

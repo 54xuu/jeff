@@ -10,18 +10,30 @@
 - [`packages/core/package.json`](packages/core/package.json)
 - [`apps/desktop/package.json`](apps/desktop/package.json)
 
-规则（`MAJOR.MINOR.PATCH`）：
+### 核心原则：默认 PATCH，MINOR 要克制
 
-| 变更类型 | 升哪个数字 | 说明 |
-|----------|------------|------|
-| 修 bug / 小修正 / CI 修通 | **PATCH**（第三个 +1） | 例如 `1.4.0` → `1.4.1` |
-| 新功能或功能重构 | **MINOR**（第二个 +1，PATCH 归零） | 例如 `1.3.0` → `1.4.0` |
-| 破坏性变更（数据不兼容、强制迁移等） | **MAJOR**（第一个 +1，其余归零） | 少见，需明确说明 |
+版本号是**用户可见的发版信号**，不是每次改代码的进度条。近期已到 `1.7.0`，后续优先慢升。
 
-每次解决问题并合入后：
+判定顺序（从上往下，命中即停）：
 
-1. 按上表 bump 三处 `package.json`（必要时同步 `package-lock.json`）。
-2. **必须升级本机已安装的 Jeff**：打 Linux 包并覆盖安装，再重启应用验证。
+| 优先级 | 变更类型 | 升哪个 | 典型例子 |
+|--------|----------|--------|----------|
+| 1 | **破坏性**（数据不兼容、强制迁移、删公开能力） | **MAJOR**（`x.0.0`） | 库表无法平滑升级；同步协议破坏旧客户端 |
+| 2 | **独立可感知的新能力**（用户能说出「多了一个功能」） | **MINOR**（`x.y.0`，PATCH 归零） | 全新设置页分区、全新同步品类（若整块上线）、新交互入口 |
+| 3 | 其余一律 | **PATCH**（`x.y.z`） | 修 bug、补同步缺口、文案、测试、CI、小重构、在已有功能上打补丁 |
+
+**宁可 PATCH，不要轻易 MINOR。** 拿不准时：
+
+- Agent / 协作者：**默认 PATCH**；若认为该升 MINOR/MAJOR，**先问用户确认**再 bump。
+- 「修 bug + 顺手补一小块配置进已有同步」→ **PATCH**（例如同步刷新失败 + 把 MCP 塞进已有 settings 包）。
+- 「纯文档 / 纯测试 / 只改 AGENTS.md」→ **不 bump**。
+- 同一会话、同一发版意图内的多处改动 → **只 bump 一次**（按整包最高级别，不按文件数累加）。
+
+### 何时 bump、何时打安装包
+
+1. **bump 时机**：用户明确要求发版 / 合入并安装验证时；不要在每个小提交途中反复改版本号。
+2. bump 时改齐三处 `package.json`（必要时同步 `package-lock.json`）。
+3. 需要本机验证时再打包装：
 
 ```bash
 npm run package:linux
@@ -29,7 +41,7 @@ sudo dpkg -i apps/desktop/release/jeff-desktop_<version>_amd64.deb
 # 然后退出并重新打开 Jeff，在「设置 → 关于」确认版本号
 ```
 
-推送 `v*` tag 会触发 GitHub Actions 构建 Windows / Linux 安装包并发布到 Releases。
+推送 `v*` tag 会触发 GitHub Actions 构建 Windows / Linux 安装包并发布到 Releases。Tag 应与三处 `package.json` 版本一致（如 `v1.7.1`）。
 
 ## 产品心智模型
 

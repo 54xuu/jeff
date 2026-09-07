@@ -338,6 +338,7 @@ export function registerIpc(core: JeffCore): void {
       const d = p as { kind: 'user' | 'agent' | 'project'; id: string; content: string }
       const scope = d.kind === 'user' ? ({ kind: 'user' } as const) : d.kind === 'agent' ? ({ kind: 'agent', agentId: d.id } as const) : ({ kind: 'project', projectId: d.id } as const)
       core.memory.writeRaw(scope, d.content)
+      core.bus.emit('data-changed', 'memory')
       return { ok: true }
     },
 

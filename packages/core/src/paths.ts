@@ -28,6 +28,8 @@ export interface JeffPaths {
   ocSkillsDir: string
   /** 用户级 AGENTS.md */
   agentsMdUser: string
+  /** 项目级 AGENTS.md 权威副本目录（按 projectId 存，不依赖 workspace_dir） */
+  agentsMdDir: string
   /** skills 恢复暂存目录 */
   restoreStagingDir: string
   /** 本地备份根目录（skills 恢复前快照等） */
@@ -51,6 +53,7 @@ export function buildPaths(root: string): JeffPaths {
     ocPluginsDir: path.join(ocConfigDir, 'plugin'),
     ocSkillsDir: path.join(ocConfigDir, 'skills'),
     agentsMdUser: path.join(root, 'AGENTS.md'),
+    agentsMdDir: path.join(root, 'agents-md'),
     restoreStagingDir: path.join(root, 'restore-staging'),
     backupsDir: path.join(root, 'backups'),
   }
@@ -63,6 +66,7 @@ export function ensureDirs(p: JeffPaths): void {
     p.logDir,
     p.memoryDir,
     p.workspaceDir,
+    p.agentsMdDir,
     p.ocConfigDir,
     p.ocAgentsDir,
     p.ocPluginsDir,

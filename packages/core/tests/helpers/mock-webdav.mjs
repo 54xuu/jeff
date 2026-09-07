@@ -38,6 +38,22 @@ export function startMockWebdav(port, rootDir) {
         return
       }
       if (method === 'GET') {
+        // 测试注入：rootDir/.dav-fail = { "agents.json": 500 } → 匹配后缀返回指定状态码
+        const failFile = path.join(rootDir, '.dav-fail')
+        if (fs.existsSync(failFile)) {
+          try {
+            const rules = JSON.parse(fs.readFileSync(failFile, 'utf8'))
+            for (const [suffix, code] of Object.entries(rules)) {
+              if (urlPath.endsWith(String(suffix))) {
+                res.writeHead(Number(code) || 500)
+                res.end('injected failure')
+                return
+              }
+            }
+          } catch {
+            /* ignore bad fail file */
+          }
+        }
         if (fs.existsSync(fsPath) && fs.statSync(fsPath).isFile()) {
           const buf = fs.readFileSync(fsPath)
           res.writeHead(200, { 'content-type': 'application/octet-stream', 'content-length': buf.length })

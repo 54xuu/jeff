@@ -107,6 +107,7 @@ export class JeffCore extends EventEmitter {
       store: this.memory,
       indexer: this.indexer,
       resolveSession: (sessionId) => this.resolveSession(sessionId),
+      onChanged: () => this.bus.emit('data-changed', 'memory'),
     })
     this.bridge.register(DELEGATE_TOOL, async (raw: Record<string, unknown>) => {
       const { __ctx, member_agent_id, instruction } = raw as {
@@ -175,7 +176,16 @@ export class JeffCore extends EventEmitter {
 
   /** 手动同步 */
   async syncNow(): Promise<SyncReport> {
-    return this.sync.sync()
+    const report = await this.sync.sync()
+    if (report.ok) {
+      this.syncRegistry()
+      this.writeSidecarConfig()
+      this.markRegistryDirty()
+      this.bus.emit('data-changed', 'agents')
+      this.bus.emit('data-changed', 'projects')
+      this.bus.emit('data-changed', 'settings')
+    }
+    return report
   }
 
   /** 配置 WebDAV（密码存本地 kv；password 空串则保留已存密码）。不自动 sync——由 UI「保存并同步」/「立即同步」或防抖触发，避免与紧随其后的 syncNow 撞重入锁。 */
@@ -472,7 +482,7 @@ export class JeffCore extends EventEmitter {
     if (sessionId) await this.oc.abortSession(sessionId)
   }
 
-  /** AGENTS.md 注入块：用户级（<data>/AGENTS.md）+ 项目级（工作空间目录下 AGENTS.md，存在才注入） */
+  /** AGENTS.md 注入块：用户级权威副本 + 项目级权威副本；工作空间旧文件仅作本机额外注入 */
   agentsMdBlocks(projectId?: string): string[] {
     const out: string[] = []
     try {
@@ -482,12 +492,17 @@ export class JeffCore extends EventEmitter {
         if (text) out.push(`【AGENTS.md · 用户级】（${userFile}）\n${text}`)
       }
       if (projectId) {
+        const auth = path.join(this.paths.agentsMdDir, `${projectId}.md`)
+        if (fs.existsSync(auth)) {
+          const text = fs.readFileSync(auth, 'utf8').trim()
+          if (text) out.push(`【AGENTS.md · 项目级】（${auth}）\n${text}`)
+        }
         const project = projectRepo(this.db).get(projectId)
         const dir = project?.workspace_dir || this.paths.workspaceDir
-        const file = path.join(dir, 'AGENTS.md')
-        if (fs.existsSync(file)) {
-          const text = fs.readFileSync(file, 'utf8').trim()
-          if (text) out.push(`【AGENTS.md · 项目级】（${file}）\n${text}`)
+        const legacy = path.join(dir, 'AGENTS.md')
+        if (fs.existsSync(legacy) && path.resolve(legacy) !== path.resolve(auth)) {
+          const text = fs.readFileSync(legacy, 'utf8').trim()
+          if (text) out.push(`【AGENTS.md · 工作空间】（${legacy}）\n${text}`)
         }
       }
     } catch {
@@ -496,15 +511,21 @@ export class JeffCore extends EventEmitter {
     return out
   }
 
-  /** AGENTS.md 文件清单（设置页编辑用） */
+  /** AGENTS.md 文件清单（设置页编辑用；项目级指向权威副本） */
   agentsMdList(): Array<{ kind: 'user' | 'project'; id: string; label: string; file: string; exists: boolean }> {
     const out: Array<{ kind: 'user' | 'project'; id: string; label: string; file: string; exists: boolean }> = []
     const userFile = this.paths.agentsMdUser
     out.push({ kind: 'user', id: 'user', label: '用户级 AGENTS.md（全局）', file: userFile, exists: fs.existsSync(userFile) })
     for (const p of projectRepo(this.db).list()) {
-      const dir = p.workspace_dir || this.paths.workspaceDir
-      const file = path.join(dir, 'AGENTS.md')
-      out.push({ kind: 'project', id: p.id, label: `${p.icon} ${p.title}（${dir}）`, file, exists: fs.existsSync(file) })
+      const file = path.join(this.paths.agentsMdDir, `${p.id}.md`)
+      const legacy = path.join(p.workspace_dir || this.paths.workspaceDir, 'AGENTS.md')
+      out.push({
+        kind: 'project',
+        id: p.id,
+        label: `${p.icon} ${p.title}`,
+        file,
+        exists: fs.existsSync(file) || fs.existsSync(legacy),
+      })
     }
     return out
   }
@@ -513,7 +534,13 @@ export class JeffCore extends EventEmitter {
     const list = this.agentsMdList()
     const hit = list.find((x) => x.kind === kind && x.id === id)
     if (!hit) throw new Error('AGENTS.md 条目不存在')
-    const content = fs.existsSync(hit.file) ? fs.readFileSync(hit.file, 'utf8') : ''
+    let content = ''
+    if (fs.existsSync(hit.file)) content = fs.readFileSync(hit.file, 'utf8')
+    else if (kind === 'project') {
+      const p = projectRepo(this.db).get(id)
+      const legacy = path.join(p?.workspace_dir || this.paths.workspaceDir, 'AGENTS.md')
+      if (fs.existsSync(legacy)) content = fs.readFileSync(legacy, 'utf8')
+    }
     return { content, file: hit.file }
   }
 
@@ -523,6 +550,7 @@ export class JeffCore extends EventEmitter {
     if (!hit) throw new Error('AGENTS.md 条目不存在')
     fs.mkdirSync(path.dirname(hit.file), { recursive: true })
     fs.writeFileSync(hit.file, content, 'utf8')
+    this.bus.emit('data-changed', 'agentsmd')
   }
 
   // ---------- skills 备份/恢复（委托 SyncEngine；安全模型见 engine.ts） ----------
@@ -864,7 +892,7 @@ export class JeffCore extends EventEmitter {
     this.privateChat = new PrivateChat(this.db, () => this.oc, this.chatHooks())
   }
 
-  /** 内置小杰：不存在则创建；存在则强制对齐指令（保持与代码同步，不可被改） */
+  /** 内置小杰：不存在则创建；存在则仅在指令漂移时对齐（避免每次启动顶 updated_at） */
   private seedXiaojie(): void {
     const agents = agentRepo(this.db)
     const existing = agents.get(XIAOJIE_ID)
@@ -877,7 +905,10 @@ export class JeffCore extends EventEmitter {
         builtin: 1,
       })
     }
-    agents.update(XIAOJIE_ID, { instructions: XIAOJIE_INSTRUCTIONS })
+    const cur = agents.get(XIAOJIE_ID)
+    if (cur && cur.instructions !== XIAOJIE_INSTRUCTIONS) {
+      agents.update(XIAOJIE_ID, { instructions: XIAOJIE_INSTRUCTIONS })
+    }
   }
 
   /** 把工具桥插件写进 sidecar 插件目录 */
@@ -924,7 +955,7 @@ Jeff 把「开发 + 项目管理」组织成三个概念（微信心智模型）
 - **MCP**：设置页粘贴 JSON 导入（支持 mcpServers 包裹格式），可查看每个服务的连接状态与工具清单。
 - **图片消息**：聊天输入框支持上传/粘贴/拖拽图片（需模型支持图片输入），智能体能看图回答。
 - **项目群工作空间**：发起群聊可选工作空间目录，群内产出的文件默认保存到该目录。
-- **WebDAV 同步**：设置页配置；同步智能体/项目/任务/设置/记忆 + 备份 ~/.agents/skills（单向备份，本地永不自动改写）；实体级双向合并，多台机器交替使用不丢数据。
+- **WebDAV 同步**：设置页配置；同步智能体/项目群/任务/设置（含 MCP）/记忆/AGENTS.md + 备份 ~/.agents/skills（单向备份，本地永不自动改写）；项目工作空间路径按设备保留；实体级双向合并，多台机器交替使用不丢数据。
 - **亮/深夜模式**：左侧导航底部切换，或跟随系统。
 `
     fs.writeFileSync(path.join(dir, 'SKILL.md'), content, 'utf8')
