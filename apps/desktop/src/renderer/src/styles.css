@@ -842,6 +842,24 @@ body {
   color: var(--text-2);
   margin-bottom: 10px;
   line-height: 1.5;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.sync-error-text {
+  display: block;
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, #c45656 35%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, #c45656 8%, var(--bg));
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  cursor: text;
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 .provider-row {
@@ -1218,6 +1236,8 @@ body {
 
 .settings-content {
   max-width: 760px;
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 .settings-title {
@@ -1247,6 +1267,8 @@ body {
   font-size: 12px;
   color: var(--danger);
   margin-bottom: 10px;
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 .empty-card {

@@ -97,7 +97,7 @@ export default function SyncSettings(): React.JSX.Element {
           <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://…" />
         </label>
         <label className="field">
-          <span>远端基目录</span>
+          <span>远端基目录（必须以 / 开头，如 /jeff）</span>
           <input value={basePath} onChange={(e) => setBasePath(e.target.value)} placeholder="/jeff" />
         </label>
         <label className="field">
@@ -127,11 +127,15 @@ export default function SyncSettings(): React.JSX.Element {
         {busy && <span className="settings-tip" style={{ alignSelf: 'center' }}>同步中…</span>}
       </div>
       {report && (
-        <p className="settings-tip" style={{ marginTop: 6 }}>
-          上次同步：{report.ok ? '✅' : '❌'} {new Date(report.at).toLocaleString()} · 下发 {Math.max(0, (report.uploaded ?? 0) - 4)} 项 / 拉取 {report.downloaded ?? 0} 项
-          {report.conflicts?.length ? ` · 冲突 ${report.conflicts.length} 处（按更新时间取新）` : ''}
-          {report.error ? ` · ${report.error}` : ''}
-        </p>
+        <div className="sync-report" data-testid="sync-report">
+          <p className="settings-tip" style={{ marginTop: 6, marginBottom: 4 }}>
+            上次同步：{report.ok ? '✅' : '❌'} {new Date(report.at).toLocaleString()} · 下发 {Math.max(0, (report.uploaded ?? 0) - 4)} 项 / 拉取 {report.downloaded ?? 0} 项
+            {report.conflicts?.length ? ` · 冲突 ${report.conflicts.length} 处（按更新时间取新）` : ''}
+          </p>
+          {report.error && (
+            <pre className="settings-error sync-error-text" title="可选中复制">{report.error}</pre>
+          )}
+        </div>
       )}
 
       <SkillsBackup />
@@ -200,10 +204,12 @@ function SkillsBackup(): React.JSX.Element {
         <button className="btn" disabled={!!busy} onClick={() => void stage()}>{busy === 'stage' ? '检查中…' : '从备份恢复…'}</button>
       </div>
       {last && (
-        <p className="settings-tip" style={{ marginTop: 6 }}>
-          上次备份：{last.ok ? '✅' : '❌'} {new Date(last.at).toLocaleString()} · 共 {last.fileCount ?? '?'} 个文件 · 上传 {last.uploaded} · 旧版本归档 {last.archived} · 未变化 {last.skipped}
-          {last.error ? ` · ${last.error}` : ''}
-        </p>
+        <div className="sync-report" style={{ marginTop: 6 }}>
+          <p className="settings-tip" style={{ marginBottom: 4 }}>
+            上次备份：{last.ok ? '✅' : '❌'} {new Date(last.at).toLocaleString()} · 共 {last.fileCount ?? '?'} 个文件 · 上传 {last.uploaded} · 旧版本归档 {last.archived} · 未变化 {last.skipped}
+          </p>
+          {last.error && <pre className="settings-error sync-error-text">{last.error}</pre>}
+        </div>
       )}
       {staged && (
         <div className="pv-detail" style={{ marginTop: 10 }}>

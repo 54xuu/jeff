@@ -13,12 +13,46 @@ export interface WebdavConfig {
   url: string
   username: string
   password: string
-  basePath: string // 远端基目录，如 /dav/jeff
+  basePath: string // 远端基目录，如 /jeff（必须以 / 开头）
   autoSync: boolean
   /** 单次请求超时 ms；默认 60000 */
   timeoutMs?: number
   /** 是否校验证书；默认 true */
   tlsVerify?: boolean
+}
+
+/** 规范化远端基目录：去尾斜杠、补前导 /；空则 /jeff */
+export function normalizeWebdavBasePath(raw: string | undefined | null): string {
+  let b = String(raw ?? '').trim().replace(/\/+$/, '')
+  if (!b) return '/jeff'
+  if (!b.startsWith('/')) b = `/${b}`
+  return b
+}
+
+/** 把 webdav/HTTP 错误翻成可读中文（保留原消息便于排查） */
+export function formatWebdavError(err: unknown): string {
+  const raw = String((err as Error)?.message || err)
+  const m = /Invalid response:\s*(\d+)\s*([A-Za-z ]+)?/i.exec(raw)
+  if (m) {
+    const code = Number(m[1])
+    const hint =
+      code === 401
+        ? '认证失败：请检查用户名/密码'
+        : code === 403
+          ? '拒绝访问：常见原因是远端目录不存在或无权写入子目录（请确认基目录以 / 开头，且账号对基目录有写权限）'
+          : code === 404
+            ? '路径不存在：请检查服务器 URL 与远端基目录'
+            : code === 405
+              ? '方法不被允许（目录可能已存在；若持续失败请检查服务器 WebDAV 配置）'
+              : code === 409
+                ? '冲突：父目录可能不存在'
+                : '请求被服务器拒绝'
+    return `${hint}（HTTP ${code}${m[2] ? ` ${m[2].trim()}` : ''}）· ${raw}`.slice(0, 300)
+  }
+  if (/TLS|ECONNRESET|socket disconnected|certificate/i.test(raw)) {
+    return `TLS/网络连接失败：${raw}`.slice(0, 300)
+  }
+  return raw.slice(0, 300)
 }
 
 export interface SyncReport {
@@ -79,7 +113,39 @@ export class SyncEngine {
   }
 
   private base(): string {
-    return (this.cfg().basePath.replace(/\/+$/, '') || '/jeff')
+    return normalizeWebdavBasePath(this.cfg().basePath)
+  }
+
+  /**
+   * 确保远端目录存在：MKCOL；405/409 时再 PROPFIND/stat 确认。
+   * 不再静默吞掉失败——否则后续 PUT 会落到含糊的 403。
+   */
+  private async ensureCollection(path: string): Promise<void> {
+    const client = this.client()
+    const dir = path.endsWith('/') ? path : `${path}/`
+    try {
+      await client.createDirectory(path, { recursive: true })
+      return
+    } catch (err) {
+      const msg = String((err as Error)?.message || err)
+      // 已存在 / 方法不允许：多数 WebDAV 对已有 collection 返回 405
+      if (!/405|409|Method Not Allowed|Conflict/i.test(msg)) {
+        throw new Error(`无法创建远端目录 ${path}: ${formatWebdavError(err)}`)
+      }
+    }
+    try {
+      const st = (await client.stat(path)) as { type?: string }
+      if (st && (st.type === 'directory' || st.type === 'collection' || !st.type)) return
+    } catch {
+      /* fallthrough */
+    }
+    // 部分服务 stat 用无尾斜杠失败，再试带 /
+    try {
+      await client.stat(dir.replace(/\/+$/, '') || path)
+      return
+    } catch (err) {
+      throw new Error(`远端目录不存在且无法创建：${path}（${formatWebdavError(err)}）`)
+    }
   }
 
   async sync(): Promise<SyncReport> {
@@ -102,8 +168,8 @@ export class SyncEngine {
     try {
       const client = this.client()
       const base = this.base()
-      await client.createDirectory(base, { recursive: true }).catch(() => {})
-      await client.createDirectory(`${base}/memory`, { recursive: true }).catch(() => {})
+      await this.ensureCollection(base)
+      await this.ensureCollection(`${base}/memory`)
 
       // 1. 拉远端 → 归一化（墓碑时间并入 updatedAt）
       const remote = new Map<string, RemoteRec>()
@@ -175,7 +241,7 @@ export class SyncEngine {
       this.kvSetJSON('sync:lastreport', report)
       report.ok = true
     } catch (err) {
-      report.error = String((err as Error)?.message || err).slice(0, 300)
+      report.error = formatWebdavError(err)
       this.kvSetJSON('sync:lastreport', report)
     }
     this.onReport(report)
@@ -429,6 +495,7 @@ export class SyncEngine {
     try {
       const client = this.client()
       const base = this.base()
+      await this.ensureCollection(`${base}/skills`)
       const root = this.skillsDir()
       const files = this.listSkillFiles(root)
       const lastHashes = this.skillsKv<Record<string, string>>('hashes', {})
@@ -452,10 +519,12 @@ export class SyncEngine {
           // 归档远端旧版本（按相对路径 + 时间戳），永不覆盖 versions
           const verPath = `${base}/skills-versions/${rel}/${Date.now()}`
           const verDir = verPath.slice(0, verPath.lastIndexOf('/'))
-          await client.createDirectory(verDir, { recursive: true }).catch(() => {})
+          await this.ensureCollection(verDir)
           await client.putFileContents(verPath, remoteContent, { overwrite: false }).catch(() => {})
           report.archived += 1
         }
+        const fileDir = `${base}/skills/${rel}`.slice(0, `${base}/skills/${rel}`.lastIndexOf('/'))
+        if (fileDir !== `${base}/skills`) await this.ensureCollection(fileDir)
         await client.putFileContents(`${base}/skills/${rel}`, content, { overwrite: true })
         report.uploaded += 1
       }
@@ -464,7 +533,7 @@ export class SyncEngine {
       this.skillsKvSet('last', { ...report, ok: true, fileCount: files.length })
       report.ok = true
     } catch (err) {
-      report.error = String((err as Error)?.message || err).slice(0, 300)
+      report.error = formatWebdavError(err)
       this.skillsKvSet('last', report)
     }
     return report

@@ -58,3 +58,14 @@
 sudo dpkg -i /home/xujian/cdbox/jeff/apps/desktop/release/jeff-desktop_1.3.0_amd64.deb
 /usr/bin/jeff-desktop &
 ```
+
+## 后续：WebDAV 403 与错误可选中（同日）
+
+**原因**：用户 `basePath` 配成了 `jeff`（缺前导 `/`）。同步时 `createDirectory` 失败被 `.catch(() => {})` 吞掉，`memory/` 未建成就 PUT，Apache WebDAV 返回 `403 Forbidden`。根目录直写文件其实是通的。
+
+**修复**：
+
+- `normalizeWebdavBasePath`：自动补 `/`
+- `ensureCollection`：MKCOL 失败且目录确不存在时抛出可读错误，不再静默
+- `formatWebdavError`：把 401/403 等翻成中文说明
+- 设置页同步/备份错误用可选中的 `<pre class="sync-error-text">`；`settings-content` 允许 `user-select: text`

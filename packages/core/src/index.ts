@@ -22,7 +22,7 @@ import { SessionIndex } from './memory/indexer.js'
 import type { McpServerCfg } from './mcp/parse.js'
 import { probeMcpAll } from './mcp/probe.js'
 import type { SkillsBackupReport, SkillsRestoreStage, SkillsRestoreApply, ContextPreviewInfo } from './ipc/contract.js'
-import { SyncEngine, type WebdavConfig, type SyncReport } from './sync/engine.js'
+import { SyncEngine, type WebdavConfig, type SyncReport, normalizeWebdavBasePath } from './sync/engine.js'
 import { compactionThreshold, splitContextMessages } from './chat/context.js'
 
 export const APP_VERSION = '1.3.0'
@@ -185,7 +185,7 @@ export class JeffCore extends EventEmitter {
       url: cfg.url,
       username: cfg.username,
       password: cfg.password || prev?.password || '',
-      basePath: cfg.basePath || '/jeff',
+      basePath: normalizeWebdavBasePath(cfg.basePath || prev?.basePath),
       autoSync: !!cfg.autoSync,
       timeoutMs: cfg.timeoutMs ?? prev?.timeoutMs ?? 60_000,
       tlsVerify: cfg.tlsVerify !== false,
@@ -964,7 +964,7 @@ export { GroupChat } from './orchestrator/group.js'
 export { Delegator } from './orchestrator/delegate.js'
 export { registerProjectTools, taskCardMessage } from './tools/projectTools.js'
 export { MemoryStore, parseEntries, matchUnique, type MemoryScope, type MemoryOp, type MemoryResult } from './memory/store.js'
-export { SyncEngine, type WebdavConfig, type SyncReport } from './sync/engine.js'
+export { SyncEngine, type WebdavConfig, type SyncReport, normalizeWebdavBasePath, formatWebdavError } from './sync/engine.js'
 export { probeMcpServer, probeMcpAll, type McpProbe } from './mcp/probe.js'
 export { migrateProviders, firstEnabledModel, configuredModelOptions, thinkingVariant, API_FORMAT_NPM, ANTHROPIC_BUDGET, type ConfiguredModelOption } from './oc/configWriter.js'
 
