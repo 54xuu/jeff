@@ -50,6 +50,11 @@ export class OcClient extends EventEmitter {
     await this.req('DELETE', `/session/${sessionId}`)
   }
 
+  /** 更新会话标题等元数据 */
+  async updateSession(sessionId: string, patch: { title?: string }): Promise<SessionInfo> {
+    return this.req('PATCH', `/session/${sessionId}`, patch)
+  }
+
   /** 获取会话消息（含 user/assistant 与 parts） */
   async getMessages(sessionId: string): Promise<SessionMessage[]> {
     return this.req('GET', `/session/${sessionId}/message`)

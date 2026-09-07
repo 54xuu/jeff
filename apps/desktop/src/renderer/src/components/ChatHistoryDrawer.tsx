@@ -5,15 +5,16 @@ import { IPC, type ChatMsg, type SessionBrief } from '@jeff/core'
 import { Markdown } from './Markdown'
 
 /**
- * 聊天记录抽屉（微信式历史会话）：
- * - 私聊：该 agent 的全部会话；群聊：项目内按成员分组
- * - 点击会话预览完整历史；「继续此会话」切为当前；支持删除旧会话
+ * 聊天记录抽屉（微信式历史会话，私聊用）：
+ * - 私聊：该 agent 的全部会话；可改标题 / 继续 / 删除
  */
 export default function ChatHistoryDrawer(props: { agentId?: string; projectId?: string; onClose: () => void }): React.JSX.Element {
   const [sessions, setSessions] = useState<SessionBrief[] | null>(null)
   const [preview, setPreview] = useState<{ id: string; msgs: ChatMsg[] } | null>(null)
   const [previewLoading, setPreviewLoading] = useState(false)
   const [error, setError] = useState('')
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editTitle, setEditTitle] = useState('')
 
   const load = async () => {
     try {
@@ -47,7 +48,6 @@ export default function ChatHistoryDrawer(props: { agentId?: string; projectId?:
   const activate = async (s: SessionBrief) => {
     if (!props.agentId && !props.projectId) return
     await api.invoke(IPC.sessionActivate, { scope: props.projectId ? 'group' : 'private', agentId: s.agentId, projectId: props.projectId, sessionId: s.id })
-    // 刷新当前会话视图 + 列表高亮
     if (props.agentId) await useStore.getState().loadHistory(`agent:${props.agentId}`)
     if (props.projectId) await useStore.getState().loadGroupHistory(props.projectId)
     await load()
@@ -61,6 +61,23 @@ export default function ChatHistoryDrawer(props: { agentId?: string; projectId?:
     await load()
   }
 
+  const startRename = (s: SessionBrief) => {
+    setEditingId(s.id)
+    setEditTitle(s.title)
+  }
+
+  const commitRename = async (sessionId: string) => {
+    const t = editTitle.trim()
+    setEditingId(null)
+    if (!t) return
+    try {
+      await api.invoke(IPC.sessionRename, { sessionId, title: t })
+      await load()
+    } catch (err) {
+      setError(String((err as Error).message).slice(0, 160))
+    }
+  }
+
   // 按 agent 分组（私聊只有一组）
   const groups = new Map<string, SessionBrief[]>()
   for (const s of sessions || []) {
@@ -70,11 +87,13 @@ export default function ChatHistoryDrawer(props: { agentId?: string; projectId?:
   }
 
   return (
-    <div className="drawer-mask" onClick={props.onClose}>
+    <div className="drawer-mask" data-testid="chat-history-drawer" onClick={props.onClose}>
       <div className="history-drawer" onClick={(e) => e.stopPropagation()}>
         <div className="history-head">
           <span>聊天记录</span>
-          <button className="text-btn" onClick={props.onClose}>关闭</button>
+          <button className="text-btn" onClick={props.onClose}>
+            关闭
+          </button>
         </div>
         {error && <p className="settings-error">⚠️ {error}</p>}
         {!sessions && <p className="settings-tip history-tip">加载中…</p>}
@@ -87,10 +106,44 @@ export default function ChatHistoryDrawer(props: { agentId?: string; projectId?:
                 {list.map((s) => (
                   <div key={s.id} className={`history-item ${preview?.id === s.id ? 'previewing' : ''}`} onClick={() => void openPreview(s)}>
                     <div className="history-item-top">
-                      <span className="history-item-title">{s.title}</span>
+                      {editingId === s.id ? (
+                        <input
+                          className="history-rename-input"
+                          data-testid="session-rename-input"
+                          autoFocus
+                          value={editTitle}
+                          onClick={(e) => e.stopPropagation()}
+                          onChange={(e) => setEditTitle(e.target.value)}
+                          onBlur={() => void commitRename(s.id)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault()
+                              void commitRename(s.id)
+                            }
+                            if (e.key === 'Escape') setEditingId(null)
+                          }}
+                        />
+                      ) : (
+                        <span
+                          className="history-item-title"
+                          data-testid={`session-title-${s.id}`}
+                          title="双击改标题"
+                          onDoubleClick={(e) => {
+                            e.stopPropagation()
+                            startRename(s)
+                          }}
+                        >
+                          {s.title}
+                        </span>
+                      )}
                       {s.active && <span className="tag tag-green">当前</span>}
                     </div>
                     <div className="history-item-sub">{fmtTime(s.updatedAt)}</div>
+                    <div className="history-item-actions" onClick={(e) => e.stopPropagation()}>
+                      <button className="text-btn" data-testid={`session-rename-${s.id}`} onClick={() => startRename(s)}>
+                        改名
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -105,7 +158,9 @@ export default function ChatHistoryDrawer(props: { agentId?: string; projectId?:
                   {preview.msgs.length === 0 && <div className="empty-card">该会话还没有消息。</div>}
                   {preview.msgs.map((m) => (
                     <div key={m.id} className={`history-msg ${m.role}`}>
-                      <div className="history-msg-meta">{m.role === 'user' ? '我' : m.role === 'system' ? '系统' : '对方'} · {fmtTime(m.time)}</div>
+                      <div className="history-msg-meta">
+                        {m.role === 'user' ? '我' : m.role === 'system' ? '系统' : '对方'} · {fmtTime(m.time)}
+                      </div>
                       {m.role === 'assistant' ? <Markdown text={m.text || '（无文本）'} /> : <pre className="history-msg-text">{m.text}</pre>}
                     </div>
                   ))}
@@ -114,7 +169,9 @@ export default function ChatHistoryDrawer(props: { agentId?: string; projectId?:
                   {(() => {
                     const s = (sessions || []).find((x) => x.id === preview.id)
                     return s && !s.active ? (
-                      <button className="btn primary" onClick={() => void activate(s)}>继续此会话</button>
+                      <button className="btn primary" onClick={() => void activate(s)}>
+                        继续此会话
+                      </button>
                     ) : (
                       <span className="settings-tip">这是当前会话</span>
                     )
@@ -122,7 +179,9 @@ export default function ChatHistoryDrawer(props: { agentId?: string; projectId?:
                   {(() => {
                     const s = (sessions || []).find((x) => x.id === preview.id)
                     return s && !s.active ? (
-                      <button className="btn danger" onClick={() => void remove(s)}>删除</button>
+                      <button className="btn danger" onClick={() => void remove(s)}>
+                        删除
+                      </button>
                     ) : null
                   })()}
                 </div>

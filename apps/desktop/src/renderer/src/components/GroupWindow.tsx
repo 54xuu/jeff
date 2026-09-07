@@ -6,16 +6,14 @@ import Avatar from './Avatar'
 import GroupInfoDrawer from './GroupInfoDrawer'
 import { Markdown } from './Markdown'
 import { useImages, ImagePreviews, MsgImages, AssistantExtras } from './ChatShared'
-import ChatHistoryDrawer from './ChatHistoryDrawer'
 import ContextDrawer, { ContextUsageBar, fetchContextPreview } from './ContextDrawer'
 import { useDismissable } from '../hooks/useDismissable'
 
 /** 项目群聊天窗口（= 微信群） */
 export default function GroupWindow(props: { projectId: string }): React.JSX.Element {
-  const { projects, groupMessages, tasks, sending, streaming, loadGroupHistory, loadTasks, sendGroup, stopGroup, catalog, settings } = useStore()
+  const { projects, groupMessages, sending, streaming, loadGroupHistory, sendGroup, stopGroup, catalog, settings } = useStore()
   const project = projects.find((p) => p.id === props.projectId)
   const msgs = groupMessages[props.projectId] || []
-  const projectTasks = tasks[props.projectId] || []
   const busy = !!sending[`group:${props.projectId}`]
   const stream = streaming[`group:${props.projectId}`]
   const [draft, setDraft] = useState('')
@@ -25,7 +23,6 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
   const [modelOpen, setModelOpen] = useState(false)
   const [modelFilter, setModelFilter] = useState('')
   const [variantOpen, setVariantOpen] = useState(false)
-  const [historyOpen, setHistoryOpen] = useState(false)
   const [contextOpen, setContextOpen] = useState(false)
   const [ctxPreview, setCtxPreview] = useState<ContextPreviewInfo | null>(null)
   const [ctxLoading, setCtxLoading] = useState(false)
@@ -45,7 +42,6 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
 
   useEffect(() => {
     void loadGroupHistory(props.projectId)
-    void loadTasks(props.projectId)
     void api.invoke<Array<{ agent_id: string; role: string; name: string; avatar: string }>>(IPC.projectMembers, { projectId: props.projectId }).then((list) => {
       setMembers(list.map((m) => ({ agentId: m.agent_id, name: m.name || m.agent_id })))
       setCtxAgentId((cur) => {
@@ -161,6 +157,16 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
     }
   }
 
+  const doNewTask = async () => {
+    const leader = project.leader_agent_id
+    if (!leader) {
+      alert('请先在群资料里设置群主')
+      return
+    }
+    await api.invoke(IPC.groupNewSession, { projectId: project.id, agentId: leader })
+    await loadGroupHistory(project.id)
+  }
+
   return (
     <div className="chat-window group-window">
       <div className="chat-header">
@@ -179,14 +185,11 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
           >
             {compressing ? '压缩中…' : '压缩'}
           </button>
-          <button className="icon-btn" title="聊天记录" onClick={() => setHistoryOpen(true)}>
-            <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="12" cy="12" r="9" />
-              <path d="M12 7v5l3.5 2" />
-            </svg>
+          <button className="text-btn" data-testid="group-new-task" disabled={busy || !project.leader_agent_id} onClick={() => void doNewTask()} title="给群主开新任务会话">
+            新任务
           </button>
           <button className="text-btn" data-testid="group-info-btn" onClick={() => setDrawer(true)}>
-            群资料与任务
+            群资料
           </button>
         </div>
       </div>
@@ -367,8 +370,7 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
         </div>
       </div>
 
-      {drawer && <GroupInfoDrawer project={project} tasks={projectTasks} onClose={() => setDrawer(false)} />}
-      {historyOpen && <ChatHistoryDrawer projectId={project.id} onClose={() => setHistoryOpen(false)} />}
+      {drawer && <GroupInfoDrawer project={project} onClose={() => setDrawer(false)} />}
       {contextOpen && ctxAgentId && (
         <ContextDrawer
           agentId={ctxAgentId}
@@ -394,10 +396,6 @@ const TIER_LABEL: Record<string, string> = { none: '无思考', low: '低', high
 
 function GroupBubble(props: { msg: GroupMessage }): React.JSX.Element {
   const { msg } = props
-  const meta = (msg.meta || {}) as { type?: string; taskId?: string }
-  if (msg.role === 'system' && meta.type === 'task') {
-    return <TaskCardInline msg={msg} />
-  }
   if (msg.role === 'system') {
     return (
       <div className="msg-system">
@@ -424,27 +422,6 @@ function GroupBubble(props: { msg: GroupMessage }): React.JSX.Element {
         </div>
       </div>
       {mine && <div className="self-avatar">🧑</div>}
-    </div>
-  )
-}
-
-/** 聊天里的任务卡片（点击打开看板由上层处理；这里展示状态） */
-function TaskCardInline(props: { msg: GroupMessage }): React.JSX.Element {
-  const { msg } = props
-  const meta = (msg.meta || {}) as { type?: string; taskId?: string }
-  const taskId = meta.taskId
-  const active = useStore((s) => s.active)
-  const openKanban = () => {
-    // 触发群资料抽屉：通过自定义事件让 GroupWindow 打开
-    window.dispatchEvent(new CustomEvent('jeff:open-kanban', { detail: { projectId: active?.kind === 'group' ? active.id : undefined } }))
-  }
-  return (
-    <div className="msg-system">
-      <button className="task-card" onClick={openKanban}>
-        <span className="task-card-icon">📋</span>
-        <span className="task-card-text">{msg.text.replace(/^📋 任务 /, '')}</span>
-        {taskId && <span className="tag">看板</span>}
-      </button>
     </div>
   )
 }

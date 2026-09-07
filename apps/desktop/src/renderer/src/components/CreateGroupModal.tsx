@@ -50,11 +50,11 @@ export default function CreateGroupModal(props: { onClose: () => void }): React.
             <span>图标</span>
             <input value={icon} onChange={(e) => setIcon(e.target.value)} maxLength={4} />
           </label>
-          <label className="field" style={{ flex: 1 }}>
-            <span>群简介</span>
-            <input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="这个项目是干嘛的" />
-          </label>
         </div>
+        <label className="field">
+          <span>群简介（项目背景，会注入群聊 system）</span>
+          <textarea rows={4} value={description} data-testid="group-desc" onChange={(e) => setDescription(e.target.value)} placeholder="这个项目是干嘛的、背景约束、验收口径…" />
+        </label>
         <label className="field">
           <span>工作空间目录（不选 = Jeff 默认工作区）</span>
           <div style={{ display: 'flex', gap: 8 }}>

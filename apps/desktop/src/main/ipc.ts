@@ -159,6 +159,17 @@ export function registerIpc(core: JeffCore): void {
       await core.deleteSession(sessionId)
       return { ok: true }
     },
+    [IPC.sessionRename]: async (p) => {
+      const d = p as { sessionId: string; title: string }
+      return core.renameSession(d.sessionId, d.title)
+    },
+    [IPC.groupNewSession]: async (p) => {
+      const d = p as { projectId: string; agentId: string }
+      if (!d.projectId || !d.agentId) throw new Error('projectId 与 agentId 必填')
+      const r = await core.newGroupSession(d.projectId, d.agentId)
+      core.bus.emit('group-updated', { projectId: d.projectId })
+      return r
+    },
     [IPC.settingsGet]: async (): Promise<AppSettings> => {
       const kv = core.kv()
       return {

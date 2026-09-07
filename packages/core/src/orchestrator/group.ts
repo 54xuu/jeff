@@ -47,8 +47,10 @@ export class GroupChat {
     const agent = agentRepo(this.db).get(agentId)
     // 会话锚定到项目工作空间目录（opencode 支持 ?directory=；未指定时用 sidecar 全局 workspace）
     const dir = project?.workspace_dir || undefined
+    const when = new Date()
+    const stamp = `${when.getMonth() + 1}/${when.getDate()} ${String(when.getHours()).padStart(2, '0')}:${String(when.getMinutes()).padStart(2, '0')}`
     const s = await this.getOc().createSession({
-      title: `群「${project?.title || projectId}」· ${agent?.name || agentId}`,
+      title: `任务 · ${agent?.name || agentId} · ${stamp}`,
       agent: agentSlug(agentId),
       ...(dir ? { directory: dir } : {}),
     })
@@ -59,6 +61,13 @@ export class GroupChat {
 
   getSessionId(projectId: string, agentId: string): string | null {
     return kvRepo(this.db).get(SESSION_KEY(projectId, agentId))
+  }
+
+  /** 给某成员开全新任务会话（旧会话保留在历史里） */
+  async newSession(projectId: string, agentId: string): Promise<string> {
+    await this.hooks?.beforeEnsure?.()
+    kvRepo(this.db).delete(SESSION_KEY(projectId, agentId))
+    return this.ensureSession(projectId, agentId)
   }
 
   /** 解析 @提及：返回命中的成员 agentId（按名字精确匹配优先、包含匹配兜底） */
@@ -88,17 +97,16 @@ export class GroupChat {
     const roleLine = isLeaderBriefing
       ? '你是本群群主（leader），用户的消息默认由你统筹：能自己答就答；需要别人干活的，用委派工具交给工作者（worker）。'
       : '你是本群工作者（worker），就你职责范围内的问题作答；不做开发/产品等细分类角色。'
+    const bg = (project.description || '').trim()
     return [
       `【项目群上下文】群名：${project.title}`,
-      project.description ? `群简介：${project.description}` : '',
+      `项目背景（群简介）：${bg || '（未填写，请在群资料补充）'}`,
       `工作空间目录：${project.workspace_dir || '默认工作区'}。用户没有指定输出位置时，你产出的所有文件（代码、文档等）都保存到该目录。`,
       `成员名册（仅 leader / worker）：`,
       roster,
       roleLine,
       `用户消息里 @某成员名 表示直接指名对话；回复请用简体中文，简洁、可执行。`,
-    ]
-      .filter(Boolean)
-      .join('\n')
+    ].join('\n')
   }
 
   /** 用户在群里发消息：存储 + 路由（@直达 或 leader）+ 回帖 */

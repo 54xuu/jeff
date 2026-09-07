@@ -163,13 +163,34 @@ test.describe('Jeff UI 封闭清单', () => {
       await page.getByTestId('group-info-btn').click()
       await expect(page.getByTestId('group-info-drawer')).toBeVisible()
       await expect(page.getByTestId('group-settings')).toBeVisible()
+      await expect(page.getByTestId('group-settings-desc')).toBeVisible()
+      // 简介应是多行 textarea，且无看板
+      await expect(page.getByTestId('group-settings-desc')).toHaveJSProperty('tagName', 'TEXTAREA')
+      await expect(page.getByText('任务看板')).toHaveCount(0)
+      await expect(page.getByTestId('group-task-sessions')).toBeVisible()
       await page.getByTestId('group-settings-title').fill('E2E改名群')
+      await page.getByTestId('group-settings-desc').fill('E2E 项目背景：验证群简介注入。')
       await page.getByTestId('group-settings-save').click()
       await expect(page.getByText('已保存')).toBeVisible({ timeout: 10000 })
       await page.getByTestId('group-info-drawer').locator('.drawer-head .icon-btn').click()
       await expect(page.getByTestId('group-info-drawer')).toHaveCount(0)
       await expect(page.getByTestId('chat-group-E2E改名群')).toBeVisible({ timeout: 15000 })
 
+      // ---- 私聊历史可改名入口 ----
+      await page.getByTestId('chat-agent-小杰').click()
+      await page.getByTestId('chat-history').click()
+      await expect(page.getByTestId('chat-history-drawer')).toBeVisible({ timeout: 15000 })
+      const renameBtn = page.locator('[data-testid^="session-rename-"]').first()
+      if ((await renameBtn.count()) > 0) {
+        await renameBtn.click()
+        await expect(page.getByTestId('session-rename-input')).toBeVisible()
+        await page.getByTestId('session-rename-input').fill('E2E改名会话')
+        await page.getByTestId('session-rename-input').press('Enter')
+        await expect(page.getByText('E2E改名会话')).toBeVisible({ timeout: 10000 })
+      }
+      await page.getByTestId('chat-history-drawer').getByText('关闭').click()
+
+      await page.getByTestId('chat-group-E2E改名群').click()
       await page.getByTestId('chat-draft').fill('群聊 E2E：只回「收到」。')
       await page.getByTestId('chat-send').click()
       await expect(page.getByTestId('chat-draft')).toHaveValue('', { timeout: 10000 })

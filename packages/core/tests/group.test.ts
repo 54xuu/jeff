@@ -56,10 +56,17 @@ describe('GroupChat', () => {
     const leaderId = projectRepo(db).list()[0].leader_agent_id as string
     const briefing = group.buildBriefing(p.id, leaderId)
     expect(briefing).toContain('官网项目')
+    expect(briefing).toContain('项目背景（群简介）')
     expect(briefing).toContain('架构师')
     expect(briefing).toContain('群主/leader')
     expect(briefing).toContain('工作者/worker')
     expect(briefing).toContain('@')
+  })
+
+  it('briefing 空简介时仍写入项目背景占位', () => {
+    const empty = projectRepo(db).create({ title: '空简介群', description: '', leader_agent_id: agentRepo(db).list()[0].id })
+    const briefing = group.buildBriefing(empty.id, empty.leader_agent_id as string)
+    expect(briefing).toContain('项目背景（群简介）：（未填写，请在群资料补充）')
   })
 
   it('send：默认路由 leader，@直达成员，消息入群记录', async () => {

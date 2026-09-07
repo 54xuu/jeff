@@ -1036,6 +1036,57 @@ body {
   border-left: 1px solid var(--border);
 }
 
+.drawer-wide {
+  width: 860px;
+}
+
+.group-task-layout {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(280px, 1.2fr);
+  gap: 12px;
+  min-height: 280px;
+  margin-bottom: 8px;
+}
+
+.group-task-list {
+  overflow-y: auto;
+  max-height: 420px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 6px;
+}
+
+.group-task-member {
+  margin-bottom: 10px;
+}
+
+.group-task-member-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 6px;
+  color: var(--text-muted);
+}
+
+.history-item-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.history-rename-input {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  padding: 2px 6px;
+  border-radius: 6px;
+  border: 1px solid var(--accent, #07c160);
+  background: var(--bg);
+  color: var(--text);
+}
+
 .drawer-head {
   display: flex;
   justify-content: space-between;

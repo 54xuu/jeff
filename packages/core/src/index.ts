@@ -328,6 +328,20 @@ export class JeffCore extends EventEmitter {
     }
   }
 
+  /** 重命名会话标题（私聊 / 群任务共用） */
+  async renameSession(sessionId: string, title: string): Promise<{ id: string; title: string }> {
+    const t = title.trim()
+    if (!t) throw new Error('标题不能为空')
+    const s = await this.oc.updateSession(sessionId, { title: t })
+    return { id: s.id, title: s.title || t }
+  }
+
+  /** 群内某成员开新任务会话（旧会话保留） */
+  async newGroupSession(projectId: string, agentId: string): Promise<{ sessionId: string }> {
+    const sessionId = await this.groupChat.newSession(projectId, agentId)
+    return { sessionId }
+  }
+
   /** 已配置模型选项（只含启用提供商的模型；composer/智能体表单共用） */
   configuredModels() {
     return configuredModelOptions(this.listProviders())

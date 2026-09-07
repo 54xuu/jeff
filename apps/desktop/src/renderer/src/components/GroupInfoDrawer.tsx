@@ -1,26 +1,16 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useStore } from '../store'
 import { api } from '../api'
-import { IPC, projectRoleLabel, type ProjectInfo, type TaskInfo } from '@jeff/core'
+import { IPC, projectRoleLabel, type ChatMsg, type ProjectInfo, type SessionBrief } from '@jeff/core'
 import Avatar from './Avatar'
+import { Markdown } from './Markdown'
 
-const STATUSES: Array<{ id: string; label: string }> = [
-  { id: 'todo', label: '待办' },
-  { id: 'in_progress', label: '进行中' },
-  { id: 'in_review', label: '待审' },
-  { id: 'done', label: '完成' },
-]
-const PRIORITY_LABEL: Record<string, string> = { urgent: '紧急', high: '高', medium: '中', low: '低' }
-
-/** 群资料抽屉：群设置 + 成员管理 + 任务看板（拖拽改状态） */
-export default function GroupInfoDrawer(props: { project: ProjectInfo; tasks: TaskInfo[]; onClose: () => void }): React.JSX.Element {
-  const { project, tasks, onClose } = props
+/** 群资料抽屉：上段群设置 + 下段按成员分组的会话（任务） */
+export default function GroupInfoDrawer(props: { project: ProjectInfo; onClose: () => void }): React.JSX.Element {
+  const { project, onClose } = props
   const agents = useStore((s) => s.agents)
-  const { loadTasks, refreshProjects, setActive } = useStore()
+  const { refreshProjects, setActive, loadGroupHistory } = useStore()
   const [members, setMembers] = useState<Array<{ agent_id: string; role: string; name: string; avatar: string }>>([])
-  const [addingTask, setAddingTask] = useState(false)
-  const [editing, setEditing] = useState<TaskInfo | null>(null)
-  const [dragOver, setDragOver] = useState<string | null>(null)
   const [addingMember, setAddingMember] = useState(false)
 
   const [title, setTitle] = useState(project.title)
@@ -30,6 +20,13 @@ export default function GroupInfoDrawer(props: { project: ProjectInfo; tasks: Ta
   const [leaderId, setLeaderId] = useState(project.leader_agent_id || '')
   const [saving, setSaving] = useState(false)
   const [saveMsg, setSaveMsg] = useState<string | null>(null)
+
+  const [sessions, setSessions] = useState<SessionBrief[] | null>(null)
+  const [preview, setPreview] = useState<{ id: string; msgs: ChatMsg[] } | null>(null)
+  const [previewLoading, setPreviewLoading] = useState(false)
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editTitle, setEditTitle] = useState('')
+  const [sessionError, setSessionError] = useState('')
 
   useEffect(() => {
     setTitle(project.title)
@@ -44,8 +41,20 @@ export default function GroupInfoDrawer(props: { project: ProjectInfo; tasks: Ta
     setMembers(list)
   }
 
+  const refreshSessions = async () => {
+    try {
+      const r = await api.invoke<{ sessions: SessionBrief[] }>(IPC.sessionsList, { projectId: project.id })
+      setSessions(r.sessions)
+      setSessionError('')
+    } catch (err) {
+      setSessionError(String((err as Error).message).slice(0, 160))
+      setSessions([])
+    }
+  }
+
   useEffect(() => {
     void refreshMembers()
+    void refreshSessions()
   }, [project.id])
 
   const candidateAgents = useMemo(() => {
@@ -53,10 +62,18 @@ export default function GroupInfoDrawer(props: { project: ProjectInfo; tasks: Ta
     return agents.filter((a) => !inGroup.has(a.id))
   }, [agents, members])
 
-  const moveTask = async (taskId: string, status: string) => {
-    await api.invoke(IPC.taskSave, { id: taskId, project_id: project.id, title: tasks.find((t) => t.id === taskId)?.title || '', status })
-    await loadTasks(project.id)
-  }
+  const sessionsByMember = useMemo(() => {
+    const map = new Map<string, { agentId: string; agentName: string; list: SessionBrief[] }>()
+    for (const m of members) {
+      map.set(m.agent_id, { agentId: m.agent_id, agentName: m.name, list: [] })
+    }
+    for (const s of sessions || []) {
+      const g = map.get(s.agentId)
+      if (g) g.list.push(s)
+      else map.set(s.agentId, { agentId: s.agentId, agentName: s.agentName, list: [s] })
+    }
+    return Array.from(map.values())
+  }, [members, sessions])
 
   const saveSettings = async () => {
     if (!title.trim() || !leaderId) return
@@ -95,11 +112,59 @@ export default function GroupInfoDrawer(props: { project: ProjectInfo; tasks: Ta
     onClose()
   }
 
-  const activeTasks = tasks.filter((t) => t.status !== 'cancelled')
+  const openPreview = async (s: SessionBrief) => {
+    if (preview?.id === s.id) return
+    setPreviewLoading(true)
+    try {
+      const r = await api.invoke<{ messages: ChatMsg[] }>(IPC.sessionPreview, { sessionId: s.id })
+      setPreview({ id: s.id, msgs: r.messages })
+    } catch (err) {
+      setSessionError(String((err as Error).message).slice(0, 160))
+    } finally {
+      setPreviewLoading(false)
+    }
+  }
+
+  const activate = async (s: SessionBrief) => {
+    await api.invoke(IPC.sessionActivate, { scope: 'group', agentId: s.agentId, projectId: project.id, sessionId: s.id })
+    await loadGroupHistory(project.id)
+    await refreshSessions()
+    onClose()
+  }
+
+  const remove = async (s: SessionBrief) => {
+    if (!confirm(`删除任务「${s.title}」？该操作不可恢复。`)) return
+    await api.invoke(IPC.sessionDelete, { sessionId: s.id })
+    if (preview?.id === s.id) setPreview(null)
+    await refreshSessions()
+  }
+
+  const startRename = (s: SessionBrief) => {
+    setEditingId(s.id)
+    setEditTitle(s.title)
+  }
+
+  const commitRename = async (sessionId: string) => {
+    const t = editTitle.trim()
+    setEditingId(null)
+    if (!t) return
+    try {
+      await api.invoke(IPC.sessionRename, { sessionId, title: t })
+      await refreshSessions()
+    } catch (err) {
+      setSessionError(String((err as Error).message).slice(0, 160))
+    }
+  }
+
+  const newTask = async (agentId: string) => {
+    await api.invoke(IPC.groupNewSession, { projectId: project.id, agentId })
+    await loadGroupHistory(project.id)
+    await refreshSessions()
+  }
 
   return (
     <div className="drawer-mask" data-testid="group-info-drawer" onClick={onClose}>
-      <div className="drawer" onClick={(e) => e.stopPropagation()}>
+      <div className="drawer drawer-wide" onClick={(e) => e.stopPropagation()}>
         <div className="drawer-head">
           <span>群资料：{project.title}</span>
           <button className="icon-btn" onClick={onClose}>
@@ -113,16 +178,20 @@ export default function GroupInfoDrawer(props: { project: ProjectInfo; tasks: Ta
             <span>群名 *</span>
             <input value={title} data-testid="group-settings-title" onChange={(e) => setTitle(e.target.value)} placeholder="如：Jeff 官网开发" />
           </label>
-          <div style={{ display: 'flex', gap: 12 }}>
-            <label className="field" style={{ width: 90 }}>
-              <span>图标</span>
-              <input value={icon} data-testid="group-settings-icon" onChange={(e) => setIcon(e.target.value)} maxLength={4} />
-            </label>
-            <label className="field" style={{ flex: 1 }}>
-              <span>群简介</span>
-              <input value={description} data-testid="group-settings-desc" onChange={(e) => setDescription(e.target.value)} placeholder="这个项目是干嘛的" />
-            </label>
-          </div>
+          <label className="field" style={{ width: 90 }}>
+            <span>图标</span>
+            <input value={icon} data-testid="group-settings-icon" onChange={(e) => setIcon(e.target.value)} maxLength={4} />
+          </label>
+          <label className="field">
+            <span>群简介 / 项目背景（注入群聊 system）</span>
+            <textarea
+              rows={5}
+              value={description}
+              data-testid="group-settings-desc"
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="项目背景、约束、验收口径…会作为固定上下文注入每位成员的任务会话"
+            />
+          </label>
           <label className="field">
             <span>工作空间目录（不选 = Jeff 默认工作区）</span>
             <div style={{ display: 'flex', gap: 8 }}>
@@ -189,54 +258,111 @@ export default function GroupInfoDrawer(props: { project: ProjectInfo; tasks: Ta
           })}
         </div>
 
-        <div className="drawer-sec">
-          任务看板（{activeTasks.length}）
-          <button className="text-btn" onClick={() => setAddingTask(true)}>
-            + 新建任务
-          </button>
-        </div>
-        <div className="kanban">
-          {STATUSES.map((col) => (
-            <div
-              key={col.id}
-              className={`kanban-col ${dragOver === col.id ? 'drag-over' : ''}`}
-              onDragOver={(e) => {
-                e.preventDefault()
-                setDragOver(col.id)
-              }}
-              onDragLeave={() => setDragOver(null)}
-              onDrop={(e) => {
-                e.preventDefault()
-                setDragOver(null)
-                const taskId = e.dataTransfer.getData('text/jeff-task')
-                if (taskId) void moveTask(taskId, col.id)
-              }}
-            >
-              <div className="kanban-col-title">
-                {col.label}
-                <span className="kanban-count">{activeTasks.filter((t) => t.status === col.id).length}</span>
-              </div>
-              {activeTasks
-                .filter((t) => t.status === col.id)
-                .map((t) => (
-                  <div
-                    key={t.id}
-                    className="task-card"
-                    draggable
-                    onDragStart={(e) => e.dataTransfer.setData('text/jeff-task', t.id)}
-                    onClick={() => setEditing(t)}
-                  >
-                    <div className="task-card-title">{t.title}</div>
-                    <div className="task-card-meta">
-                      <span className="tag">JEF-{t.number}</span>
-                      <span className={`tag ${t.priority === 'urgent' ? 'tag-red' : ''}`}>{PRIORITY_LABEL[t.priority] || t.priority}</span>
-                      {t.assignee_id && <AssigneeTag agentId={t.assignee_id} />}
+        <div className="drawer-sec">任务会话（按成员）</div>
+        <p className="settings-tip" style={{ marginTop: 0 }}>
+          每个成员下的会话就是一个任务；可改标题、继续或新开任务。
+        </p>
+        {sessionError && <p className="settings-error">⚠️ {sessionError}</p>}
+        {!sessions && <p className="settings-tip">加载任务中…</p>}
+
+        <div className="group-task-layout" data-testid="group-task-sessions">
+          <div className="group-task-list">
+            {sessionsByMember.map((g) => (
+              <div key={g.agentId} className="group-task-member">
+                <div className="group-task-member-head">
+                  <span>{g.agentName}</span>
+                  <button className="text-btn" data-testid={`group-new-task-${g.agentId}`} onClick={() => void newTask(g.agentId)} title="给该成员开新任务">
+                    + 新任务
+                  </button>
+                </div>
+                {g.list.length === 0 && <div className="kanban-empty">还没有任务会话</div>}
+                {g.list.map((s) => (
+                  <div key={s.id} className={`history-item ${preview?.id === s.id ? 'previewing' : ''}`} onClick={() => void openPreview(s)}>
+                    <div className="history-item-top">
+                      {editingId === s.id ? (
+                        <input
+                          className="history-rename-input"
+                          data-testid="session-rename-input"
+                          autoFocus
+                          value={editTitle}
+                          onClick={(e) => e.stopPropagation()}
+                          onChange={(e) => setEditTitle(e.target.value)}
+                          onBlur={() => void commitRename(s.id)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault()
+                              void commitRename(s.id)
+                            }
+                            if (e.key === 'Escape') setEditingId(null)
+                          }}
+                        />
+                      ) : (
+                        <span
+                          className="history-item-title"
+                          data-testid={`session-title-${s.id}`}
+                          title="双击改标题"
+                          onDoubleClick={(e) => {
+                            e.stopPropagation()
+                            startRename(s)
+                          }}
+                        >
+                          {s.title}
+                        </span>
+                      )}
+                      {s.active && <span className="tag tag-green">当前</span>}
+                    </div>
+                    <div className="history-item-sub">{fmtTime(s.updatedAt)}</div>
+                    <div className="history-item-actions" onClick={(e) => e.stopPropagation()}>
+                      <button className="text-btn" onClick={() => startRename(s)}>
+                        改名
+                      </button>
+                      {!s.active && (
+                        <button className="text-btn" onClick={() => void activate(s)}>
+                          继续
+                        </button>
+                      )}
+                      {!s.active && (
+                        <button className="text-btn danger" onClick={() => void remove(s)}>
+                          删除
+                        </button>
+                      )}
                     </div>
                   </div>
                 ))}
-              {activeTasks.filter((t) => t.status === col.id).length === 0 && <div className="kanban-empty">拖任务到这里</div>}
-            </div>
-          ))}
+              </div>
+            ))}
+          </div>
+          <div className="history-preview">
+            {previewLoading && <p className="settings-tip history-tip">加载中…</p>}
+            {!previewLoading && !preview && <div className="empty-card">点击左侧任务查看完整历史</div>}
+            {!previewLoading && preview && (
+              <>
+                <div className="history-preview-msgs">
+                  {preview.msgs.length === 0 && <div className="empty-card">该任务还没有消息。</div>}
+                  {preview.msgs.map((m) => (
+                    <div key={m.id} className={`history-msg ${m.role}`}>
+                      <div className="history-msg-meta">
+                        {m.role === 'user' ? '我' : m.role === 'system' ? '系统' : '对方'} · {fmtTime(m.time)}
+                      </div>
+                      {m.role === 'assistant' ? <Markdown text={m.text || '（无文本）'} /> : <pre className="history-msg-text">{m.text}</pre>}
+                    </div>
+                  ))}
+                </div>
+                <div className="history-preview-actions">
+                  {(() => {
+                    const s = (sessions || []).find((x) => x.id === preview.id)
+                    return s && !s.active ? (
+                      <button className="btn primary" onClick={() => void activate(s)}>
+                        继续此任务
+                      </button>
+                    ) : (
+                      <span className="settings-tip">这是当前任务</span>
+                    )
+                  })()}
+                </div>
+              </>
+            )}
+          </div>
         </div>
 
         <div className="drawer-danger">
@@ -254,35 +380,6 @@ export default function GroupInfoDrawer(props: { project: ProjectInfo; tasks: Ta
               setAddingMember(false)
               await refreshMembers()
               await refreshProjects()
-            }}
-          />
-        )}
-
-        {addingTask && (
-          <TaskModal
-            projectId={project.id}
-            agents={agents}
-            onClose={() => setAddingTask(false)}
-            onSaved={async () => {
-              setAddingTask(false)
-              await loadTasks(project.id)
-            }}
-          />
-        )}
-        {editing && (
-          <TaskModal
-            projectId={project.id}
-            agents={agents}
-            initial={editing}
-            onClose={() => setEditing(null)}
-            onSaved={async () => {
-              setEditing(null)
-              await loadTasks(project.id)
-            }}
-            onDelete={async () => {
-              await api.invoke(IPC.taskDelete, { id: editing.id })
-              setEditing(null)
-              await loadTasks(project.id)
             }}
           />
         )}
@@ -321,101 +418,10 @@ function AddMemberModal(props: {
   )
 }
 
-function AssigneeTag(props: { agentId: string }): React.JSX.Element {
-  const agent = useStore((s) => s.agents.find((a) => a.id === props.agentId))
-  return <span className="tag tag-green">{agent ? `${agent.avatar} ${agent.name}` : '已指派'}</span>
-}
-
-/** 任务新建/编辑弹窗 */
-export function TaskModal(props: {
-  projectId: string
-  agents: Array<{ id: string; name: string; avatar: string }>
-  initial?: TaskInfo
-  onClose: () => void
-  onSaved: () => Promise<void>
-  onDelete?: () => Promise<void>
-}): React.JSX.Element {
-  const t = props.initial
-  const [title, setTitle] = useState(t?.title || '')
-  const [description, setDescription] = useState(t?.description || '')
-  const [status, setStatus] = useState(t?.status || 'todo')
-  const [priority, setPriority] = useState(t?.priority || 'medium')
-  const [assignee, setAssignee] = useState(t?.assignee_id || '')
-
-  const save = async () => {
-    if (!title.trim()) return
-    await api.invoke(IPC.taskSave, {
-      ...(t ? { id: t.id } : {}),
-      project_id: props.projectId,
-      title: title.trim(),
-      description,
-      status,
-      priority,
-      assignee_id: assignee,
-    })
-    await props.onSaved()
-  }
-
-  return (
-    <div className="modal-mask" onClick={props.onClose}>
-      <div className="modal form" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-title">{t ? `编辑任务 JEF-${t.number}` : '新建任务'}</div>
-        <label className="field">
-          <span>标题 *</span>
-          <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="如：修复登录超时" />
-        </label>
-        <label className="field">
-          <span>描述 / 验收标准</span>
-          <textarea rows={3} value={description} onChange={(e) => setDescription(e.target.value)} />
-        </label>
-        <div style={{ display: 'flex', gap: 12 }}>
-          <label className="field" style={{ flex: 1 }}>
-            <span>状态</span>
-            <select value={status} onChange={(e) => setStatus(e.target.value)}>
-              {STATUSES.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.label}
-                </option>
-              ))}
-              <option value="cancelled">已取消</option>
-            </select>
-          </label>
-          <label className="field" style={{ flex: 1 }}>
-            <span>优先级</span>
-            <select value={priority} onChange={(e) => setPriority(e.target.value)}>
-              {Object.entries(PRIORITY_LABEL).map(([k, v]) => (
-                <option key={k} value={k}>
-                  {v}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-        <label className="field">
-          <span>指派给</span>
-          <select value={assignee} onChange={(e) => setAssignee(e.target.value)}>
-            <option value="">（未指派）</option>
-            {props.agents.map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.avatar} {a.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <div className="modal-actions">
-          {t && props.onDelete && (
-            <button className="btn danger" onClick={() => void props.onDelete!()}>
-              删除
-            </button>
-          )}
-          <button className="btn" onClick={props.onClose}>
-            取消
-          </button>
-          <button className="btn primary" disabled={!title.trim()} onClick={() => void save()}>
-            保存
-          </button>
-        </div>
-      </div>
-    </div>
-  )
+function fmtTime(t: number): string {
+  if (!t) return '—'
+  const d = new Date(t)
+  const today = new Date()
+  const sameDay = d.toDateString() === today.toDateString()
+  return sameDay ? d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) : d.toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' })
 }

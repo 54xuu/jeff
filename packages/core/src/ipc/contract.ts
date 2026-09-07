@@ -54,6 +54,8 @@ export const IPC = {
   sessionPreview: 'session:preview',
   sessionActivate: 'session:activate',
   sessionDelete: 'session:delete',
+  sessionRename: 'session:rename',
+  groupNewSession: 'group:newSession',
   settingsGet: 'settings:get',
   settingsSet: 'settings:set',
   mcpList: 'mcp:list',
@@ -319,6 +321,8 @@ export type InvokeMap = {
   [IPC.sessionPreview]: { sessionId: string }
   [IPC.sessionActivate]: { scope: 'private' | 'group'; agentId: string; projectId?: string; sessionId: string }
   [IPC.sessionDelete]: { sessionId: string }
+  [IPC.sessionRename]: { sessionId: string; title: string }
+  [IPC.groupNewSession]: { projectId: string; agentId: string }
   [IPC.settingsGet]: void
   [IPC.settingsSet]: { theme?: AppSettings['theme']; themePack?: AppSettings['themePack'] }
   [IPC.mcpList]: void
