@@ -47,3 +47,14 @@
 2. 对话标题栏查看占用；接近自动压缩线时变色；点占用条打开上下文抽屉。
 3. 【压缩】手动触发 summarize；历史消息仍保留在聊天记录中，仅模型上下文被压缩。
 4. WebDAV 设置可调请求超时与是否校验证书；自签证书才关闭校验。
+
+## 本机更新（2026-09-07）
+
+- 已 `npm run package:linux`，产物：`apps/desktop/release/jeff-desktop_1.3.0_amd64.deb`（约 188MB，含上下文/WebDAV 改动）。
+- Agent 环境无交互 sudo，未能代执行 `dpkg -i`；已用 `release/linux-unpacked/jeff-desktop` 拉起当前构建供手测（数据仍在 `~/.jeff`）。
+- 系统覆盖安装请本机终端执行：
+
+```bash
+sudo dpkg -i /home/xujian/cdbox/jeff/apps/desktop/release/jeff-desktop_1.3.0_amd64.deb
+/usr/bin/jeff-desktop &
+```
