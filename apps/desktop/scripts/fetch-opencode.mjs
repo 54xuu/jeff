@@ -26,10 +26,29 @@ function assetUrl(target) {
   throw new Error(`未知目标: ${target}`)
 }
 
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+
+// CI runner 下载 ~180MB 大文件偶发断流，单次 fetch 即失败会导致整个 release job 挂掉；
+// 这里重试 3 次（2s/4s/8s 退避），fetch 与传输中途的失败都算。
 async function downloadTo(url, dest) {
-  const res = await fetch(url, { redirect: 'follow' })
-  if (!res.ok || !res.body) throw new Error(`下载失败 ${res.status}: ${url}`)
-  await pipeline(Readable.fromWeb(res.body), fs.createWriteStream(dest))
+  const attempts = 3
+  let lastErr
+  for (let i = 1; i <= attempts; i++) {
+    try {
+      const res = await fetch(url, { redirect: 'follow' })
+      if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`)
+      await pipeline(Readable.fromWeb(res.body), fs.createWriteStream(dest))
+      return
+    } catch (err) {
+      lastErr = err
+      if (i < attempts) {
+        const delay = 2000 * 2 ** (i - 1)
+        console.log(`[fetch-opencode] 下载失败（第 ${i} 次）：${err.message}，${delay / 1000}s 后重试 ${url}`)
+        await sleep(delay)
+      }
+    }
+  }
+  throw new Error(`下载失败（共 ${attempts} 次）: ${url} — ${lastErr?.message ?? lastErr}`)
 }
 
 /** 纯 Node 最小 zip 解压（store + deflate），跨平台无 shell 依赖 */

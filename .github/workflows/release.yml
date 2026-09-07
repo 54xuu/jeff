@@ -39,6 +39,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     permissions:
       contents: write
+    env:
+      OPENCODE_VERSION: '1.18.26'
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -47,14 +49,19 @@ jobs:
           cache: npm
       - name: 安装依赖
         run: npm ci --no-audit --no-fund
+      - name: 缓存 opencode 二进制（约 180MB，避免每次下载）
+        uses: actions/cache@v4
+        with:
+          path: apps/desktop/resources/oc-bin
+          key: oc-bin-${{ matrix.platform }}-${{ env.OPENCODE_VERSION }}
       - name: 拉取 opencode 二进制
         working-directory: apps/desktop
         shell: bash
         run: |
           if [ "${{ matrix.platform }}" = "linux" ]; then
-            node scripts/fetch-opencode.mjs 1.18.26 linux-x64
+            node scripts/fetch-opencode.mjs "$OPENCODE_VERSION" linux-x64
           else
-            node scripts/fetch-opencode.mjs 1.18.26 windows-x64
+            node scripts/fetch-opencode.mjs "$OPENCODE_VERSION" windows-x64
           fi
       - name: 构建渲染/主进程
         working-directory: apps/desktop
@@ -80,7 +87,7 @@ jobs:
           ls -la "$JEFF_SMOKE_OUT" || true
       - name: 发布 linux 产物到 GitHub Releases
         if: matrix.platform == 'linux'
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
@@ -90,7 +97,7 @@ jobs:
           fail_on_unmatched_files: true
       - name: 发布 windows 产物到 GitHub Releases
         if: matrix.platform == 'win'
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
@@ -98,7 +105,7 @@ jobs:
           fail_on_unmatched_files: true
       - name: 生成 Release 说明
         if: matrix.platform == 'linux'
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
