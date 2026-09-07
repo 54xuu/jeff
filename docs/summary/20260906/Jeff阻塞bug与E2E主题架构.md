@@ -74,3 +74,8 @@ UI 期望 `status/toolCount`，IPC 原先直接返回 `{ ok, tools }`，探测�
 | 测试 | `projectRole.test.ts` + 相关用例 role 字段改为 worker |
 
 智能体**名字**仍可叫「开发」等（@提及用名），只是 `project_agent.role` 不再存细分类。
+
+### 本机升级（同日）
+
+- 重新 `npm run package:linux` → 安装 `jeff-desktop_1.3.0_amd64.deb`（覆盖安装）
+- 已启动 `/usr/bin/jeff-desktop`；用户数据仍在 `~/.jeff`，打开库时会自动把旧 role 归一为 leader/worker
