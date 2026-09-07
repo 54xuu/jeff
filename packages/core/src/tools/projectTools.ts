@@ -1,7 +1,6 @@
 import type { ToolBridge } from './bridge.js'
 import type { DB } from '../db/db.js'
 import { agentRepo, projectAgentRepo, projectRepo, taskRepo } from '../db/repos.js'
-import { XIAOJIE_ID } from '../ipc/contract.js'
 
 export interface ProjectToolDeps {
   db: DB
@@ -35,7 +34,7 @@ export function registerProjectTools(reg: ToolBridge, deps: ProjectToolDeps): vo
       const id = m.agentId || m.agent_id
       if (!id || id === leaderId) continue
       if (!agents.get(id)) throw new Error(`成员智能体不存在: ${id}`)
-      members.add(p.id, id, m.role || 'member')
+      members.add(p.id, id, 'worker')
     }
     deps.onProjectChanged()
     return { id: p.id, title: p.title, leader_agent_id: p.leader_agent_id }
@@ -72,7 +71,8 @@ export function registerProjectTools(reg: ToolBridge, deps: ProjectToolDeps): vo
     if (!args.project_id || !args.agent_id) throw new Error('project_id 与 agent_id 必填')
     if (!projects.get(args.project_id)) throw new Error(`项目不存在: ${args.project_id}`)
     if (!agents.get(args.agent_id)) throw new Error(`智能体不存在: ${args.agent_id}`)
-    members.add(args.project_id, args.agent_id, args.role || 'member')
+    // 加员一律 worker；群主只能通过 create/update 的 leader_agent_id 指定
+    members.add(args.project_id, args.agent_id, 'worker')
     deps.onProjectChanged()
     return { added: true }
   })
@@ -182,4 +182,4 @@ export function statusLabel(status: string): string {
 }
 
 /** 供小杰指令参考：项目群/任务工具提示文本 */
-export const PROJECT_TOOL_HINT = `项目群工具（jeff_project_*）用于建群、配成员与群主；任务工具（jeff_task_*）用于创建/流转任务，任务会以卡片形式出现在对应项目群里。创建项目群时必须先想好：群名、谁当群主（leader，统筹一切的智能体）、有哪些成员（开发/UI/测试/产品等角色）。${XIAOJIE_ID === 'agt_xiaojie' ? '' : ''}`
+export const PROJECT_TOOL_HINT = `项目群工具（jeff_project_*）用于建群、配成员与群主；任务工具（jeff_task_*）用于创建/流转任务，任务会以卡片形式出现在对应项目群里。创建项目群时必须先想好：群名、谁当群主（leader，统筹一切的智能体）、有哪些工作者（worker，统一角色，不做开发/产品等细分类）。`

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useStore } from '../store'
 import { api } from '../api'
-import { IPC, type ProjectInfo, type TaskInfo } from '@jeff/core'
+import { IPC, projectRoleLabel, type ProjectInfo, type TaskInfo } from '@jeff/core'
 import Avatar from './Avatar'
 
 const STATUSES: Array<{ id: string; label: string }> = [
@@ -48,7 +48,7 @@ export default function GroupInfoDrawer(props: { project: ProjectInfo; tasks: Ta
               <div key={m.agent_id} className="member-row">
                 <Avatar emoji={m.avatar} size={30} />
                 <span className="member-name">{m.name}</span>
-                <span className={`tag ${isLeader ? 'tag-green' : ''}`}>{isLeader ? '群主' : m.role}</span>
+                <span className={`tag ${isLeader ? 'tag-green' : ''}`}>{projectRoleLabel(isLeader ? 'leader' : m.role)}</span>
                 {!isLeader && (
                   <button
                     className="text-btn danger"

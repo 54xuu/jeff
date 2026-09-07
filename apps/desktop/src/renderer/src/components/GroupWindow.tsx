@@ -129,7 +129,7 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
             <Avatar emoji={project.icon} size={64} />
             <p className="chat-welcome-name">{project.title}</p>
             <p className="chat-welcome-desc">
-              这是项目「{project.title}」的群聊。所有消息默认由群主（leader）统筹处理；用 @成员名 可以直接指名对话。
+              这是项目「{project.title}」的群聊。消息默认由群主（leader）统筹；工作者（worker）统一角色。用 @成员名 可直接指名对话。
             </p>
           </div>
         )}

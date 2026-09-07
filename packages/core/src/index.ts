@@ -757,9 +757,9 @@ Jeff 把「开发 + 项目管理」组织成三个概念（微信心智模型）
 - 创建途径：\u2460 找小杰说「帮我创建一个智能体」；\u2461 「智能体」页手动新建。
 
 ## 2. 项目群 = 微信群
-- 一个项目就是一个群；群里有你 + 若干智能体成员（开发/UI/测试/产品…）。
+- 一个项目就是一个群；群里有你 + 一个群主（leader）+ 若干工作者（worker）。工作者是统一角色，不做开发/UI/测试/产品等细分类。
 - **只有一个群主（leader）**，所有工作由它统筹：群消息默认给 leader，@成员名 直达该成员。
-- leader 用 jeff_delegate 工具把活儿委派给成员，成员独立执行后结果自动回群，leader 再汇总。
+- leader 用 jeff_delegate 工具把活儿委派给 worker，worker 独立执行后结果自动回群，leader 再汇总。
 - 群资料面板：成员管理 + 任务看板（拖拽改状态）。
 
 ## 3. 任务 = JEF-n
@@ -855,3 +855,4 @@ export { SessionIndex, cjkSplit, buildMatchQuery } from './memory/indexer.js'
 export { parseMcpServerJson } from './mcp/parse.js'
 export { MEMORY_TOOL, SEARCH_TOOL, DELEGATE_TOOL, type SessionScopeCtx, type ToolCtx } from './tools/memoryTools.js'
 export { formatModelKey, parseModelKey, modelDisplayLabel } from './util/modelKey.js'
+export { normalizeProjectRole, projectRoleLabel, PROJECT_ROLES, type ProjectRole } from './util/projectRole.js'

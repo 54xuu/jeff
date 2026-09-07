@@ -48,7 +48,7 @@ CREATE TABLE IF NOT EXISTS project (
 CREATE TABLE IF NOT EXISTS project_agent (
   project_id TEXT NOT NULL,                      -- 项目 id
   agent_id   TEXT NOT NULL,                      -- 智能体 id
-  role       TEXT NOT NULL DEFAULT 'member',     -- 群内角色：开发/ui/测试/产品/leader/member
+  role       TEXT NOT NULL DEFAULT 'worker',     -- 群内角色：仅 leader（群主）| worker（工作者）；不做开发/产品等细分类
   position   INTEGER NOT NULL DEFAULT 0,         -- 排序
   created_at INTEGER NOT NULL,                   -- 加入时间（ms）
   PRIMARY KEY (project_id, agent_id)
@@ -96,6 +96,26 @@ CREATE INDEX IF NOT EXISTS idx_msg_scope ON chat_message(scope, created_at);
   // 增量列迁移（CREATE TABLE IF NOT EXISTS 不会给旧库加列）
   addColumn(db, 'agent', 'thinking', "TEXT NOT NULL DEFAULT ''", "默认思考档位：'' /none/low/high/max（''=跟随模型配置）")
   addColumn(db, 'project', 'workspace_dir', "TEXT NOT NULL DEFAULT ''", '工作空间目录（空=全局 workspace，输出文件默认落这里）')
+
+  // 角色归一：历史 member / 开发 / ui / 测试 / 产品 … → worker；再按 project.leader_agent_id 校正群主
+  db.exec(`UPDATE project_agent SET role = 'worker' WHERE role IS NULL OR trim(role) = '' OR lower(role) != 'leader'`)
+  db.exec(`
+    UPDATE project_agent
+    SET role = 'leader'
+    WHERE EXISTS (
+      SELECT 1 FROM project p
+      WHERE p.id = project_agent.project_id AND p.leader_agent_id = project_agent.agent_id
+    )
+  `)
+  db.exec(`
+    UPDATE project_agent
+    SET role = 'worker'
+    WHERE lower(role) = 'leader'
+      AND NOT EXISTS (
+        SELECT 1 FROM project p
+        WHERE p.id = project_agent.project_id AND p.leader_agent_id = project_agent.agent_id
+      )
+  `)
 }
 
 /** 若表缺列则 ALTER TABLE ADD COLUMN（幂等） */

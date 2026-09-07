@@ -71,7 +71,7 @@ d('E2E: 项目群聊 + 任务卡片', () => {
       body: JSON.stringify({
         title: '官网开发群',
         leader_agent_id: XIAOJIE_ID,
-        members: [{ agentId: dev.id, role: '开发' }],
+        members: [{ agentId: dev.id, role: 'worker' }],
       }),
     })
     const created = (await res.json()) as { ok: boolean; data?: { id: string }; error?: string }

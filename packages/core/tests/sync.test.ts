@@ -48,7 +48,7 @@ function seed(side: Side): void {
   const dev = agents.create({ name: '开发', instructions: '前端' })
   const p = projectRepo(side.db).create({ title: '同步测试群', leader_agent_id: leader.id })
   projectAgentRepo(side.db).add(p.id, leader.id, 'leader')
-  projectAgentRepo(side.db).add(p.id, dev.id, '开发')
+  projectAgentRepo(side.db).add(p.id, dev.id, 'worker')
   taskRepo(side.db).create({ project_id: p.id, title: '任务一', priority: 'high' })
   side.memory.add({ kind: 'agent', agentId: dev.id }, '用户偏好 vite')
   side.memory.add({ kind: 'user' }, '称呼：Jeff 老师们')

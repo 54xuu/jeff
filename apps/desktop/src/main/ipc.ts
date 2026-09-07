@@ -300,13 +300,13 @@ export function registerIpc(core: JeffCore): void {
         if (!row) throw new Error('项目不存在')
         projectAgentRepo(core.db).add(d.id, d.leader_agent_id, 'leader', 0)
         for (const mid of d.memberAgentIds || []) {
-          if (mid !== d.leader_agent_id) projectAgentRepo(core.db).add(d.id, mid, 'member')
+          if (mid !== d.leader_agent_id) projectAgentRepo(core.db).add(d.id, mid, 'worker')
         }
       } else {
         const row = projectRepo(core.db).create({ title: d.title, description: d.description, icon: d.icon, leader_agent_id: d.leader_agent_id, workspace_dir: d.workspace_dir || '' })
         projectAgentRepo(core.db).add(row.id, d.leader_agent_id, 'leader', 0)
         for (const mid of d.memberAgentIds || []) {
-          if (mid !== d.leader_agent_id) projectAgentRepo(core.db).add(row.id, mid, 'member')
+          if (mid !== d.leader_agent_id) projectAgentRepo(core.db).add(row.id, mid, 'worker')
         }
       }
       core.bus.emit('data-changed', 'projects')
@@ -337,8 +337,8 @@ export function registerIpc(core: JeffCore): void {
       })
     },
     [IPC.projectAddMember]: async (p): Promise<{ ok: boolean }> => {
-      const { projectId, agentId, role } = p as { projectId: string; agentId: string; role?: string }
-      projectAgentRepo(core.db).add(projectId, agentId, role || 'member')
+      const { projectId, agentId } = p as { projectId: string; agentId: string }
+      projectAgentRepo(core.db).add(projectId, agentId, 'worker')
       core.bus.emit('data-changed', 'projects')
       return { ok: true }
     },

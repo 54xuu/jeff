@@ -75,7 +75,7 @@ export default function CreateGroupModal(props: { onClose: () => void }): React.
           </select>
         </label>
         <div className="field">
-          <span>群成员（可多选，群主自动入群）</span>
+          <span>工作者（worker，可多选；群主自动入群，角色统一为 worker）</span>
           <div className="member-picker">
             {agents
               .filter((a) => a.id !== leaderId)

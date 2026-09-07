@@ -30,7 +30,7 @@ beforeEach(() => {
   const p = projectRepo(db).create({ title: '官网项目', leader_agent_id: leader.id })
   const pa = projectAgentRepo(db)
   pa.add(p.id, leader.id, 'leader', 0)
-  pa.add(p.id, dev.id, '开发')
+  pa.add(p.id, dev.id, 'worker')
   pa.add(p.id, ui.id, 'ui')
   db.prepare('UPDATE project SET leader_agent_id = ? WHERE id = ?').run(leader.id, p.id)
 })
@@ -58,6 +58,7 @@ describe('GroupChat', () => {
     expect(briefing).toContain('官网项目')
     expect(briefing).toContain('架构师')
     expect(briefing).toContain('群主/leader')
+    expect(briefing).toContain('工作者/worker')
     expect(briefing).toContain('@')
   })
 

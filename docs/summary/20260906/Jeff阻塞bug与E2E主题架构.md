@@ -60,3 +60,17 @@ UI 期望 `status/toolCount`，IPC 原先直接返回 `{ ok, tools }`，探测�
 - 产物：`apps/desktop/release/jeff-desktop_1.3.0_amd64.deb`（含本次 fix 提交）
 - 安装：`sudo dpkg -i …/jeff-desktop_1.3.0_amd64.deb` → `/usr/bin/jeff-desktop`
 - 已启动供手测；日常数据仍在 `~/.jeff`（与 E2E 隔离目录无关）
+
+## 六、项目群角色模型修正（2026-09-07）
+
+**规则**：群内角色只有 `leader`（群主）与 `worker`（工作者）；禁止开发 / UI / 测试 / 产品等细分类。
+
+| 层 | 改动 |
+|---|---|
+| `projectRole.ts` | `normalizeProjectRole` / `projectRoleLabel`；非 leader 一律 → worker |
+| DB | 默认 `worker`；打开库时迁移旧 role，并按 `project.leader_agent_id` 校正群主 |
+| repo / IPC / tools | 建群、加员固定 worker；工具文案与小杰提示改为 leader/worker |
+| UI | 群资料显示「群主/工作者」；建群文案改为「工作者」 |
+| 测试 | `projectRole.test.ts` + 相关用例 role 字段改为 worker |
+
+智能体**名字**仍可叫「开发」等（@提及用名），只是 `project_agent.role` 不再存细分类。

@@ -154,7 +154,7 @@ describe('resolveMemoryScope', () => {
   it('user 仅小杰可写；project 需要成员身份', () => {
     db.exec(`INSERT INTO agent (id,name,avatar,builtin,created_at,updated_at) VALUES ('agt_xj','小杰','🧑',1,1,1),('agt_dev','开发','💻',0,1,1)`)
     db.exec(`INSERT INTO project (id,title,leader_agent_id,created_at,updated_at) VALUES ('prj_1','群','agt_xj',1,1)`)
-    db.exec(`INSERT INTO project_agent (project_id,agent_id,role,created_at) VALUES ('prj_1','agt_dev','开发',1)`)
+    db.exec(`INSERT INTO project_agent (project_id,agent_id,role,created_at) VALUES ('prj_1','agt_dev','worker',1)`)
 
     const okUser = resolveMemoryScope(db, { agentId: 'agt_xj', resolved: null, explicit: 'user', builtin: true })
     expect(okUser).toMatchObject({ scope: { kind: 'user' } })

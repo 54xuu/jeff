@@ -70,7 +70,7 @@ export class GroupChat {
     return hits[0].agent_id
   }
 
-  /** roster briefing（注入到每条群消息的 system；按接收者 agent 区分 leader/成员视角） */
+  /** roster briefing（注入到每条群消息的 system；按接收者 agent 区分 leader/worker 视角） */
   buildBriefing(projectId: string, agentId: string): string {
     const project = projectRepo(this.db).get(projectId)
     if (!project) throw new Error(`项目不存在: ${projectId}`)
@@ -79,20 +79,22 @@ export class GroupChat {
     const roster = members
       .map((m) => {
         const a = agents.get(m.agent_id)
-        return `- ${a?.name || m.agent_id}（角色: ${m.role}${m.agent_id === project.leader_agent_id ? '，群主/leader' : ''}）id=${m.agent_id}`
+        const isLeader = m.agent_id === project.leader_agent_id
+        const roleLabel = isLeader ? '群主/leader' : '工作者/worker'
+        return `- ${a?.name || m.agent_id}（${roleLabel}）id=${m.agent_id}`
       })
       .join('\n')
     const isLeaderBriefing = project.leader_agent_id === agentId
-    const leaderLine = isLeaderBriefing
-      ? '你是本群群主（leader），用户的消息默认由你统筹：能自己答就答；需要别人干活的，说明你打算怎么做（M3 将支持直接委派工具）。'
-      : '你是本群成员，就你职责范围内的问题作答。'
+    const roleLine = isLeaderBriefing
+      ? '你是本群群主（leader），用户的消息默认由你统筹：能自己答就答；需要别人干活的，用委派工具交给工作者（worker）。'
+      : '你是本群工作者（worker），就你职责范围内的问题作答；不做开发/产品等细分类角色。'
     return [
       `【项目群上下文】群名：${project.title}`,
       project.description ? `群简介：${project.description}` : '',
       `工作空间目录：${project.workspace_dir || '默认工作区'}。用户没有指定输出位置时，你产出的所有文件（代码、文档等）都保存到该目录。`,
-      `成员名册：`,
+      `成员名册（仅 leader / worker）：`,
       roster,
-      leaderLine,
+      roleLine,
       `用户消息里 @某成员名 表示直接指名对话；回复请用简体中文，简洁、可执行。`,
     ]
       .filter(Boolean)

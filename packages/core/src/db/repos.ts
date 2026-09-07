@@ -1,6 +1,7 @@
 import type { DB } from './db.js'
 import { now } from './db.js'
 import { genId } from '../util/id.js'
+import { normalizeProjectRole } from '../util/projectRole.js'
 
 // ---------- 类型 ----------
 export interface AgentRow {
@@ -226,11 +227,12 @@ export const projectAgentRepo = (db: DB) => ({
   listByProject(projectId: string): ProjectAgentRow[] {
     return db.prepare('SELECT * FROM project_agent WHERE project_id = ? ORDER BY position, created_at').all(projectId) as unknown as ProjectAgentRow[]
   },
-  add(projectId: string, agentId: string, role = 'member', position = 0): void {
+  add(projectId: string, agentId: string, role = 'worker', position = 0): void {
+    const normalized = normalizeProjectRole(role)
     db.prepare(
       `INSERT INTO project_agent (project_id, agent_id, role, position, created_at) VALUES (?, ?, ?, ?, ?)
        ON CONFLICT(project_id, agent_id) DO UPDATE SET role = excluded.role, position = excluded.position`,
-    ).run(projectId, agentId, role, position, now())
+    ).run(projectId, agentId, normalized, position, now())
   },
   remove(projectId: string, agentId: string): void {
     db.prepare('DELETE FROM project_agent WHERE project_id = ? AND agent_id = ?').run(projectId, agentId)

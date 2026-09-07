@@ -31,7 +31,7 @@ beforeEach(() => {
   projectId = projectRepo(db).create({ title: '官网群', leader_agent_id: leaderId }).id
   const pa = projectAgentRepo(db)
   pa.add(projectId, leaderId, 'leader', 0)
-  pa.add(projectId, devId, '开发', 1)
+  pa.add(projectId, devId, 'worker', 1)
 
   group = new GroupChat(db, () => ocStub, {})
   delegator = new Delegator(db, () => ocStub, group, () => {})

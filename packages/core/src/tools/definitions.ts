@@ -56,7 +56,7 @@ export function allToolDefs(): ToolDef[] {
     {
       name: 'jeff_project_create',
       description:
-        '创建项目群（= 微信群）：需要群名、群主 leader（某个智能体 id，统筹一切）和成员智能体列表。返回项目 id。',
+        '创建项目群（= 微信群）：需要群名、群主 leader（某个智能体 id，统筹一切）和工作者列表（统一 worker，不做开发/产品等细分类）。返回项目 id。',
       args: {
         title: { type: 'string', description: '群名' },
         icon: { type: 'string', description: '群图标 emoji' },
@@ -64,7 +64,7 @@ export function allToolDefs(): ToolDef[] {
         leader_agent_id: { type: 'string', description: '群主智能体 id（必须已存在）' },
         members: {
           type: 'array',
-          description: '成员列表（不含群主也要包含的话请一并给出），每项 {agentId, role}',
+          description: '工作者列表（role 忽略，一律存为 worker），每项 {agentId}',
           items: { type: 'object' },
         },
       },
@@ -83,21 +83,20 @@ export function allToolDefs(): ToolDef[] {
     },
     {
       name: 'jeff_project_list',
-      description: '列出所有项目群（含成员与群主）。',
+      description: '列出所有项目群（含群主与工作者）。',
       args: {},
     },
     {
       name: 'jeff_project_add_member',
-      description: '向项目群添加成员智能体（可指定群内角色：开发/ui/测试/产品/leader 等）。',
+      description: '向项目群添加工作者智能体（角色固定为 worker）。',
       args: {
         project_id: { type: 'string', description: '项目 id' },
         agent_id: { type: 'string', description: '智能体 id' },
-        role: { type: 'string', description: '群内角色' },
       },
     },
     {
       name: 'jeff_project_remove_member',
-      description: '把成员智能体移出项目群。',
+      description: '把工作者智能体移出项目群（不能移除群主；请先改群主）。',
       args: { project_id: { type: 'string', description: '项目 id' }, agent_id: { type: 'string', description: '智能体 id' } },
     },
     {
