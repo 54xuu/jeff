@@ -1,4 +1,4 @@
-# LLM 证书校验失败修复（v1.7.4）
+# LLM 证书校验失败修复（v1.7.4 / v1.7.5）
 
 ## 问题现象
 
@@ -45,12 +45,30 @@
   3. 关闭调试模式 → 日志停止写入。
 - 发版 1.7.4（三处 `package.json` + lock）：`npm run package:linux` → deb 安装本机，「设置→关于」1.7.4，sidecar 正常启动且默认未注入 TLS 变量；`npm run package:win` → `jeff-Setup-1.7.4.exe`，wine 冒烟通过。
 
-## Windows 机器上的操作建议
+## 追加排查：v1.7.5（Windows 上改报「⏹️ 已停止生成」）
 
-1. 安装 `jeff-Setup-1.7.4.exe`；
-2. 设置 → 引擎服务 → 勾选「跳过 LLM 证书校验」（引擎自动重启）；
-3. 再到「POCT+AI项目管理」群发消息验证；
-4. 若仍有问题，先勾选「调试模式」复现一次，把 `~/.jeff/logs/debug-*.log` 发回来分析。
+### 现象与日志盲区
+
+用户 Windows 机器装上 1.7.4、开启「跳过 LLM 证书校验」后，群消息报 `⏹️ 已停止生成`，且调试日志里**只有 sidecar 重启事件、没有任何失败现场**。原因：
+
+1. v1.7.4 的停止判定 `/abort/i.test(msg)` 过宽——provider 请求超时/被中断等错误的文案里也含 "abort"，被误判成「用户手动停止」，于是显示「已停止生成」且**跳过了失败日志**（v1.7.4 对 stop 类不落日志，是本次日志盲区的直接原因）。
+
+### 修复
+
+1. **停止判定收紧**：`OcClient` 记录用户主动 `abortSession` 的会话与时间戳（新增 `isAbortRequested(sessionId, windowMs=120s)`）；群聊/私聊 catch 改为 `/abort/i` 且 `isAbortRequested` 双条件才算「已停止生成」，否则展示真实错误。
+2. **失败全量落日志**：`group-send-stop` / `group-send-fail`、`private-send-stop` / `private-send-fail` 全部落调试日志（含堆栈）；`OcClient.sendMessage` 增加 `send-start` 现场行（sessionId/agent/model/variant/文本长度/图片数/超时，不含消息内容）。
+3. **群主简报强化**：leader 角色行明确「拆分任务后必须逐个调用 jeff_delegate 委派工具派活；只回复文本 @ 成员不会触发执行」。
+
+### 群消息路由机制核实（与用户预期一致，无需改动）
+
+用户预期「非 @ 消息默认给群主 → 群主拆分任务按类型 @ 分配给 worker」。现状即如此：`group.ts` 路由 `targetId = parseMention(text) ?? project.leader_agent_id`；派活走 `jeff_delegate` 工具（leader 执行、成员独立会话、结果回群）。之前「机制像坏了」实际是群主一直处理失败（证书错误 → 疑似 provider 超时被误判为停止），消息从未被成功处理。
+
+### 对 Windows 机器的下一步建议
+
+1. 安装 `jeff-Setup-1.7.5.exe`，保持「跳过 LLM 证书校验」与「调试模式」开启；
+2. 群里再发一条消息：若再失败，现在会显示**真实错误**并落 `group-send-fail` 日志，把日志发回分析；
+3. 强烈建议同时把「项经理」「项小沐」的资料里绑定 **opencode-go/glm-5.2**（该 provider 在此网络环境已验证可用），绕开对 api.siliconflow.cn 的网络拦截——跳过证书校验只能解决「证书被拦」，解决不了「域名被墙/超时」；
+4. v1.7.5：`npm test` 96 通过，TLS e2e 3 用例回归通过，deb 已装本机（1.7.5）并启动验证。
 
 ## 涉及文件
 

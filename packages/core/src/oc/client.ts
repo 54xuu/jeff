@@ -82,6 +82,16 @@ export class OcClient extends EventEmitter {
     noReply?: boolean
     timeoutMs?: number
   }): Promise<AssistantInfo> {
+    // 调试现场：只记元信息（不含消息内容），用于对齐后续 assistant-error / stop 日志
+    this.log?.('send-start', {
+      sessionId: input.sessionId,
+      agent: input.agent,
+      model: input.model,
+      variant: input.variant,
+      textLen: input.text.length,
+      images: input.images?.length ?? 0,
+      timeoutMs: input.timeoutMs ?? 180000,
+    })
     const returned = await this.req<{ info?: AssistantInfo; id?: string }>(
       'POST',
       `/session/${input.sessionId}/message`,
@@ -124,8 +134,23 @@ export class OcClient extends EventEmitter {
     }
   }
 
+  /** 用户主动停止过的会话 → 时间戳（区分「已停止生成」与 provider 真实失败） */
+  private aborts = new Map<string, number>()
+
   async abortSession(sessionId: string): Promise<void> {
+    this.aborts.set(sessionId, Date.now())
     await this.req('POST', `/session/${sessionId}/abort`).catch(() => {})
+  }
+
+  /** 最近 windowMs 内是否对该会话发起过用户停止 */
+  isAbortRequested(sessionId: string, windowMs = 120000): boolean {
+    const t = this.aborts.get(sessionId)
+    if (!t) return false
+    if (Date.now() - t > windowMs) {
+      this.aborts.delete(sessionId)
+      return false
+    }
+    return true
   }
 
   /**

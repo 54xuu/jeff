@@ -100,7 +100,7 @@ export class GroupChat {
       .join('\n')
     const isLeaderBriefing = project.leader_agent_id === agentId
     const roleLine = isLeaderBriefing
-      ? '你是本群群主（leader），用户的消息默认由你统筹：能自己答就答；需要别人干活的，用委派工具交给工作者（worker）。'
+      ? '你是本群群主（leader），用户的消息默认由你统筹：能自己答就答；需要别人干活的，先拆分任务，再逐个用 jeff_delegate 委派工具把任务分派给合适的工作者（worker），等结果回群后汇总。只在自己回复文本里 @ 成员不会触发执行，派活必须调用 jeff_delegate。'
       : '你是本群工作者（worker），就你职责范围内的问题作答；不做开发/产品等细分类角色。'
     const bg = (project.description || '').trim()
     return [
@@ -158,18 +158,17 @@ export class GroupChat {
       })
     } catch (err) {
       const msg = String((err as Error)?.message || err)
-      const stopped = /abort/i.test(msg)
-      if (!stopped) {
-        this.hooks?.onDebugLog?.('group-send-fail', {
-          projectId,
-          threadId,
-          agentId: targetId,
-          agent: target.name,
-          sessionId,
-          error: msg,
-          stack: (err as Error)?.stack,
-        })
-      }
+      // 只有最近确实点过停止才算「已停止生成」；provider 超时/中断等也含 abort 字样，须暴露真实错误
+      const stopped = /abort/i.test(msg) && this.getOc().isAbortRequested(sessionId)
+      this.hooks?.onDebugLog?.(stopped ? 'group-send-stop' : 'group-send-fail', {
+        projectId,
+        threadId,
+        agentId: targetId,
+        agent: target.name,
+        sessionId,
+        error: msg,
+        stack: (err as Error)?.stack,
+      })
       chatMessageRepo(this.db).add({
         scope,
         sender_type: 'system',

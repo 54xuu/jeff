@@ -102,9 +102,14 @@ export class PrivateChat {
       return reply
     } catch (err) {
       const msg = String((err as Error)?.message || err)
-      if (!/abort/i.test(msg)) {
-        this.hooks?.onDebugLog?.('private-send-fail', { agentId, sessionId, error: msg, stack: (err as Error)?.stack })
-      }
+      // 只有最近确实点过停止才算「已停止」；provider 超时/中断等也含 abort 字样，须落日志留现场
+      const stopped = /abort/i.test(msg) && this.getOc().isAbortRequested(sessionId)
+      this.hooks?.onDebugLog?.(stopped ? 'private-send-stop' : 'private-send-fail', {
+        agentId,
+        sessionId,
+        error: msg,
+        stack: (err as Error)?.stack,
+      })
       throw err
     }
   }
