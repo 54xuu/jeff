@@ -1,12 +1,17 @@
 import { EventEmitter } from 'node:events'
 import { sleep } from '../sidecar/manager.js'
+import type { DebugLogFn } from '../logger.js'
 
 /**
  * opencode server 薄客户端（基于其 OpenAPI HTTP 面，1.18.x 验证）。
  * 刻意不依赖 @opencode-ai/sdk：接口面窄而稳定，避免 SDK 版本耦合。
  */
 export class OcClient extends EventEmitter {
-  constructor(public port: number) {
+  constructor(
+    public port: number,
+    /** 调试日志回调（可选）：assistant 错误的完整 JSON 只有这里能拿到（上层会被截断） */
+    private log?: DebugLogFn,
+  ) {
     super()
   }
 
@@ -103,7 +108,13 @@ export class OcClient extends EventEmitter {
       if (found) {
         // 列表条目的 parts 在顶层（info 里没有）——合并回去，调用方才能提取回复文本
         if (entry?.parts?.length && !found.parts) found.parts = entry.parts
-        if (found.error) throw new Error(`assistant 消息出错: ${JSON.stringify(found.error).slice(0, 300)}`)
+        if (found.error) {
+          const raw = JSON.stringify(found.error)
+          // 完整错误只在调试日志里留存（上层提示会被层层截断）
+          this.log?.('assistant-error', { sessionId: input.sessionId, assistantId, error: found.error })
+          const hint = /certificate/i.test(raw) ? '（如为企业网络证书拦截，可在 设置→引擎服务 开启「跳过 LLM 证书校验」）' : ''
+          throw new Error(`assistant 消息出错: ${raw.slice(0, 300)}${hint}`)
+        }
         if (found.time?.completed) return found
       } else if (Date.now() > deadline) {
         throw new Error('assistant 消息未创建（超时）')
@@ -149,7 +160,10 @@ export class OcClient extends EventEmitter {
         if (info.role !== 'assistant') continue
         if (!(info.summary === true || info.mode === 'compaction')) continue
         if (entry.parts?.length && !info.parts) info.parts = entry.parts
-        if (info.error) throw new Error(`压缩失败: ${JSON.stringify(info.error).slice(0, 300)}`)
+        if (info.error) {
+          this.log?.('compact-error', { sessionId: input.sessionId, error: info.error })
+          throw new Error(`压缩失败: ${JSON.stringify(info.error).slice(0, 300)}`)
+        }
         if (info.time?.completed || (info as { finish?: string }).finish) return info
       }
       if (Date.now() > deadline) throw new Error('等待压缩完成超时')

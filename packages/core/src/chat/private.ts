@@ -32,6 +32,8 @@ export interface PrivateChatHooks {
   afterReply?: (scope: { kind: 'private'; agentId: string } | { kind: 'group'; projectId: string; agentId: string }) => void
   /** 智能体未绑定模型时的会话兜底 */
   defaultModel?: () => { providerID: string; modelID: string } | null
+  /** 调试日志（消息处理失败等现场） */
+  onDebugLog?: (tag: string, detail: unknown) => void
 }
 
 /** 私聊（agent = 微信好友）：每个 agent 一条持续会话 */
@@ -87,16 +89,24 @@ export class PrivateChat {
     const sessionId = await this.ensureSession(agentId, agentName)
     const agent = agentRepo(this.db).get(agentId)
     const opts = agentPromptOpts(agent, this.hooks?.defaultModel?.() ?? null)
-    const reply = await this.getOc().sendMessage({
-      sessionId,
-      text,
-      ...(images && images.length ? { images } : {}),
-      agent: agentSlug(agentId),
-      system: this.hooks?.buildSystem?.(agentId),
-      ...opts,
-    })
-    this.hooks?.afterReply?.({ kind: 'private', agentId })
-    return reply
+    try {
+      const reply = await this.getOc().sendMessage({
+        sessionId,
+        text,
+        ...(images && images.length ? { images } : {}),
+        agent: agentSlug(agentId),
+        system: this.hooks?.buildSystem?.(agentId),
+        ...opts,
+      })
+      this.hooks?.afterReply?.({ kind: 'private', agentId })
+      return reply
+    } catch (err) {
+      const msg = String((err as Error)?.message || err)
+      if (!/abort/i.test(msg)) {
+        this.hooks?.onDebugLog?.('private-send-fail', { agentId, sessionId, error: msg, stack: (err as Error)?.stack })
+      }
+      throw err
+    }
   }
 
   /** 读取历史消息（映射为 UI 形状） */

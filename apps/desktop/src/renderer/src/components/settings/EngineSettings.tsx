@@ -10,15 +10,30 @@ const STATUS_LABELS: Record<string, string> = {
   crashed: '异常（自动重启中）',
 }
 
-/** 设置 → 引擎服务：opencode sidecar 状态 / 版本 / 重启 / 日志 */
+/** 设置 → 引擎服务：opencode sidecar 状态 / 版本 / 重启 / 日志 / TLS 与调试开关 */
 export default function EngineSettings(): React.JSX.Element {
   const { appInfo, refreshAppInfo } = useStore()
   const [logs, setLogs] = useState<string[]>([])
   const [restarting, setRestarting] = useState(false)
+  const [skipTls, setSkipTls] = useState(false)
+  const [debugEnabled, setDebugEnabled] = useState(false)
 
   useEffect(() => {
     void api.invoke<{ lines: string[] }>(IPC.sidecarLogs).then((r) => setLogs(r.lines))
+    void api.invoke<{ skipVerify: boolean }>(IPC.llmTlsGet).then((r) => setSkipTls(r.skipVerify))
+    void api.invoke<{ enabled: boolean }>(IPC.debugLogGet).then((r) => setDebugEnabled(r.enabled))
   }, [])
+
+  const toggleSkipTls = async (v: boolean) => {
+    setSkipTls(v)
+    await api.invoke(IPC.llmTlsSet, { skip: v })
+    await refreshAppInfo()
+  }
+
+  const toggleDebug = async (v: boolean) => {
+    setDebugEnabled(v)
+    await api.invoke(IPC.debugLogSet, { enabled: v })
+  }
 
   const restart = async () => {
     setRestarting(true)
@@ -53,6 +68,16 @@ export default function EngineSettings(): React.JSX.Element {
           </div>
           <button className="text-btn" disabled={restarting} onClick={() => void restart()}>{restarting ? '重启中…' : '重启服务'}</button>
         </div>
+      </div>
+      <div className="pv-detail" style={{ marginTop: 8 }}>
+        <label className="field check-field">
+          <input type="checkbox" checked={skipTls} onChange={(e) => void toggleSkipTls(e.target.checked)} />
+          <span>跳过 LLM 证书校验（企业代理 / 安全软件拦截导致「certificate verification error」时开启；保存后自动重启引擎）</span>
+        </label>
+        <label className="field check-field">
+          <input type="checkbox" checked={debugEnabled} onChange={(e) => void toggleDebug(e.target.checked)} />
+          <span>调试模式（记录引擎输出与消息处理日志到 数据目录/logs/debug-日期.log，可能包含聊天内容）</span>
+        </label>
       </div>
       <details className="mcp-tools" open={!!appInfo?.sidecarError}>
         <summary>最近日志（{logs.length} 行）</summary>

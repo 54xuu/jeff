@@ -74,6 +74,10 @@ export const IPC = {
   agentsMdSave: 'agentsmd:save',
   sidecarRestart: 'sidecar:restart',
   sidecarLogs: 'sidecar:logs',
+  llmTlsGet: 'llmTls:get',
+  llmTlsSet: 'llmTls:set',
+  debugLogGet: 'debugLog:get',
+  debugLogSet: 'debugLog:set',
   dialogPickDir: 'dialog:pickDir',
   skillsBackupNow: 'skills:backupNow',
   skillsLast: 'skills:last',
@@ -357,6 +361,10 @@ export type InvokeMap = {
   [IPC.agentsMdSave]: { kind: 'user' | 'project'; id: string; content: string }
   [IPC.sidecarRestart]: void
   [IPC.sidecarLogs]: void
+  [IPC.llmTlsGet]: void
+  [IPC.llmTlsSet]: { skip: boolean }
+  [IPC.debugLogGet]: void
+  [IPC.debugLogSet]: { enabled: boolean }
   [IPC.dialogPickDir]: { title?: string; defaultPath?: string }
   [IPC.skillsBackupNow]: void
   [IPC.skillsLast]: void

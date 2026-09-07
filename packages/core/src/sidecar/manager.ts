@@ -13,6 +13,8 @@ export interface SidecarOptions {
   binaryPath?: string
   /** 打包资源内的二进制目录（如 resources/oc-bin），按平台子目录查找 */
   resourceBinDir?: string
+  /** spawn 时追加的环境变量（每次 spawn 时求值，可按设置动态变化，如跳过 LLM 证书校验） */
+  extraEnv?: () => Record<string, string>
   minPort?: number
   maxPort?: number
 }
@@ -72,6 +74,8 @@ export class SidecarManager extends EventEmitter {
       OPENCODE_DISABLE_EXTERNAL_SKILLS: '1',
       // 阻止 opencode 读取项目级 .opencode 配置造成串扰：cwd 固定在 Jeff 工作区
       HOME: process.env.HOME,
+      // 动态附加项放最后，允许覆盖（如 NODE_TLS_REJECT_UNAUTHORIZED=0 跳过 LLM 证书校验）
+      ...(this.opts.extraEnv?.() ?? {}),
     }
   }
 

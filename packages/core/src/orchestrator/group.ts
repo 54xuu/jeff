@@ -14,6 +14,8 @@ export interface GroupChatHooks {
   afterReply?: (scope: { kind: 'private'; agentId: string } | { kind: 'group'; projectId: string; agentId: string }) => void
   /** 智能体未绑定模型时的会话兜底 */
   defaultModel?: () => { providerID: string; modelID: string } | null
+  /** 调试日志（消息处理失败等现场） */
+  onDebugLog?: (tag: string, detail: unknown) => void
 }
 
 /**
@@ -157,6 +159,17 @@ export class GroupChat {
     } catch (err) {
       const msg = String((err as Error)?.message || err)
       const stopped = /abort/i.test(msg)
+      if (!stopped) {
+        this.hooks?.onDebugLog?.('group-send-fail', {
+          projectId,
+          threadId,
+          agentId: targetId,
+          agent: target.name,
+          sessionId,
+          error: msg,
+          stack: (err as Error)?.stack,
+        })
+      }
       chatMessageRepo(this.db).add({
         scope,
         sender_type: 'system',

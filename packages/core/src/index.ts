@@ -24,6 +24,7 @@ import { probeMcpAll } from './mcp/probe.js'
 import type { SkillsBackupReport, SkillsRestoreStage, SkillsRestoreApply, ContextPreviewInfo } from './ipc/contract.js'
 import { SyncEngine, type WebdavConfig, type SyncReport, normalizeWebdavBasePath } from './sync/engine.js'
 import { compactionThreshold, splitContextMessages } from './chat/context.js'
+import { DebugLogger, type DebugLogFn } from './logger.js'
 
 export const APP_VERSION = '1.3.0'
 
@@ -48,6 +49,8 @@ export class JeffCore extends EventEmitter {
   memory!: MemoryStore
   indexer!: SessionIndex
   sync!: SyncEngine
+  /** 调试日志（设置 → 引擎服务 开启；写 ~/.jeff/logs/debug-YYYYMMDD.log） */
+  debugLog!: DebugLogger
   bus = new EventEmitter()
   private started = false
   private registryDirty = false
@@ -64,6 +67,8 @@ export class JeffCore extends EventEmitter {
     ensureDirs(this.paths)
     this.db = openDb(this.paths)
     this.seedXiaojie()
+    this.debugLog = new DebugLogger(this.paths)
+    this.debugLog.setEnabled(this.kv().getJSON<{ enabled?: boolean } | null>('settings:debugLog', null)?.enabled ?? false)
     this.registry = new AgentRegistry(this.db, this.paths)
     this.memory = new MemoryStore(this.paths)
     this.indexer = new SessionIndex(this.db)
@@ -72,6 +77,7 @@ export class JeffCore extends EventEmitter {
     this.delegator = new Delegator(this.db, () => this.oc, this.groupChat, (projectId) => {
       this.bus.emit('group-updated', { projectId })
     })
+    this.delegator.onDebugLog = this.debugLog.fn()
     this.sync = new SyncEngine(this.db, this.paths, this.memory, () => this.kv().getJSON<WebdavConfig | null>('settings:webdav', null), (r) => {
       this.lastSyncReport = r
       this.bus.emit('sync-report', r)
@@ -141,16 +147,21 @@ export class JeffCore extends EventEmitter {
       paths: this.paths,
       resourceBinDir: opts.resourceBinDir,
       binaryPath: opts.binaryPath,
+      extraEnv: () => this.sidecarExtraEnv(),
       // E2E 避开本机日常 Jeff 占用的 14096+ 端口段
       ...(e2e ? { minPort: 16096, maxPort: 17096 } : {}),
     })
     this.sidecar.on('status', (status: string, error?: string) => {
+      this.debugLog.log('sidecar-status', { status, error })
       this.bus.emit('sidecar-status', { status, error })
       this.emit('sidecar-status', { status, error })
     })
-    this.sidecar.on('log', (line: string) => this.emit('sidecar-log', line))
+    this.sidecar.on('log', (line: string) => {
+      this.debugLog.log('sidecar', line)
+      this.emit('sidecar-log', line)
+    })
     await this.sidecar.start()
-    this.oc = new OcClient(this.sidecar.port)
+    this.oc = new OcClient(this.sidecar.port, this.debugLog.fn())
     this.oc.startEventStream()
     this.oc.on('event', (evt: { type?: string; properties?: Record<string, unknown> }) => this.handleOcEvent(evt))
 
@@ -160,6 +171,12 @@ export class JeffCore extends EventEmitter {
     if (this.kv().getJSON<WebdavConfig | null>('settings:webdav', null)?.autoSync) {
       setTimeout(() => void this.syncNow().catch(() => {}), 5000)
     }
+  }
+
+  /** sidecar 附加环境变量：跳过 LLM 证书校验开关（Bun 支持 NODE_TLS_REJECT_UNAUTHORIZED=0；企业网络中间人场景） */
+  private sidecarExtraEnv(): Record<string, string> {
+    const cfg = this.kv().getJSON<{ skipVerify?: boolean } | null>('settings:llmTls', null)
+    return cfg?.skipVerify ? { NODE_TLS_REJECT_UNAUTHORIZED: '0' } : {}
   }
 
   /** 数据变化后防抖自动同步 */
@@ -227,6 +244,7 @@ export class JeffCore extends EventEmitter {
       afterReply: (scope: { kind: 'private'; agentId: string } | { kind: 'group'; projectId: string; agentId: string }) => {
         this.onReplyDone(scope)
       },
+      onDebugLog: (tag: string, detail: unknown) => this.debugLog.log(tag, detail),
     }
   }
 
@@ -886,7 +904,7 @@ export class JeffCore extends EventEmitter {
     await this.sidecar.stop()
     await this.sidecar.start()
     old?.stopEventStream()
-    this.oc = new OcClient(this.sidecar.port)
+    this.oc = new OcClient(this.sidecar.port, this.debugLog.fn())
     this.oc.startEventStream()
     this.oc.on('event', (evt: { type?: string; properties?: Record<string, unknown> }) => this.handleOcEvent(evt))
     this.groupChat = new GroupChat(this.db, () => this.oc, this.chatHooks())
@@ -980,6 +998,29 @@ Jeff 把「开发 + 项目管理」组织成三个概念（微信心智模型）
     await this.restartSidecar()
   }
 
+  /** LLM 证书校验设置（kv settings:llmTls；绑定机器网络环境，不参与 WebDAV 同步） */
+  llmTlsConfig(): { skipVerify: boolean } {
+    return { skipVerify: !!this.kv().getJSON<{ skipVerify?: boolean } | null>('settings:llmTls', null)?.skipVerify }
+  }
+
+  /** 切换「跳过 LLM 证书校验」：env 只在 spawn 时生效，需重启 sidecar */
+  async setLlmTlsSkip(skip: boolean): Promise<void> {
+    this.kv().setJSON('settings:llmTls', { skipVerify: !!skip })
+    this.debugLog.log('settings', `跳过 LLM 证书校验 = ${!!skip}（重启引擎生效）`)
+    await this.restartSidecar()
+  }
+
+  /** 调试模式（kv settings:debugLog；无需重启，即时生效） */
+  debugLogConfig(): { enabled: boolean } {
+    return { enabled: this.debugLog.isEnabled() }
+  }
+
+  setDebugLog(enabled: boolean): void {
+    this.debugLog.setEnabled(enabled)
+    this.kv().setJSON('settings:debugLog', { enabled: !!enabled })
+    if (enabled) this.debugLog.log('settings', '调试模式已开启')
+  }
+
   /** 探测全部 MCP：连接 + tools/list（设置页展示状态与工具清单；与 sidecar 无关） */
   async probeMcp(): Promise<Awaited<ReturnType<typeof probeMcpAll>>> {
     return probeMcpAll(this.listMcp())
@@ -1026,6 +1067,7 @@ export { compactionThreshold, splitContextMessages, tokenUsage, COMPACTION_BUFFE
 export { XIAOJIE_SLUG, agentSlug } from './agents/registry.js'
 export { XIAOJIE_ID } from './ipc/contract.js'
 export { SidecarManager } from './sidecar/manager.js'
+export { DebugLogger, type DebugLogFn } from './logger.js'
 export { ToolBridge } from './tools/bridge.js'
 export { GroupChat } from './orchestrator/group.js'
 export { Delegator } from './orchestrator/delegate.js'

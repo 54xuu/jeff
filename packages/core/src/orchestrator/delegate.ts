@@ -31,6 +31,8 @@ export class Delegator {
   private inflight = new Set<string>()
   private perMessageCount = new Map<string, { count: number; ts: number }>()
   private static PRUNE_MS = 30 * 60 * 1000
+  /** 调试日志（委派失败等现场） */
+  onDebugLog?: (tag: string, detail: unknown) => void
 
   constructor(
     private db: DB,
@@ -131,6 +133,14 @@ export class Delegator {
       return { ok: true, memberName: member.name, result: resultText }
     } catch (err) {
       const msg = String((err as Error)?.message || err).slice(0, 300)
+      this.onDebugLog?.('delegate-fail', {
+        projectId: ctx.projectId,
+        leaderAgentId: ctx.leaderAgentId,
+        memberId,
+        instruction: instruction.slice(0, 500),
+        error: msg,
+        stack: (err as Error)?.stack,
+      })
       chatMessageRepo(this.db).add({
         scope,
         sender_type: 'system',

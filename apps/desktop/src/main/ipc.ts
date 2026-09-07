@@ -303,6 +303,20 @@ export function registerIpc(core: JeffCore): void {
       return { ok: true }
     },
     [IPC.sidecarLogs]: async (): Promise<{ lines: string[] }> => ({ lines: getSidecarLogs() }),
+    [IPC.llmTlsGet]: async (): Promise<{ skipVerify: boolean }> => core.llmTlsConfig(),
+    [IPC.llmTlsSet]: async (p): Promise<{ ok: boolean }> => {
+      const { skip } = p as { skip: boolean }
+      await core.setLlmTlsSkip(!!skip)
+      core.bus.emit('data-changed', 'settings')
+      return { ok: true }
+    },
+    [IPC.debugLogGet]: async (): Promise<{ enabled: boolean }> => core.debugLogConfig(),
+    [IPC.debugLogSet]: async (p): Promise<{ ok: boolean }> => {
+      const { enabled } = p as { enabled: boolean }
+      core.setDebugLog(!!enabled)
+      core.bus.emit('data-changed', 'settings')
+      return { ok: true }
+    },
     [IPC.dialogPickDir]: async (p): Promise<string | null> => {
       const d = p as { title?: string; defaultPath?: string }
       const win = getMainWindow()
