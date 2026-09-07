@@ -54,3 +54,9 @@ UI 期望 `status/toolCount`，IPC 原先直接返回 `{ ok, tools }`，探测�
 - `apps/desktop/src/renderer/src/components/settings/AppearanceSettings.tsx`
 - `apps/desktop/e2e/`（`ui.spec.ts` / `live.spec.ts` / helpers）
 - `apps/desktop/src/main/ipc.ts`（settings themePack、mcpProbe 映射）
+
+## 五、本机安装（2026-09-07）
+
+- 产物：`apps/desktop/release/jeff-desktop_1.3.0_amd64.deb`（含本次 fix 提交）
+- 安装：`sudo dpkg -i …/jeff-desktop_1.3.0_amd64.deb` → `/usr/bin/jeff-desktop`
+- 已启动供手测；日常数据仍在 `~/.jeff`（与 E2E 隔离目录无关）
