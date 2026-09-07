@@ -21,8 +21,9 @@ import { MemoryStore } from './memory/store.js'
 import { SessionIndex } from './memory/indexer.js'
 import type { McpServerCfg } from './mcp/parse.js'
 import { probeMcpAll } from './mcp/probe.js'
-import type { SkillsBackupReport, SkillsRestoreStage, SkillsRestoreApply } from './ipc/contract.js'
+import type { SkillsBackupReport, SkillsRestoreStage, SkillsRestoreApply, ContextPreviewInfo } from './ipc/contract.js'
 import { SyncEngine, type WebdavConfig, type SyncReport } from './sync/engine.js'
+import { compactionThreshold, splitContextMessages } from './chat/context.js'
 
 export const APP_VERSION = '1.3.0'
 
@@ -177,18 +178,32 @@ export class JeffCore extends EventEmitter {
     return this.sync.sync()
   }
 
-  /** 配置 WebDAV（密码存本地 kv） */
+  /** 配置 WebDAV（密码存本地 kv；password 空串则保留已存密码） */
   async configureSync(cfg: WebdavConfig): Promise<void> {
-    this.kv().setJSON('settings:webdav', cfg)
+    const prev = this.kv().getJSON<WebdavConfig | null>('settings:webdav', null)
+    const next: WebdavConfig = {
+      url: cfg.url,
+      username: cfg.username,
+      password: cfg.password || prev?.password || '',
+      basePath: cfg.basePath || '/jeff',
+      autoSync: !!cfg.autoSync,
+      timeoutMs: cfg.timeoutMs ?? prev?.timeoutMs ?? 60_000,
+      tlsVerify: cfg.tlsVerify !== false,
+    }
+    this.kv().setJSON('settings:webdav', next)
     this.sync.resetClient()
-    if (cfg.autoSync) void this.syncNow().catch(() => {})
+    if (next.autoSync) void this.syncNow().catch(() => {})
   }
 
   syncConfig(): Omit<WebdavConfig, 'password'> | null {
     const cfg = this.kv().getJSON<WebdavConfig | null>('settings:webdav', null)
     if (!cfg?.url) return null
     const { password: _password, ...rest } = cfg
-    return rest
+    return {
+      ...rest,
+      timeoutMs: rest.timeoutMs ?? 60_000,
+      tlsVerify: rest.tlsVerify !== false,
+    }
   }
 
   private chatHooks() {
@@ -317,6 +332,107 @@ export class JeffCore extends EventEmitter {
   /** 已配置模型选项（只含启用提供商的模型；composer/智能体表单共用） */
   configuredModels() {
     return configuredModelOptions(this.listProviders())
+  }
+
+  /** 解析当前会话使用的模型（覆盖 → agent 绑定 → 全局默认） */
+  resolveModel(agentId: string, override?: { providerID: string; modelID: string } | null): { providerID: string; modelID: string } | null {
+    if (override?.providerID && override?.modelID) return override
+    const agent = agentRepo(this.db).get(agentId)
+    if (agent?.model_provider && agent?.model_id) return { providerID: agent.model_provider, modelID: agent.model_id }
+    return this.defaultModel()
+  }
+
+  private modelLimits(model: { providerID: string; modelID: string } | null): { contextLimit: number | null; outputLimit: number | null } {
+    if (!model) return { contextLimit: null, outputLimit: null }
+    const opt = this.configuredModels().find((m) => m.providerID === model.providerID && m.modelID === model.modelID)
+    return {
+      contextLimit: opt?.contextLimit ?? null,
+      outputLimit: opt?.outputLimit ?? null,
+    }
+  }
+
+  /** 对话上下文预览（占用、system、compact 摘要、活跃消息） */
+  async contextPreview(input: { agentId: string; projectId?: string; model?: { providerID: string; modelID: string } }): Promise<ContextPreviewInfo> {
+    const { agentId, projectId } = input
+    if (!agentRepo(this.db).get(agentId)) throw new Error('智能体不存在')
+    const sessionId = projectId
+      ? this.groupChat.getSessionId(projectId, agentId)
+      : this.privateChat.getSessionId(agentId)
+    const model = this.resolveModel(agentId, input.model)
+    const { contextLimit, outputLimit } = this.modelLimits(model)
+    const threshold = compactionThreshold(contextLimit ?? undefined, outputLimit ?? undefined)
+    const system = this.buildMemorySystem(agentId, projectId) || null
+
+    if (!sessionId) {
+      return {
+        sessionId: null,
+        agentId,
+        ...(projectId ? { projectId } : {}),
+        usedTokens: 0,
+        contextLimit,
+        outputLimit,
+        threshold,
+        autoEnabled: !!contextLimit && contextLimit > 0,
+        system,
+        summary: null,
+        activeMessages: [],
+        compactedCount: 0,
+      }
+    }
+
+    const msgs = await this.oc.getMessages(sessionId)
+    const parts = splitContextMessages(msgs)
+    return {
+      sessionId,
+      agentId,
+      ...(projectId ? { projectId } : {}),
+      usedTokens: parts.usedTokens,
+      contextLimit,
+      outputLimit,
+      threshold,
+      autoEnabled: !!contextLimit && contextLimit > 0,
+      system,
+      summary: parts.summary,
+      activeMessages: parts.activeMessages,
+      compactedCount: parts.compactedCount,
+    }
+  }
+
+  /** 手动压缩当前会话（调用 opencode summarize） */
+  async contextCompress(input: {
+    agentId: string
+    projectId?: string
+    model?: { providerID: string; modelID: string }
+  }): Promise<ContextPreviewInfo> {
+    const { agentId, projectId } = input
+    if (!agentRepo(this.db).get(agentId)) throw new Error('智能体不存在')
+    const sessionId = projectId
+      ? this.groupChat.getSessionId(projectId, agentId)
+      : this.privateChat.getSessionId(agentId)
+    if (!sessionId) throw new Error('当前没有可压缩的会话')
+    const model = this.resolveModel(agentId, input.model)
+    if (!model) throw new Error('未配置模型，无法压缩')
+    await this.oc.summarize({ sessionId, providerID: model.providerID, modelID: model.modelID, auto: false })
+    return this.contextPreview(input)
+  }
+
+  /** 群聊最近一次回复的 agent（用于上下文默认成员） */
+  lastGroupAgentId(projectId: string): string | null {
+    const sessionId = this.kv().get(`session:group:last:${projectId}`)
+    if (!sessionId) return null
+    const members = projectAgentRepo(this.db).listByProject(projectId)
+    for (const m of members) {
+      if (this.groupChat.getSessionId(projectId, m.agent_id) === sessionId) return m.agent_id
+    }
+    // 回退：扫描 kv
+    const rows = this.db.prepare("SELECT key, value FROM kv WHERE key LIKE ?").all(`session:group:${projectId}:%`) as Array<{ key: string; value: string }>
+    for (const r of rows) {
+      if (r.value === sessionId) {
+        const m = /session:group:[^:]+:(.+)/.exec(r.key)
+        if (m) return m[1]
+      }
+    }
+    return null
   }
 
   /** 停止群聊当前生成（abort 最近路由的会话） */
@@ -839,6 +955,7 @@ export * from './db/repos.js'
 export * from './oc/client.js'
 export * from './oc/configWriter.js'
 export * from './chat/private.js'
+export { compactionThreshold, splitContextMessages, tokenUsage, COMPACTION_BUFFER, type ContextPreview } from './chat/context.js'
 export { XIAOJIE_SLUG, agentSlug } from './agents/registry.js'
 export { XIAOJIE_ID } from './ipc/contract.js'
 export { SidecarManager } from './sidecar/manager.js'

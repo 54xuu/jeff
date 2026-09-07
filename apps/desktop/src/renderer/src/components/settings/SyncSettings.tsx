@@ -7,6 +7,8 @@ interface WebdavCfg {
   username: string
   basePath: string
   autoSync: boolean
+  timeoutMs?: number
+  tlsVerify?: boolean
 }
 
 interface SyncReportInfo {
@@ -25,6 +27,8 @@ export default function SyncSettings(): React.JSX.Element {
   const [password, setPassword] = useState('')
   const [basePath, setBasePath] = useState('/jeff')
   const [autoSync, setAutoSync] = useState(true)
+  const [timeoutSec, setTimeoutSec] = useState('60')
+  const [tlsVerify, setTlsVerify] = useState(true)
   const [report, setReport] = useState<SyncReportInfo | null>(null)
   const [busy, setBusy] = useState(false)
   const [loaded, setLoaded] = useState(false)
@@ -36,16 +40,31 @@ export default function SyncSettings(): React.JSX.Element {
         setUsername(config.username)
         setBasePath(config.basePath)
         setAutoSync(config.autoSync)
+        setTimeoutSec(String(Math.round((config.timeoutMs ?? 60_000) / 1000)))
+        setTlsVerify(config.tlsVerify !== false)
       }
       setReport(r)
       setLoaded(true)
     })
   }, [])
 
+  const payload = () => {
+    const sec = Number(timeoutSec)
+    return {
+      url,
+      username,
+      password,
+      basePath,
+      autoSync,
+      timeoutMs: Number.isFinite(sec) && sec > 0 ? Math.round(sec * 1000) : 60_000,
+      tlsVerify,
+    }
+  }
+
   const save = async () => {
     setBusy(true)
     try {
-      await api.invoke(IPC.syncConfigure, { url, username, password, basePath, autoSync })
+      await api.invoke(IPC.syncConfigure, payload())
       const r = await api.invoke<SyncReportInfo>(IPC.syncNow)
       setReport(r)
     } catch (err) {
@@ -89,10 +108,18 @@ export default function SyncSettings(): React.JSX.Element {
           <span>密码 / 应用密码</span>
           <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="留空 = 不修改已存密码" />
         </label>
+        <label className="field">
+          <span>请求超时（秒）</span>
+          <input value={timeoutSec} onChange={(e) => setTimeoutSec(e.target.value)} placeholder="60" inputMode="numeric" />
+        </label>
       </div>
       <label className="field check-field">
         <input type="checkbox" checked={autoSync} onChange={(e) => setAutoSync(e.target.checked)} />
         <span>自动同步（启动时 + 变更后 30 秒防抖）</span>
+      </label>
+      <label className="field check-field">
+        <input type="checkbox" checked={tlsVerify} onChange={(e) => setTlsVerify(e.target.checked)} />
+        <span>校验证书（TLS Verify；仅自签证书时关闭）</span>
       </label>
       <div className="settings-actions" style={{ justifyContent: 'flex-start' }}>
         <button className="btn primary" disabled={busy || !url.trim()} onClick={() => void save()}>保存并同步</button>

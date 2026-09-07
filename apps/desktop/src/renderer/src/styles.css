@@ -2259,3 +2259,97 @@ body {
   border-top: 1px solid var(--border);
 }
 
+
+.history-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* 上下文占用条 */
+.ctx-usage {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-2, var(--bg));
+  color: var(--text-2);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 3px 8px;
+  border-radius: 999px;
+  max-width: 160px;
+}
+.ctx-usage:hover { border-color: var(--green); color: var(--green); }
+.ctx-usage.warn { border-color: #e6a23c; color: #e6a23c; }
+.ctx-usage.danger { border-color: #f56c6c; color: #f56c6c; }
+.ctx-usage-track {
+  position: relative;
+  width: 48px;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--border);
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.ctx-usage-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--green);
+  border-radius: 3px;
+}
+.ctx-usage.warn .ctx-usage-fill { background: #e6a23c; }
+.ctx-usage.danger .ctx-usage-fill { background: #f56c6c; }
+.ctx-usage-mark {
+  position: absolute;
+  top: -1px;
+  bottom: -1px;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--text);
+  opacity: 0.55;
+}
+.ctx-usage-label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.context-drawer .ctx-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 16px 24px;
+  min-height: 0;
+}
+.ctx-member-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--line);
+}
+.ctx-section { margin-top: 14px; }
+.ctx-section-title {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.ctx-pre, .ctx-summary {
+  margin: 0;
+  padding: 10px 12px;
+  background: var(--bg-2, rgba(0,0,0,0.03));
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 220px;
+  overflow: auto;
+}
+.ctx-msgs {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 40vh;
+  overflow-y: auto;
+}

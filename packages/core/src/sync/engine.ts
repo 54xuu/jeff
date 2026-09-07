@@ -1,4 +1,5 @@
 import fs from 'node:fs'
+import https from 'node:https'
 import os from 'node:os'
 import path from 'node:path'
 import { createClient, WebDAVClient } from 'webdav'
@@ -14,6 +15,10 @@ export interface WebdavConfig {
   password: string
   basePath: string // 远端基目录，如 /dav/jeff
   autoSync: boolean
+  /** 单次请求超时 ms；默认 60000 */
+  timeoutMs?: number
+  /** 是否校验证书；默认 true */
+  tlsVerify?: boolean
 }
 
 export interface SyncReport {
@@ -54,7 +59,16 @@ export class SyncEngine {
   private client(): WebDAVClient {
     if (!this.davClient) {
       const cfg = this.cfg()
-      this.davClient = createClient(cfg.url, { username: cfg.username, password: cfg.password })
+      const timeoutMs = cfg.timeoutMs && cfg.timeoutMs > 0 ? cfg.timeoutMs : 60_000
+      const tlsVerify = cfg.tlsVerify !== false
+      this.davClient = createClient(cfg.url, {
+        username: cfg.username,
+        password: cfg.password,
+        httpsAgent: new https.Agent({
+          timeout: timeoutMs,
+          rejectUnauthorized: tlsVerify,
+        }),
+      })
     }
     return this.davClient
   }

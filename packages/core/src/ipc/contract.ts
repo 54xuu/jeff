@@ -75,6 +75,8 @@ export const IPC = {
   syncNow: 'sync:now',
   syncStatus: 'sync:status',
   syncConfigure: 'sync:configure',
+  contextPreview: 'context:preview',
+  contextCompress: 'context:compress',
   // 冒烟钩子（仅 JEFF_SMOKE=1 时注册）
   smokeShot: 'smoke:shot',
   smokeDone: 'smoke:done',
@@ -175,7 +177,33 @@ export interface AppSettings {
   themePack: 'weui'
   /** 会话无覆盖且 agent 无绑定时的兜底模型（动态计算 = 第一个启用提供商的第一个模型） */
   defaultModel: { providerID: string; modelID: string } | null
-  webdav?: { url: string; username: string; basePath: string; autoSync: boolean } | null
+  webdav?: {
+    url: string
+    username: string
+    basePath: string
+    autoSync: boolean
+    /** 单次请求超时 ms；默认 60000 */
+    timeoutMs?: number
+    /** 是否校验证书；默认 true */
+    tlsVerify?: boolean
+  } | null
+}
+
+/** 对话上下文预览（占用 + system / 摘要 / 活跃消息） */
+export interface ContextPreviewInfo {
+  sessionId: string | null
+  agentId: string
+  projectId?: string
+  usedTokens: number
+  contextLimit: number | null
+  outputLimit: number | null
+  /** 自动压缩阈值；null = 未配置 contextLimit，自动压缩未启用 */
+  threshold: number | null
+  autoEnabled: boolean
+  system: string | null
+  summary: string | null
+  activeMessages: ChatMsg[]
+  compactedCount: number
 }
 
 export interface AppInfo {
@@ -311,7 +339,17 @@ export type InvokeMap = {
   [IPC.skillsRestoreApply]: void
   [IPC.syncNow]: void
   [IPC.syncStatus]: void
-  [IPC.syncConfigure]: { url: string; username: string; password: string; basePath: string; autoSync: boolean }
+  [IPC.syncConfigure]: {
+    url: string
+    username: string
+    password: string
+    basePath: string
+    autoSync: boolean
+    timeoutMs?: number
+    tlsVerify?: boolean
+  }
+  [IPC.contextPreview]: { agentId: string; projectId?: string }
+  [IPC.contextCompress]: { agentId: string; projectId?: string; model?: { providerID: string; modelID: string } }
   [IPC.smokeShot]: { name: string }
   [IPC.smokeDone]: void
 }

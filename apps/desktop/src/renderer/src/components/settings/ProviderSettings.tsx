@@ -170,7 +170,7 @@ function ProviderDetail(props: {
               {(m.thinkingTiers?.length ?? 0) > 0 && <span className="tag">思考: {m.thinkingTiers!.join('/')}</span>}
             </div>
             <div className="provider-sub">
-              {m.contextLimit ? `上下文 ${m.contextLimit}` : '上下文默认'}
+              {m.contextLimit ? `上下文 ${m.contextLimit}` : '⚠️ 未配置上下文'}
               {m.outputLimit ? ` · 最大输出 ${m.outputLimit}` : ' · 输出默认'}
               {' · 输出: 文本'}
             </div>
@@ -228,11 +228,13 @@ function ModelForm(props: {
     if (!mid) return setError('模型 ID 必填')
     if (props.existingIds.includes(mid)) return setError(`模型 ID「${mid}」已存在`)
     const num = (s: string) => (s.trim() && /^\d+$/.test(s.trim()) ? Number(s.trim()) : undefined)
+    const contextLimit = num(ctx)
+    if (!contextLimit || contextLimit <= 0) return setError('上下文窗口必填（正整数 tokens，用于自动压缩）')
     props.onSave({
       id: mid,
       ...(name.trim() ? { name: name.trim() } : {}),
       ...(attachment ? { attachment: true } : {}),
-      ...(num(ctx) ? { contextLimit: num(ctx) } : {}),
+      contextLimit,
       ...(num(out) ? { outputLimit: num(out) } : {}),
       ...(tiers.length ? { thinkingTiers: tiers } : {}),
     })
@@ -252,7 +254,7 @@ function ModelForm(props: {
         </label>
         <div style={{ display: 'flex', gap: 12 }}>
           <label className="field" style={{ flex: 1 }}>
-            <span>上下文窗口（tokens，可选）</span>
+            <span>上下文窗口（tokens）*</span>
             <input value={ctx} onChange={(e) => setCtx(e.target.value.replace(/[^\d]/g, ''))} placeholder="如 128000" />
           </label>
           <label className="field" style={{ flex: 1 }}>

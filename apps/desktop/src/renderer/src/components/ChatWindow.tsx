@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useStore } from '../store'
-import { IPC, modelDisplayLabel, type ChatMsg, type ModelOption, type ProviderCatalogItem } from '@jeff/core'
+import { api } from '../api'
+import { IPC, modelDisplayLabel, type ChatMsg, type ContextPreviewInfo, type ModelOption, type ProviderCatalogItem } from '@jeff/core'
 import Avatar from './Avatar'
 import { Markdown } from './Markdown'
 import { useImages, ImagePreviews, MsgImages, AssistantExtras } from './ChatShared'
 import ChatHistoryDrawer from './ChatHistoryDrawer'
+import ContextDrawer, { ContextUsageBar, fetchContextPreview } from './ContextDrawer'
 import { useDismissable } from '../hooks/useDismissable'
 
 export default function ChatWindow(props: { agentId: string }): React.JSX.Element {
@@ -21,6 +23,10 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
   const [modelFilter, setModelFilter] = useState('')
   const [variantOpen, setVariantOpen] = useState(false)
   const [historyOpen, setHistoryOpen] = useState(false)
+  const [contextOpen, setContextOpen] = useState(false)
+  const [ctxPreview, setCtxPreview] = useState<ContextPreviewInfo | null>(null)
+  const [ctxLoading, setCtxLoading] = useState(false)
+  const [compressing, setCompressing] = useState(false)
   const [dragOver, setDragOver] = useState(false)
   const attachments = useImages()
   const bodyRef = useRef<HTMLDivElement>(null)
@@ -34,11 +40,6 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
     void loadHistory(key)
   }, [key])
 
-  useEffect(() => {
-    const el = bodyRef.current
-    if (el) el.scrollTop = el.scrollHeight
-  }, [msgs.length, sendingNow, stream?.text])
-
   const allModels: ModelOption[] = useMemo(() => catalog.flatMap((c) => c.models), [catalog])
   const filteredModels = useMemo(() => {
     const q = modelFilter.trim().toLowerCase()
@@ -46,6 +47,26 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
     return allModels.filter((m) => m.label.toLowerCase().includes(q) || m.modelID.toLowerCase().includes(q))
   }, [allModels, modelFilter])
   const currentModel = modelOverride || (agent?.model_provider && agent?.model_id ? { providerID: agent.model_provider, modelID: agent.model_id } : settings?.defaultModel || null)
+
+  useEffect(() => {
+    let cancelled = false
+    setCtxLoading(true)
+    void fetchContextPreview({ agentId: props.agentId, model: currentModel }).then((p) => {
+      if (!cancelled) {
+        setCtxPreview(p)
+        setCtxLoading(false)
+      }
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [props.agentId, currentModel?.providerID, currentModel?.modelID, msgs.length, sendingNow])
+
+  useEffect(() => {
+    const el = bodyRef.current
+    if (el) el.scrollTop = el.scrollHeight
+  }, [msgs.length, sendingNow, stream?.text])
+
   // 当前模型的思考档位（来自供应商配置）；切模型时档位复位
   const tiers = useMemo(() => {
     if (!currentModel) return []
@@ -65,6 +86,22 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
     await sendAgent(agent.id, text, modelOverride || undefined, images, variant || undefined)
   }
 
+  const doCompress = async () => {
+    if (compressing || sendingNow) return
+    setCompressing(true)
+    try {
+      const r = await api.invoke<ContextPreviewInfo>(IPC.contextCompress, {
+        agentId: agent.id,
+        ...(currentModel ? { model: currentModel } : {}),
+      })
+      setCtxPreview(r)
+    } catch (err) {
+      alert(`压缩失败：${String((err as Error).message).slice(0, 160)}`)
+    } finally {
+      setCompressing(false)
+    }
+  }
+
   return (
     <div className="chat-window" data-testid="chat-window">
       <div className="chat-header">
@@ -74,6 +111,16 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
           <span className="chat-header-sub">{agent.builtin ? 'Jeff 内置管家' : agent.description || '智能体'}</span>
         </div>
         <div className="chat-header-actions">
+          <ContextUsageBar preview={ctxPreview} loading={ctxLoading} onOpen={() => setContextOpen(true)} />
+          <button
+            className="text-btn"
+            data-testid="chat-compress"
+            disabled={compressing || sendingNow || !ctxPreview?.sessionId}
+            onClick={() => void doCompress()}
+            title="手动压缩当前会话上下文"
+          >
+            {compressing ? '压缩中…' : '压缩'}
+          </button>
           <button className="text-btn" data-testid="chat-new-session" onClick={() => void newAgentSession(agent.id)} title="开启新会话（旧会话保留在聊天记录里）">
             新会话
           </button>
@@ -251,6 +298,14 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
       </div>
 
       {historyOpen && <ChatHistoryDrawer agentId={agent.id} onClose={() => setHistoryOpen(false)} />}
+      {contextOpen && (
+        <ContextDrawer
+          agentId={agent.id}
+          model={currentModel}
+          onClose={() => setContextOpen(false)}
+          onPreviewChange={setCtxPreview}
+        />
+      )}
     </div>
   )
 }

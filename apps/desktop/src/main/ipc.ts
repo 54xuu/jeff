@@ -186,9 +186,25 @@ export function registerIpc(core: JeffCore): void {
 
     // ---------- WebDAV 同步 ----------
     [IPC.syncConfigure]: async (p): Promise<{ ok: boolean }> => {
-      const d = p as { url: string; username: string; password: string; basePath: string; autoSync: boolean }
+      const d = p as {
+        url: string
+        username: string
+        password: string
+        basePath: string
+        autoSync: boolean
+        timeoutMs?: number
+        tlsVerify?: boolean
+      }
       if (!d.url || !d.basePath) throw new Error('url 与 basePath 必填')
-      await core.configureSync({ url: d.url.replace(/\/+$/, ''), username: d.username || '', password: d.password || '', basePath: d.basePath, autoSync: !!d.autoSync })
+      await core.configureSync({
+        url: d.url.replace(/\/+$/, ''),
+        username: d.username || '',
+        password: d.password || '',
+        basePath: d.basePath,
+        autoSync: !!d.autoSync,
+        timeoutMs: typeof d.timeoutMs === 'number' && d.timeoutMs > 0 ? d.timeoutMs : 60_000,
+        tlsVerify: d.tlsVerify !== false,
+      })
       return { ok: true }
     },
     [IPC.syncNow]: async (): Promise<unknown> => core.syncNow(),
@@ -196,6 +212,18 @@ export function registerIpc(core: JeffCore): void {
       config: core.syncConfig(),
       report: core.lastSyncReport,
     }),
+
+    // ---------- 对话上下文 ----------
+    [IPC.contextPreview]: async (p) => {
+      const d = p as { agentId: string; projectId?: string; model?: { providerID: string; modelID: string } }
+      if (!d.agentId) throw new Error('agentId 必填')
+      return core.contextPreview(d)
+    },
+    [IPC.contextCompress]: async (p) => {
+      const d = p as { agentId: string; projectId?: string; model?: { providerID: string; modelID: string } }
+      if (!d.agentId) throw new Error('agentId 必填')
+      return core.contextCompress(d)
+    },
 
     // ---------- MCP 连接器 ----------
     [IPC.mcpList]: async (): Promise<Record<string, import('@jeff/core').McpServerCfg>> => core.listMcp(),

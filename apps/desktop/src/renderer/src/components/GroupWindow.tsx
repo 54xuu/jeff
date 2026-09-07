@@ -1,16 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useStore } from '../store'
-import { modelDisplayLabel, type GroupMessage, type ModelOption, type ProviderCatalogItem } from '@jeff/core'
+import { api } from '../api'
+import { IPC, modelDisplayLabel, type ContextPreviewInfo, type GroupMessage, type ModelOption, type ProviderCatalogItem } from '@jeff/core'
 import Avatar from './Avatar'
 import GroupInfoDrawer from './GroupInfoDrawer'
 import { Markdown } from './Markdown'
 import { useImages, ImagePreviews, MsgImages, AssistantExtras } from './ChatShared'
 import ChatHistoryDrawer from './ChatHistoryDrawer'
+import ContextDrawer, { ContextUsageBar, fetchContextPreview } from './ContextDrawer'
 import { useDismissable } from '../hooks/useDismissable'
 
 /** 项目群聊天窗口（= 微信群） */
 export default function GroupWindow(props: { projectId: string }): React.JSX.Element {
-  const { projects, groupMessages, tasks, sending, streaming, loadGroupHistory, loadTasks, sendGroup, stopGroup, catalog, settings, agents } = useStore()
+  const { projects, groupMessages, tasks, sending, streaming, loadGroupHistory, loadTasks, sendGroup, stopGroup, catalog, settings } = useStore()
   const project = projects.find((p) => p.id === props.projectId)
   const msgs = groupMessages[props.projectId] || []
   const projectTasks = tasks[props.projectId] || []
@@ -24,6 +26,12 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
   const [modelFilter, setModelFilter] = useState('')
   const [variantOpen, setVariantOpen] = useState(false)
   const [historyOpen, setHistoryOpen] = useState(false)
+  const [contextOpen, setContextOpen] = useState(false)
+  const [ctxPreview, setCtxPreview] = useState<ContextPreviewInfo | null>(null)
+  const [ctxLoading, setCtxLoading] = useState(false)
+  const [compressing, setCompressing] = useState(false)
+  const [ctxAgentId, setCtxAgentId] = useState<string | null>(null)
+  const [members, setMembers] = useState<Array<{ agentId: string; name: string }>>([])
   const [mention, setMention] = useState<{ query: string; start: number } | null>(null)
   const [dragOver, setDragOver] = useState(false)
   const attachments = useImages()
@@ -38,7 +46,22 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
   useEffect(() => {
     void loadGroupHistory(props.projectId)
     void loadTasks(props.projectId)
+    void api.invoke<Array<{ agent_id: string; role: string; name: string; avatar: string }>>(IPC.projectMembers, { projectId: props.projectId }).then((list) => {
+      setMembers(list.map((m) => ({ agentId: m.agent_id, name: m.name || m.agent_id })))
+      setCtxAgentId((cur) => {
+        if (cur && list.some((m) => m.agent_id === cur)) return cur
+        const fromStream = useStore.getState().streaming[`group:${props.projectId}`]?.agentId
+        if (fromStream && list.some((m) => m.agent_id === fromStream)) return fromStream
+        const leader = useStore.getState().projects.find((p) => p.id === props.projectId)?.leader_agent_id
+        if (leader && list.some((m) => m.agent_id === leader)) return leader
+        return list[0]?.agent_id ?? null
+      })
+    })
   }, [props.projectId])
+
+  useEffect(() => {
+    if (stream?.agentId) setCtxAgentId(stream.agentId)
+  }, [stream?.agentId])
 
   useEffect(() => {
     const el = bodyRef.current
@@ -47,6 +70,25 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
 
   const allModels: ModelOption[] = useMemo(() => catalog.flatMap((c) => c.models), [catalog])
   const currentModel = modelOverride || settings?.defaultModel || null
+
+  useEffect(() => {
+    if (!ctxAgentId) {
+      setCtxPreview(null)
+      return
+    }
+    let cancelled = false
+    setCtxLoading(true)
+    void fetchContextPreview({ agentId: ctxAgentId, projectId: props.projectId, model: currentModel }).then((p) => {
+      if (!cancelled) {
+        setCtxPreview(p)
+        setCtxLoading(false)
+      }
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [ctxAgentId, props.projectId, currentModel?.providerID, currentModel?.modelID, msgs.length, busy])
+
   const tiers = useMemo(() => {
     if (!currentModel) return []
     return allModels.find((m) => m.providerID === currentModel.providerID && m.modelID === currentModel.modelID)?.thinkingTiers ?? []
@@ -102,6 +144,23 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
     await sendGroup(project.id, text, modelOverride || undefined, images, variant || undefined)
   }
 
+  const doCompress = async () => {
+    if (!ctxAgentId || compressing || busy) return
+    setCompressing(true)
+    try {
+      const r = await api.invoke<ContextPreviewInfo>(IPC.contextCompress, {
+        agentId: ctxAgentId,
+        projectId: project.id,
+        ...(currentModel ? { model: currentModel } : {}),
+      })
+      setCtxPreview(r)
+    } catch (err) {
+      alert(`压缩失败：${String((err as Error).message).slice(0, 160)}`)
+    } finally {
+      setCompressing(false)
+    }
+  }
+
   return (
     <div className="chat-window group-window">
       <div className="chat-header">
@@ -111,6 +170,15 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
           <span className="chat-header-sub">{project.memberCount} 个成员 · 群主统筹</span>
         </div>
         <div className="chat-header-actions">
+          <ContextUsageBar preview={ctxPreview} loading={ctxLoading} onOpen={() => setContextOpen(true)} />
+          <button
+            className="text-btn"
+            disabled={compressing || busy || !ctxPreview?.sessionId}
+            onClick={() => void doCompress()}
+            title="手动压缩当前成员会话上下文"
+          >
+            {compressing ? '压缩中…' : '压缩'}
+          </button>
           <button className="icon-btn" title="聊天记录" onClick={() => setHistoryOpen(true)}>
             <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <circle cx="12" cy="12" r="9" />
@@ -301,7 +369,19 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
 
       {drawer && <GroupInfoDrawer project={project} tasks={projectTasks} onClose={() => setDrawer(false)} />}
       {historyOpen && <ChatHistoryDrawer projectId={project.id} onClose={() => setHistoryOpen(false)} />}
-      {void agents}
+      {contextOpen && ctxAgentId && (
+        <ContextDrawer
+          agentId={ctxAgentId}
+          projectId={project.id}
+          members={members}
+          model={currentModel}
+          onClose={() => setContextOpen(false)}
+          onPreviewChange={(p) => {
+            setCtxPreview(p)
+            if (p?.agentId) setCtxAgentId(p.agentId)
+          }}
+        />
+      )}
     </div>
   )
 }

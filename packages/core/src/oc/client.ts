@@ -112,6 +112,46 @@ export class OcClient extends EventEmitter {
     await this.req('POST', `/session/${sessionId}/abort`).catch(() => {})
   }
 
+  /**
+   * 手动触发会话压缩（opencode 1.18：POST /session/{id}/summarize）。
+   * 等待 compaction assistant 完成（summary + completed）后返回。
+   */
+  async summarize(input: {
+    sessionId: string
+    providerID: string
+    modelID: string
+    auto?: boolean
+    timeoutMs?: number
+  }): Promise<AssistantInfo> {
+    const before = await this.getMessages(input.sessionId)
+    const beforeIds = new Set(before.map((m) => m.info?.id).filter(Boolean) as string[])
+    await this.req(
+      'POST',
+      `/session/${input.sessionId}/summarize`,
+      {
+        providerID: input.providerID,
+        modelID: input.modelID,
+        auto: input.auto ?? false,
+      },
+      60000,
+    )
+    const deadline = Date.now() + (input.timeoutMs ?? 180000)
+    for (;;) {
+      const msgs = await this.getMessages(input.sessionId)
+      for (const entry of msgs) {
+        const info = entry.info as AssistantInfo
+        if (!info?.id || beforeIds.has(info.id)) continue
+        if (info.role !== 'assistant') continue
+        if (!(info.summary === true || info.mode === 'compaction')) continue
+        if (entry.parts?.length && !info.parts) info.parts = entry.parts
+        if (info.error) throw new Error(`压缩失败: ${JSON.stringify(info.error).slice(0, 300)}`)
+        if (info.time?.completed || (info as { finish?: string }).finish) return info
+      }
+      if (Date.now() > deadline) throw new Error('等待压缩完成超时')
+      await sleep(400)
+    }
+  }
+
   // ---------- agent / provider ----------
   async listAgents(): Promise<OpencodeAgent[]> {
     return this.req('GET', '/agent')
@@ -201,7 +241,11 @@ export interface AssistantInfo {
   time?: { created: number; completed?: number }
   error?: unknown
   parts?: Part[]
-  tokens?: { total?: number; input?: number; output?: number }
+  tokens?: { total?: number; input?: number; output?: number; cache?: { read?: number; write?: number } }
+  /** opencode compaction 摘要消息标记 */
+  summary?: boolean
+  mode?: string
+  finish?: string
   [k: string]: unknown
 }
 
