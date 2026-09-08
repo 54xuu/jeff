@@ -9,6 +9,13 @@ import { GroupThreadStore, groupMsgScope } from './groupThreads.js'
 /** 单次用户消息触发的串行协作流水线最大步数（防死循环） */
 const MAX_PIPELINE_HOPS = 5
 
+/** 群消息发送结果：summaryFailed 表示 worker 成果已保留但 leader 最终总结失败（可手动再次请求总结） */
+export interface GroupSendResult {
+  routedTo: string
+  summaryFailed?: boolean
+  summaryError?: string
+}
+
 export interface GroupChatHooks {
   beforeEnsure?: () => Promise<void>
   onSessionCreated?: (sessionId: string, meta: { kind: 'private' | 'group' | 'review'; agentId: string; projectId?: string; threadId?: string }) => void
@@ -47,10 +54,21 @@ export class GroupChat {
   }
 
   async ensureSession(projectId: string, agentId: string, threadId?: string): Promise<string> {
-    await this.hooks?.beforeEnsure?.()
     const tid = threadId || this.threads.ensureActiveThread(projectId)
-    const kv = kvRepo(this.db)
     const key = this.threads.sessionKey(projectId, tid, agentId)
+    // per-key 创建锁：并发 ensureSession 同一 (群,thread,agent) 只建一次会话，防 KV 指针互相覆盖
+    const inflight = this.sessionEnsureInflight.get(key)
+    if (inflight) return inflight
+    const p = this.doEnsureSession(projectId, agentId, tid, key).finally(() => this.sessionEnsureInflight.delete(key))
+    this.sessionEnsureInflight.set(key, p)
+    return p
+  }
+
+  private sessionEnsureInflight = new Map<string, Promise<string>>()
+
+  private async doEnsureSession(projectId: string, agentId: string, tid: string, key: string): Promise<string> {
+    await this.hooks?.beforeEnsure?.()
+    const kv = kvRepo(this.db)
     const existing = kv.get(key)
     if (existing) {
       try {
@@ -167,8 +185,31 @@ export class GroupChat {
    * 3. worker 完成后在群里 @leader 汇报（也可再 @其他 worker 续入队列）；
    * 4. 队列执行完毕后自动唤醒 leader 做最终验收总结回复用户。
    * 单次用户消息全链路最多 MAX_PIPELINE_HOPS 步，防死循环。
+   *
+   * 并发控制：同一 projectId 的完整流程按队列串行（防同一 leader/worker session 交叉请求）；
+   * 不同项目并行。leader 回合内的 jeff_delegate 天然在本流程锁内执行，不再取锁。
    */
-  async send(input: { projectId: string; text: string; model?: { providerID: string; modelID: string }; variant?: string; images?: Array<{ mime: string; dataUrl: string }> }): Promise<{ routedTo: string }> {
+  async send(input: { projectId: string; text: string; model?: { providerID: string; modelID: string }; variant?: string; images?: Array<{ mime: string; dataUrl: string }> }): Promise<GroupSendResult> {
+    return this.withProjectLock(input.projectId, () => this.doSend(input))
+  }
+
+  private projectLocks = new Map<string, Promise<void>>()
+
+  private async withProjectLock<T>(projectId: string, fn: () => Promise<T>): Promise<T> {
+    const prev = this.projectLocks.get(projectId) ?? Promise.resolve()
+    let release!: () => void
+    const gate = new Promise<void>((r) => (release = r))
+    this.projectLocks.set(projectId, gate)
+    await prev
+    try {
+      return await fn()
+    } finally {
+      release()
+      if (this.projectLocks.get(projectId) === gate) this.projectLocks.delete(projectId)
+    }
+  }
+
+  private async doSend(input: { projectId: string; text: string; model?: { providerID: string; modelID: string }; variant?: string; images?: Array<{ mime: string; dataUrl: string }> }): Promise<GroupSendResult> {
     const { projectId, text } = input
     const project = projectRepo(this.db).get(projectId)
     if (!project) throw new Error(`项目不存在: ${projectId}`)
@@ -230,14 +271,23 @@ export class GroupChat {
     }
 
     // 闭环：有派发（或用户直连 worker 且 worker 向 leader 汇报）时，唤醒 leader 做最终总结
+    let summaryFailed = false
+    let summaryError: string | undefined
     if (dispatchedAny || (firstTargetId !== leaderId && this.parseAllMentions(first.content, memberInfos).some((m) => m.agent_id === leaderId))) {
       routedTo = leaderId
       const summaryPrompt = dispatchedAny
         ? '【系统通知】你派发的任务已全部由成员执行完毕并回群汇报。请对照各成员的汇报验收成果，直接向用户给出清晰、完整的最终总结答复（无需再派发新任务）。'
         : `【系统通知】${firstTarget.name} 已在群里向你汇报。请验收其结果，直接向用户给出最终答复。`
-      await this.runTurn({ projectId, threadId, agentId: leaderId, text: summaryPrompt })
+      try {
+        await this.runTurn({ projectId, threadId, agentId: leaderId, text: summaryPrompt })
+      } catch (err) {
+        // 部分成功可恢复：worker 成果与失败系统消息已落库，不再自动重试 leader 的 POST（防重复执行）
+        summaryError = String((err as Error)?.message || err).slice(0, 200)
+        summaryFailed = true
+        this.addSystemMessage(projectId, `ℹ️ 成员执行结果已保留。群主最终总结未完成（${summaryError}），可直接再发一条消息让其总结。`)
+      }
     }
-    return { routedTo }
+    return summaryFailed ? { routedTo, summaryFailed, summaryError } : { routedTo }
   }
 
   /** 从派发文本中截取 @成员名 后、下一个 @提及前的那段任务说明 */
@@ -335,6 +385,8 @@ export class GroupChat {
       },
     })
     this.hooks?.afterReply?.({ kind: 'group', projectId, agentId })
+    // 落库后刷新 thread 时间线，保证 worker 结果/失败状态能更新 thread 排序
+    this.threads.touch(projectId, threadId)
     return { content, stopped: false }
   }
 

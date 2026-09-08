@@ -129,6 +129,7 @@ export class Delegator {
         content: resultText,
         meta: { sessionId, messageId: reply.id, delegatedBy: ctx.leaderAgentId },
       })
+      this.groupChat.threads.touch(ctx.projectId, threadId)
       this.notify(ctx.projectId)
       return { ok: true, memberName: member.name, result: resultText }
     } catch (err) {

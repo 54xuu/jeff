@@ -322,6 +322,121 @@ describe('GroupChat', () => {
     await group.send({ projectId: p.id, text: '在吗？' })
     expect(order).toEqual(['leader'])
   })
+
+  it('send：worker 完成但 leader 总结失败 → 保留成果并返回 summaryFailed，不自动重试', async () => {
+    const p = projectRepo(db).list()[0]
+    const agents = agentRepo(db)
+    const leader = agents.list().find((a) => a.name === '架构师')!
+    const dev = agents.list().find((a) => a.name === '开发')!
+    const slugToName = new Map([
+      [agentSlug(leader.id), '架构师'],
+      [agentSlug(dev.id), '开发'],
+    ])
+    let calls = 0
+    const ocStub = {
+      getSession: async () => ({ id: 'x' }),
+      createSession: async () => ({ id: `ses_${Math.random().toString(36).slice(2, 8)}` }),
+      sendMessage: async (input: { agent?: string; text?: string }) => {
+        calls += 1
+        const name = slugToName.get(input.agent || '') || ''
+        if (calls === 1) return { id: 'm1', parts: [{ type: 'text', text: '@开发 实现登录接口' }] }
+        if (name === '开发') return { id: 'm2', parts: [{ type: 'text', text: '@架构师 汇报：登录接口已完成' }] }
+        // leader 总结回合：模拟 sidecar 不可达
+        throw new Error('fetch failed')
+      },
+    } as unknown as OcClient
+    group = new GroupChat(db, () => ocStub)
+
+    const r = await group.send({ projectId: p.id, text: '做个登录功能' })
+    expect(r.summaryFailed).toBe(true)
+    expect(r.routedTo).toBe(leader.id)
+    expect(r.summaryError).toContain('fetch failed')
+    // 严格 3 次调用：leader 派发 → worker 汇报 → leader 总结（失败），没有自动第 4 次重试
+    expect(calls).toBe(3)
+    const history = group.history(p.id)
+    expect(history.some((m) => m.sender_name === '开发' && m.text.includes('登录接口已完成'))).toBe(true)
+    expect(history.some((m) => m.role === 'system' && m.text.includes('处理消息失败：fetch failed'))).toBe(true)
+    expect(history.some((m) => m.role === 'system' && m.text.includes('成员执行结果已保留'))).toBe(true)
+  })
+
+  it('send：worker 阶段失败 → 整体 reject，不触发 leader 总结', async () => {
+    const p = projectRepo(db).list()[0]
+    const agents = agentRepo(db)
+    const leader = agents.list().find((a) => a.name === '架构师')!
+    const dev = agents.list().find((a) => a.name === '开发')!
+    const slugToName = new Map([
+      [agentSlug(leader.id), '架构师'],
+      [agentSlug(dev.id), '开发'],
+    ])
+    let calls = 0
+    const ocStub = {
+      getSession: async () => ({ id: 'x' }),
+      createSession: async () => ({ id: `ses_${Math.random().toString(36).slice(2, 8)}` }),
+      sendMessage: async (input: { agent?: string }) => {
+        calls += 1
+        const name = slugToName.get(input.agent || '') || ''
+        if (calls === 1) return { id: 'm1', parts: [{ type: 'text', text: '@开发 实现登录接口' }] }
+        throw new Error('worker unavailable')
+      },
+    } as unknown as OcClient
+    group = new GroupChat(db, () => ocStub)
+
+    await expect(group.send({ projectId: p.id, text: '做个登录功能' })).rejects.toThrow('worker unavailable')
+    expect(calls).toBe(2)
+    const history = group.history(p.id)
+    expect(history.some((m) => m.role === 'system' && m.text.includes('开发 处理消息失败：worker unavailable'))).toBe(true)
+  })
+
+  it('send：同一项目并发请求串行执行，不同项目并行', async () => {
+    const agents = agentRepo(db)
+    const p1 = projectRepo(db).list()[0]
+    const p2 = projectRepo(db).create({ title: '第二群', leader_agent_id: agents.list().find((a) => a.name === '架构师')!.id })
+    projectAgentRepo(db).add(p2.id, agents.list().find((a) => a.name === '架构师')!.id, 'leader', 0)
+    let active = 0
+    let maxActive = 0
+    const ocStub = {
+      getSession: async () => ({ id: 'x' }),
+      createSession: async () => ({ id: `ses_${Math.random().toString(36).slice(2, 8)}` }),
+      sendMessage: async () => {
+        active += 1
+        maxActive = Math.max(maxActive, active)
+        await new Promise((r) => setTimeout(r, 60))
+        active -= 1
+        return { id: `m_${Math.random().toString(36).slice(2, 6)}`, parts: [{ type: 'text', text: 'ok' }] }
+      },
+    } as unknown as OcClient
+    group = new GroupChat(db, () => ocStub)
+
+    await Promise.all([
+      group.send({ projectId: p1.id, text: '消息1' }),
+      group.send({ projectId: p1.id, text: '消息2' }),
+      group.send({ projectId: p2.id, text: '另一群' }),
+    ])
+    // 同一项目两条消息绝不并发（maxActive 只来自两个不同项目的各 1 条）
+    expect(maxActive).toBe(2)
+  })
+
+  it('ensureSession：同一 (群,thread,agent) 并发调用只创建一次会话', async () => {
+    const p = projectRepo(db).list()[0]
+    const leaderId = p.leader_agent_id as string
+    let created = 0
+    const ocStub = {
+      getSession: async () => {
+        throw new Error('session gone')
+      },
+      createSession: async () => {
+        await new Promise((r) => setTimeout(r, 40))
+        created += 1
+        return { id: 'ses_shared' }
+      },
+    } as unknown as OcClient
+    group = new GroupChat(db, () => ocStub)
+
+    const [a, b] = await Promise.all([group.ensureSession(p.id, leaderId), group.ensureSession(p.id, leaderId)])
+    expect(a).toBe('ses_shared')
+    expect(b).toBe('ses_shared')
+    expect(created).toBe(1)
+  })
 })
 
 describe('taskCardMessage / statusLabel', () => {

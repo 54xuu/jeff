@@ -160,10 +160,13 @@ export class JeffCore extends EventEmitter {
       this.debugLog.log('sidecar', line)
       this.emit('sidecar-log', line)
     })
+    // 崩溃自动重启会换端口：ready 后统一重绑 OcClient（含手动 restartSidecar 触发的启动，rebind 内部按代际判重）
+    this.sidecar.on('ready', (info: { port: number; generation: number }) => {
+      this.debugLog.log('sidecar-ready', info)
+      this.rebindOcClient()
+    })
     await this.sidecar.start()
-    this.oc = new OcClient(this.sidecar.port, this.debugLog.fn())
-    this.oc.startEventStream()
-    this.wireOcClient()
+    this.rebindOcClient()
 
     this.writeUsageSkill()
     this.backfillIndex()
@@ -762,7 +765,8 @@ export class JeffCore extends EventEmitter {
   private wireOcClient(): void {
     this.oc.on('event', (evt: { type?: string; properties?: Record<string, unknown> }) => this.handleOcEvent(evt))
     this.oc.on('sse-open', (info: unknown) => this.debugLog.log('sse-open', info))
-    this.oc.on('sse-error', (err: unknown) => this.debugLog.log('sse-error', String(err)))
+    this.oc.on('sse-error', (info: unknown) => this.debugLog.log('sse-error', info))
+    this.oc.statusProvider = () => (this.sidecar ? { status: this.sidecar.status, port: this.sidecar.port } : null)
   }
 
   private handleOcEvent(evt: { type?: string; properties?: Record<string, unknown> }): void {
@@ -920,17 +924,31 @@ export class JeffCore extends EventEmitter {
     await this.restartSidecar()
   }
 
-  /** 重启 sidecar 并重建客户端/会话对象 */
+  /** 重启 sidecar 并重建客户端/会话对象（互斥：并发调用只执行一次，共享同一结果） */
+  private restarting: Promise<void> | null = null
   async restartSidecar(): Promise<void> {
-    const old = this.oc
-    await this.sidecar.stop()
-    await this.sidecar.start()
-    old?.stopEventStream()
+    if (this.restarting) return this.restarting
+    this.restarting = (async () => {
+      await this.sidecar.stop()
+      await this.sidecar.start()
+      // ready 事件里已重绑；此处兜底（防事件时序差异），rebindOcClient 按代际判重不会重复创建
+      this.rebindOcClient()
+    })().finally(() => {
+      this.restarting = null
+    })
+    return this.restarting
+  }
+
+  /** 当前 oc 绑定的 sidecar 代际；不一致才重建客户端（自动重启换端口后旧客户端会持续请求失效端口） */
+  private ocGeneration = -1
+  private rebindOcClient(): void {
+    if (!this.sidecar) return
+    if (this.oc && this.ocGeneration === this.sidecar.generation) return
+    this.ocGeneration = this.sidecar.generation
+    this.oc?.stopEventStream()
     this.oc = new OcClient(this.sidecar.port, this.debugLog.fn())
     this.oc.startEventStream()
     this.wireOcClient()
-    this.groupChat = new GroupChat(this.db, () => this.oc, this.chatHooks())
-    this.privateChat = new PrivateChat(this.db, () => this.oc, this.chatHooks())
   }
 
   /** 内置小杰：不存在则创建；存在则仅在指令漂移时对齐（避免每次启动顶 updated_at） */

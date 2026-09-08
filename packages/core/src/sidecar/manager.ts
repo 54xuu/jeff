@@ -26,13 +26,24 @@ export class SidecarManager extends EventEmitter {
   private restarts = 0
   private stopping = false
   private healthTimer: NodeJS.Timeout | null = null
+  /** start/stop/自动重启统一串行队列：避免手动重启与崩溃自动重启交错产生新旧进程混跑 */
+  private lifecycleQueue: Promise<unknown> = Promise.resolve()
   port = 0
+  /** 每次健康启动成功 +1；调用方据此判断是否需要重绑定客户端（自动重启会换端口） */
+  generation = 0
   status: SidecarStatus = 'stopped'
   lastError = ''
 
   constructor(opts: SidecarOptions) {
     super()
     this.opts = opts
+  }
+
+  /** 串行执行生命周期操作，保证 stop→start 与崩溃自动重启不交错 */
+  private runExclusive<T>(fn: () => Promise<T>): Promise<T> {
+    const run = this.lifecycleQueue.then(fn, fn)
+    this.lifecycleQueue = run.catch(() => {})
+    return run
   }
 
   /** 解析 opencode 可执行文件路径 */
@@ -80,6 +91,10 @@ export class SidecarManager extends EventEmitter {
   }
 
   async start(): Promise<number> {
+    return this.runExclusive(() => this.doStart())
+  }
+
+  private async doStart(): Promise<number> {
     if (this.status === 'running' || this.status === 'starting') return this.port
     const bin = this.resolveBinary()
     if (!bin) {
@@ -116,6 +131,13 @@ export class SidecarManager extends EventEmitter {
     // 健康轮询直到就绪
     const ok = await this.waitHealthy(15000)
     if (!ok) {
+      // 启动超时：清掉本次 spawn 的进程，防止僵尸残留占用端口（exit 事件会安排自动重启）
+      try {
+        proc.kill('SIGKILL')
+      } catch {
+        /* 已退出 */
+      }
+      this.proc = null
       this.lastError = `sidecar 启动超时（端口 ${port}）`
       this.status = 'crashed'
       this.emit('status', this.status, this.lastError)
@@ -123,7 +145,10 @@ export class SidecarManager extends EventEmitter {
     }
     this.status = 'running'
     this.restarts = 0
+    this.generation += 1
     this.emit('status', this.status)
+    // 通知绑定方换端口重绑客户端（初次启动与崩溃自动重启都会走到这里）
+    this.emit('ready', { port: this.port, generation: this.generation })
     this.startHealthMonitor()
     return port
   }
@@ -158,7 +183,7 @@ export class SidecarManager extends EventEmitter {
     const delay = Math.min(1000 * this.restarts, 5000)
     this.emit('log', `[sidecar] ${delay}ms 后第 ${this.restarts} 次重启`)
     setTimeout(() => {
-      if (!this.stopping) void this.start().catch(() => {})
+      if (!this.stopping) void this.runExclusive(() => this.doStart()).catch(() => {})
     }, delay)
   }
 
@@ -200,6 +225,10 @@ export class SidecarManager extends EventEmitter {
   }
 
   async stop(): Promise<void> {
+    return this.runExclusive(() => this.doStop())
+  }
+
+  private async doStop(): Promise<void> {
     this.stopping = true
     this.stopHealthMonitor()
     const proc = this.proc

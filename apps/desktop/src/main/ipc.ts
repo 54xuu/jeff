@@ -481,7 +481,7 @@ export function registerIpc(core: JeffCore): void {
       const { projectId } = p as { projectId: string }
       return core.groupChat.history(projectId)
     },
-    [IPC.groupSend]: async (p): Promise<{ routedTo: string }> => {
+    [IPC.groupSend]: async (p): Promise<{ routedTo: string; summaryFailed?: boolean; summaryError?: string }> => {
       const { projectId, text, images } = p as { projectId: string; text: string; images?: Array<{ mime: string; dataUrl: string }> }
       // 模型/思考由路由目标智能体资料决定，忽略前端覆盖
       return core.groupChat.send({ projectId, text, images })

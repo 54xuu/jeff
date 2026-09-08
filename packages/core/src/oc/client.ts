@@ -15,24 +15,52 @@ export class OcClient extends EventEmitter {
     super()
   }
 
+  /** sidecar 状态探针（由 JeffCore 注入）：连接失败时日志能对上 sidecar 当时状态/端口 */
+  statusProvider?: () => { status: string; port: number } | null
+
   private base(): string {
     return `http://127.0.0.1:${this.port}`
   }
 
   private async req<T>(method: string, path: string, body?: unknown, timeoutMs = 30000): Promise<T> {
-    const res = await fetch(`${this.base()}${path}`, {
-      method,
-      headers: body !== undefined ? { 'content-type': 'application/json' } : undefined,
-      body: body !== undefined ? JSON.stringify(body) : undefined,
-      signal: AbortSignal.timeout(timeoutMs),
-    })
-    if (!res.ok) {
-      const text = await res.text().catch(() => '')
-      throw new Error(`opencode ${method} ${path} -> ${res.status}: ${text.slice(0, 300)}`)
+    const started = Date.now()
+    try {
+      const res = await fetch(`${this.base()}${path}`, {
+        method,
+        headers: body !== undefined ? { 'content-type': 'application/json' } : undefined,
+        body: body !== undefined ? JSON.stringify(body) : undefined,
+        signal: AbortSignal.timeout(timeoutMs),
+      })
+      if (!res.ok) {
+        const text = await res.text().catch(() => '')
+        // HTTP 业务错误：sidecar 可达，不按连接失败包装
+        const httpErr = new Error(`opencode ${method} ${path} -> ${res.status}: ${text.slice(0, 300)}`) as Error & { httpStatus?: number }
+        httpErr.httpStatus = res.status
+        throw httpErr
+      }
+      const ct = res.headers.get('content-type') || ''
+      if (!ct.includes('json')) return undefined as T
+      return (await res.json()) as T
+    } catch (err) {
+      const e = err as Error & { name?: string; cause?: unknown; httpStatus?: number }
+      // HTTP 业务错误 / 超时 / 用户中止：原样抛出（上层依赖 abort 字样判定「已停止生成」）
+      if (e?.httpStatus || e?.name === 'TimeoutError' || e?.name === 'AbortError') throw err
+      // 连接层失败（端口不可达/连接重置等）：留全量现场 + 包装成可读错误，保留原始 cause
+      const cause = e?.cause instanceof Error ? { name: e.cause.name, message: e.cause.message } : e?.cause
+      this.log?.('oc-req-fail', {
+        method,
+        path,
+        port: this.port,
+        elapsedMs: Date.now() - started,
+        sidecar: this.statusProvider?.() ?? null,
+        name: e?.name,
+        message: e?.message,
+        cause,
+      })
+      const wrapped = new Error(`引擎服务连接失败（127.0.0.1:${this.port} ${method} ${path}）：${e?.message || err}`)
+      ;(wrapped as Error & { cause?: unknown }).cause = err
+      throw wrapped
     }
-    const ct = res.headers.get('content-type') || ''
-    if (!ct.includes('json')) return undefined as T
-    return (await res.json()) as T
   }
 
   // ---------- 会话 ----------
@@ -61,8 +89,8 @@ export class OcClient extends EventEmitter {
   }
 
   /** 获取会话消息（含 user/assistant 与 parts） */
-  async getMessages(sessionId: string): Promise<SessionMessage[]> {
-    return this.req('GET', `/session/${sessionId}/message`)
+  async getMessages(sessionId: string, timeoutMs = 30000): Promise<SessionMessage[]> {
+    return this.req('GET', `/session/${sessionId}/message`, undefined, timeoutMs)
   }
 
   /**
@@ -93,6 +121,9 @@ export class OcClient extends EventEmitter {
       timeoutMs: input.timeoutMs ?? 600000,
     })
     const waitMs = input.timeoutMs ?? 600000
+    // 总预算从进入时计：POST 与后续轮询共用剩余时间（旧逻辑 POST 结束后才起 deadline，总时长可能翻倍）
+    const deadline = Date.now() + waitMs
+    const remaining = () => Math.max(1000, deadline - Date.now())
     const returned = await this.req<{ info?: AssistantInfo; id?: string }>(
       'POST',
       `/session/${input.sessionId}/message`,
@@ -109,13 +140,13 @@ export class OcClient extends EventEmitter {
       },
       // POST 会阻塞到整个 run 结束（LLM 慢思考/慢网络时可达数分钟），超时必须覆盖全程；
       // 之前固定 60s 会在 LLM 生成超过 60s 时先炸（TimeoutError 误判为已停止）
-      waitMs,
+      remaining(),
     )
     const assistantId = returned?.info?.id ?? returned?.id
     if (!assistantId) throw new Error('发送消息未返回 assistant 消息 id')
-    const deadline = Date.now() + waitMs
     for (;;) {
-      const msgs = await this.getMessages(input.sessionId)
+      if (Date.now() > deadline) throw new Error('等待 assistant 回复超时')
+      const msgs = await this.getMessages(input.sessionId, remaining())
       const entry = msgs.find((m) => m.info?.id === assistantId)
       const found = entry?.info as AssistantInfo | undefined
       if (found) {
@@ -129,8 +160,6 @@ export class OcClient extends EventEmitter {
           throw new Error(`assistant 消息出错: ${raw.slice(0, 300)}${hint}`)
         }
         if (found.time?.completed) return found
-      } else if (Date.now() > deadline) {
-        throw new Error('assistant 消息未创建（超时）')
       }
       if (Date.now() > deadline) throw new Error('等待 assistant 回复超时')
       await sleep(400)
@@ -142,7 +171,10 @@ export class OcClient extends EventEmitter {
 
   async abortSession(sessionId: string): Promise<void> {
     this.aborts.set(sessionId, Date.now())
-    await this.req('POST', `/session/${sessionId}/abort`).catch(() => {})
+    await this.req('POST', `/session/${sessionId}/abort`).catch((err) => {
+      // /abort 失败不再完全静默：留诊断现场（会话可能已结束或 sidecar 不可达）
+      this.log?.('abort-fail', { sessionId, error: String((err as Error)?.message || err) })
+    })
   }
 
   /** 最近 windowMs 内是否对该会话发起过用户停止 */
@@ -259,9 +291,12 @@ export class OcClient extends EventEmitter {
             }
           }
         }
+        // 服务端正常关流（sidecar 退出/重启）：与错误断开区分，便于对账
+        this.log?.('sse-eof', { port: this.port })
       } catch (err) {
         if (ctrl.signal.aborted) return
-        this.emit('sse-error', err)
+        const e = err as Error & { cause?: unknown }
+        this.emit('sse-error', { port: this.port, name: e?.name, message: e?.message })
       }
       if (ctrl.signal.aborted) return
       await sleep(1500)
