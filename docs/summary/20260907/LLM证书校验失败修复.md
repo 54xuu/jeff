@@ -124,3 +124,28 @@ Windows 换绑 `opencode-go/deepseek-v4-flash` 后报 `⚠️ 项经理 处理�
 
 - `JEFF_E2E=1 tests/e2e.stream.test.ts` 3 用例全过（私聊流式增量 + 缓冲清理 + 图片）；`npm test` 96 通过；typecheck 仅存量 3 个 e2e helper 错误。
 - 版本 1.7.7（PATCH），deb 装本机验证；Windows 装 `jeff-Setup-1.7.7.exe` 后群发消息观察流式气泡，若仍无中间过程，开调试模式把 `~/.jeff/logs` 发回（`sse-open`/`stream-start`/`stream-drop` 直接指出断点）。
+
+## 追加排查：v1.7.8（流式终于打通 / 日志格式 / 消息缩进）
+
+### 1. 流式依然不输出（真凶第二层：SSE 端点选错）
+
+v1.7.7 诊断日志给出决定性证据：`[sse-open]` 出现了，但之后**一条 `stream-start`/`stream-drop` 都没有** —— 说明 SSE 连接成功但裸 `/event` 上根本没有任何会话事件。逆向 opencode 1.18.26 确认：
+
+- 裸 `GET /event` 只是实例/工作区级事件流，不带 `?directory=` 时基本只推 `server.connected`/心跳；
+- **跨工作区全量事件流是 `GET /global/event`**（会话的 `message.part.delta` 等都挂在 global 总线）；
+- 且 `/global/event` 的 SSE 行**多包一层**：`data: {"directory":...,"project":...,"payload":{type,properties}}`，直接 `JSON.parse` 后 `evt.type` 为 undefined 全被丢弃。
+
+修复（`oc/client.ts`）：SSE 端点改连 `/global/event`，解析时统一解包 `parsed.payload ?? parsed`（两种端点格式兼容）。`e2e.stream` 3 用例（增量/清理/图片）全过。
+
+### 2. 调试日志时间格式与时区
+
+原 `new Date().toISOString()` 输出 UTC（`2026-09-08T06:19:50.460Z`），与本地时间差 8 小时且带 T/Z。改为本地时区格式 **`[YYYY-MM-DD HH:mm:ss.SSS]`**（如 `[2026-09-08 15:05:34.023]`），`logger.ts` 新增 `formatLocalTime()`。
+
+### 3. 发送消息缩进丢失
+
+两层叠加：① `ChatWindow/GroupWindow` 的 `doSend` 用 `draft.trim()` 剥掉首行前导缩进；② 用户气泡按行渲染 `<p>`，CSS 默认 `white-space: normal` 折叠掉所有段首空格与连续空格。修复：发送改 `draft.trimEnd()`（保留前导缩进、仅裁尾部，判空仍用 trim），CSS 为 `.bubble.user p` 加 `white-space: pre-wrap`（用户消息不走 Markdown，不会被 4 空格代码块规则影响）。
+
+### 发版
+
+- 版本 1.7.8（PATCH），`npm test` 102 通过、typecheck 仅存量 3 个 e2e helper 错误，deb 装本机验证（日志格式实测正确）。
+- Windows 装 `jeff-Setup-1.7.8.exe`：群聊发消息应能看到流式过程（思考/正文/工具），发送带缩进的消息不再丢格式。

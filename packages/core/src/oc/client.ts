@@ -231,9 +231,11 @@ export class OcClient extends EventEmitter {
   private async runSse(ctrl: AbortController): Promise<void> {
     for (;;) {
       try {
-        const res = await fetch(`${this.base()}/event`, { signal: ctrl.signal })
+        // 必须用全局事件流：裸 /event 不带 ?directory= 时只推 server.connected/heartbeat，
+        // 会话的 message.part.delta 挂在 global 总线（opencode 1.18 实测）
+        const res = await fetch(`${this.base()}/global/event`, { signal: ctrl.signal })
         if (!res.ok || !res.body) throw new Error(`SSE ${res.status}`)
-        this.emit('sse-open', { port: this.port })
+        this.emit('sse-open', { port: this.port, endpoint: '/global/event' })
         const reader = res.body.getReader()
         const decoder = new TextDecoder()
         let buf = ''
@@ -249,7 +251,9 @@ export class OcClient extends EventEmitter {
             const payload = line.slice(5).trim()
             if (!payload || payload === '[DONE]') continue
             try {
-              this.emit('event', JSON.parse(payload))
+              const parsed = JSON.parse(payload) as { payload?: { type?: string; properties?: Record<string, unknown> }; type?: string; properties?: Record<string, unknown> }
+              // /event 直接给 {type,properties}；/global/event 包一层 {directory,project,payload} —— 统一解包
+              this.emit('event', parsed.payload ?? parsed)
             } catch {
               /* 非 JSON 行忽略 */
             }

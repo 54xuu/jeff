@@ -13,6 +13,12 @@ function localDay(d = new Date()): string {
   return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}`
 }
 
+/** 本地时区时间戳 [YYYY-MM-DD HH:mm:ss.SSS]（无 T/Z；用户要求的日志格式） */
+function formatLocalTime(d = new Date()): string {
+  const p = (n: number, w = 2) => String(n).padStart(w, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}.${p(d.getMilliseconds(), 3)}`
+}
+
 /**
  * 调试日志（默认关闭，设置 → 引擎服务 开启）：
  * 写 `<dataDir>/logs/debug-YYYYMMDD.log`，按天分文件；单文件超 5MB 轮转为 .old.log。
@@ -46,7 +52,7 @@ export class DebugLogger {
         /* 文件不存在等，忽略 */
       }
       const body = typeof detail === 'string' ? detail : JSON.stringify(detail)
-      fs.appendFileSync(file, `[${new Date().toISOString()}] [${tag}] ${body}\n`)
+      fs.appendFileSync(file, `[${formatLocalTime()}] [${tag}] ${body}\n`)
     } catch {
       /* 忽略 */
     }

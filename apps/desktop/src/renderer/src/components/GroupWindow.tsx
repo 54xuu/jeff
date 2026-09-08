@@ -114,8 +114,9 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
   }
 
   const doSend = async () => {
-    const text = draft.trim()
-    if ((!text && attachments.images.length === 0) || busy) return
+    // 保留行首缩进（仅裁掉尾部空白/换行）；全空白且无图片时拦截
+    const text = draft.trimEnd()
+    if ((!text.trim() && attachments.images.length === 0) || busy) return
     setDraft('')
     setMention(null)
     const images = attachments.images

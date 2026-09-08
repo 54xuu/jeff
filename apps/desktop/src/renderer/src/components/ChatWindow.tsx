@@ -61,8 +61,9 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
   if (!agent) return <div className="empty-hint">智能体不存在</div>
 
   const doSend = async () => {
-    const text = draft.trim()
-    if ((!text && attachments.images.length === 0) || sendingNow) return
+    // 保留行首缩进（仅裁掉尾部空白/换行）；全空白且无图片时拦截
+    const text = draft.trimEnd()
+    if ((!text.trim() && attachments.images.length === 0) || sendingNow) return
     setDraft('')
     const images = attachments.images
     attachments.clear()

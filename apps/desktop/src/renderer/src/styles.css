@@ -451,6 +451,11 @@ body {
   margin: 2px 0;
 }
 
+/* 用户消息保留原始缩进与连续空格（HTML 默认会折叠段首空格） */
+.bubble.user p {
+  white-space: pre-wrap;
+}
+
 .bubble.typing {
   display: flex;
   gap: 4px;
