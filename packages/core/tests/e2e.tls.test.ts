@@ -2,6 +2,7 @@
  * 端到端：LLM TLS 证书校验开关 + 调试日志（真实 opencode sidecar + 自签 HTTPS mock LLM）。
  * 仅在 JEFF_TLS_E2E=1 时运行（需要本机有 opencode 可执行文件与 openssl）。
  * 运行：JEFF_TLS_E2E=1 npx vitest run --no-file-parallelism tests/e2e.tls.test.ts
+ * 慢 LLM 模拟：MOCK_DELAY_MS=70000 复现「生成超过 60s」（v1.7.5 曾因 POST 固定 60s 超时误报）。
  *
  * 场景：企业网络对 LLM API 做 TLS 中间人（证书装在系统库，Bun 不读 Windows/Linux 证书存储之外的
  * 自签根）时，opencode 报 unknown certificate verification error。验证：

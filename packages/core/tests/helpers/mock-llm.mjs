@@ -12,7 +12,7 @@ export function startMockLlm(port, opts = {}) {
   const server = http.createServer((req, res) => {
     let body = ''
     req.on('data', (c) => (body += c))
-    req.on('end', () => {
+    req.on('end', async () => {
       const url = new URL(req.url, `http://127.0.0.1:${port}`)
       res.setHeader('content-type', 'application/json')
       if (url.pathname === '/v1/models') {
@@ -20,6 +20,8 @@ export function startMockLlm(port, opts = {}) {
         return
       }
       if (url.pathname === '/v1/chat/completions' && req.method === 'POST') {
+        // 可控延迟（验证 LLM 慢生成时的行为）
+        if (process.env.MOCK_DELAY_MS) await new Promise((r) => setTimeout(r, Number(process.env.MOCK_DELAY_MS)))
         const payload = JSON.parse(body || '{}')
         const msgs = payload.messages || []
         const tools = payload.tools || []

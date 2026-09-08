@@ -90,8 +90,9 @@ export class OcClient extends EventEmitter {
       variant: input.variant,
       textLen: input.text.length,
       images: input.images?.length ?? 0,
-      timeoutMs: input.timeoutMs ?? 180000,
+      timeoutMs: input.timeoutMs ?? 600000,
     })
+    const waitMs = input.timeoutMs ?? 600000
     const returned = await this.req<{ info?: AssistantInfo; id?: string }>(
       'POST',
       `/session/${input.sessionId}/message`,
@@ -106,11 +107,13 @@ export class OcClient extends EventEmitter {
         ...(input.system ? { system: input.system } : {}),
         ...(input.noReply ? { noReply: true } : {}),
       },
-      60000,
+      // POST 会阻塞到整个 run 结束（LLM 慢思考/慢网络时可达数分钟），超时必须覆盖全程；
+      // 之前固定 60s 会在 LLM 生成超过 60s 时先炸（TimeoutError 误判为已停止）
+      waitMs,
     )
     const assistantId = returned?.info?.id ?? returned?.id
     if (!assistantId) throw new Error('发送消息未返回 assistant 消息 id')
-    const deadline = Date.now() + (input.timeoutMs ?? 180000)
+    const deadline = Date.now() + waitMs
     for (;;) {
       const msgs = await this.getMessages(input.sessionId)
       const entry = msgs.find((m) => m.info?.id === assistantId)
@@ -166,6 +169,8 @@ export class OcClient extends EventEmitter {
   }): Promise<AssistantInfo> {
     const before = await this.getMessages(input.sessionId)
     const beforeIds = new Set(before.map((m) => m.info?.id).filter(Boolean) as string[])
+    const compactMs = input.timeoutMs ?? 300000
+    // 与 sendMessage 同理：POST 阻塞到压缩完成，超时须覆盖全程
     await this.req(
       'POST',
       `/session/${input.sessionId}/summarize`,
@@ -174,9 +179,9 @@ export class OcClient extends EventEmitter {
         modelID: input.modelID,
         auto: input.auto ?? false,
       },
-      60000,
+      compactMs,
     )
-    const deadline = Date.now() + (input.timeoutMs ?? 180000)
+    const deadline = Date.now() + compactMs
     for (;;) {
       const msgs = await this.getMessages(input.sessionId)
       for (const entry of msgs) {

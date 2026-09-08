@@ -1,4 +1,4 @@
-# LLM 证书校验失败修复（v1.7.4 / v1.7.5）
+# LLM 证书校验失败修复（v1.7.4 / v1.7.5 / v1.7.6）
 
 ## 问题现象
 
@@ -75,3 +75,28 @@
 - 新增：`packages/core/src/logger.ts`、`packages/core/tests/e2e.tls.test.ts`
 - 修改：`sidecar/manager.ts`（extraEnv）、`index.ts`（开关方法 + 日志接线）、`oc/client.ts`（完整错误 + 提示）、`chat/private.ts`、`orchestrator/group.ts`、`orchestrator/delegate.ts`（失败落日志）、`ipc/contract.ts`、`apps/desktop/src/main/ipc.ts`、`EngineSettings.tsx`（两个开关）
 - 版本：1.7.3 → **1.7.4**（PATCH：修 bug + 已有功能打补丁）
+
+## 追加排查：v1.7.6（真凶：本地 POST 60 秒超时，与证书/网络无关）
+
+### 现象
+
+Windows 换绑 `opencode-go/deepseek-v4-flash` 后报 `⚠️ 项经理 处理消息失败：The operation was aborted due to timeout`，勾不勾「跳过 LLM 证书校验」都一样。
+
+### 根因（v1.7.5 的 send-start/group-send-fail 日志直接定位）
+
+`send-start`（01:07:39.929）→ `group-send-fail`（01:08:39.940）**精确 60 秒**，堆栈在 `OcClient.req` —— 是 Jeff 主进程对**本地 sidecar** 的 `POST /session/:id/message` 带 `AbortSignal.timeout(60000)`。实验实证（mock LLM 人为延迟）：**opencode 1.18 的这个 POST 会阻塞到整个 run 结束（成功或报错）才返回**，mock 延迟 70 秒时 run 在 ~70 秒完成、我们在 60 秒先超时——所以只要 LLM 生成（max 思考 + 慢网络）超过 60 秒就必现；LLM 秒回时（此前所有 e2e）永远不会暴露。与证书开关无关，因此勾不勾一样。另实证：sidecar 连不上 LLM API 时 opencode 内部带退避重试 ~60 秒后才以 APIError 结束 run，同样超过我们旧的 60 秒 POST 超时。
+
+### 修复
+
+1. `OcClient.sendMessage`：POST 超时从固定 60s 改为 `input.timeoutMs`（默认 **600s**，与等待回复的轮询 deadline 一致）；轮询 deadline 同步用 `waitMs`。委派已单独传 600s。
+2. `OcClient.summarize`：POST 超时 60s → `input.timeoutMs ?? 300s`（压缩同样是阻塞语义）。
+3. e2e 回归：`e2e.tls.test.ts` 支持 `MOCK_DELAY_MS=70000` 模拟慢生成——修复前第 2 用例 60s 必炸、修复后 ~80s 正常完成；`mock-llm.mjs` 新增 `MOCK_DELAY_MS` 延迟注入（修复前实验中发现 helper 的请求回调需 async，已改）。
+
+### 验证
+
+- `MOCK_DELAY_MS=70000` e2e 3 用例全过（含 70 秒慢生成成功返回）；`npm test` 96 通过；typecheck 仅存量 3 个 e2e helper 错误。
+- 版本 1.7.6（PATCH），deb 已装本机并启动验证。
+
+### Windows 验证要点
+
+装 `jeff-Setup-1.7.6.exe` 后群里发消息：deepseek-v4-flash（max 思考）慢时回复可能要等 1~5 分钟，属正常；仍失败的话真实错误会显示出来（不再被「已停止生成」/超时掩盖），配合调试日志即可继续定位。
