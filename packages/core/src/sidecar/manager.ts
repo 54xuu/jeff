@@ -21,10 +21,19 @@ export interface SidecarOptions {
 
 /** opencode sidecar 进程管理：解析二进制 → 隔离环境 spawn → 健康轮询 → 崩溃重启 */
 export class SidecarManager extends EventEmitter {
+  /** 健康检查连续失败阈值（15s 一次，3 次 ≈ 45s），达到即判假运行并杀进程重启 */
+  private static readonly HEALTH_FAIL_LIMIT = 3
+
   private proc: ChildProcess | null = null
   private opts: SidecarOptions
   private restarts = 0
   private stopping = false
+  /** 期望运行中（start 置位 / 显式 stop 复位）：自动重启只在该标志为真时执行，防止 stop 后被旧 timer 拉起 */
+  private wantedRunning = false
+  /** 排队中的自动重启 timer（显式 stop 时取消） */
+  private restartTimer: NodeJS.Timeout | null = null
+  /** 健康检查连续失败计数（进程在但 HTTP 不通的「假运行」；达到阈值杀进程走重启链路） */
+  private healthFails = 0
   private healthTimer: NodeJS.Timeout | null = null
   /** start/stop/自动重启统一串行队列：避免手动重启与崩溃自动重启交错产生新旧进程混跑 */
   private lifecycleQueue: Promise<unknown> = Promise.resolve()
@@ -96,6 +105,7 @@ export class SidecarManager extends EventEmitter {
 
   private async doStart(): Promise<number> {
     if (this.status === 'running' || this.status === 'starting') return this.port
+    this.wantedRunning = true
     const bin = this.resolveBinary()
     if (!bin) {
       this.lastError = '未找到 opencode 可执行文件（检查 JEFF_OPENCODE_BIN / 资源目录 / PATH）'
@@ -146,6 +156,8 @@ export class SidecarManager extends EventEmitter {
     this.status = 'running'
     this.restarts = 0
     this.generation += 1
+    // 之前启动失败/崩溃留下的旧错误不再代表当前状态：恢复运行即清空（历史可看日志，不挂在现时错误上）
+    this.lastError = ''
     this.emit('status', this.status)
     // 通知绑定方换端口重绑客户端（初次启动与崩溃自动重启都会走到这里）
     this.emit('ready', { port: this.port, generation: this.generation })
@@ -155,12 +167,28 @@ export class SidecarManager extends EventEmitter {
 
   private startHealthMonitor(): void {
     this.stopHealthMonitor()
+    this.healthFails = 0
     this.healthTimer = setInterval(() => {
       if (this.status !== 'running') return
       void this.ping().then((ok) => {
-        if (!ok && this.status === 'running') {
-          // HTTP 不健康但进程未退：短暂容忍，由进程 exit 事件负责崩溃重启
-          this.emit('log', '[sidecar] 健康检查未通过（进程仍在）')
+        if (this.status !== 'running') return
+        if (ok) {
+          this.healthFails = 0
+          return
+        }
+        // HTTP 不健康但进程未退：连续多次失败视为「假运行」（卡死），杀掉走 exit → 自动重启链路恢复
+        this.healthFails += 1
+        this.emit('log', `[sidecar] 健康检查未通过（${this.healthFails}/${SidecarManager.HEALTH_FAIL_LIMIT}，进程仍在）`)
+        if (this.healthFails >= SidecarManager.HEALTH_FAIL_LIMIT) {
+          const proc = this.proc
+          if (!proc) return
+          this.lastError = '引擎健康检查连续失败，自动重启'
+          this.emit('log', '[sidecar] 健康检查连续失败，终止假运行进程以触发自动重启')
+          try {
+            proc.kill('SIGKILL')
+          } catch {
+            /* 已退出 */
+          }
         }
       })
     }, 15000)
@@ -173,7 +201,7 @@ export class SidecarManager extends EventEmitter {
   }
 
   private scheduleRestart(): void {
-    if (this.stopping) return
+    if (this.stopping || !this.wantedRunning) return
     this.restarts += 1
     if (this.restarts > 5) {
       this.lastError = 'sidecar 连续崩溃超过 5 次，停止重启'
@@ -182,9 +210,12 @@ export class SidecarManager extends EventEmitter {
     }
     const delay = Math.min(1000 * this.restarts, 5000)
     this.emit('log', `[sidecar] ${delay}ms 后第 ${this.restarts} 次重启`)
-    setTimeout(() => {
-      if (!this.stopping) void this.runExclusive(() => this.doStart()).catch(() => {})
+    if (this.restartTimer) clearTimeout(this.restartTimer)
+    this.restartTimer = setTimeout(() => {
+      this.restartTimer = null
+      if (!this.stopping && this.wantedRunning) void this.runExclusive(() => this.doStart()).catch(() => {})
     }, delay)
+    this.restartTimer.unref?.()
   }
 
   async ping(): Promise<boolean> {
@@ -230,6 +261,12 @@ export class SidecarManager extends EventEmitter {
 
   private async doStop(): Promise<void> {
     this.stopping = true
+    this.wantedRunning = false
+    // 取消排队中的自动重启：显式 stop 后不允许旧 timer 把进程拉起来
+    if (this.restartTimer) {
+      clearTimeout(this.restartTimer)
+      this.restartTimer = null
+    }
     this.stopHealthMonitor()
     const proc = this.proc
     this.proc = null

@@ -98,6 +98,47 @@ describe('projectAgentRepo', () => {
     pa.remove(p.id, ui.id)
     expect(pa.listByProject(p.id)).toHaveLength(1)
   })
+
+  it('setLeader：旧群主降级为 worker，唯一 leader', () => {
+    const projects = projectRepo(db)
+    const agents = agentRepo(db)
+    const pa = projectAgentRepo(db)
+    const p = projects.create({ title: '群', leader_agent_id: null })
+    const a1 = agents.create({ name: '甲' })
+    const a2 = agents.create({ name: '乙' })
+    pa.add(p.id, a1.id, 'leader')
+    pa.add(p.id, a2.id, 'worker')
+    pa.setLeader(p.id, a2.id)
+    expect(pa.getRole(p.id, a2.id)).toBe('leader')
+    expect(pa.getRole(p.id, a1.id)).toBe('worker')
+  })
+
+  it('replaceMembers：完整快照、差集删除、群主必在群且唯一', () => {
+    const projects = projectRepo(db)
+    const agents = agentRepo(db)
+    const pa = projectAgentRepo(db)
+    const p = projects.create({ title: '群', leader_agent_id: null })
+    const l = agents.create({ name: '群主' })
+    const w1 = agents.create({ name: '甲' })
+    const w2 = agents.create({ name: '乙' })
+    const w3 = agents.create({ name: '丙' })
+    pa.add(p.id, l.id, 'leader')
+    pa.add(p.id, w1.id, 'worker')
+    pa.add(p.id, w2.id, 'worker')
+    pa.add(p.id, w3.id, 'worker')
+    // 新快照只保留 群主+乙：甲/丙被差集删除；不传群主也会自动并入
+    pa.replaceMembers(p.id, l.id, [w2.id])
+    const rows = pa.listByProject(p.id)
+    expect(rows.map((r) => r.agent_id).sort()).toEqual([l.id, w2.id].sort())
+    expect(pa.getRole(p.id, l.id)).toBe('leader')
+    expect(pa.getRole(p.id, w2.id)).toBe('worker')
+    // 换群主（快照保留两人）：旧群主降 worker，唯一 leader
+    pa.replaceMembers(p.id, w1.id, [l.id])
+    expect(pa.getRole(p.id, w1.id)).toBe('leader')
+    expect(pa.getRole(p.id, l.id)).toBe('worker')
+    const leaders = pa.listByProject(p.id).filter((r) => r.role === 'leader')
+    expect(leaders).toHaveLength(1)
+  })
 })
 
 describe('chatMessageRepo', () => {

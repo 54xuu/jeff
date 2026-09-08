@@ -11,7 +11,7 @@ import type {
   AppSettings,
   AppInfo,
 } from '@jeff/core'
-import { IPC, XIAOJIE_ID, agentRepo, projectRepo, projectAgentRepo, taskRepo, taskCardMessage, APP_VERSION, type ThinkingTier } from '@jeff/core'
+import { IPC, XIAOJIE_ID, agentRepo, projectRepo, projectAgentRepo, taskRepo, taskCardMessage, APP_VERSION, PrivateChatStoppedError, type ThinkingTier } from '@jeff/core'
 import type { MemoryScopeInfo } from '@jeff/core'
 import type { JeffCore, TaskRow } from '@jeff/core'
 import { getMainWindow, getSidecarLogs } from './index.js'
@@ -87,13 +87,19 @@ export function registerIpc(core: JeffCore): void {
       const { agentId } = p as { agentId: string }
       return core.privateChat.history(agentId)
     },
-    [IPC.chatSend]: async (p): Promise<{ ok: boolean }> => {
+    [IPC.chatSend]: async (p): Promise<{ ok: boolean; stopped?: boolean }> => {
       const { agentId, text, images } = p as { agentId: string; text: string; images?: Array<{ mime: string; dataUrl: string }> }
       const row = core.agents.get(agentId)
       if (!row) throw new Error('智能体不存在')
       // 模型/思考由智能体资料决定，忽略前端覆盖
-      await core.privateChat.send(agentId, row.name, text, undefined, images)
-      return { ok: true }
+      try {
+        await core.privateChat.send(agentId, row.name, text, undefined, images)
+        return { ok: true }
+      } catch (err) {
+        // 用户主动停止是预期结果：返回 stopped，UI 不弹「发送失败」
+        if (err instanceof PrivateChatStoppedError) return { ok: true, stopped: true }
+        throw err
+      }
     },
     [IPC.chatNew]: async (p): Promise<{ sessionId: string }> => {
       const { agentId } = p as { agentId: string }
@@ -360,48 +366,28 @@ export function registerIpc(core: JeffCore): void {
     // ---------- 项目群 ----------
     [IPC.projectsList]: async (): Promise<ProjectInfo[]> => {
       const projects = projectRepo(core.db).list()
-      return projects.map((p) => ({
-        id: p.id,
-        title: p.title,
-        description: p.description,
-        icon: p.icon,
-        status: p.status,
-        leader_agent_id: p.leader_agent_id,
-        workspace_dir: p.workspace_dir || '',
-        updated_at: p.updated_at,
-        memberCount: projectAgentRepo(core.db).listByProject(p.id).length,
-      }))
+      return projects.map((p) => toProjectInfo(core, p))
     },
     [IPC.projectSave]: async (p): Promise<ProjectInfo> => {
       const d = p as { id?: string; title: string; description?: string; icon?: string; leader_agent_id?: string | null; memberAgentIds?: string[]; workspace_dir?: string }
       if (!d.leader_agent_id) throw new Error('必须选择群主（leader）')
+      // 成员快照语义：memberAgentIds 是完整集合，群主自动并入
+      const memberIds = Array.from(new Set([...(d.memberAgentIds || []), d.leader_agent_id]))
+      for (const mid of memberIds) {
+        const a = agentRepo(core.db).get(mid)
+        if (!a || a.deleted_at) throw new Error(`成员智能体不存在或已删除: ${mid}`)
+      }
+      let row
       if (d.id) {
-        const row = projectRepo(core.db).update(d.id, { title: d.title, description: d.description, icon: d.icon, leader_agent_id: d.leader_agent_id, ...(d.workspace_dir !== undefined ? { workspace_dir: d.workspace_dir } : {}) })
+        row = projectRepo(core.db).update(d.id, { title: d.title, description: d.description, icon: d.icon, leader_agent_id: d.leader_agent_id, ...(d.workspace_dir !== undefined ? { workspace_dir: d.workspace_dir } : {}) })
         if (!row) throw new Error('项目不存在')
-        projectAgentRepo(core.db).add(d.id, d.leader_agent_id, 'leader', 0)
-        for (const mid of d.memberAgentIds || []) {
-          if (mid !== d.leader_agent_id) projectAgentRepo(core.db).add(d.id, mid, 'worker')
-        }
       } else {
-        const row = projectRepo(core.db).create({ title: d.title, description: d.description, icon: d.icon, leader_agent_id: d.leader_agent_id, workspace_dir: d.workspace_dir || '' })
-        projectAgentRepo(core.db).add(row.id, d.leader_agent_id, 'leader', 0)
-        for (const mid of d.memberAgentIds || []) {
-          if (mid !== d.leader_agent_id) projectAgentRepo(core.db).add(row.id, mid, 'worker')
-        }
+        row = projectRepo(core.db).create({ title: d.title, description: d.description, icon: d.icon, leader_agent_id: d.leader_agent_id, workspace_dir: d.workspace_dir || '' })
       }
+      // 事务化成员快照：差集删除 + 群主唯一（直接用 create/update 返回的 row，不按可重复的 title 回查）
+      projectAgentRepo(core.db).replaceMembers(row.id, d.leader_agent_id, memberIds)
       core.bus.emit('data-changed', 'projects')
-      const row = projectRepo(core.db).list().find((x) => x.title === d.title)!
-      return {
-        id: row.id,
-        title: row.title,
-        description: row.description,
-        icon: row.icon,
-        status: row.status,
-        leader_agent_id: row.leader_agent_id,
-        workspace_dir: row.workspace_dir || '',
-        updated_at: row.updated_at,
-        memberCount: projectAgentRepo(core.db).listByProject(row.id).length,
-      }
+      return toProjectInfo(core, row)
     },
     [IPC.projectDelete]: async (p): Promise<{ ok: boolean }> => {
       const { id } = p as { id: string }
@@ -418,6 +404,10 @@ export function registerIpc(core: JeffCore): void {
     },
     [IPC.projectAddMember]: async (p): Promise<{ ok: boolean }> => {
       const { projectId, agentId } = p as { projectId: string; agentId: string }
+      const project = projectRepo(core.db).get(projectId)
+      if (!project || project.deleted_at) throw new Error('项目不存在')
+      const agent = agentRepo(core.db).get(agentId)
+      if (!agent || agent.deleted_at) throw new Error('智能体不存在或已删除')
       projectAgentRepo(core.db).add(projectId, agentId, 'worker')
       core.bus.emit('data-changed', 'projects')
       return { ok: true }
@@ -425,7 +415,10 @@ export function registerIpc(core: JeffCore): void {
     [IPC.projectRemoveMember]: async (p): Promise<{ ok: boolean }> => {
       const { projectId, agentId } = p as { projectId: string; agentId: string }
       const project = projectRepo(core.db).get(projectId)
-      if (project?.leader_agent_id === agentId) throw new Error('不能移除群主；请先改群主')
+      if (!project || project.deleted_at) throw new Error('项目不存在')
+      if (project.leader_agent_id === agentId) throw new Error('不能移除群主；请先改群主')
+      const agent = agentRepo(core.db).get(agentId)
+      if (!agent || agent.deleted_at) throw new Error('智能体不存在或已删除')
       projectAgentRepo(core.db).remove(projectId, agentId)
       core.bus.emit('data-changed', 'projects')
       return { ok: true }
@@ -479,7 +472,7 @@ export function registerIpc(core: JeffCore): void {
     // ---------- 群聊 ----------
     [IPC.groupHistory]: async (p): Promise<unknown> => {
       const { projectId } = p as { projectId: string }
-      return core.groupChat.history(projectId)
+      return core.historyActive(projectId)
     },
     [IPC.groupSend]: async (p): Promise<{ routedTo: string; summaryFailed?: boolean; summaryError?: string }> => {
       const { projectId, text, images } = p as { projectId: string; text: string; images?: Array<{ mime: string; dataUrl: string }> }
@@ -537,6 +530,21 @@ export function toAgentInfo(row: import('@jeff/core').AgentRow): AgentInfo {
     thinking: row.thinking || '',
     builtin: !!row.builtin,
     archived: !!row.archived,
+  }
+}
+
+/** ProjectRow → IPC 响应（projectsList 与 projectSave 共用；成员数现查） */
+function toProjectInfo(core: JeffCore, row: import('@jeff/core').ProjectRow): ProjectInfo {
+  return {
+    id: row.id,
+    title: row.title,
+    description: row.description,
+    icon: row.icon,
+    status: row.status,
+    leader_agent_id: row.leader_agent_id,
+    workspace_dir: row.workspace_dir || '',
+    updated_at: row.updated_at,
+    memberCount: projectAgentRepo(core.db).listByProject(row.id).length,
   }
 }
 

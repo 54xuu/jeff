@@ -1,5 +1,5 @@
 import type { DB } from '../db/db.js'
-import { chatMessageRepo, projectAgentRepo, projectRepo, agentRepo, kvRepo, type ChatMessageRow } from '../db/repos.js'
+import { chatMessageRepo, projectAgentRepo, projectRepo, agentRepo, kvRepo, type ChatMessageRow, type ProjectRow } from '../db/repos.js'
 import { agentSlug } from '../agents/registry.js'
 import type { OcClient, AssistantInfo } from '../oc/client.js'
 import type { GroupMessage } from '../ipc/contract.js'
@@ -19,6 +19,7 @@ export interface GroupSendResult {
 export interface GroupChatHooks {
   beforeEnsure?: () => Promise<void>
   onSessionCreated?: (sessionId: string, meta: { kind: 'private' | 'group' | 'review'; agentId: string; projectId?: string; threadId?: string }) => void
+
   /** 群消息的记忆块注入（追加在 briefing 之后） */
   buildMemory?: (agentId: string, projectId: string) => string | undefined
   afterReply?: (scope: { kind: 'private'; agentId: string } | { kind: 'group'; projectId: string; agentId: string }) => void
@@ -41,6 +42,26 @@ export class GroupChat {
     private hooks?: GroupChatHooks,
   ) {
     this.threads = new GroupThreadStore(db)
+  }
+
+  /** 单次群发送的运行态：冻结发起时的 thread，跟踪当前会话与取消标记（stream/stop/system 公告都归属它） */
+  private runStates = new Map<string, { threadId: string; cancelled: boolean; sessionId: string | null }>()
+
+  /** 该项目群是否有在途发送（用于禁止切换/删除 thread，防止消息串线） */
+  isBusy(projectId: string): boolean {
+    return this.runStates.has(projectId)
+  }
+
+  /**
+   * 停止该群的在途流水线：标记取消（未开始的 worker 回合与最终总结不再执行），
+   * 并 abort 当前正在生成的会话。返回是否命中了在途流程。
+   */
+  async abort(projectId: string): Promise<boolean> {
+    const st = this.runStates.get(projectId)
+    if (!st) return false
+    st.cancelled = true
+    if (st.sessionId) await this.getOc().abortSession(st.sessionId).catch(() => {})
+    return true
   }
 
   /** @deprecated 用 scope(projectId, threadId)；保留给迁移扫描 */
@@ -215,10 +236,29 @@ export class GroupChat {
     if (!project) throw new Error(`项目不存在: ${projectId}`)
     if (!project.leader_agent_id) throw new Error('项目未设置群主（leader）')
     const threadId = this.threads.ensureActiveThread(projectId)
+    // 冻结本次流程的归属：后续 stream/system 公告/取消都只认这个 thread，不随界面切换漂移
+    const runState = { threadId, cancelled: false, sessionId: null as string | null }
+    this.runStates.set(projectId, runState)
+    try {
+      return await this.doSendPipeline(input, project, threadId, runState)
+    } finally {
+      // 仅清理仍属于本次运行的状态（期间不可能有并发 send，防御性判断）
+      if (this.runStates.get(projectId) === runState) this.runStates.delete(projectId)
+    }
+  }
+
+  private async doSendPipeline(
+    input: { projectId: string; text: string; model?: { providerID: string; modelID: string }; variant?: string; images?: Array<{ mime: string; dataUrl: string }> },
+    project: ProjectRow,
+    threadId: string,
+    runState: { threadId: string; cancelled: boolean; sessionId: string | null },
+  ): Promise<GroupSendResult> {
+    const { projectId, text } = input
+    const leaderId = project.leader_agent_id
+    if (!leaderId) throw new Error('项目未设置群主（leader）')
     const members = projectAgentRepo(this.db).listByProject(projectId)
     const agents = agentRepo(this.db)
     const scope = groupMsgScope(projectId, threadId)
-    const leaderId = project.leader_agent_id
 
     chatMessageRepo(this.db).add({
       scope,
@@ -235,39 +275,45 @@ export class GroupChat {
     if (!firstTarget) throw new Error(`路由目标不存在: ${firstTargetId}`)
 
     // 第一回合：响应用户
-    const first = await this.runTurn({ projectId, threadId, agentId: firstTargetId, text, images: input.images })
+    const first = await this.runTurn({ projectId, threadId, agentId: firstTargetId, text, images: input.images, runState })
     let routedTo = firstTargetId
     if (first.stopped) return { routedTo }
 
     // 串行流水线：解析第一回合回复中的 @ 派发队列
     // （用户直连 worker 时，其回复里的 @leader 是「汇报」，进总结分支而非派发队列）
+    // 队列携带「指派来源文本」：worker 二级转派时，下游拿到的是转派者的实际任务说明，而非回退到最初用户输入
     let hops = 0
     let dispatchedAny = false
-    let queue = this.parseAllMentions(first.content, memberInfos)
+    let queue: Array<{ agentId: string; source: string }> = this.parseAllMentions(first.content, memberInfos)
       .filter((m) => m.agent_id !== firstTargetId && !(firstTargetId !== leaderId && m.agent_id === leaderId))
-      .map((m) => m.agent_id)
+      .map((m) => ({ agentId: m.agent_id, source: first.content }))
     if (firstTargetId === leaderId && queue.length > 0) {
-      this.addSystemMessage(projectId, `📋 ${firstTarget.name} 已拆解任务，开始按序派发给 ${queue.length} 位成员执行…`)
+      this.addSystemMessage(projectId, `📋 ${firstTarget.name} 已拆解任务，开始按序派发给 ${queue.length} 位成员执行…`, undefined, threadId)
     }
     while (queue.length > 0 && hops < MAX_PIPELINE_HOPS) {
-      const workerId = queue.shift() as string
+      if (runState.cancelled) return { routedTo }
+      const item = queue.shift() as { agentId: string; source: string }
+      const workerId = item.agentId
       const worker = agents.get(workerId)
       if (!worker) continue
       routedTo = workerId
       hops += 1
       dispatchedAny = true
-      const taskText = this.extractMentionTask(first.content, worker.name, memberInfos)
-      const prompt = `【群主 ${agents.get(leaderId)?.name || '群主'} 在群里指派】${taskText || text}\n请执行上述任务；完成后在群里以「@${agents.get(leaderId)?.name || '群主'} 汇报：<结果>」公开汇报。`
-      const turn = await this.runTurn({ projectId, threadId, agentId: workerId, text: prompt })
+      const taskText = this.extractMentionTask(item.source, worker.name, memberInfos)
+      // 二级转派（worker → worker）时说明来源是同事，避免误导为群主指派
+      const from = firstTargetId === leaderId ? `群主 ${agents.get(leaderId)?.name || '群主'} 在群里指派` : `${firstTarget.name} 转派`
+      const prompt = `【${from}】${taskText || text}\n请执行上述任务；完成后在群里以「@${agents.get(leaderId)?.name || '群主'} 汇报：<结果>」公开汇报。`
+      const turn = await this.runTurn({ projectId, threadId, agentId: workerId, text: prompt, runState })
       if (turn.stopped) return { routedTo }
-      // worker 回复里继续 @ 的人：leader 代表汇报到位；其他 worker 续入队列串行执行
+      // worker 回复里继续 @ 的人：leader 代表汇报到位；其他 worker 续入队列串行执行（来源文本 = 该 worker 的回复）
       for (const nm of this.parseAllMentions(turn.content, memberInfos)) {
         if (nm.agent_id === workerId) continue
-        if (nm.agent_id !== leaderId && !queue.includes(nm.agent_id)) queue.push(nm.agent_id)
+        if (nm.agent_id !== leaderId && !queue.some((q) => q.agentId === nm.agent_id)) queue.push({ agentId: nm.agent_id, source: turn.content })
       }
     }
+    if (runState.cancelled) return { routedTo }
     if (hops >= MAX_PIPELINE_HOPS && queue.length > 0) {
-      this.addSystemMessage(projectId, `⚠️ 本轮协作步数已达上限（${MAX_PIPELINE_HOPS} 步），剩余任务不再派发，由群主直接汇总。`)
+      this.addSystemMessage(projectId, `⚠️ 本轮协作步数已达上限（${MAX_PIPELINE_HOPS} 步），剩余任务不再派发，由群主直接汇总。`, undefined, threadId)
     }
 
     // 闭环：有派发（或用户直连 worker 且 worker 向 leader 汇报）时，唤醒 leader 做最终总结
@@ -279,12 +325,12 @@ export class GroupChat {
         ? '【系统通知】你派发的任务已全部由成员执行完毕并回群汇报。请对照各成员的汇报验收成果，直接向用户给出清晰、完整的最终总结答复（无需再派发新任务）。'
         : `【系统通知】${firstTarget.name} 已在群里向你汇报。请验收其结果，直接向用户给出最终答复。`
       try {
-        await this.runTurn({ projectId, threadId, agentId: leaderId, text: summaryPrompt })
+        await this.runTurn({ projectId, threadId, agentId: leaderId, text: summaryPrompt, runState })
       } catch (err) {
         // 部分成功可恢复：worker 成果与失败系统消息已落库，不再自动重试 leader 的 POST（防重复执行）
         summaryError = String((err as Error)?.message || err).slice(0, 200)
         summaryFailed = true
-        this.addSystemMessage(projectId, `ℹ️ 成员执行结果已保留。群主最终总结未完成（${summaryError}），可直接再发一条消息让其总结。`)
+        this.addSystemMessage(projectId, `ℹ️ 成员执行结果已保留。群主最终总结未完成（${summaryError}），可直接再发一条消息让其总结。`, undefined, threadId)
       }
     }
     return summaryFailed ? { routedTo, summaryFailed, summaryError } : { routedTo }
@@ -311,7 +357,7 @@ export class GroupChat {
    * 驱动单个 agent 回合一轮：调 opencode、落库、错误兜底。
    * 返回回复文本与是否被用户停止。
    */
-  private async runTurn(input: { projectId: string; threadId: string; agentId: string; text: string; images?: Array<{ mime: string; dataUrl: string }> }): Promise<{ content: string; stopped: boolean }> {
+  private async runTurn(input: { projectId: string; threadId: string; agentId: string; text: string; images?: Array<{ mime: string; dataUrl: string }>; runState?: { threadId: string; cancelled: boolean; sessionId: string | null } }): Promise<{ content: string; stopped: boolean }> {
     const { projectId, threadId, agentId, text } = input
     const agents = agentRepo(this.db)
     const target = agents.get(agentId)
@@ -319,11 +365,15 @@ export class GroupChat {
     if (!target) throw new Error(`路由目标不存在: ${agentId}`)
 
     const sessionId = await this.ensureSession(projectId, agentId, threadId)
+    // 记录到运行态供停止使用（非流水线调用如 jeff_delegate 沿用旧 last-session 兜底）
+    if (input.runState) input.runState.sessionId = sessionId
     this.threads.setLastOcSession(projectId, sessionId)
     let reply: AssistantInfo
     const memoryBlock = this.hooks?.buildMemory?.(agentId, projectId)
     const system = memoryBlock ? `${this.buildBriefing(projectId, agentId)}\n\n${memoryBlock}` : this.buildBriefing(projectId, agentId)
     const opts = agentPromptOpts(target, this.hooks?.defaultModel?.() ?? null)
+    // 用户已点停止：不再发起本回合，直接按已停止收敛（流水线后续回合也会被取消标记拦下）
+    if (input.runState?.cancelled) return { content: '', stopped: true }
     try {
       reply = await this.getOc().sendMessage({
         sessionId,
@@ -424,15 +474,16 @@ export class GroupChat {
     })
   }
 
-  addSystemMessage(projectId: string, content: string, meta?: Record<string, unknown>): void {
-    const threadId = this.threads.ensureActiveThread(projectId)
+  /** 写群系统公告；显式传 threadId 时落指定会话（流水线内防切换漂移），缺省写当前活跃会话 */
+  addSystemMessage(projectId: string, content: string, meta?: Record<string, unknown>, threadId?: string): void {
+    const tid = threadId || this.threads.ensureActiveThread(projectId)
     chatMessageRepo(this.db).add({
-      scope: groupMsgScope(projectId, threadId),
+      scope: groupMsgScope(projectId, tid),
       sender_type: 'system',
       content,
       meta,
     })
-    this.threads.touch(projectId, threadId)
+    this.threads.touch(projectId, tid)
   }
 }
 

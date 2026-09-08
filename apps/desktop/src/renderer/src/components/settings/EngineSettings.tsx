@@ -17,6 +17,8 @@ export default function EngineSettings(): React.JSX.Element {
   const [restarting, setRestarting] = useState(false)
   const [skipTls, setSkipTls] = useState(false)
   const [debugEnabled, setDebugEnabled] = useState(false)
+  const [toggling, setToggling] = useState<'tls' | 'debug' | null>(null)
+  const [toggleError, setToggleError] = useState<string | null>(null)
 
   useEffect(() => {
     void api.invoke<{ lines: string[] }>(IPC.sidecarLogs).then((r) => setLogs(r.lines))
@@ -24,15 +26,38 @@ export default function EngineSettings(): React.JSX.Element {
     void api.invoke<{ enabled: boolean }>(IPC.debugLogGet).then((r) => setDebugEnabled(r.enabled))
   }, [])
 
+  // 乐观更新 + 失败回滚：保存会触发 sidecar 重启，失败时不能假装已生效
   const toggleSkipTls = async (v: boolean) => {
+    if (toggling) return
+    const prev = skipTls
+    setToggling('tls')
+    setToggleError(null)
     setSkipTls(v)
-    await api.invoke(IPC.llmTlsSet, { skip: v })
-    await refreshAppInfo()
+    try {
+      await api.invoke(IPC.llmTlsSet, { skip: v })
+      await refreshAppInfo()
+    } catch (err) {
+      setSkipTls(prev)
+      setToggleError(`证书校验开关保存失败：${String((err as Error).message).slice(0, 160)}`)
+    } finally {
+      setToggling(null)
+    }
   }
 
   const toggleDebug = async (v: boolean) => {
+    if (toggling) return
+    const prev = debugEnabled
+    setToggling('debug')
+    setToggleError(null)
     setDebugEnabled(v)
-    await api.invoke(IPC.debugLogSet, { enabled: v })
+    try {
+      await api.invoke(IPC.debugLogSet, { enabled: v })
+    } catch (err) {
+      setDebugEnabled(prev)
+      setToggleError(`调试模式保存失败：${String((err as Error).message).slice(0, 160)}`)
+    } finally {
+      setToggling(null)
+    }
   }
 
   const restart = async () => {
@@ -71,13 +96,14 @@ export default function EngineSettings(): React.JSX.Element {
       </div>
       <div className="pv-detail" style={{ marginTop: 8 }}>
         <label className="field check-field">
-          <input type="checkbox" checked={skipTls} onChange={(e) => void toggleSkipTls(e.target.checked)} />
+          <input type="checkbox" disabled={toggling !== null} checked={skipTls} onChange={(e) => void toggleSkipTls(e.target.checked)} />
           <span>跳过 LLM 证书校验（企业代理 / 安全软件拦截导致「certificate verification error」时开启；保存后自动重启引擎）</span>
         </label>
         <label className="field check-field">
-          <input type="checkbox" checked={debugEnabled} onChange={(e) => void toggleDebug(e.target.checked)} />
+          <input type="checkbox" disabled={toggling !== null} checked={debugEnabled} onChange={(e) => void toggleDebug(e.target.checked)} />
           <span>调试模式（记录引擎输出与消息处理日志到 数据目录/logs/debug-日期.log，可能包含聊天内容）</span>
         </label>
+        {toggleError && <p className="settings-error">⚠️ {toggleError}</p>}
       </div>
       <details className="mcp-tools" open={!!appInfo?.sidecarError}>
         <summary>最近日志（{logs.length} 行）</summary>

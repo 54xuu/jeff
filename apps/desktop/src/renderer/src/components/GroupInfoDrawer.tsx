@@ -4,10 +4,11 @@ import { api } from '../api'
 import { IPC, projectRoleLabel, type GroupMessage, type GroupThreadBrief, type ProjectInfo } from '@jeff/core'
 import Avatar from './Avatar'
 import { Markdown } from './Markdown'
+import { EmojiPickerButton } from './ui/EmojiPicker'
 
-/** 群资料抽屉：上段群设置 + 下段项目级扁平聊天记录 */
-export default function GroupInfoDrawer(props: { project: ProjectInfo; onClose: () => void }): React.JSX.Element {
-  const { project, onClose } = props
+/** 群资料抽屉：上段群设置 + 下段项目级扁平聊天记录。busy（生成中）时禁用切换/新建/删除会话，防消息串线 */
+export default function GroupInfoDrawer(props: { project: ProjectInfo; busy?: boolean; onClose: () => void }): React.JSX.Element {
+  const { project, busy, onClose } = props
   const agents = useStore((s) => s.agents)
   const { refreshProjects, setActive, loadGroupHistory } = useStore()
   const [members, setMembers] = useState<Array<{ agent_id: string; role: string; name: string; avatar: string }>>([])
@@ -110,18 +111,26 @@ export default function GroupInfoDrawer(props: { project: ProjectInfo; onClose: 
   }
 
   const activate = async (t: GroupThreadBrief) => {
-    await api.invoke(IPC.groupThreadActivate, { projectId: project.id, threadId: t.id })
-    await loadGroupHistory(project.id)
-    await refreshThreads()
-    onClose()
+    try {
+      await api.invoke(IPC.groupThreadActivate, { projectId: project.id, threadId: t.id })
+      await loadGroupHistory(project.id)
+      await refreshThreads()
+      onClose()
+    } catch (err) {
+      setSessionError(String((err as Error).message).slice(0, 160))
+    }
   }
 
   const remove = async (t: GroupThreadBrief) => {
     if (!confirm(`删除会话「${t.title}」？该段聊天记录不可恢复。`)) return
-    await api.invoke(IPC.groupThreadDelete, { projectId: project.id, threadId: t.id })
-    if (preview?.id === t.id) setPreview(null)
-    await loadGroupHistory(project.id)
-    await refreshThreads()
+    try {
+      await api.invoke(IPC.groupThreadDelete, { projectId: project.id, threadId: t.id })
+      if (preview?.id === t.id) setPreview(null)
+      await loadGroupHistory(project.id)
+      await refreshThreads()
+    } catch (err) {
+      setSessionError(String((err as Error).message).slice(0, 160))
+    }
   }
 
   const startRename = (t: GroupThreadBrief) => {
@@ -142,10 +151,14 @@ export default function GroupInfoDrawer(props: { project: ProjectInfo; onClose: 
   }
 
   const newThread = async () => {
-    await api.invoke(IPC.groupThreadNew, { projectId: project.id })
-    await loadGroupHistory(project.id)
-    await refreshThreads()
-    onClose()
+    try {
+      await api.invoke(IPC.groupThreadNew, { projectId: project.id })
+      await loadGroupHistory(project.id)
+      await refreshThreads()
+      onClose()
+    } catch (err) {
+      setSessionError(String((err as Error).message).slice(0, 160))
+    }
   }
 
   return (
@@ -164,9 +177,12 @@ export default function GroupInfoDrawer(props: { project: ProjectInfo; onClose: 
             <span>群名 *</span>
             <input value={title} data-testid="group-settings-title" onChange={(e) => setTitle(e.target.value)} placeholder="如：Jeff 官网开发" />
           </label>
-          <label className="field" style={{ width: 90 }}>
+          <label className="field" style={{ width: 110 }}>
             <span>图标</span>
-            <input value={icon} data-testid="group-settings-icon" onChange={(e) => setIcon(e.target.value)} maxLength={4} />
+            <div className="emoji-input-row">
+              <input value={icon} data-testid="group-settings-icon" onChange={(e) => setIcon(e.target.value)} />
+              <EmojiPickerButton value={icon} onPick={setIcon} testId="group-icon-picker" />
+            </div>
           </label>
           <label className="field">
             <span>群简介 / 项目背景（注入群聊 system）</span>
@@ -246,10 +262,11 @@ export default function GroupInfoDrawer(props: { project: ProjectInfo; onClose: 
 
         <div className="drawer-sec">
           聊天记录
-          <button className="text-btn" data-testid="group-new-thread" onClick={() => void newThread()}>
+          <button className="text-btn" data-testid="group-new-thread" disabled={busy} title={busy ? '生成中不可新建会话，请先停止或等待完成' : undefined} onClick={() => void newThread()}>
             + 新会话
           </button>
         </div>
+        {busy && <p className="settings-error">⏳ 生成中：会话切换 / 新建 / 删除已临时禁用，防止消息串会话。</p>}
         <p className="settings-tip" style={{ marginTop: 0 }}>
           每一段都是整个项目群的对话历史（可由不同成员执行）；可改标题、继续或新开。
         </p>
@@ -299,16 +316,16 @@ export default function GroupInfoDrawer(props: { project: ProjectInfo; onClose: 
                   {typeof t.messageCount === 'number' ? ` · ${t.messageCount} 条` : ''}
                 </div>
                 <div className="history-item-actions" onClick={(e) => e.stopPropagation()}>
-                  <button className="text-btn" onClick={() => startRename(t)}>
+                  <button className="text-btn" disabled={busy} title={busy ? '生成中不可操作会话' : undefined} onClick={() => startRename(t)}>
                     改名
                   </button>
                   {!t.active && (
-                    <button className="text-btn" onClick={() => void activate(t)}>
+                    <button className="text-btn" disabled={busy} title={busy ? '生成中不可切换会话' : undefined} onClick={() => void activate(t)}>
                       继续
                     </button>
                   )}
                   {!t.active && (
-                    <button className="text-btn danger" onClick={() => void remove(t)}>
+                    <button className="text-btn danger" disabled={busy} title={busy ? '生成中不可删除会话' : undefined} onClick={() => void remove(t)}>
                       删除
                     </button>
                   )}

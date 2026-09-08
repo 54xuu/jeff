@@ -1,7 +1,8 @@
-import { memo, useState } from 'react'
+import { memo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeHighlight from 'rehype-highlight'
+import { CopyButton } from './ui/CopyButton'
 
 /**
  * 聊天消息的 Markdown 渲染：GFM（表格/删除线/任务列表）+ 代码高亮 + 代码块复制按钮。
@@ -30,22 +31,12 @@ function CodeBlock(props: Record<string, unknown>): React.JSX.Element {
   const raw = Array.isArray(node?.props?.children)
     ? (node?.props?.children as unknown[]).map(String).join('')
     : String(node?.props?.children ?? '')
-  const [copied, setCopied] = useState(false)
   const lang = /language-([\w-]+)/.exec(node?.props?.className || '')?.[1]
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(raw)
-      setCopied(true)
-      setTimeout(() => setCopied(false), 1500)
-    } catch {
-      /* 剪贴板不可用忽略 */
-    }
-  }
   return (
     <div className="md-code">
       <div className="md-code-bar">
         <span>{lang || '代码'}</span>
-        <button className="md-copy-btn" onClick={() => void copy()}>{copied ? '已复制' : '复制'}</button>
+        <CopyButton className="md-copy-btn" text={raw} label="复制代码" testId="md-copy-code" />
       </div>
       <pre {...rest}>{children as React.ReactNode}</pre>
     </div>

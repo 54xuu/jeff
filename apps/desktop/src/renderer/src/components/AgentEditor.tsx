@@ -5,6 +5,7 @@ import ModelPickerCombo from './ModelPickerCombo'
 import { Button } from './ui/Button'
 import { Field } from './ui/Field'
 import { Toast } from './ui/Toast'
+import { EmojiPickerButton } from './ui/EmojiPicker'
 
 export type ThinkingTierOpt = '' | ThinkingTier
 
@@ -115,7 +116,10 @@ export default function AgentEditor(props: {
               <input value={name} onChange={(e) => setName(e.target.value)} placeholder="如：架构师阿伟" data-testid="agent-name" />
             </Field>
             <Field label="头像 emoji">
-              <input value={avatar} onChange={(e) => setAvatar(e.target.value)} maxLength={4} />
+              <div className="emoji-input-row">
+                <input value={avatar} onChange={(e) => setAvatar(e.target.value)} placeholder="🤖" data-testid="agent-avatar" />
+                <EmojiPickerButton value={avatar} onPick={setAvatar} testId="agent-avatar-picker" />
+              </div>
             </Field>
           </>
         )}

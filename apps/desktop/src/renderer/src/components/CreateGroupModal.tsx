@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useStore } from '../store'
 import { api } from '../api'
 import { IPC, XIAOJIE_ID } from '@jeff/core'
+import { EmojiPickerButton } from './ui/EmojiPicker'
 
 /** 发起群聊 = 创建项目群：群名/图标/群主/成员/工作空间目录 */
 export default function CreateGroupModal(props: { onClose: () => void }): React.JSX.Element {
@@ -12,6 +13,7 @@ export default function CreateGroupModal(props: { onClose: () => void }): React.
   const [leaderId, setLeaderId] = useState('')
   const [memberIds, setMemberIds] = useState<string[]>([])
   const [workspaceDir, setWorkspaceDir] = useState('')
+  const [error, setError] = useState<string | null>(null)
 
   const toggleMember = (id: string) => {
     setMemberIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
@@ -25,16 +27,20 @@ export default function CreateGroupModal(props: { onClose: () => void }): React.
   const save = async () => {
     if (!title.trim() || !leaderId) return
     const members = [leaderId, ...memberIds.filter((m) => m !== leaderId)]
-    await api.invoke(IPC.projectSave, {
-      title: title.trim(),
-      icon: icon.trim() || '👥',
-      description: description.trim(),
-      leader_agent_id: leaderId,
-      memberAgentIds: members,
-      workspace_dir: workspaceDir.trim(),
-    })
-    await useStore.getState().refreshProjects()
-    props.onClose()
+    try {
+      await api.invoke(IPC.projectSave, {
+        title: title.trim(),
+        icon: icon.trim() || '👥',
+        description: description.trim(),
+        leader_agent_id: leaderId,
+        memberAgentIds: members,
+        workspace_dir: workspaceDir.trim(),
+      })
+      await useStore.getState().refreshProjects()
+      props.onClose()
+    } catch (err) {
+      setError(String((err as Error).message).slice(0, 160))
+    }
   }
 
   return (
@@ -46,9 +52,12 @@ export default function CreateGroupModal(props: { onClose: () => void }): React.
           <input value={title} data-testid="group-title" onChange={(e) => setTitle(e.target.value)} placeholder="如：Jeff 官网开发" />
         </label>
         <div style={{ display: 'flex', gap: 12 }}>
-          <label className="field" style={{ width: 90 }}>
+          <label className="field" style={{ width: 110 }}>
             <span>图标</span>
-            <input value={icon} onChange={(e) => setIcon(e.target.value)} maxLength={4} />
+            <div className="emoji-input-row">
+              <input value={icon} onChange={(e) => setIcon(e.target.value)} />
+              <EmojiPickerButton value={icon} onPick={setIcon} testId="group-icon-create-picker" />
+            </div>
           </label>
         </div>
         <label className="field">
@@ -93,6 +102,7 @@ export default function CreateGroupModal(props: { onClose: () => void }): React.
           </div>
         </div>
         <div className="modal-actions">
+          {error && <span className="settings-error" style={{ marginRight: 'auto', alignSelf: 'center' }}>⚠️ {error}</span>}
           <button className="btn" onClick={props.onClose}>取消</button>
           <button className="btn primary" data-testid="group-create-confirm" disabled={!title.trim() || !leaderId} onClick={() => void save()}>
             建群

@@ -4,6 +4,7 @@ import { api } from '../api'
 import { IPC, modelDisplayLabel, type ChatMsg, type ContextPreviewInfo } from '@jeff/core'
 import Avatar from './Avatar'
 import { Markdown } from './Markdown'
+import { CopyButton } from './ui/CopyButton'
 import { useImages, ImagePreviews, MsgImages, AssistantExtras, StreamingBubble, useComposerResize } from './ChatShared'
 import ChatHistoryDrawer from './ChatHistoryDrawer'
 import ContextDrawer, { ContextUsageBar, fetchContextPreview } from './ContextDrawer'
@@ -42,12 +43,17 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
   useEffect(() => {
     let cancelled = false
     setCtxLoading(true)
-    void fetchContextPreview({ agentId: props.agentId, model: currentModel }).then((p) => {
-      if (!cancelled) {
-        setCtxPreview(p)
-        setCtxLoading(false)
-      }
-    })
+    // catch/finally 兜底：IPC 失败也不能把界面留在永久「加载中」
+    fetchContextPreview({ agentId: props.agentId, model: currentModel })
+      .then((p) => {
+        if (!cancelled) setCtxPreview(p)
+      })
+      .catch(() => {
+        if (!cancelled) setCtxPreview(null)
+      })
+      .finally(() => {
+        if (!cancelled) setCtxLoading(false)
+      })
     return () => {
       cancelled = true
     }
@@ -105,7 +111,13 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
           >
             {compressing ? '压缩中…' : '压缩'}
           </button>
-          <button className="text-btn" data-testid="chat-new-session" onClick={() => void newAgentSession(agent.id)} title="开启新会话（旧会话保留在聊天记录里）">
+          <button
+            className="text-btn"
+            data-testid="chat-new-session"
+            disabled={sendingNow}
+            onClick={() => void newAgentSession(agent.id)}
+            title={sendingNow ? '生成中不能开新会话，请先停止或等待完成' : '开启新会话（旧会话保留在聊天记录里）'}
+          >
             新会话
           </button>
           <button className="icon-btn" title="聊天记录" data-testid="chat-history" onClick={() => setHistoryOpen(true)}>
@@ -256,16 +268,19 @@ export function MessageBubble(props: { msg: ChatMsg; agentName: string; agentAva
       {!mine && <Avatar emoji={agentAvatar} size={34} />}
       <div className="msg-stack">
         {!mine && <div className="msg-sender">{agentName}</div>}
-        <div className={`bubble ${mine ? 'user' : 'assistant'}`}>
-          {isMarkdown && <AssistantExtras reasoning={msg.reasoning} tools={msg.tools} />}
-          <MsgImages images={msg.images || []} />
-          {isMarkdown ? (
-            <Markdown text={msg.text} />
-          ) : (
-            msg.text.split('\n').map((line, i) => (
-              <p key={i}>{line || ' '}</p>
-            ))
-          )}
+        <div className="msg-bubble-wrap">
+          <div className={`bubble ${mine ? 'user' : 'assistant'}`}>
+            {isMarkdown && <AssistantExtras reasoning={msg.reasoning} tools={msg.tools} />}
+            <MsgImages images={msg.images || []} />
+            {isMarkdown ? (
+              <Markdown text={msg.text} />
+            ) : (
+              msg.text.split('\n').map((line, i) => (
+                <p key={i}>{line || ' '}</p>
+              ))
+            )}
+          </div>
+          <CopyButton className="msg-copy" text={msg.text} label="复制消息" testId="msg-copy" />
         </div>
       </div>
       {mine && <div className="self-avatar">🧑</div>}

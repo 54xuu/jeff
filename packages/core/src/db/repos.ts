@@ -241,6 +241,38 @@ export const projectAgentRepo = (db: DB) => ({
     const row = db.prepare('SELECT role FROM project_agent WHERE project_id = ? AND agent_id = ?').get(projectId, agentId) as { role: string } | undefined
     return row?.role
   },
+  /** 换群主：旧 leader 降为 worker，目标成员置为唯一 leader（事务，防中途失败留下双 leader） */
+  setLeader(projectId: string, agentId: string): void {
+    db.exec('BEGIN')
+    try {
+      db.prepare(`UPDATE project_agent SET role = 'worker' WHERE project_id = ? AND role = 'leader'`).run(projectId)
+      this.add(projectId, agentId, 'leader')
+      db.exec('COMMIT')
+    } catch (err) {
+      db.exec('ROLLBACK')
+      throw err
+    }
+  },
+  /**
+   * 完整成员快照替换（事务）：leader 必属成员集合且唯一；差集删除不在新集合中的旧成员。
+   * memberIds 不含 leader 时会自动补上，保证「群主必在群里」。
+   */
+  replaceMembers(projectId: string, leaderId: string, memberIds: string[]): void {
+    const uniq = Array.from(new Set([leaderId, ...memberIds]))
+    db.exec('BEGIN')
+    try {
+      const keep = new Set(uniq)
+      for (const row of this.listByProject(projectId)) {
+        if (!keep.has(row.agent_id)) this.remove(projectId, row.agent_id)
+      }
+      let pos = 0
+      for (const id of uniq) this.add(projectId, id, id === leaderId ? 'leader' : 'worker', pos++)
+      db.exec('COMMIT')
+    } catch (err) {
+      db.exec('ROLLBACK')
+      throw err
+    }
+  },
 })
 
 // ---------- task ----------

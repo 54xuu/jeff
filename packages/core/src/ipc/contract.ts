@@ -381,7 +381,7 @@ export type InvokeMap = {
     timeoutMs?: number
     tlsVerify?: boolean
   }
-  [IPC.contextPreview]: { agentId: string; projectId?: string }
+  [IPC.contextPreview]: { agentId: string; projectId?: string; model?: { providerID: string; modelID: string } }
   [IPC.contextCompress]: { agentId: string; projectId?: string; model?: { providerID: string; modelID: string } }
   [IPC.smokeShot]: { name: string }
   [IPC.smokeDone]: void
@@ -392,7 +392,7 @@ export type EventPayloads = {
   [IPC.evSidecarLog]: { line: string }
   [IPC.evChatUpdated]: { agentId: string; sessionId: string }
   [IPC.evDataChanged]: { what: 'agents' | 'projects' | 'tasks' | 'settings' }
-  [IPC.evGroupUpdated]: { projectId: string }
+  [IPC.evGroupUpdated]: { projectId: string; threadId?: string }
   [IPC.evSync]: { state: string; detail?: string }
-  [IPC.evChatStream]: { kind: 'private' | 'group'; agentId: string; projectId?: string; messageId: string; text: string; reasoning?: string; currentTool?: string; tools?: Array<{ tool: string; status?: string }>; done: boolean }
+  [IPC.evChatStream]: { kind: 'private' | 'group'; agentId: string; projectId?: string; threadId?: string; messageId: string; text: string; reasoning?: string; currentTool?: string; tools?: Array<{ tool: string; status?: string }>; done: boolean }
 }

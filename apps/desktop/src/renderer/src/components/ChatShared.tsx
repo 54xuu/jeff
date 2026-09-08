@@ -2,11 +2,12 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ChatImage } from '@jeff/core'
 import Avatar from './Avatar'
 import { Markdown } from './Markdown'
+import { CopyButton } from './ui/CopyButton'
 
 const COMPOSER_MIN_HEIGHT = 40
 const COMPOSER_MAX_HEIGHT = 320
 
-/** 流式气泡（私聊/群聊共用）：只要 store 里有流就显示（不再 gate 在发送中状态上） */
+/** 流式气泡（私聊/群聊共用）：只要 store 里有流就显示（不再 gate 在发送中状态上）；已有正文即可复制 */
 export function StreamingBubble(props: {
   avatar: string
   name: string
@@ -18,10 +19,13 @@ export function StreamingBubble(props: {
       <Avatar emoji={avatar} size={34} />
       <div className="msg-stack">
         <div className="msg-sender">{name}</div>
-        <div className="bubble assistant">
-          <AssistantExtras reasoning={stream.reasoning ? [stream.reasoning] : undefined} tools={stream.tools} live />
-          <Markdown text={stream.text || '…'} />
-          <span className="stream-caret" />
+        <div className="msg-bubble-wrap">
+          <div className="bubble assistant">
+            <AssistantExtras reasoning={stream.reasoning ? [stream.reasoning] : undefined} tools={stream.tools} live />
+            <Markdown text={stream.text || '…'} />
+            <span className="stream-caret" />
+          </div>
+          <CopyButton className="msg-copy" text={stream.text} label="复制消息" testId="msg-copy-streaming" />
         </div>
       </div>
     </div>

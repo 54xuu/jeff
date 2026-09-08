@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api } from '../../api'
 import { IPC, type MemoryScopeInfo, type AgentsMdInfo } from '@jeff/core'
+import { Dialog, Toast } from '../ui'
 
 /** 记忆字符预算（与 memory/store.ts 保持一致） */
 const BUDGET = { user: 1375, agent: 2200, project: 2200 } as const
@@ -24,6 +25,9 @@ export default function MemorySettings(): React.JSX.Element {
   const [mdSel, setMdSel] = useState<AgentsMdInfo | null>(null)
   const [mdContent, setMdContent] = useState('')
   const [mdDirty, setMdDirty] = useState(false)
+  const [mdSaving, setMdSaving] = useState(false)
+  const [mdError, setMdError] = useState<string | null>(null)
+  const [mdConfirmDiscard, setMdConfirmDiscard] = useState(false)
 
   const refresh = async (keepId?: string) => {
     const list = await api.invoke<MemoryScopeInfo[]>(IPC.memoryScopes)
@@ -46,6 +50,18 @@ export default function MemorySettings(): React.JSX.Element {
     void refreshMd()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // 编辑器 Esc 关闭（脏内容先确认丢弃，不悄然丢失）
+  useEffect(() => {
+    if (!mdSel) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || mdConfirmDiscard || mdSaving) return
+      requestDiscard()
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mdSel, mdDirty, mdConfirmDiscard, mdSaving])
 
   const pick = async (m: MemoryScopeInfo, resetDirty = true) => {
     const data = await api.invoke<MemoryData>(IPC.memoryGet, { kind: m.kind, id: m.id })
@@ -192,12 +208,21 @@ export default function MemorySettings(): React.JSX.Element {
               </div>
               <div className="provider-sub">{m.file}</div>
             </div>
-            <button className="text-btn" onClick={async () => {
-              const data = await api.invoke<{ content: string; file: string }>(IPC.agentsMdGet, { kind: m.kind, id: m.id })
-              setMdSel(m)
-              setMdContent(data.content)
-              setMdDirty(false)
-            }}>
+            <button
+              className="text-btn"
+              data-testid={`agentsmd-edit-${m.kind}`}
+              onClick={async () => {
+                try {
+                  const data = await api.invoke<{ content: string; file: string }>(IPC.agentsMdGet, { kind: m.kind, id: m.id })
+                  setMdSel(m)
+                  setMdContent(data.content)
+                  setMdDirty(false)
+                  setMdError(null)
+                } catch (err) {
+                  alert(`读取失败：${String((err as Error).message).slice(0, 160)}`)
+                }
+              }}
+            >
               编辑
             </button>
           </div>
@@ -205,32 +230,87 @@ export default function MemorySettings(): React.JSX.Element {
       </div>
 
       {mdSel && (
-        <div className="modal-mask" onClick={() => setMdSel(null)}>
-          <div className="modal form" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-title">编辑 AGENTS.md</div>
-            <p className="settings-tip">{mdSel.file}</p>
+        <div className="agentsmd-mask" data-testid="agentsmd-editor" onMouseDown={(e) => { if (e.target === e.currentTarget) requestDiscard() }}>
+          <div className="agentsmd-panel" role="dialog" aria-modal="true" onMouseDown={(e) => e.stopPropagation()}>
+            <div className="agentsmd-head">
+              <div className="agentsmd-head-title">
+                <span className="agentsmd-title">编辑 AGENTS.md</span>
+                <span className={`tag ${mdSel.kind === 'user' ? 'tag-green' : ''}`}>{mdSel.kind === 'user' ? '用户级 · 全局生效' : '项目级 · 仅该群生效'}</span>
+                <span className="tag">{mdSel.exists ? '已存在' : '未创建'}</span>
+              </div>
+              <div className="agentsmd-head-file" title={mdSel.file}>{mdSel.file}</div>
+            </div>
             <textarea
-              rows={16}
+              className="agentsmd-textarea"
+              data-testid="agentsmd-textarea"
               value={mdContent}
               onChange={(e) => { setMdContent(e.target.value); setMdDirty(true) }}
               placeholder={'# 我的全局规则\n- 回复用简体中文\n- 代码先解释再写…'}
               spellCheck={false}
-              style={{ fontFamily: 'inherit', fontSize: 12 }}
             />
-            <div className="modal-actions">
-              <button className="btn" onClick={() => setMdSel(null)}>取消</button>
-              <button className="btn primary" disabled={!mdDirty} onClick={async () => {
-                if (!mdSel) return
-                await api.invoke(IPC.agentsMdSave, { kind: mdSel.kind, id: mdSel.id, content: mdContent })
-                setMdSel(null)
-                void refreshMd()
-              }}>
-                保存
-              </button>
+            <div className="agentsmd-foot">
+              <span className="agentsmd-meta" data-testid="agentsmd-status">
+                {mdContent.length} 字符
+                {mdDirty ? ' · 有未保存修改' : ' · 已与文件一致'}
+              </span>
+              {mdError && <Toast kind="error" message={mdError} onClose={() => setMdError(null)} />}
+              <div className="agentsmd-foot-actions">
+                <button className="btn" data-testid="agentsmd-cancel" disabled={mdSaving} onClick={() => requestDiscard()}>
+                  取消
+                </button>
+                <button className="btn primary" data-testid="agentsmd-save" disabled={!mdDirty || mdSaving} onClick={() => void saveMd()}>
+                  {mdSaving ? '保存中…' : '保存'}
+                </button>
+              </div>
             </div>
           </div>
         </div>
       )}
+
+      {mdConfirmDiscard && (
+        <Dialog
+          title="放弃未保存的修改？"
+          onClose={() => setMdConfirmDiscard(false)}
+          onConfirm={() => {
+            setMdConfirmDiscard(false)
+            setMdSel(null)
+            setMdDirty(false)
+            setMdError(null)
+          }}
+          confirmLabel="放弃修改"
+          cancelLabel="继续编辑"
+        >
+          <p className="settings-tip">AGENTS.md 有未保存的修改，关闭后将丢失这些内容。</p>
+        </Dialog>
+      )}
     </div>
   )
+
+  function requestDiscard() {
+    if (!mdSel) return
+    if (mdDirty && !mdSaving) setMdConfirmDiscard(true)
+    else closeMd()
+  }
+
+  function closeMd() {
+    setMdSel(null)
+    setMdDirty(false)
+    setMdError(null)
+  }
+
+  async function saveMd() {
+    if (!mdSel) return
+    setMdSaving(true)
+    setMdError(null)
+    try {
+      await api.invoke(IPC.agentsMdSave, { kind: mdSel.kind, id: mdSel.id, content: mdContent })
+      closeMd()
+      void refreshMd()
+    } catch (err) {
+      // 保存失败：保留编辑内容，错误可见可重试
+      setMdError(`保存失败：${String((err as Error).message).slice(0, 160)}`)
+    } finally {
+      setMdSaving(false)
+    }
+  }
 }

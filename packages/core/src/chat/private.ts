@@ -36,8 +36,21 @@ export interface PrivateChatHooks {
   onDebugLog?: (tag: string, detail: unknown) => void
 }
 
+/** 用户主动停止生成的可辨识错误（IPC 层映射为 stopped 结果，不与 provider 失败混同） */
+export class PrivateChatStoppedError extends Error {
+  constructor(sessionId: string) {
+    super('已停止生成')
+    this.name = 'PrivateChatStoppedError'
+    this.sessionId = sessionId
+  }
+  sessionId: string
+}
+
 /** 私聊（agent = 微信好友）：每个 agent 一条持续会话 */
 export class PrivateChat {
+  /** 并发 ensureSession 去重：同 agent 只建一个会话（防 send/新会话竞态下 KV 指针互相覆盖） */
+  private ensureInflight = new Map<string, Promise<string>>()
+
   constructor(
     private db: DB,
     private getOc: () => OcClient,
@@ -46,6 +59,14 @@ export class PrivateChat {
 
   /** 取该 agent 的活跃会话（不存在则创建并记录） */
   async ensureSession(agentId: string, agentName: string): Promise<string> {
+    const inflight = this.ensureInflight.get(agentId)
+    if (inflight) return inflight
+    const p = this.doEnsureSession(agentId, agentName).finally(() => this.ensureInflight.delete(agentId))
+    this.ensureInflight.set(agentId, p)
+    return p
+  }
+
+  private async doEnsureSession(agentId: string, agentName: string): Promise<string> {
     await this.hooks?.beforeEnsure?.()
     const kv = kvRepo(this.db)
     const existing = kv.get(SESSION_KEY(agentId))
@@ -110,6 +131,8 @@ export class PrivateChat {
         error: msg,
         stack: (err as Error)?.stack,
       })
+      // 停止是用户预期行为：抛专用错误，由 IPC 层转成 stopped 结果，UI 不显示「发送失败」
+      if (stopped) throw new PrivateChatStoppedError(sessionId)
       throw err
     }
   }

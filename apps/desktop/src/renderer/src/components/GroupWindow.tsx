@@ -5,16 +5,21 @@ import { IPC, type ContextPreviewInfo, type GroupMessage } from '@jeff/core'
 import Avatar from './Avatar'
 import GroupInfoDrawer from './GroupInfoDrawer'
 import { Markdown } from './Markdown'
+import { CopyButton } from './ui/CopyButton'
 import { useImages, ImagePreviews, MsgImages, AssistantExtras, StreamingBubble, useComposerResize } from './ChatShared'
 import ContextDrawer, { ContextUsageBar, fetchContextPreview } from './ContextDrawer'
 
 /** 项目群聊天窗口（= 微信群） */
 export default function GroupWindow(props: { projectId: string }): React.JSX.Element {
-  const { projects, agents, groupMessages, sending, streaming, loadGroupHistory, sendGroup, stopGroup, settings } = useStore()
+  const { projects, agents, groupMessages, groupThreads, sending, streaming, loadGroupHistory, sendGroup, stopGroup, settings } = useStore()
   const project = projects.find((p) => p.id === props.projectId)
   const msgs = groupMessages[props.projectId] || []
+  const curThread = groupThreads[props.projectId]
   const busy = !!sending[`group:${props.projectId}`]
-  const stream = streaming[`group:${props.projectId}`]
+  const rawStream = streaming[`group:${props.projectId}`]
+  // 旧会话的流式/更新事件不串进当前会话（threadId 缺失时视为旧数据，保持原行为兼容）
+  const streamStale = !!rawStream?.threadId && !!curThread && rawStream.threadId !== curThread
+  const stream = streamStale ? undefined : rawStream
   const [draft, setDraft] = useState('')
   const [drawer, setDrawer] = useState(false)
   const [contextOpen, setContextOpen] = useState(false)
@@ -69,25 +74,31 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
     }
     let cancelled = false
     setCtxLoading(true)
-    void fetchContextPreview({ agentId: ctxAgentId, projectId: props.projectId, model: currentModel }).then((p) => {
-      if (!cancelled) {
-        setCtxPreview(p)
-        setCtxLoading(false)
-      }
-    })
+    // catch/finally 兜底：IPC 失败也不能把界面留在永久「加载中」
+    fetchContextPreview({ agentId: ctxAgentId, projectId: props.projectId, model: currentModel })
+      .then((p) => {
+        if (!cancelled) setCtxPreview(p)
+      })
+      .catch(() => {
+        if (!cancelled) setCtxPreview(null)
+      })
+      .finally(() => {
+        if (!cancelled) setCtxLoading(false)
+      })
     return () => {
       cancelled = true
     }
   }, [ctxAgentId, props.projectId, currentModel?.providerID, currentModel?.modelID, msgs.length, busy])
 
-  // @ 自动补全：光标前最近的 @xx
+  // @ 自动补全：光标前最近的 @xx —— 只列本项目群成员（后端只路由成员，列全局 agent 会误导派发）
   const mentionCandidates = useMemo(() => {
     if (!mention) return []
+    const memberIds = new Set(members.map((m) => m.agentId))
     return useStore
       .getState()
-      .agents.filter((a) => a.name.includes(mention.query))
+      .agents.filter((a) => memberIds.has(a.id) && a.name.includes(mention.query))
       .slice(0, 5)
-  }, [mention])
+  }, [mention, members])
 
   if (!project) return <div className="empty-hint">项目群不存在</div>
 
@@ -142,8 +153,12 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
   }
 
   const doNewThread = async () => {
-    await api.invoke(IPC.groupThreadNew, { projectId: project.id })
-    await loadGroupHistory(project.id)
+    try {
+      await api.invoke(IPC.groupThreadNew, { projectId: project.id })
+      await loadGroupHistory(project.id)
+    } catch (err) {
+      alert(String((err as Error).message).slice(0, 160))
+    }
   }
 
   return (
@@ -291,7 +306,7 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
         </div>
       </div>
 
-      {drawer && <GroupInfoDrawer project={project} onClose={() => setDrawer(false)} />}
+      {drawer && <GroupInfoDrawer project={project} busy={busy} onClose={() => setDrawer(false)} />}
       {contextOpen && ctxAgentId && (
         <ContextDrawer
           agentId={ctxAgentId}
@@ -315,6 +330,7 @@ function GroupBubble(props: { msg: GroupMessage }): React.JSX.Element {
     return (
       <div className="msg-system">
         <span>{msg.text}</span>
+        <CopyButton className="msg-copy msg-copy-system" text={msg.text} label="复制消息" testId="msg-copy-system" />
       </div>
     )
   }
@@ -324,16 +340,19 @@ function GroupBubble(props: { msg: GroupMessage }): React.JSX.Element {
       {!mine && <Avatar emoji={msg.sender_avatar || '🤖'} size={34} />}
       <div className="msg-stack">
         {!mine && <div className="msg-sender">{msg.sender_name}</div>}
-        <div className={`bubble ${mine ? 'user' : 'assistant'}`}>
-          {msg.role === 'assistant' && <AssistantExtras reasoning={msg.reasoning} tools={msg.tools} />}
-          <MsgImages images={msg.images || []} />
-          {msg.role === 'assistant' ? (
-            <Markdown text={msg.text} />
-          ) : (
-            msg.text.split('\n').map((line, i) => (
-              <p key={i}>{line || ' '}</p>
-            ))
-          )}
+        <div className="msg-bubble-wrap">
+          <div className={`bubble ${mine ? 'user' : 'assistant'}`}>
+            {msg.role === 'assistant' && <AssistantExtras reasoning={msg.reasoning} tools={msg.tools} />}
+            <MsgImages images={msg.images || []} />
+            {msg.role === 'assistant' ? (
+              <Markdown text={msg.text} />
+            ) : (
+              msg.text.split('\n').map((line, i) => (
+                <p key={i}>{line || ' '}</p>
+              ))
+            )}
+          </div>
+          <CopyButton className="msg-copy" text={msg.text} label="复制消息" testId="msg-copy" />
         </div>
       </div>
       {mine && <div className="self-avatar">🧑</div>}

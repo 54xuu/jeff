@@ -2491,3 +2491,233 @@ body.composer-resizing * {
   max-height: 40vh;
   overflow-y: auto;
 }
+
+/* ===== 消息气泡复制图标（两个叠加小正方形；hover/键盘聚焦时浮现） ===== */
+.msg-bubble-wrap {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+}
+
+.msg-copy {
+  position: absolute;
+  top: -10px;
+  right: -30px;
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  background: var(--bg-panel);
+  color: var(--text-2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+  z-index: 5;
+}
+
+/* 右侧（用户）气泡的复制按钮放在气泡左侧，避免伸出窗口右缘 */
+.msg-row.right .msg-copy {
+  right: auto;
+  left: -30px;
+}
+
+.msg-copy:hover {
+  color: var(--green);
+  border-color: color-mix(in srgb, var(--green) 45%, transparent);
+}
+
+.msg-copy.done {
+  color: var(--green);
+  border-color: color-mix(in srgb, var(--green) 45%, transparent);
+  opacity: 1;
+}
+
+.msg-copy.failed {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 45%, transparent);
+  opacity: 1;
+}
+
+.msg-row:hover .msg-copy,
+.msg-copy:focus-visible,
+.msg-copy.done,
+.msg-copy.failed {
+  opacity: 1;
+}
+
+/* 群 system 消息（居中标签）也带复制 */
+.msg-system {
+  position: relative;
+}
+
+.msg-copy-system {
+  position: static;
+  opacity: 0;
+  width: 20px;
+  height: 20px;
+  margin-left: 6px;
+  border: none;
+  background: transparent;
+}
+
+.msg-system:hover .msg-copy-system,
+.msg-copy-system.done,
+.msg-copy-system.failed,
+.msg-copy-system:focus-visible {
+  opacity: 1;
+}
+
+/* 代码块复制按钮状态（与消息复制同一原语） */
+.md-copy-btn.done {
+  color: var(--green);
+}
+
+.md-copy-btn.failed {
+  color: var(--danger);
+}
+
+/* ===== emoji 选择器（头像/群图标输入框右侧的方形按钮） ===== */
+.emoji-input-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.emoji-input-row input {
+  flex: 1;
+  min-width: 0;
+}
+
+.emoji-pick {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.emoji-pick-btn {
+  width: var(--input-h);
+  height: var(--input-h);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-panel);
+  color: var(--text-2);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.emoji-pick-btn:hover {
+  border-color: color-mix(in srgb, var(--green) 45%, transparent);
+  color: var(--green);
+}
+
+.emoji-pick-cur {
+  font-size: 16px;
+}
+
+.emoji-pick-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  /* 按钮通常贴近输入区右缘：向左展开，避免溢出窗口 */
+  left: auto;
+  right: 0;
+  z-index: 60;
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  box-shadow: var(--shadow);
+  border: 1px solid var(--border);
+}
+
+/* ===== AGENTS.md 编辑工作台（接近全屏，深浅主题一致） ===== */
+.agentsmd-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 80;
+}
+
+.agentsmd-panel {
+  width: min(960px, 92vw);
+  height: min(680px, 88vh);
+  background: var(--bg-panel);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.agentsmd-head {
+  padding: 14px 18px 10px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.agentsmd-head-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.agentsmd-title {
+  font-size: var(--fs-lg);
+  font-weight: 600;
+}
+
+.agentsmd-head-file {
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  user-select: text;
+}
+
+.agentsmd-textarea {
+  flex: 1;
+  border: none;
+  outline: none;
+  resize: none;
+  padding: 14px 18px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.65;
+  color: var(--text);
+  background: var(--bg-panel);
+}
+
+.agentsmd-textarea::placeholder {
+  color: var(--text-2);
+}
+
+.agentsmd-foot {
+  border-top: 1px solid var(--border);
+  padding: 10px 18px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.agentsmd-meta {
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.agentsmd-foot-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 8px;
+}

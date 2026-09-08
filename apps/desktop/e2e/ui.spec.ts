@@ -76,34 +76,18 @@ test.describe('Jeff UI 封闭清单', () => {
       await expect(page.getByTestId('memory-settings')).toBeVisible()
 
       // ---- MCP 导入（确认后会重启引擎，给足时间）----
-      await page.getByTestId('settings-nav-mcp').click()
-      await expect(page.getByTestId('mcp-settings')).toBeVisible()
-      await page.getByTestId('mcp-import').click()
-      const mcpJson = JSON.stringify({
-        mcpServers: {
-          'mysql-test': {
-            command: 'npx',
-            args: ['-y', '@benborla29/mcp-server-mysql'],
-            env: {
-              MYSQL_HOST: '192.168.3.249',
-              MYSQL_PORT: '3306',
-              MYSQL_USER: 'root',
-              MYSQL_PASS: 'Admin@123',
-              MYSQL_DB: '',
-              ALLOW_INSERT_OPERATION: 'false',
-              ALLOW_UPDATE_OPERATION: 'false',
-              ALLOW_DELETE_OPERATION: 'false',
-              ALLOW_DDL_OPERATION: 'false',
-            },
-          },
-        },
-      })
-      await page.getByTestId('mcp-import-json').fill(mcpJson)
-      await page.getByTestId('mcp-parse').click()
-      await page.getByTestId('mcp-import-confirm').click()
-      // 等待导入弹层关闭（保存会重启引擎，可能较慢）
-      await expect(page.getByTestId('mcp-import-json')).toHaveCount(0, { timeout: 90000 })
-      await expect(page.locator('.provider-name').filter({ hasText: 'mysql-test' })).toBeVisible({ timeout: 15000 })
+      // 凭据不进仓库：只从环境变量注入（E2E_MCP_MYSQL_JSON = 完整 mcpServers JSON）；未提供则跳过该段
+      const mcpJson = process.env.E2E_MCP_MYSQL_JSON || ''
+      if (mcpJson.trim()) {
+        await page.getByTestId('settings-nav-mcp').click()
+        await expect(page.getByTestId('mcp-settings')).toBeVisible()
+        await page.getByTestId('mcp-import').click()
+        await page.getByTestId('mcp-import-json').fill(mcpJson)
+        await page.getByTestId('mcp-parse').click()
+        await page.getByTestId('mcp-import-confirm').click()
+        // 等待导入弹层关闭（保存会重启引擎，可能较慢）
+        await expect(page.getByTestId('mcp-import-json')).toHaveCount(0, { timeout: 90000 })
+      }
 
       // ---- 供应商保存复位 ----
       await page.getByTestId('settings-nav-providers').click()

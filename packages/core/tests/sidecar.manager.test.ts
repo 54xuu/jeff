@@ -88,4 +88,34 @@ process.on("SIGTERM", () => process.exit(0));
     expect(manager.status).toBe('stopped')
     expect(await manager.ping()).toBe(false)
   }, 20000)
+
+  it('崩溃后立刻显式 stop：已排队的自动重启被取消，不会自己复活', async () => {
+    manager = makeManager()
+    await manager.start()
+    // 模拟崩溃：kill → exit 事件安排 1s 后自动重启
+    manager['proc']?.kill('SIGKILL')
+    // 在重启 timer 到期前显式 stop
+    await new Promise((r) => setTimeout(r, 300))
+    await manager.stop()
+    expect(manager.status).toBe('stopped')
+    // 等待远超原重启延迟：generation 不应增加（不会被旧 timer 拉起）
+    await new Promise((r) => setTimeout(r, 4000))
+    expect(manager.generation).toBe(1)
+    expect(manager.status).toBe('stopped')
+    expect(await manager.ping()).toBe(false)
+  }, 20000)
+
+  it('恢复运行后清空 lastError（旧崩溃错误不再挂在现时状态上）', async () => {
+    manager = makeManager()
+    await manager.start()
+    expect(manager.lastError).toBe('')
+    manager['proc']?.kill('SIGKILL')
+    const deadline = Date.now() + 15000
+    while (manager.generation < 2 && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 200))
+    }
+    expect(manager.generation).toBe(2)
+    expect(manager.status).toBe('running')
+    expect(manager.lastError).toBe('')
+  }, 20000)
 })

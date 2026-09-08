@@ -124,6 +124,9 @@ export class GroupThreadStore {
     }
     chatMessageRepo(this.db).deleteByScope(groupMsgScope(projectId, threadId))
     kv.delete(THREAD_KEY(projectId, threadId))
+    // 最后会话指针若指向被删 thread 的 session，一并清理（防 abort 打到已删除会话 / lastGroupAgentId 误判）
+    const last = kv.get(LAST_OC_KEY(projectId))
+    if (last && ocSessionIds.includes(last)) kv.delete(LAST_OC_KEY(projectId))
     if (wasActive) {
       kv.delete(ACTIVE_KEY(projectId))
       const rest = this.listThreads(projectId)

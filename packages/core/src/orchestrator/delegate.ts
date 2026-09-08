@@ -10,6 +10,8 @@ import { groupMsgScope } from './groupThreads.js'
 export interface DelegateCtx {
   projectId: string
   leaderAgentId: string
+  /** 发起委派时的群会话（冻结归属，防界面切换后公告/消息落到别的 thread） */
+  threadId?: string
 }
 
 export interface DelegateResult {
@@ -93,7 +95,7 @@ export class Delegator {
     }
     this.inflight.add(sig)
 
-    const threadId = this.groupChat.threads.ensureActiveThread(ctx.projectId)
+    const threadId = ctx.threadId || this.groupChat.threads.ensureActiveThread(ctx.projectId)
     const scope = groupMsgScope(ctx.projectId, threadId)
     const leaderName = agents.get(ctx.leaderAgentId)?.name || '群主'
     try {

@@ -5,7 +5,7 @@ import path from 'node:path'
 import { openDb } from '../src/db/db.js'
 import { agentRepo } from '../src/db/repos.js'
 import { buildPaths } from '../src/paths.js'
-import { PrivateChat } from '../src/chat/private.js'
+import { PrivateChat, PrivateChatStoppedError } from '../src/chat/private.js'
 import { XIAOJIE_ID } from '../src/ipc/contract.js'
 import type { DB } from '../src/db/db.js'
 import type { OcClient } from '../src/oc/client.js'
@@ -65,5 +65,48 @@ describe('PrivateChat.send 模型归属', () => {
     await chat.send(a.id, a.name, 'hi')
     expect(sent[0].model).toEqual({ providerID: 'fallback', modelID: 'fb' })
     expect(sent[0].variant).toBeUndefined()
+  })
+
+  it('并发 ensureSession 同一 agent 只建一个会话', async () => {
+    let createCalls = 0
+    const oc = {
+      getSession: async () => {
+        throw new Error('not found')
+      },
+      createSession: async () => {
+        createCalls += 1
+        await new Promise((r) => setTimeout(r, 50))
+        return { id: `ses_${createCalls}` }
+      },
+    } as unknown as OcClient
+    const chat = new PrivateChat(db, () => oc)
+    const [s1, s2] = await Promise.all([chat.ensureSession('agt_a', '甲'), chat.ensureSession('agt_a', '甲')])
+    expect(s1).toBe(s2)
+    expect(createCalls).toBe(1)
+  })
+
+  it('用户主动停止抛 PrivateChatStoppedError，与 provider 失败可区分', async () => {
+    const oc = {
+      getSession: async () => ({ id: 'x' }),
+      createSession: async () => ({ id: 'ses_stop' }),
+      sendMessage: async () => {
+        throw new Error('request aborted')
+      },
+      isAbortRequested: () => true,
+    } as unknown as OcClient
+    const chat = new PrivateChat(db, () => oc)
+    await expect(chat.send('agt_stop', '甲', 'hi')).rejects.toThrow(PrivateChatStoppedError)
+    // provider 失败（未请求停止）仍原样抛出
+    const oc2 = {
+      getSession: async () => ({ id: 'x' }),
+      createSession: async () => ({ id: 'ses_fail' }),
+      sendMessage: async () => {
+        throw new Error('request aborted')
+      },
+      isAbortRequested: () => false,
+    } as unknown as OcClient
+    const chat2 = new PrivateChat(db, () => oc2)
+    await expect(chat2.send('agt_fail', '乙', 'hi')).rejects.toThrow(/aborted/)
+    expect(chat2).toBeDefined()
   })
 })

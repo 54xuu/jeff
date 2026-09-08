@@ -11,6 +11,8 @@ export type SettingsSection = 'providers' | 'mcp' | 'memory' | 'engine' | 'sync'
 export interface StreamState {
   agentId?: string
   projectId?: string
+  /** 群流所属的会话（thread）；与当前窗口不一致时不渲染，防串会话 */
+  threadId?: string
   senderName: string
   senderAvatar: string
   text: string
@@ -28,6 +30,8 @@ interface JeffState {
   projects: ProjectInfo[]
   messages: Record<string, ChatMsg[]>
   groupMessages: Record<string, GroupMessage[]>
+  /** 项目群当前活跃会话 id（与 groupMessages 同 key；用于过滤跨会话流式事件） */
+  groupThreads: Record<string, string | undefined>
   tasks: Record<string, TaskInfo[]>
   sending: Record<string, boolean>
   /** 流式回复增量（key: agent:<id> / group:<id>；完成时清空） */
@@ -62,6 +66,7 @@ export const useStore = create<JeffState>((set, get) => ({
   projects: [],
   messages: {},
   groupMessages: {},
+  groupThreads: {},
   tasks: {},
   sending: {},
   streaming: {},
@@ -92,8 +97,8 @@ export const useStore = create<JeffState>((set, get) => ({
   },
 
   loadGroupHistory: async (projectId) => {
-    const msgs = await api.invoke<GroupMessage[]>(IPC.groupHistory, { projectId })
-    set((s) => ({ groupMessages: { ...s.groupMessages, [projectId]: msgs } }))
+    const r = await api.invoke<{ threadId: string; messages: GroupMessage[] }>(IPC.groupHistory, { projectId })
+    set((s) => ({ groupMessages: { ...s.groupMessages, [projectId]: r.messages }, groupThreads: { ...s.groupThreads, [projectId]: r.threadId } }))
   },
 
   loadTasks: async (projectId) => {
@@ -112,8 +117,19 @@ export const useStore = create<JeffState>((set, get) => ({
       },
     }))
     try {
-      await api.invoke(IPC.chatSend, { agentId, text, ...(images && images.length ? { images } : {}) })
+      const r = await api.invoke<{ ok: boolean; stopped?: boolean }>(IPC.chatSend, { agentId, text, ...(images && images.length ? { images } : {}) })
+      // 用户主动停止是预期结果：显示「已停止」而非「发送失败」
+      if (r?.stopped) {
+        set((s) => ({
+          messages: {
+            ...s.messages,
+            [key]: [...(s.messages[key] || []), { id: `stop-${now}`, role: 'system', text: '⏹️ 已停止生成', time: Date.now() }],
+          },
+        }))
+      }
+      await get().loadHistory(key)
     } catch (err) {
+      // 真失败：保留本地用户消息与失败气泡（重拉历史会把刚插入的提示瞬间冲掉，用户再也看不到失败原因）
       set((s) => ({
         messages: {
           ...s.messages,
@@ -122,7 +138,6 @@ export const useStore = create<JeffState>((set, get) => ({
       }))
     } finally {
       set((s) => ({ sending: { ...s.sending, [key]: false } }))
-      await get().loadHistory(key)
     }
   },
 
@@ -141,7 +156,10 @@ export const useStore = create<JeffState>((set, get) => ({
     }))
     try {
       await api.invoke(IPC.groupSend, { projectId, text, ...(images && images.length ? { images } : {}) })
+      await get().loadGroupHistory(key)
+      await get().loadTasks(key)
     } catch (err) {
+      // 同私聊：失败时保留本地气泡与失败原因，不用历史刷新覆盖
       set((s) => ({
         groupMessages: {
           ...s.groupMessages,
@@ -153,14 +171,15 @@ export const useStore = create<JeffState>((set, get) => ({
       }))
     } finally {
       set((s) => ({ sending: { ...s.sending, [`group:${key}`]: false } }))
-      await get().loadGroupHistory(key)
-      await get().loadTasks(key)
     }
   },
 
   newAgentSession: async (agentId) => {
+    // 生成中新会话会切走当前会话指针（回复丢失、停止打到新会话），拒绝
+    const key = `agent:${agentId}`
+    if (get().sending[key]) return
     await api.invoke(IPC.chatNew, { agentId })
-    await get().loadHistory(`agent:${agentId}`)
+    await get().loadHistory(key)
   },
 
   stopAgent: async (agentId) => {
@@ -202,7 +221,7 @@ export const useStore = create<JeffState>((set, get) => ({
   handlePush: (what, payload) => {
     const { active } = get()
     if (what === 'chat-stream') {
-      const p = (payload || {}) as { kind: 'private' | 'group'; agentId: string; projectId?: string; text: string; reasoning?: string; tools?: Array<{ tool: string; status?: string }>; done: boolean }
+      const p = (payload || {}) as { kind: 'private' | 'group'; agentId: string; projectId?: string; threadId?: string; text: string; reasoning?: string; tools?: Array<{ tool: string; status?: string }>; done: boolean }
       const key = p.kind === 'group' ? `group:${p.projectId}` : `agent:${p.agentId}`
       if (p.done) {
         set((s) => {
@@ -216,7 +235,7 @@ export const useStore = create<JeffState>((set, get) => ({
         set((s) => ({
           streaming: {
             ...s.streaming,
-            [key]: { agentId: p.agentId, projectId: p.projectId, senderName: agent?.name || '对方', senderAvatar: agent?.avatar || '🤖', text: p.text, ...(p.reasoning ? { reasoning: p.reasoning } : {}), ...(p.tools?.length ? { tools: p.tools } : {}) },
+            [key]: { agentId: p.agentId, projectId: p.projectId, threadId: p.threadId, senderName: agent?.name || '对方', senderAvatar: agent?.avatar || '🤖', text: p.text, ...(p.reasoning ? { reasoning: p.reasoning } : {}), ...(p.tools?.length ? { tools: p.tools } : {}) },
           },
         }))
       }
@@ -253,7 +272,7 @@ export const useStore = create<JeffState>((set, get) => ({
         void get().loadHistory(`agent:${agentId}`)
       }
     } else if (what === 'group-updated') {
-      const { projectId } = (payload || {}) as { projectId?: string }
+      const { projectId, threadId } = (payload || {}) as { projectId?: string; threadId?: string }
       const key = `group:${projectId}`
       set((s) => {
         if (!(key in s.streaming)) return s
@@ -261,7 +280,9 @@ export const useStore = create<JeffState>((set, get) => ({
         delete streaming[key]
         return { streaming }
       })
-      if (projectId && active?.kind === 'group' && active.id === projectId) {
+      // 只刷新事件归属的会话：带 threadId 且与当前加载的不一致时，不动当前窗口（防旧会话的完成事件串进新会话）
+      const curThread = projectId ? get().groupThreads[projectId] : undefined
+      if (projectId && (!threadId || !curThread || threadId === curThread) && active?.kind === 'group' && active.id === projectId) {
         void get().loadGroupHistory(projectId)
       }
       void get().refreshProjects()

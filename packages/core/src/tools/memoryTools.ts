@@ -13,7 +13,7 @@ export interface ToolCtx {
 
 export type SessionScopeCtx =
   | { kind: 'private'; agentId: string }
-  | { kind: 'group'; projectId: string; agentId: string }
+  | { kind: 'group'; projectId: string; agentId: string; threadId?: string }
   | { kind: 'review'; agentId: string; projectId?: string }
 
 export interface MemoryToolDeps {

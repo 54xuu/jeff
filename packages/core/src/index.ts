@@ -21,12 +21,12 @@ import { MemoryStore } from './memory/store.js'
 import { SessionIndex } from './memory/indexer.js'
 import type { McpServerCfg } from './mcp/parse.js'
 import { probeMcpAll } from './mcp/probe.js'
-import type { SkillsBackupReport, SkillsRestoreStage, SkillsRestoreApply, ContextPreviewInfo } from './ipc/contract.js'
+import type { SkillsBackupReport, SkillsRestoreStage, SkillsRestoreApply, ContextPreviewInfo, GroupMessage } from './ipc/contract.js'
 import { SyncEngine, type WebdavConfig, type SyncReport, normalizeWebdavBasePath } from './sync/engine.js'
 import { compactionThreshold, splitContextMessages } from './chat/context.js'
 import { DebugLogger, type DebugLogFn } from './logger.js'
 
-export const APP_VERSION = '1.3.0'
+export { APP_VERSION } from './version.js'
 
 export type { McpServerCfg } from './mcp/parse.js'
 export { buildPaths, ensureDirs, jeffRoot } from './paths.js'
@@ -127,7 +127,7 @@ export class JeffCore extends EventEmitter {
       }
       if (!member_agent_id || !instruction) return { ok: false, error: 'member_agent_id 与 instruction 必填' }
       const r = await this.delegator.delegate(
-        { projectId: resolved.projectId, leaderAgentId: resolved.agentId },
+        { projectId: resolved.projectId, leaderAgentId: resolved.agentId, ...(resolved.threadId ? { threadId: resolved.threadId } : {}) },
         member_agent_id,
         instruction,
         __ctx?.messageID,
@@ -315,13 +315,22 @@ export class JeffCore extends EventEmitter {
     return this.groupChat.history(projectId, threadId)
   }
 
+  /** 读取当前活跃 thread 的群消息（附 threadId，供渲染层过滤跨会话流式事件） */
+  historyActive(projectId: string): { threadId: string; messages: GroupMessage[] } {
+    const threadId = this.groupChat.activeThreadId(projectId)
+    return { threadId, messages: this.groupChat.history(projectId, threadId) }
+  }
+
   newGroupThread(projectId: string, title?: string): { threadId: string; title: string } {
     if (!projectRepo(this.db).get(projectId)) throw new Error('项目不存在')
+    if (this.groupChat.isBusy(projectId)) throw new Error('生成中不可切换会话，请先停止或等待完成')
     const t = this.groupChat.threads.createThread(projectId, title)
     return { threadId: t.id, title: t.title }
   }
 
   activateGroupThread(projectId: string, threadId: string): void {
+    if (!projectRepo(this.db).get(projectId)) throw new Error('项目不存在')
+    if (this.groupChat.isBusy(projectId)) throw new Error('生成中不可切换会话，请先停止或等待完成')
     this.groupChat.threads.setActive(projectId, threadId)
   }
 
@@ -331,6 +340,8 @@ export class JeffCore extends EventEmitter {
   }
 
   async deleteGroupThread(projectId: string, threadId: string): Promise<{ ok: boolean }> {
+    if (!projectRepo(this.db).get(projectId)) throw new Error('项目不存在')
+    if (this.groupChat.isBusy(projectId)) throw new Error('生成中不可删除会话，请先停止或等待完成')
     const { ocSessionIds } = this.groupChat.threads.deleteThread(projectId, threadId)
     for (const sid of ocSessionIds) {
       await this.oc.deleteSession(sid).catch(() => {})
@@ -498,8 +509,10 @@ export class JeffCore extends EventEmitter {
     return null
   }
 
-  /** 停止群聊当前生成（abort 最近路由的会话） */
+  /** 停止群聊当前生成：优先取消在途流水线（含后续回合），无在途时兜底 abort 最近会话 */
   async abortGroup(projectId: string): Promise<void> {
+    const hit = await this.groupChat.abort(projectId)
+    if (hit) return
     const sessionId = this.groupChat.threads.getLastOcSession(projectId)
     if (sessionId) await this.oc.abortSession(sessionId)
   }
@@ -731,9 +744,9 @@ export class JeffCore extends EventEmitter {
 
   /** opencode session → Jeff 会话语义（元数据优先，kv 扫描回退） */
   resolveSession(sessionId: string): SessionScopeCtx | null {
-    const meta = this.kv().getJSON<{ kind: 'private' | 'group' | 'review'; agentId: string; projectId?: string } | null>(sesMetaKey(sessionId), null)
+    const meta = this.kv().getJSON<{ kind: 'private' | 'group' | 'review'; agentId: string; projectId?: string; threadId?: string } | null>(sesMetaKey(sessionId), null)
     if (meta?.agentId) {
-      if (meta.kind === 'group' && meta.projectId) return { kind: 'group', projectId: meta.projectId, agentId: meta.agentId }
+      if (meta.kind === 'group' && meta.projectId) return { kind: 'group', projectId: meta.projectId, agentId: meta.agentId, ...(meta.threadId ? { threadId: meta.threadId } : {}) }
       if (meta.kind === 'review') return { kind: 'review', agentId: meta.agentId, projectId: meta.projectId }
       return { kind: 'private', agentId: meta.agentId }
     }
@@ -745,7 +758,7 @@ export class JeffCore extends EventEmitter {
       if (r.value === sessionId) {
         // session:group:projectId:threadId:agentId
         const withThread = /session:group:([^:]+):([^:]+):(.+)/.exec(r.key)
-        if (withThread) return { kind: 'group', projectId: withThread[1], agentId: withThread[3] }
+        if (withThread) return { kind: 'group', projectId: withThread[1], agentId: withThread[3], threadId: withThread[2] }
         const legacy = /session:group:([^:]+):(.+)/.exec(r.key)
         if (legacy) return { kind: 'group', projectId: legacy[1], agentId: legacy[2] }
       }
@@ -852,9 +865,9 @@ export class JeffCore extends EventEmitter {
       }
       if (!resolved) return
       if (resolved.kind === 'group') {
-        this.debugLog.log('stream-done', { kind: 'group', sessionId, projectId: resolved.projectId, agentId: resolved.agentId })
-        this.bus.emit('chat-stream', { kind: 'group', projectId: resolved.projectId, agentId: resolved.agentId, messageId: info?.id || '', text: '', done: true })
-        this.bus.emit('group-updated', { projectId: resolved.projectId })
+        this.debugLog.log('stream-done', { kind: 'group', sessionId, projectId: resolved.projectId, agentId: resolved.agentId, threadId: resolved.threadId })
+        this.bus.emit('chat-stream', { kind: 'group', projectId: resolved.projectId, agentId: resolved.agentId, threadId: resolved.threadId, messageId: info?.id || '', text: '', done: true })
+        this.bus.emit('group-updated', { projectId: resolved.projectId, threadId: resolved.threadId })
       } else if (resolved.kind === 'private') {
         this.debugLog.log('stream-done', { kind: 'private', sessionId, agentId: resolved.agentId })
         this.bus.emit('chat-stream', { kind: 'private', agentId: resolved.agentId, messageId: info?.id || '', text: '', done: true })
@@ -889,7 +902,7 @@ export class JeffCore extends EventEmitter {
     const tools = this.streamTools.get(`${sessionId}:${messageId}`)
     const toolList = tools ? Array.from(tools.values()) : undefined
     if (resolved.kind === 'group') {
-      this.bus.emit('chat-stream', { kind: 'group', projectId: resolved.projectId, agentId: resolved.agentId, messageId, text, reasoning: reasoning || undefined, tools: toolList, done: false })
+      this.bus.emit('chat-stream', { kind: 'group', projectId: resolved.projectId, agentId: resolved.agentId, threadId: resolved.threadId, messageId, text, reasoning: reasoning || undefined, tools: toolList, done: false })
     } else {
       this.bus.emit('chat-stream', { kind: 'private', agentId: resolved.agentId, messageId, text, reasoning: reasoning || undefined, tools: toolList, done: false })
     }
@@ -1118,6 +1131,7 @@ export { SidecarManager } from './sidecar/manager.js'
 export { DebugLogger, type DebugLogFn } from './logger.js'
 export { ToolBridge } from './tools/bridge.js'
 export { GroupChat } from './orchestrator/group.js'
+export { PrivateChatStoppedError } from './chat/private.js'
 export { Delegator } from './orchestrator/delegate.js'
 export { registerProjectTools, taskCardMessage } from './tools/projectTools.js'
 export { MemoryStore, parseEntries, matchUnique, type MemoryScope, type MemoryOp, type MemoryResult } from './memory/store.js'

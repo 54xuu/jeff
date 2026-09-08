@@ -91,4 +91,22 @@ describe('GroupThreadStore', () => {
     threads.setActive(projectId, t2.id)
     expect(group.history(projectId)).toHaveLength(0)
   })
+
+  it('删除话题时清理指向它的 last-session 指针', async () => {
+    const ocStub = {
+      getSession: async () => ({ id: 'x' }),
+      createSession: async () => ({ id: 'ses_del' }),
+      sendMessage: async () => ({ id: 'msg', parts: [{ type: 'text', text: 'ok' }] }),
+    } as unknown as OcClient
+    group = new GroupChat(db, () => ocStub)
+    threads = group.threads
+
+    await group.send({ projectId, text: '将被删除的会话' })
+    const tid = group.activeThreadId(projectId)
+    // runTurn 会把最后会话指针指到该 thread 的 session
+    expect(kvRepo(db).get(`session:group:last:${projectId}`)).toBe('ses_del')
+
+    threads.deleteThread(projectId, tid)
+    expect(kvRepo(db).get(`session:group:last:${projectId}`)).toBeNull()
+  })
 })
