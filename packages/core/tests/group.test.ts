@@ -61,6 +61,13 @@ describe('GroupChat', () => {
     expect(briefing).toContain('群主/leader')
     expect(briefing).toContain('工作者/worker')
     expect(briefing).toContain('@')
+    // 新版协作规范：技能清单 + 串行派发指示
+    expect(briefing).toContain('群成员名册与技能清单')
+    expect(briefing).toContain('写代码')
+    expect(briefing).toContain('画图')
+    expect(briefing).toContain('按执行顺序')
+    const workerBriefing = group.buildBriefing(p.id, agentRepo(db).list().find((a) => a.name === '开发')!.id)
+    expect(workerBriefing).toContain('@架构师 汇报')
   })
 
   it('briefing 空简介时仍写入项目背景占位', () => {
@@ -164,6 +171,156 @@ describe('GroupChat', () => {
     const userMsg = history.find((m) => m.role === 'user')
     expect(userMsg?.images?.length).toBe(1)
     expect(userMsg?.images?.[0].dataUrl).toBe(img.dataUrl)
+  })
+
+  it('parseAllMentions：按出现顺序返回全部提及并去重', () => {
+    const members = [
+      { agent_id: 'a_dev', name: '开发' },
+      { agent_id: 'a_ui', name: 'UI' },
+      { agent_id: 'a_qa', name: '测试' },
+    ]
+    const r = group.parseAllMentions('先 @开发 做A，再 @UI 画B，最后 @开发 复查', members)
+    expect(r.map((m) => m.agent_id)).toEqual(['a_dev', 'a_ui'])
+    expect(group.parseAllMentions('无提及', members)).toEqual([])
+  })
+
+  it('extractMentionTask：按下一个 @ 切分各自的任务说明', () => {
+    const members = [
+      { agent_id: 'a_dev', name: '开发' },
+      { agent_id: 'a_ui', name: 'UI' },
+    ]
+    const text = '方案如下 @开发 实现登录接口， @UI 出登录页设计稿'
+    expect(group.extractMentionTask(text, '开发', members)).toBe('实现登录接口，')
+    expect(group.extractMentionTask(text, 'UI', members)).toBe('出登录页设计稿')
+    expect(group.extractMentionTask('没有派发', '开发', members)).toBe('')
+  })
+
+  it('send：leader 拆解 @派发 → worker 串行执行并汇报 → leader 自动总结闭环', async () => {
+    const p = projectRepo(db).list()[0]
+    const agents = agentRepo(db)
+    const leader = agents.list().find((a) => a.name === '架构师')!
+    const dev = agents.list().find((a) => a.name === '开发')!
+    const ui = agents.list().find((a) => a.name === 'UI')!
+    const slugToName = new Map([
+      [agentSlug(leader.id), '架构师'],
+      [agentSlug(dev.id), '开发'],
+      [agentSlug(ui.id), 'UI'],
+    ])
+    const order: string[] = []
+    const texts: Array<{ agent?: string; text?: string }> = []
+    const ocStub = {
+      getSession: async () => ({ id: 'x' }),
+      createSession: async (input: { title?: string }) => ({ id: `ses_${Math.random().toString(36).slice(2, 8)}`, title: input?.title }),
+      sendMessage: async (input: { agent?: string; text?: string }) => {
+        const name = slugToName.get(input.agent || '') || ''
+        order.push(name)
+        texts.push(input)
+        if (name === '架构师' && order.filter((n) => n === '架构师').length === 1) {
+          return { id: 'm1', parts: [{ type: 'text', text: '我来拆解：@开发 实现登录接口；@UI 出登录页设计稿' }] }
+        }
+        if (name === '开发') return { id: 'm2', parts: [{ type: 'text', text: '@架构师 汇报：登录接口已完成' }] }
+        if (name === 'UI') return { id: 'm3', parts: [{ type: 'text', text: '@架构师 汇报：设计稿已产出' }] }
+        return { id: 'm4', parts: [{ type: 'text', text: '总结：登录功能前后端均已完成' }] }
+      },
+    } as unknown as OcClient
+    group = new GroupChat(db, () => ocStub)
+
+    const r = await group.send({ projectId: p.id, text: '做个登录功能' })
+    // 执行顺序：leader 拆解 → 开发 → UI → leader 总结
+    expect(order).toEqual(['架构师', '开发', 'UI', '架构师'])
+    expect(r.routedTo).toBe(leader.id)
+    // worker 收到的是带指派前缀与汇报要求的派发指令
+    expect(texts[1].text).toContain('群主 架构师 在群里指派')
+    expect(texts[1].text).toContain('实现登录接口')
+    expect(texts[2].text).toContain('出登录页设计稿')
+    // 总结回合是系统唤醒提示
+    expect(texts[3].text).toContain('系统通知')
+    // 群记录：公告 + 各成员消息 + 总结
+    const history = group.history(p.id)
+    expect(history.some((m) => m.role === 'system' && m.text.includes('已拆解任务'))).toBe(true)
+    expect(history.some((m) => m.sender_name === '开发' && m.text.includes('登录接口已完成'))).toBe(true)
+    expect(history.some((m) => m.sender_name === 'UI' && m.text.includes('设计稿已产出'))).toBe(true)
+    expect(history.some((m) => m.sender_name === '架构师' && m.text.includes('总结：'))).toBe(true)
+  })
+
+  it('send：用户直连 @worker，worker 汇报后 leader 自动验收总结', async () => {
+    const p = projectRepo(db).list()[0]
+    const agents = agentRepo(db)
+    const leader = agents.list().find((a) => a.name === '架构师')!
+    const dev = agents.list().find((a) => a.name === '开发')!
+    const slugToName = new Map([
+      [agentSlug(leader.id), '架构师'],
+      [agentSlug(dev.id), '开发'],
+    ])
+    const order: string[] = []
+    const ocStub = {
+      getSession: async () => ({ id: 'x' }),
+      createSession: async () => ({ id: `ses_${Math.random().toString(36).slice(2, 8)}` }),
+      sendMessage: async (input: { agent?: string }) => {
+        const name = slugToName.get(input.agent || '') || ''
+        order.push(name)
+        if (name === '开发') return { id: 'w1', parts: [{ type: 'text', text: '@架构师 汇报：已修好 bug' }] }
+        return { id: 'w2', parts: [{ type: 'text', text: '已验收，问题解决' }] }
+      },
+    } as unknown as OcClient
+    group = new GroupChat(db, () => ocStub)
+
+    const r = await group.send({ projectId: p.id, text: '@开发 修复登录 bug' })
+    expect(order).toEqual(['开发', '架构师'])
+    expect(r.routedTo).toBe(leader.id)
+  })
+
+  it('send：协作步数达到上限后停止派发，由 leader 汇总兜底', async () => {
+    const p = projectRepo(db).list()[0]
+    const agents = agentRepo(db)
+    const leader = agents.list().find((a) => a.name === '架构师')!
+    const dev = agents.list().find((a) => a.name === '开发')!
+    const ui = agents.list().find((a) => a.name === 'UI')!
+    const slugToName = new Map([
+      [agentSlug(leader.id), '架构师'],
+      [agentSlug(dev.id), '开发'],
+      [agentSlug(ui.id), 'UI'],
+    ])
+    let workerTurns = 0
+    const ocStub = {
+      getSession: async () => ({ id: 'x' }),
+      createSession: async () => ({ id: `ses_${Math.random().toString(36).slice(2, 8)}` }),
+      sendMessage: async (input: { agent?: string }) => {
+        const name = slugToName.get(input.agent || '') || ''
+        if (name === '架构师') {
+          if (workerTurns === 0) return { id: 'l1', parts: [{ type: 'text', text: '@开发 开始干活' }] }
+          return { id: 'l2', parts: [{ type: 'text', text: '步数超限，汇总当前进展' }] }
+        }
+        // worker 之间互相无限转派，制造死循环场景
+        workerTurns += 1
+        return { id: `t${workerTurns}`, parts: [{ type: 'text', text: workerTurns % 2 === 1 ? '@UI 继续推进' : '@开发 继续推进' }] }
+      },
+    } as unknown as OcClient
+    group = new GroupChat(db, () => ocStub)
+
+    await group.send({ projectId: p.id, text: '一个会循环派发的任务' })
+    expect(workerTurns).toBe(5)
+    const history = group.history(p.id)
+    expect(history.some((m) => m.role === 'system' && m.text.includes('已达上限'))).toBe(true)
+  })
+
+  it('send：leader 直答（无派发）不触发总结回合', async () => {
+    const p = projectRepo(db).list()[0]
+    const agents = agentRepo(db)
+    const leader = agents.list().find((a) => a.name === '架构师')!
+    const order: string[] = []
+    const ocStub = {
+      getSession: async () => ({ id: 'x' }),
+      createSession: async () => ({ id: 'ses_hi' }),
+      sendMessage: async (input: { agent?: string }) => {
+        order.push(agentSlug(leader.id) === input.agent ? 'leader' : (input.agent as string))
+        return { id: 'hi', parts: [{ type: 'text', text: '你好，我是群主' }] }
+      },
+    } as unknown as OcClient
+    group = new GroupChat(db, () => ocStub)
+
+    await group.send({ projectId: p.id, text: '在吗？' })
+    expect(order).toEqual(['leader'])
   })
 })
 

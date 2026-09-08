@@ -6,6 +6,9 @@ import type { GroupMessage } from '../ipc/contract.js'
 import { agentPromptOpts } from '../util/modelKey.js'
 import { GroupThreadStore, groupMsgScope } from './groupThreads.js'
 
+/** 单次用户消息触发的串行协作流水线最大步数（防死循环） */
+const MAX_PIPELINE_HOPS = 5
+
 export interface GroupChatHooks {
   beforeEnsure?: () => Promise<void>
   onSessionCreated?: (sessionId: string, meta: { kind: 'private' | 'group' | 'review'; agentId: string; projectId?: string; threadId?: string }) => void
@@ -77,12 +80,37 @@ export class GroupChat {
     return kvRepo(this.db).get(this.threads.sessionKey(projectId, tid, agentId))
   }
 
-  /** 解析 @提及 */
+  /** 解析首个 @提及（兼容旧逻辑） */
   parseMention(text: string, members: Array<{ agent_id: string; name: string }>): string | null {
-    const hits = members.filter((m) => text.includes(`@${m.name}`))
-    if (hits.length === 0) return null
-    hits.sort((a, b) => b.name.length - a.name.length)
-    return hits[0].agent_id
+    const mentions = this.parseAllMentions(text, members)
+    return mentions.length > 0 ? mentions[0].agent_id : null
+  }
+
+  /**
+   * 解析文本中所有有效的 @提及成员，按在文本中出现的先后顺序排列，去重返回。
+   * 同一位置匹配到多个成员名（如「开发」与「开发-后端」）时取最长名。
+   */
+  parseAllMentions(text: string, members: Array<{ agent_id: string; name: string }>): Array<{ agent_id: string; name: string }> {
+    const seen = new Set<string>()
+    const result: Array<{ agent_id: string; name: string }> = []
+    let i = text.indexOf('@')
+    while (i !== -1 && i < text.length) {
+      let best: { agent_id: string; name: string } | null = null
+      for (const m of members) {
+        if (!m.name) continue
+        if (text.startsWith(m.name, i + 1) && (!best || m.name.length > best.name.length)) best = m
+      }
+      if (best) {
+        if (!seen.has(best.agent_id)) {
+          seen.add(best.agent_id)
+          result.push({ agent_id: best.agent_id, name: best.name })
+        }
+        i = text.indexOf('@', i + 1 + best.name.length)
+        continue
+      }
+      i = text.indexOf('@', i + 1)
+    }
+    return result
   }
 
   buildBriefing(projectId: string, agentId: string): string {
@@ -90,32 +118,55 @@ export class GroupChat {
     if (!project) throw new Error(`项目不存在: ${projectId}`)
     const agents = agentRepo(this.db)
     const members = projectAgentRepo(this.db).listByProject(projectId)
+    const isLeaderBriefing = project.leader_agent_id === agentId
+    const leaderAgent = project.leader_agent_id ? agents.get(project.leader_agent_id) : undefined
+    const leaderName = leaderAgent?.name || '群主'
+
     const roster = members
       .map((m) => {
         const a = agents.get(m.agent_id)
         const isLeader = m.agent_id === project.leader_agent_id
         const roleLabel = isLeader ? '群主/leader' : '工作者/worker'
-        return `- ${a?.name || m.agent_id}（${roleLabel}）id=${m.agent_id}`
+        const descParts: string[] = []
+        if (a?.description?.trim()) descParts.push(a.description.trim())
+        if (a?.instructions?.trim()) descParts.push(`职责设定：${a.instructions.trim().slice(0, 150)}`)
+        const desc = descParts.length > 0 ? ` - ${descParts.join('；')}` : ''
+        return `- ${a?.name || m.agent_id}（${roleLabel}）id=${m.agent_id}${desc}`
       })
       .join('\n')
-    const isLeaderBriefing = project.leader_agent_id === agentId
+
     const roleLine = isLeaderBriefing
-      ? '你是本群群主（leader），用户的消息默认由你统筹：能自己答就答；需要别人干活的，先拆分任务，再逐个用 jeff_delegate 委派工具把任务分派给合适的工作者（worker），等结果回群后汇总。只在自己回复文本里 @ 成员不会触发执行，派活必须调用 jeff_delegate。'
-      : '你是本群工作者（worker），就你职责范围内的问题作答；不做开发/产品等细分类角色。'
+      ? `你是本群群主（leader），负责统筹协调与任务派发：
+1. 简单打招呼、寒暄、纯信息问答或群内仅有你一人时，直接用清晰友好的语言回复用户；
+2. 凡涉及具体工作与执行任务（如写代码、查验文件、执行操作、排查问题等），【严禁自己包揽全部执行】！必须仔细分析上方《群成员名册与技能清单》，评估各项子任务最适合哪位 worker 执行；
+3. 将任务分解为具体子步骤，在回复中按执行顺序依次使用「@成员名 <具体子任务要求>」进行明确派发（例如：“@开发小李 请修改前端页面... @测试小王 请执行测试...”）；
+4. 系统调度器会严格按顺序驱动各 worker 串行执行并在群内向你汇报；待所有 worker 汇报完毕后，系统会自动触发你进行最终验收与向用户的汇总答复。`
+      : `你是本群工作者（worker）。
+1. 当群主 @ 你并指派任务时，请根据指派要求全力执行（结合工作空间完成代码编写、文件查验等）；
+2. 任务执行完成后，你【必须】在回复最后以「@${leaderName} 汇报：<任务执行结果与结论总结>」的格式在群里公开汇报，以便群主验收与向用户汇总。`
+
     const bg = (project.description || '').trim()
     return [
       `【项目群上下文】群名：${project.title}`,
       `项目背景（群简介）：${bg || '（未填写，请在群资料补充）'}`,
-      `工作空间目录：${project.workspace_dir || '默认工作区'}。用户没有指定输出位置时，你产出的所有文件（代码、文档等）都保存到该目录。`,
-      `成员名册（仅 leader / worker）：`,
+      `工作空间目录：${project.workspace_dir || '默认工作区'}。用户没有指定输出位置时，产出的所有文件（代码、文档等）都保存到该目录。`,
+      `【群成员名册与技能清单】：`,
       roster,
+      `【协作与执行规范】：`,
       roleLine,
-      `用户消息里 @某成员名 表示直接指名对话；回复请用简体中文，简洁、可执行。`,
+      `群内所有沟通均使用简体中文，清晰、专业、可执行。`,
     ].join('\n')
   }
 
   /**
    * 发送群消息。模型/思考取路由目标智能体自己的设置；入参 model/variant 忽略。
+   *
+   * 协作流程（串行流水线，避免工作空间文件/git 资源竞争）：
+   * 1. 用户消息默认路由 leader（@成员名 直达该成员）；
+   * 2. leader 拆解任务后在回复里 @worker 派发 → 调度器解析全部 @，按出现顺序串行驱动各 worker 执行；
+   * 3. worker 完成后在群里 @leader 汇报（也可再 @其他 worker 续入队列）；
+   * 4. 队列执行完毕后自动唤醒 leader 做最终验收总结回复用户。
+   * 单次用户消息全链路最多 MAX_PIPELINE_HOPS 步，防死循环。
    */
   async send(input: { projectId: string; text: string; model?: { providerID: string; modelID: string }; variant?: string; images?: Array<{ mime: string; dataUrl: string }> }): Promise<{ routedTo: string }> {
     const { projectId, text } = input
@@ -126,6 +177,7 @@ export class GroupChat {
     const members = projectAgentRepo(this.db).listByProject(projectId)
     const agents = agentRepo(this.db)
     const scope = groupMsgScope(projectId, threadId)
+    const leaderId = project.leader_agent_id
 
     chatMessageRepo(this.db).add({
       scope,
@@ -137,22 +189,97 @@ export class GroupChat {
 
     const memberInfos = members.map((m) => ({ agent_id: m.agent_id, name: agents.get(m.agent_id)?.name || '' }))
     const mentioned = this.parseMention(text, memberInfos)
-    const targetId = mentioned ?? project.leader_agent_id
-    const target = agents.get(targetId)
-    if (!target) throw new Error(`路由目标不存在: ${targetId}`)
+    const firstTargetId = mentioned ?? leaderId
+    const firstTarget = agents.get(firstTargetId)
+    if (!firstTarget) throw new Error(`路由目标不存在: ${firstTargetId}`)
 
-    const sessionId = await this.ensureSession(projectId, targetId, threadId)
+    // 第一回合：响应用户
+    const first = await this.runTurn({ projectId, threadId, agentId: firstTargetId, text, images: input.images })
+    let routedTo = firstTargetId
+    if (first.stopped) return { routedTo }
+
+    // 串行流水线：解析第一回合回复中的 @ 派发队列
+    // （用户直连 worker 时，其回复里的 @leader 是「汇报」，进总结分支而非派发队列）
+    let hops = 0
+    let dispatchedAny = false
+    let queue = this.parseAllMentions(first.content, memberInfos)
+      .filter((m) => m.agent_id !== firstTargetId && !(firstTargetId !== leaderId && m.agent_id === leaderId))
+      .map((m) => m.agent_id)
+    if (firstTargetId === leaderId && queue.length > 0) {
+      this.addSystemMessage(projectId, `📋 ${firstTarget.name} 已拆解任务，开始按序派发给 ${queue.length} 位成员执行…`)
+    }
+    while (queue.length > 0 && hops < MAX_PIPELINE_HOPS) {
+      const workerId = queue.shift() as string
+      const worker = agents.get(workerId)
+      if (!worker) continue
+      routedTo = workerId
+      hops += 1
+      dispatchedAny = true
+      const taskText = this.extractMentionTask(first.content, worker.name, memberInfos)
+      const prompt = `【群主 ${agents.get(leaderId)?.name || '群主'} 在群里指派】${taskText || text}\n请执行上述任务；完成后在群里以「@${agents.get(leaderId)?.name || '群主'} 汇报：<结果>」公开汇报。`
+      const turn = await this.runTurn({ projectId, threadId, agentId: workerId, text: prompt })
+      if (turn.stopped) return { routedTo }
+      // worker 回复里继续 @ 的人：leader 代表汇报到位；其他 worker 续入队列串行执行
+      for (const nm of this.parseAllMentions(turn.content, memberInfos)) {
+        if (nm.agent_id === workerId) continue
+        if (nm.agent_id !== leaderId && !queue.includes(nm.agent_id)) queue.push(nm.agent_id)
+      }
+    }
+    if (hops >= MAX_PIPELINE_HOPS && queue.length > 0) {
+      this.addSystemMessage(projectId, `⚠️ 本轮协作步数已达上限（${MAX_PIPELINE_HOPS} 步），剩余任务不再派发，由群主直接汇总。`)
+    }
+
+    // 闭环：有派发（或用户直连 worker 且 worker 向 leader 汇报）时，唤醒 leader 做最终总结
+    if (dispatchedAny || (firstTargetId !== leaderId && this.parseAllMentions(first.content, memberInfos).some((m) => m.agent_id === leaderId))) {
+      routedTo = leaderId
+      const summaryPrompt = dispatchedAny
+        ? '【系统通知】你派发的任务已全部由成员执行完毕并回群汇报。请对照各成员的汇报验收成果，直接向用户给出清晰、完整的最终总结答复（无需再派发新任务）。'
+        : `【系统通知】${firstTarget.name} 已在群里向你汇报。请验收其结果，直接向用户给出最终答复。`
+      await this.runTurn({ projectId, threadId, agentId: leaderId, text: summaryPrompt })
+    }
+    return { routedTo }
+  }
+
+  /** 从派发文本中截取 @成员名 后、下一个 @提及前的那段任务说明 */
+  extractMentionTask(text: string, memberName: string, members: Array<{ agent_id: string; name: string }>): string {
+    const start = text.indexOf(`@${memberName}`)
+    if (start === -1) return ''
+    const from = start + memberName.length + 1
+    let end = text.length
+    for (const m of members) {
+      if (!m.name || m.name === memberName) continue
+      const idx = text.indexOf(`@${m.name}`, from)
+      if (idx !== -1 && idx < end) end = idx
+    }
+    return text
+      .slice(from, end)
+      .replace(/^[：:，,、\s-]+/, '')
+      .trim()
+  }
+
+  /**
+   * 驱动单个 agent 回合一轮：调 opencode、落库、错误兜底。
+   * 返回回复文本与是否被用户停止。
+   */
+  private async runTurn(input: { projectId: string; threadId: string; agentId: string; text: string; images?: Array<{ mime: string; dataUrl: string }> }): Promise<{ content: string; stopped: boolean }> {
+    const { projectId, threadId, agentId, text } = input
+    const agents = agentRepo(this.db)
+    const target = agents.get(agentId)
+    const scope = groupMsgScope(projectId, threadId)
+    if (!target) throw new Error(`路由目标不存在: ${agentId}`)
+
+    const sessionId = await this.ensureSession(projectId, agentId, threadId)
     this.threads.setLastOcSession(projectId, sessionId)
     let reply: AssistantInfo
-    const memoryBlock = this.hooks?.buildMemory?.(targetId, projectId)
-    const system = memoryBlock ? `${this.buildBriefing(projectId, targetId)}\n\n${memoryBlock}` : this.buildBriefing(projectId, targetId)
+    const memoryBlock = this.hooks?.buildMemory?.(agentId, projectId)
+    const system = memoryBlock ? `${this.buildBriefing(projectId, agentId)}\n\n${memoryBlock}` : this.buildBriefing(projectId, agentId)
     const opts = agentPromptOpts(target, this.hooks?.defaultModel?.() ?? null)
     try {
       reply = await this.getOc().sendMessage({
         sessionId,
         text,
         ...(input.images && input.images.length ? { images: input.images } : {}),
-        agent: agentSlug(targetId),
+        agent: agentSlug(agentId),
         system,
         ...opts,
       })
@@ -163,7 +290,7 @@ export class GroupChat {
       this.hooks?.onDebugLog?.(stopped ? 'group-send-stop' : 'group-send-fail', {
         projectId,
         threadId,
-        agentId: targetId,
+        agentId,
         agent: target.name,
         sessionId,
         error: msg,
@@ -174,8 +301,8 @@ export class GroupChat {
         sender_type: 'system',
         content: stopped ? '⏹️ 已停止生成' : `⚠️ ${target.name} 处理消息失败：${msg.slice(0, 200)}`,
       })
-      if (!stopped) throw err
-      return { routedTo: targetId }
+      if (stopped) return { content: '', stopped: true }
+      throw err
     }
 
     const textParts = (reply.parts || []).filter((p) => p.type === 'text') as Array<{ type: 'text'; text: string }>
@@ -188,7 +315,7 @@ export class GroupChat {
     chatMessageRepo(this.db).add({
       scope,
       sender_type: 'agent',
-      sender_id: targetId,
+      sender_id: agentId,
       content,
       meta: {
         sessionId,
@@ -207,8 +334,8 @@ export class GroupChat {
           : {}),
       },
     })
-    this.hooks?.afterReply?.({ kind: 'group', projectId, agentId: targetId })
-    return { routedTo: targetId }
+    this.hooks?.afterReply?.({ kind: 'group', projectId, agentId })
+    return { content, stopped: false }
   }
 
   /** 读取当前（或指定）thread 的群消息 */
