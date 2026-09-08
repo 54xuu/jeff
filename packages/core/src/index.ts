@@ -928,6 +928,14 @@ export class JeffCore extends EventEmitter {
   private restarting: Promise<void> | null = null
   async restartSidecar(): Promise<void> {
     if (this.restarting) return this.restarting
+    // 记录调用来源堆栈（排查「空闲时谁触发了重启」）
+    this.debugLog.log('sidecar-restart', {
+      stack: new Error('trace')
+        .stack?.split('\n')
+        .slice(2, 6)
+        .map((l) => l.trim())
+        .join(' | '),
+    })
     this.restarting = (async () => {
       await this.sidecar.stop()
       await this.sidecar.start()

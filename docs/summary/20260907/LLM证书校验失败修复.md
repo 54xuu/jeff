@@ -149,3 +149,25 @@ v1.7.7 诊断日志给出决定性证据：`[sse-open]` 出现了，但之后**�
 
 - 版本 1.7.8（PATCH），`npm test` 102 通过、typecheck 仅存量 3 个 e2e helper 错误，deb 装本机验证（日志格式实测正确）。
 - Windows 装 `jeff-Setup-1.7.8.exe`：群聊发消息应能看到流式过程（思考/正文/工具），发送带缩进的消息不再丢格式。
+
+## 追加排查：v1.7.10（主进程「Uncaught Exception: AbortError」崩溃弹窗）
+
+### 现象（Windows，1.7.9 构建）
+
+应用开着放一段时间后弹主进程错误框：`Uncaught Exception: AbortError: The operation was aborted`，堆栈在 `fetch$1 → executeSequence → HotPatcher.execute/patchInline`。同时段调试日志：`sse-error TypeError: terminated` → sidecar `stopped×2 → starting → running`（一次完整的 restartSidecar）→ 重新 `sse-open`。
+
+### 根因
+
+1. 堆栈里的 `HotPatcher` 是 **webdav 客户端库的依赖（hot-patcher）**：WebDAV 同步的每个请求带 `AbortSignal.timeout(60s)`（engine.ts:677），而 hot-patcher 补丁实现的 abort 抛的是**普通 `AbortError`**（非 TimeoutError，与弹窗文案吻合）。休眠唤醒/网络切换等断连场景下这个拒绝从库内部的 promise 链漏出。
+2. 主进程此前**没有任何 `unhandledRejection`/`uncaughtException` 兜底**——Node 默认把未处理拒绝按致命错误抛出 → Electron 弹「Uncaught Exception」框。
+3. 日志里那次 sidecar 重启的调用方无从得知（restartSidecar 无来源日志），是又一个可观测盲区。
+
+### 修复
+
+1. **主进程兜底**（`apps/desktop/src/main/index.ts`）：模块加载即注册 `process.on('unhandledRejection')` / `process.on('uncaughtException')` → `console.error` + 写调试日志（`unhandled-rejection` / `uncaught-exception`，含堆栈）。桌面应用对这类网络异常的正确行为是记录并继续，不再弹崩溃框。
+2. **restartSidecar 来源追踪**（`packages/core/src/index.ts`）：每次重启前落 `sidecar-restart` 日志（含调用堆栈前 4 帧），下次「空闲时谁触发了重启」一眼可见。
+
+### 发版
+
+- 版本 1.7.10（PATCH），单测 114 通过（含并行会话 v1.7.9 新增的 sidecar/oc/群串行化测试），deb 装本机验证。
+- Windows 装 `jeff-Setup-1.7.10.exe`：崩溃弹窗不会再出现；若再有异常，调试日志里 `unhandled-rejection`/`uncaught-exception`/`sidecar-restart` 会留下完整现场。

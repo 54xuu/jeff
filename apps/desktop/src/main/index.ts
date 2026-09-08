@@ -9,6 +9,21 @@ let win: BrowserWindow | null = null
 let core: JeffCore | null = null
 let tray: Tray | null = null
 
+// 主进程兜底：漏网的 Promise 拒绝/异常只记日志，不再弹「Uncaught Exception」崩溃框
+// （webdav 库在休眠唤醒/断网等场景会泄漏 AbortError 拒绝，杀不掉主进程才是正确行为）
+process.on('unhandledRejection', (reason) => fatalLog('unhandled-rejection', reason))
+process.on('uncaughtException', (err) => fatalLog('uncaught-exception', err))
+
+function fatalLog(tag: string, err: unknown): void {
+  const msg = err instanceof Error ? err.stack || err.message : String(err)
+  console.error(`[jeff] ${tag}:`, msg)
+  try {
+    core?.debugLog?.log(tag, msg)
+  } catch {
+    /* 日志失败忽略 */
+  }
+}
+
 function iconPath(): string | null {
   const cand = app.isPackaged
     ? path.join(process.resourcesPath ?? '', 'icon.png')
