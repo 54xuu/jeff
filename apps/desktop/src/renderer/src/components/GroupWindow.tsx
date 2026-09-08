@@ -5,7 +5,7 @@ import { IPC, type ContextPreviewInfo, type GroupMessage } from '@jeff/core'
 import Avatar from './Avatar'
 import GroupInfoDrawer from './GroupInfoDrawer'
 import { Markdown } from './Markdown'
-import { useImages, ImagePreviews, MsgImages, AssistantExtras, useComposerResize } from './ChatShared'
+import { useImages, ImagePreviews, MsgImages, AssistantExtras, StreamingBubble, useComposerResize } from './ChatShared'
 import ContextDrawer, { ContextUsageBar, fetchContextPreview } from './ContextDrawer'
 
 /** 项目群聊天窗口（= 微信群） */
@@ -195,19 +195,7 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
             </div>
           </div>
         )}
-        {busy && stream && (
-          <div className="msg-row left">
-            <Avatar emoji={stream.senderAvatar} size={34} />
-            <div className="msg-stack">
-              <div className="msg-sender">{stream.senderName}</div>
-              <div className="bubble assistant">
-                <AssistantExtras reasoning={stream.reasoning ? [stream.reasoning] : undefined} tools={stream.tools} live />
-                <Markdown text={stream.text || '…'} />
-                <span className="stream-caret" />
-              </div>
-            </div>
-          </div>
-        )}
+        {stream && <StreamingBubble avatar={stream.senderAvatar} name={stream.senderName} stream={stream} />}
       </div>
 
       <div className="composer" ref={composerRef}>

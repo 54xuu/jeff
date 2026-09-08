@@ -4,7 +4,7 @@ import { api } from '../api'
 import { IPC, modelDisplayLabel, type ChatMsg, type ContextPreviewInfo } from '@jeff/core'
 import Avatar from './Avatar'
 import { Markdown } from './Markdown'
-import { useImages, ImagePreviews, MsgImages, AssistantExtras, useComposerResize } from './ChatShared'
+import { useImages, ImagePreviews, MsgImages, AssistantExtras, StreamingBubble, useComposerResize } from './ChatShared'
 import ChatHistoryDrawer from './ChatHistoryDrawer'
 import ContextDrawer, { ContextUsageBar, fetchContextPreview } from './ContextDrawer'
 import AgentProfileDrawer from './AgentProfileDrawer'
@@ -140,19 +140,7 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
             </div>
           </div>
         )}
-        {sendingNow && stream && (
-          <div className="msg-row left">
-            <Avatar emoji={agent.avatar} size={34} />
-            <div className="msg-stack">
-              <div className="msg-sender">{agent.name}</div>
-              <div className="bubble assistant">
-                <AssistantExtras reasoning={stream.reasoning ? [stream.reasoning] : undefined} tools={stream.tools} live />
-                <Markdown text={stream.text || '…'} />
-                <span className="stream-caret" />
-              </div>
-            </div>
-          </div>
-        )}
+        {stream && <StreamingBubble avatar={agent.avatar} name={agent.name} stream={stream} />}
       </div>
 
       <div className="composer" ref={composerRef}>

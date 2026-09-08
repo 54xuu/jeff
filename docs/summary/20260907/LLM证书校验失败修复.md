@@ -100,3 +100,27 @@ Windows 换绑 `opencode-go/deepseek-v4-flash` 后报 `⚠️ 项经理 处理�
 ### Windows 验证要点
 
 装 `jeff-Setup-1.7.6.exe` 后群里发消息：deepseek-v4-flash（max 思考）慢时回复可能要等 1~5 分钟，属正常；仍失败的话真实错误会显示出来（不再被「已停止生成」/超时掩盖），配合调试日志即可继续定位。
+
+## 追加排查：v1.7.7（群聊中间过程流式显示）
+
+### 现象
+
+1.7.6 后消息能正常返回，但群聊等待期间（Windows）只有「⏳ 三点跳动」占位，看不到任何中间过程。
+
+### 排查结论
+
+群聊流式 UI 其实 v1.1.0 起就端到端存在：SSE `message.part.delta` → core `emitStream`（按会话归属发 kind:'group' 事件）→ 主进程 broadcast → store `streaming['group:<projectId>']` → GroupWindow 流式气泡（思考折叠 + 正文 + 光标）。用户只看到占位说明**增量没有到达渲染层**，且原代码对链路各环节零可观测性（SSE 连不上、事件被丢弃都无声），无法远程定位。
+
+### 修复
+
+1. **流式链路可观测（core）**：
+   - `OcClient` SSE 连接成功 emit `'sse-open'`（原先只有失败事件 `'sse-error'`）；
+   - `JeffCore.wireOcClient()` 统一接线（init / restartSidecar 共用），`sse-open`/`sse-error` 落调试日志；
+   - 每条 assistant 消息首个增量 → `stream-start`（每消息一次）；完成清理 → `stream-done`；`emitStream` 无法归属会话丢弃 → `stream-drop`（每会话一次，标注 unresolved/review）。
+   - 下次日志可精确区分：SSE 没连上 / 连上了没事件 / 事件被丢弃 / 事件已发但 UI 没显示。
+2. **渲染层可见性**：GroupWindow / ChatWindow 的流式气泡从 `busy && stream` / `sendingNow && stream` 放宽为**只要 `stream` 就显示**（三点占位条件不变）——覆盖委派 worker 流式、发送请求已返回但 agent 仍在生成等场景；两处几乎相同的 JSX 抽成 `ChatShared.tsx` 的 `StreamingBubble`。
+
+### 验证与发版
+
+- `JEFF_E2E=1 tests/e2e.stream.test.ts` 3 用例全过（私聊流式增量 + 缓冲清理 + 图片）；`npm test` 96 通过；typecheck 仅存量 3 个 e2e helper 错误。
+- 版本 1.7.7（PATCH），deb 装本机验证；Windows 装 `jeff-Setup-1.7.7.exe` 后群发消息观察流式气泡，若仍无中间过程，开调试模式把 `~/.jeff/logs` 发回（`sse-open`/`stream-start`/`stream-drop` 直接指出断点）。

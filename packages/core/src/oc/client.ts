@@ -233,6 +233,7 @@ export class OcClient extends EventEmitter {
       try {
         const res = await fetch(`${this.base()}/event`, { signal: ctrl.signal })
         if (!res.ok || !res.body) throw new Error(`SSE ${res.status}`)
+        this.emit('sse-open', { port: this.port })
         const reader = res.body.getReader()
         const decoder = new TextDecoder()
         let buf = ''

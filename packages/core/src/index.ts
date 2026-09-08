@@ -163,7 +163,7 @@ export class JeffCore extends EventEmitter {
     await this.sidecar.start()
     this.oc = new OcClient(this.sidecar.port, this.debugLog.fn())
     this.oc.startEventStream()
-    this.oc.on('event', (evt: { type?: string; properties?: Record<string, unknown> }) => this.handleOcEvent(evt))
+    this.wireOcClient()
 
     this.writeUsageSkill()
     this.backfillIndex()
@@ -754,6 +754,16 @@ export class JeffCore extends EventEmitter {
   private streamParts = new Map<string, { text: string; reasoning: string }>() // key: sessionId:messageId:partId
   private streamTools = new Map<string, Map<string, { tool: string; status?: string }>>() // key: sessionId:messageId → partId → tool
   private msgRoles = new Map<string, string>() // messageId → role（过滤用户消息的 part 回显）
+  /** 流式诊断去重：每条消息只记一次 start，每个会话只记一次 drop */
+  private streamStarted = new Set<string>()
+  private streamDropLogged = new Set<string>()
+
+  /** 绑定 OcClient 事件（opencode 事件分发 + SSE 生命周期诊断日志）；每次重建客户端后调用 */
+  private wireOcClient(): void {
+    this.oc.on('event', (evt: { type?: string; properties?: Record<string, unknown> }) => this.handleOcEvent(evt))
+    this.oc.on('sse-open', (info: unknown) => this.debugLog.log('sse-open', info))
+    this.oc.on('sse-error', (err: unknown) => this.debugLog.log('sse-error', String(err)))
+  }
 
   private handleOcEvent(evt: { type?: string; properties?: Record<string, unknown> }): void {
     if (!evt?.type) return
@@ -784,6 +794,12 @@ export class JeffCore extends EventEmitter {
       if (field === 'text') cur.text += delta
       else cur.reasoning += delta
       this.streamParts.set(key, cur)
+      const startKey = `${sessionId}:${messageID}`
+      if (!this.streamStarted.has(startKey)) {
+        this.streamStarted.add(startKey)
+        if (this.streamStarted.size > 200) this.streamStarted.delete(this.streamStarted.values().next().value as string)
+        this.debugLog.log('stream-start', { sessionId, messageId: messageID, field })
+      }
       this.emitStream(sessionId, messageID)
       return
     }
@@ -832,9 +848,11 @@ export class JeffCore extends EventEmitter {
       }
       if (!resolved) return
       if (resolved.kind === 'group') {
+        this.debugLog.log('stream-done', { kind: 'group', sessionId, projectId: resolved.projectId, agentId: resolved.agentId })
         this.bus.emit('chat-stream', { kind: 'group', projectId: resolved.projectId, agentId: resolved.agentId, messageId: info?.id || '', text: '', done: true })
         this.bus.emit('group-updated', { projectId: resolved.projectId })
       } else if (resolved.kind === 'private') {
+        this.debugLog.log('stream-done', { kind: 'private', sessionId, agentId: resolved.agentId })
         this.bus.emit('chat-stream', { kind: 'private', agentId: resolved.agentId, messageId: info?.id || '', text: '', done: true })
         this.bus.emit('chat-updated', { agentId: resolved.agentId, sessionId })
       }
@@ -845,7 +863,11 @@ export class JeffCore extends EventEmitter {
   private emitStream(sessionId: string, messageId: string): void {
     const resolved = this.resolveSession(sessionId)
     if (!resolved || resolved.kind === 'review') {
-      // 无法归属：清掉对应缓冲防泄漏
+      // 无法归属：清掉对应缓冲防泄漏；诊断日志每会话只记一次，避免刷屏
+      if (!this.streamDropLogged.has(sessionId)) {
+        this.streamDropLogged.add(sessionId)
+        this.debugLog.log('stream-drop', { sessionId, messageId, reason: resolved ? 'review' : 'unresolved' })
+      }
       for (const key of Array.from(this.streamParts.keys())) {
         if (key.startsWith(`${sessionId}:`)) this.streamParts.delete(key)
       }
@@ -906,7 +928,7 @@ export class JeffCore extends EventEmitter {
     old?.stopEventStream()
     this.oc = new OcClient(this.sidecar.port, this.debugLog.fn())
     this.oc.startEventStream()
-    this.oc.on('event', (evt: { type?: string; properties?: Record<string, unknown> }) => this.handleOcEvent(evt))
+    this.wireOcClient()
     this.groupChat = new GroupChat(this.db, () => this.oc, this.chatHooks())
     this.privateChat = new PrivateChat(this.db, () => this.oc, this.chatHooks())
   }

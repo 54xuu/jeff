@@ -1,8 +1,32 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ChatImage } from '@jeff/core'
+import Avatar from './Avatar'
+import { Markdown } from './Markdown'
 
 const COMPOSER_MIN_HEIGHT = 40
 const COMPOSER_MAX_HEIGHT = 320
+
+/** 流式气泡（私聊/群聊共用）：只要 store 里有流就显示（不再 gate 在发送中状态上） */
+export function StreamingBubble(props: {
+  avatar: string
+  name: string
+  stream: { text: string; reasoning?: string; tools?: Array<{ tool: string; status?: string }> }
+}): React.JSX.Element {
+  const { avatar, name, stream } = props
+  return (
+    <div className="msg-row left">
+      <Avatar emoji={avatar} size={34} />
+      <div className="msg-stack">
+        <div className="msg-sender">{name}</div>
+        <div className="bubble assistant">
+          <AssistantExtras reasoning={stream.reasoning ? [stream.reasoning] : undefined} tools={stream.tools} live />
+          <Markdown text={stream.text || '…'} />
+          <span className="stream-caret" />
+        </div>
+      </div>
+    </div>
+  )
+}
 
 /** 聊天输入区顶部拖拽调高/调低，限制在聊天窗口高度的一半以内。 */
 export function useComposerResize(containerRef: React.RefObject<HTMLElement | null>) {
