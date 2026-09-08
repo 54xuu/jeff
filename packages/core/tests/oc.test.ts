@@ -1,12 +1,13 @@
 import { describe, it, expect, afterEach } from 'vitest'
 import http from 'node:http'
 import net from 'node:net'
+import { Agent } from 'undici'
 import { OcClient } from '../src/oc/client.js'
 
 type LogEntry = [string, unknown]
 
-const makeClient = (port: number, logs: LogEntry[]) =>
-  new OcClient(port, (tag, detail) => logs.push([tag, detail]))
+const makeClient = (port: number, logs: LogEntry[], dispatcher?: Agent) =>
+  new OcClient(port, (tag, detail) => logs.push([tag, detail]), dispatcher)
 
 /** 起一个本地 http mock：handlers 按 (method, url) 前缀匹配 */
 const startServer = (handlers: Array<{ match: (method: string, url: string) => boolean; reply: (req: http.IncomingMessage, res: http.ServerResponse) => void }>): Promise<number> =>
@@ -128,5 +129,63 @@ describe('OcClient 网络诊断与超时', () => {
     const client = makeClient(port, logs)
     await expect(client.abortSession('ses_a')).resolves.toBeUndefined()
     expect(logs.some(([tag]) => tag === 'abort-fail')).toBe(true)
+  })
+
+  it('HeadersTimeout：注入小超时 dispatcher，超时被分类为「响应超时」而非连接失败，日志含 isHeadersTimeout 与 causeChain', async () => {
+    const port = await startServer([
+      {
+        match: (m, u) => m === 'GET' && u.startsWith('/session/'),
+        reply: (_req, res) => {
+          // 1s 后才回响应头：超过注入的 headersTimeout(300ms)，触发 Undici HeadersTimeoutError
+          setTimeout(() => json(res, { id: 'ses_x' }), 1000)
+        },
+      },
+    ])
+    const logs: LogEntry[] = []
+    const client = makeClient(port, logs, new Agent({ headersTimeout: 300, bodyTimeout: 300 }))
+    let err: Error | null = null
+    try {
+      await client.getSession('ses_x')
+    } catch (e) {
+      err = e as Error
+    }
+    expect(err).toBeTruthy()
+    expect(err!.message).toContain('引擎服务响应超时')
+    expect(err!.message).not.toContain('引擎服务连接失败')
+    // 上层依赖 abort 字样判定「已停止生成」，超时措辞不得误触
+    expect(err!.message).not.toContain('abort')
+    const failLog = logs.find(([tag]) => tag === 'oc-req-fail')?.[1] as Record<string, unknown>
+    expect(failLog.isHeadersTimeout).toBe(true)
+    expect(typeof failLog.timeoutMs).toBe('number')
+    const chain = failLog.causeChain as Array<{ name?: string }>
+    expect(chain.some((c) => c.name === 'HeadersTimeoutError')).toBe(true)
+  })
+
+  it('POST 挂起（永不回响应头）：默认 dispatcher 下由应用总预算终止，且全程只发一次 POST 不重放', async () => {
+    let postCount = 0
+    const port = await startServer([
+      {
+        match: (m, u) => m === 'POST' && u.includes('/message'),
+        reply: (_req, res) => {
+          postCount += 1
+          // 故意不回响应头，模拟 sidecar run 卡住
+          void res
+        },
+      },
+    ])
+    const client = makeClient(port, [])
+    const t0 = Date.now()
+    let err: Error | null = null
+    try {
+      await client.sendMessage({ sessionId: 'ses_hang', text: 'hi', timeoutMs: 2000 })
+    } catch (e) {
+      err = e as Error
+    }
+    expect(err).toBeTruthy()
+    // 2000ms 应用预算先于 Undici 默认 300s headersTimeout 生效
+    expect(Date.now() - t0).toBeLessThan(8000)
+    expect(err!.name).toBe('TimeoutError')
+    // 有副作用的 POST 绝不重放
+    expect(postCount).toBe(1)
   })
 })

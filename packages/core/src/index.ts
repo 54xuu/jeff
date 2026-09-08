@@ -766,7 +766,7 @@ export class JeffCore extends EventEmitter {
     this.oc.on('event', (evt: { type?: string; properties?: Record<string, unknown> }) => this.handleOcEvent(evt))
     this.oc.on('sse-open', (info: unknown) => this.debugLog.log('sse-open', info))
     this.oc.on('sse-error', (info: unknown) => this.debugLog.log('sse-error', info))
-    this.oc.statusProvider = () => (this.sidecar ? { status: this.sidecar.status, port: this.sidecar.port } : null)
+    this.oc.statusProvider = () => (this.sidecar ? { status: this.sidecar.status, port: this.sidecar.port, generation: this.sidecar.generation } : null)
   }
 
   private handleOcEvent(evt: { type?: string; properties?: Record<string, unknown> }): void {

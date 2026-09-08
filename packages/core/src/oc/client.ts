@@ -1,6 +1,28 @@
 import { EventEmitter } from 'node:events'
+import { Agent, fetch as undiciFetch } from 'undici'
+import type { Dispatcher } from 'undici'
 import { sleep } from '../sidecar/manager.js'
 import type { DebugLogFn } from '../logger.js'
+
+/**
+ * sidecar 本机长请求专用 dispatcher：关闭 Undici 运行时 headers/body 超时（默认 headersTimeout
+ * 300s 会把允许 600s 的委派长任务提前截断成 HeadersTimeoutError），请求总预算统一由
+ * AbortSignal.timeout 控制。惰性创建，全进程共享一个连接池。
+ */
+let sidecarAgent: Agent | null = null
+function sidecarDispatcher(): Agent {
+  sidecarAgent ??= new Agent({ headersTimeout: 0, bodyTimeout: 0 })
+  return sidecarAgent
+}
+
+/** 递归提取错误 cause 链（限深），用于诊断日志对账真实超时来源 */
+function causeChain(err: unknown, depth = 0): Array<{ name?: string; message?: string; code?: unknown }> {
+  if (!err || depth > 4) return []
+  const e = err as { name?: string; message?: string; code?: unknown; cause?: unknown }
+  const entry: { name?: string; message?: string; code?: unknown } = { name: e.name, message: e.message }
+  if (e.code !== undefined) entry.code = e.code
+  return [entry, ...causeChain(e.cause, depth + 1)]
+}
 
 /**
  * opencode server 薄客户端（基于其 OpenAPI HTTP 面，1.18.x 验证）。
@@ -11,12 +33,14 @@ export class OcClient extends EventEmitter {
     public port: number,
     /** 调试日志回调（可选）：assistant 错误的完整 JSON 只有这里能拿到（上层会被截断） */
     private log?: DebugLogFn,
+    /** 测试可注入自定义 dispatcher（如小超时 Agent）；默认使用关闭运行时超时的共享 Agent */
+    private dispatcher?: Dispatcher,
   ) {
     super()
   }
 
-  /** sidecar 状态探针（由 JeffCore 注入）：连接失败时日志能对上 sidecar 当时状态/端口 */
-  statusProvider?: () => { status: string; port: number } | null
+  /** sidecar 状态探针（由 JeffCore 注入）：连接失败时日志能对上 sidecar 当时状态/端口/代际 */
+  statusProvider?: () => { status: string; port: number; generation?: number } | null
 
   private base(): string {
     return `http://127.0.0.1:${this.port}`
@@ -25,11 +49,12 @@ export class OcClient extends EventEmitter {
   private async req<T>(method: string, path: string, body?: unknown, timeoutMs = 30000): Promise<T> {
     const started = Date.now()
     try {
-      const res = await fetch(`${this.base()}${path}`, {
+      const res = await undiciFetch(`${this.base()}${path}`, {
         method,
         headers: body !== undefined ? { 'content-type': 'application/json' } : undefined,
         body: body !== undefined ? JSON.stringify(body) : undefined,
         signal: AbortSignal.timeout(timeoutMs),
+        dispatcher: this.dispatcher ?? sidecarDispatcher(),
       })
       if (!res.ok) {
         const text = await res.text().catch(() => '')
@@ -45,6 +70,8 @@ export class OcClient extends EventEmitter {
       const e = err as Error & { name?: string; cause?: unknown; httpStatus?: number }
       // HTTP 业务错误 / 超时 / 用户中止：原样抛出（上层依赖 abort 字样判定「已停止生成」）
       if (e?.httpStatus || e?.name === 'TimeoutError' || e?.name === 'AbortError') throw err
+      const chain = causeChain(e)
+      const isHeadersTimeout = chain.some((c) => c.name === 'HeadersTimeoutError')
       // 连接层失败（端口不可达/连接重置等）：留全量现场 + 包装成可读错误，保留原始 cause
       const cause = e?.cause instanceof Error ? { name: e.cause.name, message: e.cause.message } : e?.cause
       this.log?.('oc-req-fail', {
@@ -52,11 +79,22 @@ export class OcClient extends EventEmitter {
         path,
         port: this.port,
         elapsedMs: Date.now() - started,
+        timeoutMs,
         sidecar: this.statusProvider?.() ?? null,
         name: e?.name,
         message: e?.message,
         cause,
+        causeChain: chain,
+        isHeadersTimeout,
       })
+      // 响应头超时单独分类：POST 已被 sidecar 接收且可能仍在执行，措辞不能带 abort（防误判「已停止生成」）
+      if (isHeadersTimeout) {
+        const wrapped = new Error(
+          `引擎服务响应超时（127.0.0.1:${this.port} ${method} ${path}，等待响应头 ${Math.round((Date.now() - started) / 1000)}s，任务可能仍在执行）`,
+        )
+        ;(wrapped as Error & { cause?: unknown }).cause = err
+        throw wrapped
+      }
       const wrapped = new Error(`引擎服务连接失败（127.0.0.1:${this.port} ${method} ${path}）：${e?.message || err}`)
       ;(wrapped as Error & { cause?: unknown }).cause = err
       throw wrapped
@@ -265,7 +303,11 @@ export class OcClient extends EventEmitter {
       try {
         // 必须用全局事件流：裸 /event 不带 ?directory= 时只推 server.connected/heartbeat，
         // 会话的 message.part.delta 挂在 global 总线（opencode 1.18 实测）
-        const res = await fetch(`${this.base()}/global/event`, { signal: ctrl.signal })
+        // 同样走专用 dispatcher：SSE 长连接不受 Undici 默认 headers/body 超时影响
+        const res = await undiciFetch(`${this.base()}/global/event`, {
+          signal: ctrl.signal,
+          dispatcher: this.dispatcher ?? sidecarDispatcher(),
+        })
         if (!res.ok || !res.body) throw new Error(`SSE ${res.status}`)
         this.emit('sse-open', { port: this.port, endpoint: '/global/event' })
         const reader = res.body.getReader()

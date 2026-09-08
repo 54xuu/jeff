@@ -1,6 +1,6 @@
 {
   "name": "@jeff/core",
-  "version": "1.7.10",
+  "version": "1.7.11",
   "private": true,
   "type": "module",
   "description": "Jeff 核心：数据库、sidecar 管理、opencode 客户端、编排、记忆、同步",
@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
+    "undici": "^6.28.0",
     "webdav": "^5.8.0"
   },
   "devDependencies": {

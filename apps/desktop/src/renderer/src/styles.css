@@ -18,6 +18,8 @@
   --rail-active: var(--weui-BRAND);
   --text: #191919;
   --text-2: #7a7a7a;
+  /* 思考过程正文：比次级文字更弱一档 */
+  --text-reasoning: #a3a3a3;
   --border: #e5e5e5;
   --green: var(--weui-BRAND);
   --green-dark: #06ad56;
@@ -57,6 +59,8 @@
   --rail-active: var(--weui-BRAND);
   --text: #e5e5e5;
   --text-2: #8c8c8c;
+  /* 思考过程正文：比次级文字更弱一档 */
+  --text-reasoning: #757575;
   --border: #2c2c2c;
   --green: var(--weui-BRAND);
   --green-dark: #06ad56;
@@ -2110,7 +2114,7 @@ body.composer-resizing * {
 .extra-live { color: var(--green); font-size: 11px; }
 .extra-reasoning {
   padding: 2px 10px 8px;
-  color: var(--text-2);
+  color: var(--text-reasoning);
   font-style: italic;
   line-height: 1.6;
   white-space: pre-wrap;
