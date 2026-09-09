@@ -25,6 +25,37 @@ function causeChain(err: unknown, depth = 0): Array<{ name?: string; message?: s
 }
 
 /**
+ * 把上游 assistant APIError（如 opencode Zen 网关的 400/401/429）映射为可读的中文提示；
+ * 返回 null 表示无法识别，调用方回退为原始错误的截断展示。完整原始错误始终进调试日志。
+ * 注意：文案不得含「abort」字样（上层以 abort 判定「已停止生成」）。
+ */
+export function friendlyAssistantError(error: unknown): string | null {
+  const e = error as { name?: string; data?: { statusCode?: number; message?: string; responseBody?: string } }
+  if (e?.name !== 'APIError' || !e.data) return null
+  const status = e.data.statusCode
+  if (!status) return null
+  const body = e.data.responseBody || e.data.message || ''
+  const model = /"model"\s*:\s*"([^"]+)"/.exec(body)?.[1]
+  const modelTag = model ? `（模型 ${model}）` : ''
+  if (status === 400) {
+    return `模型服务拒绝了本次请求（400）${modelTag}：常见原因是会话上下文超长、模型暂不可用或请求参数不被支持。可新建话题（清空上下文）后重试，或在 设置→模型供应商 更换模型。`
+  }
+  if (status === 401 || status === 403) {
+    return `模型服务认证失败（${status}）${modelTag}：请到 设置→模型供应商 检查 API Key 是否有效。`
+  }
+  if (status === 404) {
+    return `模型不存在或已下线（404）${modelTag}：请检查模型名称，或在 设置→模型供应商 更换模型。`
+  }
+  if (status === 429) {
+    return `模型服务限流（429）${modelTag}：请稍后重试，或更换模型。`
+  }
+  if (status >= 500) {
+    return `模型服务暂时故障（${status}）${modelTag}：请稍后重试。`
+  }
+  return null
+}
+
+/**
  * opencode server 薄客户端（基于其 OpenAPI HTTP 面，1.18.x 验证）。
  * 刻意不依赖 @opencode-ai/sdk：接口面窄而稳定，避免 SDK 版本耦合。
  */
@@ -194,6 +225,9 @@ export class OcClient extends EventEmitter {
           const raw = JSON.stringify(found.error)
           // 完整错误只在调试日志里留存（上层提示会被层层截断）
           this.log?.('assistant-error', { sessionId: input.sessionId, assistantId, error: found.error })
+          // 可识别的上游 APIError（4xx/5xx）映射为可读提示；其余保持原始截断展示
+          const friendly = friendlyAssistantError(found.error)
+          if (friendly) throw new Error(friendly)
           const hint = /certificate/i.test(raw) ? '（如为企业网络证书拦截，可在 设置→引擎服务 开启「跳过 LLM 证书校验」）' : ''
           throw new Error(`assistant 消息出错: ${raw.slice(0, 300)}${hint}`)
         }

@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from 'vitest'
 import http from 'node:http'
 import net from 'node:net'
 import { Agent } from 'undici'
-import { OcClient } from '../src/oc/client.js'
+import { OcClient, friendlyAssistantError } from '../src/oc/client.js'
 
 type LogEntry = [string, unknown]
 
@@ -187,5 +187,64 @@ describe('OcClient 网络诊断与超时', () => {
     expect(err!.name).toBe('TimeoutError')
     // 有副作用的 POST 绝不重放
     expect(postCount).toBe(1)
+  })
+})
+
+describe('friendlyAssistantError：上游 APIError 映射为可读中文提示', () => {
+  it('完整链路：assistant 带回 Zen 400 APIError 时抛出友好提示而非原始 JSON', async () => {
+    const zenError = {
+      name: 'APIError',
+      data: {
+        message: 'Bad Request: {"object":"error","model":"deepseek-v4-flash"}',
+        statusCode: 400,
+        isRetryable: false,
+        responseBody: '{"object":"error","model":"deepseek-v4-flash"}',
+        metadata: { url: 'https://opencode.ai/zen/go/v1/chat/completions' },
+      },
+    }
+    const port = await startServer([
+      { match: (m, u) => m === 'POST' && u.includes('/message'), reply: (_req, res) => json(res, { info: { id: 'msg_err', role: 'assistant' } }) },
+      {
+        match: (m, u) => m === 'GET' && u.includes('/message'),
+        reply: (_req, res) =>
+          json(res, [{ info: { id: 'msg_err', role: 'assistant', time: { completed: 1 }, error: zenError }, parts: [] }]),
+      },
+    ])
+    const logs: LogEntry[] = []
+    const client = makeClient(port, logs)
+    let msg = ''
+    try {
+      await client.sendMessage({ sessionId: 'ses_zen', text: 'hi', timeoutMs: 5000 })
+    } catch (e) {
+      msg = (e as Error).message
+    }
+    expect(msg).toContain('模型服务拒绝了本次请求（400）')
+    expect(msg).toContain('（模型 deepseek-v4-flash）')
+    expect(msg).toContain('新建话题')
+    expect(msg).not.toContain('assistant 消息出错')
+    // 提示文案不得含 abort（上层以 abort 判定「已停止生成」）
+    expect(msg).not.toContain('abort')
+    // 完整原始错误仍在调试日志
+    const errLog = logs.find(([tag]) => tag === 'assistant-error')?.[1] as { error?: unknown }
+    expect(errLog.error).toEqual(zenError)
+  })
+
+  it('按状态码给出对应处置提示，无法识别时返回 null', () => {
+    const mk = (statusCode: number, responseBody = '{"object":"error","model":"m1"}') => ({
+      name: 'APIError',
+      data: { statusCode, responseBody },
+    })
+    expect(friendlyAssistantError(mk(400))).toContain('上下文超长')
+    expect(friendlyAssistantError(mk(401))).toContain('API Key')
+    expect(friendlyAssistantError(mk(403))).toContain('API Key')
+    expect(friendlyAssistantError(mk(404))).toContain('模型不存在')
+    expect(friendlyAssistantError(mk(429))).toContain('限流')
+    expect(friendlyAssistantError(mk(503))).toContain('暂时故障')
+    // 无模型信息时不出现空标签
+    expect(friendlyAssistantError({ name: 'APIError', data: { statusCode: 400 } })).toBe('模型服务拒绝了本次请求（400）：常见原因是会话上下文超长、模型暂不可用或请求参数不被支持。可新建话题（清空上下文）后重试，或在 设置→模型供应商 更换模型。')
+    // 非 APIError / 无状态码：回退原始展示
+    expect(friendlyAssistantError({ name: 'OtherError' })).toBeNull()
+    expect(friendlyAssistantError({ name: 'APIError', data: {} })).toBeNull()
+    expect(friendlyAssistantError(null)).toBeNull()
   })
 })
