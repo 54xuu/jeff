@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { api } from '../../api'
 import { useStore } from '../../store'
 import { IPC, parseMcpServersJson, type McpServerCfg, type McpProbeResult } from '@jeff/core'
+import { useDirtyClose } from '../ui/useDirtyClose'
 
 const EXAMPLE_JSON = `{
   "mcpServers": {
@@ -129,6 +130,8 @@ function ImportJson(props: { existing: Record<string, McpServerCfg>; onClose: ()
   const [error, setError] = useState('')
   const [parsed, setParsed] = useState<Record<string, McpServerCfg> | null>(null)
 
+  const { requestClose, guard } = useDirtyClose({ dirty: text.trim() !== '', onClose: props.onClose })
+
   const doParse = () => {
     setParsed(null)
     setError('')
@@ -143,9 +146,14 @@ function ImportJson(props: { existing: Record<string, McpServerCfg>; onClose: ()
   const conflicts = parsed ? Object.keys(parsed).filter((k) => k in props.existing) : []
 
   return (
-    <div className="modal-mask" onClick={props.onClose}>
+    <div className="modal-mask" onClick={requestClose}>
       <div className="modal form" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-title">导入 MCP JSON</div>
+        <div className="modal-title-row">
+          <div className="modal-title">导入 MCP JSON</div>
+          <button className="icon-btn" aria-label="关闭" onClick={requestClose}>
+            ×
+          </button>
+        </div>
         <label className="field">
           <span>粘贴 MCP 配置 JSON（mcpServers 包裹或 opencode map 均可）</span>
           <textarea
@@ -170,13 +178,14 @@ function ImportJson(props: { existing: Record<string, McpServerCfg>; onClose: ()
           </div>
         )}
         <div className="modal-actions">
-          <button className="btn" onClick={props.onClose}>取消</button>
+          <button className="btn" onClick={requestClose}>取消</button>
           <button className="btn" data-testid="mcp-parse" disabled={!text.trim()} onClick={doParse}>解析校验</button>
           <button className="btn primary" data-testid="mcp-import-confirm" disabled={!parsed} onClick={() => parsed && props.onImport({ ...props.existing, ...parsed })}>
             {conflicts.length ? '覆盖并保存' : '添加'}
           </button>
         </div>
       </div>
+      {guard}
     </div>
   )
 }

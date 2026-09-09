@@ -731,6 +731,19 @@ body.composer-resizing * {
   margin-bottom: 14px;
 }
 
+/* 弹窗标题行：标题 + 右上角关闭 ×（useDirtyClose 守卫的表单弹窗用） */
+.modal-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.modal-title-row .modal-title {
+  margin-bottom: 0;
+}
+
 .modal-head {
   display: flex;
   gap: 12px;

@@ -32,6 +32,15 @@ export default function ChatHistoryDrawer(props: { agentId?: string; projectId?:
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // Esc 关抽屉；行内改名输入框的 Esc 已 preventDefault，不会触发这里
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !e.defaultPrevented) props.onClose()
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [props.onClose])
+
   const openPreview = async (s: SessionBrief) => {
     if (preview?.id === s.id) return
     setPreviewLoading(true)
@@ -120,7 +129,11 @@ export default function ChatHistoryDrawer(props: { agentId?: string; projectId?:
                               e.preventDefault()
                               void commitRename(s.id)
                             }
-                            if (e.key === 'Escape') setEditingId(null)
+                            if (e.key === 'Escape') {
+                              // 约定：消费 Esc 的组件 preventDefault，抽屉级 Esc 关闭检测后跳过
+                              e.preventDefault()
+                              setEditingId(null)
+                            }
                           }}
                         />
                       ) : (

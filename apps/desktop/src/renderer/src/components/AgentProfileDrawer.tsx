@@ -1,12 +1,16 @@
+import { useState } from 'react'
 import { useStore } from '../store'
 import { api } from '../api'
 import { IPC, type AgentInfo, type ModelOption } from '@jeff/core'
 import AgentEditor, { type AgentEditorSave } from './AgentEditor'
+import { useDirtyClose } from './ui/useDirtyClose'
 
-/** 私聊顶栏「资料」抽屉：编辑当前智能体（与通讯录共用 AgentEditor） */
+/** 私聊顶栏「资料」抽屉：编辑当前智能体（与通讯录共用 AgentEditor）；有未保存修改时关闭前先确认 */
 export default function AgentProfileDrawer(props: { agent: AgentInfo; onClose: () => void }): React.JSX.Element {
   const { catalog, refreshAgents } = useStore()
   const models: ModelOption[] = catalog.flatMap((c) => c.models)
+  const [editorDirty, setEditorDirty] = useState(false)
+  const { requestClose, guard } = useDirtyClose({ dirty: editorDirty, onClose: props.onClose })
 
   const save = async (d: AgentEditorSave) => {
     await api.invoke<AgentInfo>(IPC.agentsUpsert, d)
@@ -26,11 +30,11 @@ export default function AgentProfileDrawer(props: { agent: AgentInfo; onClose: (
   }
 
   return (
-    <div className="drawer-mask" data-testid="agent-profile-drawer" onClick={props.onClose}>
+    <div className="drawer-mask" data-testid="agent-profile-drawer" onClick={requestClose}>
       <div className="drawer" onClick={(e) => e.stopPropagation()}>
         <div className="drawer-head">
           <span>智能体资料：{props.agent.name}</span>
-          <button className="icon-btn" onClick={props.onClose}>
+          <button className="icon-btn" onClick={requestClose}>
             ✕
           </button>
         </div>
@@ -39,11 +43,13 @@ export default function AgentProfileDrawer(props: { agent: AgentInfo; onClose: (
           initial={props.agent}
           models={models}
           compact
-          onCancel={props.onClose}
+          onDirtyChange={setEditorDirty}
+          onCancel={requestClose}
           onSave={save}
           onDelete={props.agent.builtin ? undefined : () => void remove()}
         />
       </div>
+      {guard}
     </div>
   )
 }

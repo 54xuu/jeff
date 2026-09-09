@@ -39,7 +39,11 @@ export default function ModelPickerCombo(props: {
   useEffect(() => {
     if (!open) return
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setOpen(false)
+      if (e.key === 'Escape') {
+        // 约定：消费 Esc 的组件 preventDefault，外层弹窗守卫（useDirtyClose）检测后跳过
+        e.preventDefault()
+        setOpen(false)
+      }
     }
     document.addEventListener('keydown', onKey)
     let onDoc: ((e: MouseEvent) => void) | null = null

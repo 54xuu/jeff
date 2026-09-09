@@ -101,6 +101,15 @@ export default function ContextDrawer(props: {
     void load(agentId)
   }, [agentId, load])
 
+  // Esc 关抽屉（无表单，直接关）
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !e.defaultPrevented) props.onClose()
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [props.onClose])
+
   const goProviders = () => {
     useStore.getState().setTab('settings')
     useStore.getState().setSettingsSection('providers')

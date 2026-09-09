@@ -21,6 +21,7 @@ import { MemoryStore } from './memory/store.js'
 import { SessionIndex } from './memory/indexer.js'
 import type { McpServerCfg } from './mcp/parse.js'
 import { probeMcpAll } from './mcp/probe.js'
+import { probeProviderModel } from './providers/probe.js'
 import type { SkillsBackupReport, SkillsRestoreStage, SkillsRestoreApply, ContextPreviewInfo, GroupMessage } from './ipc/contract.js'
 import { SyncEngine, type WebdavConfig, type SyncReport, normalizeWebdavBasePath } from './sync/engine.js'
 import { compactionThreshold, splitContextMessages } from './chat/context.js'
@@ -1098,6 +1099,11 @@ Jeff 把「开发 + 项目管理」组织成三个概念（微信心智模型）
     return probeMcpAll(this.listMcp())
   }
 
+  /** 直连探测模型连通性（设置页「测试」按钮；用传入配置即时测，未保存草稿也可测；与 sidecar 无关） */
+  async probeProvider(provider: ProviderSetting, modelId: string): Promise<Awaited<ReturnType<typeof probeProviderModel>>> {
+    return probeProviderModel(provider, modelId, 15000, this.llmTlsConfig().skipVerify)
+  }
+
   /** 便捷访问器 */
   get agents() {
     return agentRepo(this.db)
@@ -1148,6 +1154,7 @@ export { registerProjectTools, taskCardMessage } from './tools/projectTools.js'
 export { MemoryStore, parseEntries, matchUnique, type MemoryScope, type MemoryOp, type MemoryResult } from './memory/store.js'
 export { SyncEngine, type WebdavConfig, type SyncReport, normalizeWebdavBasePath, formatWebdavError } from './sync/engine.js'
 export { probeMcpServer, probeMcpAll, type McpProbe } from './mcp/probe.js'
+export { probeProviderModel, type ProviderProbe } from './providers/probe.js'
 export { migrateProviders, firstEnabledModel, configuredModelOptions, thinkingVariant, API_FORMAT_NPM, ANTHROPIC_BUDGET, type ConfiguredModelOption } from './oc/configWriter.js'
 
 export { SessionIndex, cjkSplit, buildMatchQuery } from './memory/indexer.js'

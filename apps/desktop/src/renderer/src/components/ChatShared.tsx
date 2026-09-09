@@ -6,6 +6,7 @@ import { CopyButton } from './ui/CopyButton'
 
 const COMPOSER_MIN_HEIGHT = 40
 const COMPOSER_MAX_HEIGHT = 320
+const COMPOSER_DEFAULT_HEIGHT = 120
 
 /** 流式气泡（私聊/群聊共用）：只要 store 里有流就显示（不再 gate 在发送中状态上）；已有正文即可复制 */
 export function StreamingBubble(props: {
@@ -34,7 +35,7 @@ export function StreamingBubble(props: {
 
 /** 聊天输入区顶部拖拽调高/调低，限制在聊天窗口高度的一半以内。 */
 export function useComposerResize(containerRef: React.RefObject<HTMLElement | null>) {
-  const [height, setHeight] = useState(COMPOSER_MIN_HEIGHT)
+  const [height, setHeight] = useState(COMPOSER_DEFAULT_HEIGHT)
   const dragRef = useRef<{ startY: number; startHeight: number } | null>(null)
 
   const getMaxHeight = useCallback(() => {

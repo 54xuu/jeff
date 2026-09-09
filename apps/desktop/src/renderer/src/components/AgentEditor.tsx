@@ -37,15 +37,19 @@ export default function AgentEditor(props: {
   onChat?: () => void
   /** 抽屉场景隐藏「发消息」等导航动作 */
   compact?: boolean
+  /** 脏状态上报（抽屉关闭守卫用）：任一字段相对 initial 有变化即视为脏 */
+  onDirtyChange?: (dirty: boolean) => void
 }): React.JSX.Element {
   const a = props.initial
   const locked = !!a.builtin && !a.isNew
+  const initialModelKey = a.model_provider && a.model_id ? formatModelKey(a.model_provider, a.model_id) : ''
+  const initialThinking: ThinkingTierOpt = (a.thinking as ThinkingTierOpt) || ''
   const [name, setName] = useState(a.name || '')
   const [avatar, setAvatar] = useState(a.avatar || '🤖')
   const [description, setDescription] = useState(a.description || '')
   const [instructions, setInstructions] = useState(a.instructions || '')
-  const [modelKey, setModelKey] = useState(a.model_provider && a.model_id ? formatModelKey(a.model_provider, a.model_id) : '')
-  const [thinking, setThinking] = useState<ThinkingTierOpt>((a.thinking as ThinkingTierOpt) || '')
+  const [modelKey, setModelKey] = useState(initialModelKey)
+  const [thinking, setThinking] = useState<ThinkingTierOpt>(initialThinking)
   const [saving, setSaving] = useState(false)
   const [savedAt, setSavedAt] = useState<number | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -61,6 +65,24 @@ export default function AgentEditor(props: {
   useEffect(() => {
     if (thinking && !tiers.includes(thinking as ThinkingTier)) setThinking('')
   }, [tiers, thinking])
+
+  // 脏检查：模型/思考所有人可改；名称等字段仅非锁定时参与比较
+  const dirty = useMemo(() => {
+    if (modelKey !== initialModelKey || thinking !== initialThinking) return true
+    if (locked) return false
+    return (
+      (name || '') !== (a.name || '') ||
+      (avatar || '') !== (a.avatar || '🤖') ||
+      (description || '') !== (a.description || '') ||
+      (instructions || '') !== (a.instructions || '')
+    )
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [locked, modelKey, thinking, name, avatar, description, instructions])
+
+  useEffect(() => {
+    props.onDirtyChange?.(dirty)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dirty])
 
   const submit = async () => {
     if (!locked && !name.trim()) return

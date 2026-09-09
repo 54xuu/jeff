@@ -5,7 +5,11 @@ export function useDismissable(open: boolean, onClose: () => void, rootRef: RefO
   useEffect(() => {
     if (!open) return
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
+      if (e.key === 'Escape') {
+        // 约定：消费 Esc 的组件 preventDefault，外层弹窗守卫（useDirtyClose）检测后跳过
+        e.preventDefault()
+        onClose()
+      }
     }
     document.addEventListener('keydown', onKey)
     let onDoc: ((e: MouseEvent) => void) | null = null

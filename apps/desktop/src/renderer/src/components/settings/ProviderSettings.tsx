@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useStore } from '../../store'
 import { api } from '../../api'
-import { IPC, API_FORMATS, THINKING_TIERS, type ProviderSetting, type ProviderModelCfg, type ThinkingTier } from '@jeff/core'
+import { IPC, API_FORMATS, THINKING_TIERS, type ProviderSetting, type ProviderModelCfg, type ProviderProbeResult, type ThinkingTier } from '@jeff/core'
+import { useDirtyClose } from '../ui/useDirtyClose'
 
 /** 设置 → 模型供应商：横向 tabs + 每个提供商独立详情（无内置，专注自定义供应商） */
 export default function ProviderSettings(): React.JSX.Element {
@@ -112,9 +113,28 @@ function ProviderDetail(props: {
   onDelete: () => void
 }): React.JSX.Element {
   const p = props.provider
-  const set = (patch: Partial<ProviderSetting>) => props.onChange({ ...p, ...patch })
   const [addingModel, setAddingModel] = useState(false)
   const [editModel, setEditModel] = useState<string | null>(null)
+  const [probingId, setProbingId] = useState<string | null>(null)
+  const [probeResults, setProbeResults] = useState<Record<string, ProviderProbeResult>>({})
+
+  const set = (patch: Partial<ProviderSetting>) => {
+    // 配置一变，旧探测结果即失效
+    setProbeResults({})
+    props.onChange({ ...p, ...patch })
+  }
+
+  const probeModel = async (modelId: string) => {
+    setProbingId(modelId)
+    try {
+      const r = await api.invoke<ProviderProbeResult>(IPC.providersProbe, { provider: p, modelId })
+      setProbeResults((prev) => ({ ...prev, [modelId]: r }))
+    } catch (err) {
+      setProbeResults((prev) => ({ ...prev, [modelId]: { ok: false, error: String((err as Error).message).slice(0, 200), elapsedMs: 0 } }))
+    } finally {
+      setProbingId(null)
+    }
+  }
 
   const formatHint = useMemo(() => API_FORMATS.find((f) => f.id === p.apiFormat)?.hint ?? '', [p.apiFormat])
 
@@ -160,25 +180,40 @@ function ProviderDetail(props: {
       </div>
 
       {p.models.length === 0 && <div className="empty-card">还没有模型。点「+ 添加模型」录入模型 ID 等参数。</div>}
-      {p.models.map((m) => (
-        <div key={m.id} className="provider-row">
-          <div className="provider-main">
-            <div className="provider-name">
-              {m.name || m.id}
-              <span className="tag">id: {m.id}</span>
-              {m.attachment && <span className="tag tag-green">图片输入</span>}
-              {(m.thinkingTiers?.length ?? 0) > 0 && <span className="tag">思考: {m.thinkingTiers!.join('/')}</span>}
+      {p.models.map((m) => {
+        const probe = probeResults[m.id]
+        return (
+          <div key={m.id} className="provider-row">
+            <div className="provider-main">
+              <div className="provider-name">
+                {m.name || m.id}
+                <span className="tag">id: {m.id}</span>
+                {m.attachment && <span className="tag tag-green">图片输入</span>}
+                {(m.thinkingTiers?.length ?? 0) > 0 && <span className="tag">思考: {m.thinkingTiers!.join('/')}</span>}
+              </div>
+              <div className="provider-sub">
+                {m.contextLimit ? `上下文 ${m.contextLimit}` : '⚠️ 未配置上下文'}
+                {m.outputLimit ? ` · 最大输出 ${m.outputLimit}` : ' · 输出默认'}
+                {' · 输出: 文本'}
+              </div>
+              {probe && !probe.ok && probe.error && <div className="provider-sub" style={{ color: '#dc2626' }}>⚠️ {probe.error}</div>}
             </div>
-            <div className="provider-sub">
-              {m.contextLimit ? `上下文 ${m.contextLimit}` : '⚠️ 未配置上下文'}
-              {m.outputLimit ? ` · 最大输出 ${m.outputLimit}` : ' · 输出默认'}
-              {' · 输出: 文本'}
-            </div>
+            {probe?.ok && <span className="tag tag-green">已连接 · {probe.elapsedMs}ms</span>}
+            {probe && !probe.ok && <span className="tag" style={{ color: '#dc2626' }}>失败</span>}
+            <button
+              className="text-btn"
+              data-testid={`provider-probe-${m.id}`}
+              disabled={probingId === m.id}
+              title="直连 baseURL 发一次最小请求，验证该模型是否可连通（未保存的配置也可测）"
+              onClick={() => void probeModel(m.id)}
+            >
+              {probingId === m.id ? '测试中…' : '测试'}
+            </button>
+            <button className="text-btn" onClick={() => setEditModel(m.id)}>编辑</button>
+            <button className="text-btn danger" onClick={() => set({ models: p.models.filter((x) => x.id !== m.id) })}>移除</button>
           </div>
-          <button className="text-btn" onClick={() => setEditModel(m.id)}>编辑</button>
-          <button className="text-btn danger" onClick={() => set({ models: p.models.filter((x) => x.id !== m.id) })}>移除</button>
-        </div>
-      ))}
+        )
+      })}
 
       {addingModel && (
         <ModelForm
@@ -223,6 +258,15 @@ function ModelForm(props: {
   const [tiers, setTiers] = useState<ThinkingTier[]>(props.initial?.thinkingTiers ?? [])
   const [error, setError] = useState('')
 
+  const dirty =
+    id !== (props.initial?.id || '') ||
+    name !== (props.initial?.name || '') ||
+    ctx !== (props.initial?.contextLimit ? String(props.initial.contextLimit) : '') ||
+    out !== (props.initial?.outputLimit ? String(props.initial.outputLimit) : '') ||
+    attachment !== !!props.initial?.attachment ||
+    tiers.join(',') !== (props.initial?.thinkingTiers ?? []).join(',')
+  const { requestClose, guard } = useDirtyClose({ dirty, onClose: props.onClose })
+
   const submit = () => {
     const mid = id.trim()
     if (!mid) return setError('模型 ID 必填')
@@ -241,9 +285,14 @@ function ModelForm(props: {
   }
 
   return (
-    <div className="modal-mask" onClick={props.onClose}>
+    <div className="modal-mask" onClick={requestClose}>
       <div className="modal form" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-title">{isEdit ? `编辑模型「${props.initial?.id}」` : '添加模型'}</div>
+        <div className="modal-title-row">
+          <div className="modal-title">{isEdit ? `编辑模型「${props.initial?.id}」` : '添加模型'}</div>
+          <button className="icon-btn" aria-label="关闭" onClick={requestClose}>
+            ×
+          </button>
+        </div>
         <label className="field">
           <span>模型 ID *</span>
           <input value={id} onChange={(e) => setId(e.target.value)} disabled={isEdit} placeholder="如 deepseek-chat / claude-sonnet-4-5" />
@@ -286,10 +335,11 @@ function ModelForm(props: {
         </div>
         {error && <p className="settings-error">⚠️ {error}</p>}
         <div className="modal-actions">
-          <button className="btn" onClick={props.onClose}>取消</button>
+          <button className="btn" onClick={requestClose}>取消</button>
           <button className="btn primary" onClick={submit}>{isEdit ? '保存' : '添加'}</button>
         </div>
       </div>
+      {guard}
     </div>
   )
 }
@@ -302,6 +352,9 @@ function AddProvider(props: { existingIds: string[]; onClose: () => void; onAdd:
   const [apiFormat, setApiFormat] = useState<ProviderSetting['apiFormat']>('chat')
   const [apiKey, setApiKey] = useState('')
   const [error, setError] = useState('')
+
+  const dirty = id !== '' || name !== '' || baseURL !== '' || apiKey !== '' || apiFormat !== 'chat'
+  const { requestClose, guard } = useDirtyClose({ dirty, onClose: props.onClose })
 
   const submit = () => {
     const pid = id.trim().replace(/\s+/g, '-').toLowerCase()
@@ -320,9 +373,14 @@ function AddProvider(props: { existingIds: string[]; onClose: () => void; onAdd:
   }
 
   return (
-    <div className="modal-mask" onClick={props.onClose}>
+    <div className="modal-mask" onClick={requestClose}>
       <div className="modal form" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-title">添加模型提供商</div>
+        <div className="modal-title-row">
+          <div className="modal-title">添加模型提供商</div>
+          <button className="icon-btn" aria-label="关闭" onClick={requestClose}>
+            ×
+          </button>
+        </div>
         <label className="field">
           <span>id *（唯一标识，如 my-proxy）</span>
           <input value={id} onChange={(e) => setId(e.target.value)} placeholder="my-proxy" />
@@ -350,10 +408,11 @@ function AddProvider(props: { existingIds: string[]; onClose: () => void; onAdd:
         <p className="settings-tip">创建后到提供商详情里「+ 添加模型」录入模型 ID 与参数。</p>
         {error && <p className="settings-error">⚠️ {error}</p>}
         <div className="modal-actions">
-          <button className="btn" onClick={props.onClose}>取消</button>
+          <button className="btn" onClick={requestClose}>取消</button>
           <button className="btn primary" onClick={submit}>添加</button>
         </div>
       </div>
+      {guard}
     </div>
   )
 }

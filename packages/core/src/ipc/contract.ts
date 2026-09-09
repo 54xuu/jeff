@@ -49,6 +49,7 @@ export const IPC = {
   providersList: 'providers:list',
   providersSave: 'providers:save',
   providersCatalog: 'providers:catalog',
+  providersProbe: 'providers:probe',
   modelsConfigured: 'models:configured',
   sessionsList: 'sessions:list',
   sessionPreview: 'session:preview',
@@ -273,6 +274,14 @@ export interface McpProbeResult {
   elapsedMs: number
 }
 
+/** 模型连通探测结果（设置页模型行「测试」按钮） */
+export interface ProviderProbeResult {
+  ok: boolean
+  error?: string
+  /** 探测耗时 ms */
+  elapsedMs: number
+}
+
 /** skills 备份报告（单向备份，永不删除远端） */
 export interface SkillsBackupReport {
   ok: boolean
@@ -336,6 +345,7 @@ export type InvokeMap = {
   [IPC.providersList]: void
   [IPC.providersSave]: { providers: ProviderSetting[] }
   [IPC.providersCatalog]: void
+  [IPC.providersProbe]: { provider: ProviderSetting; modelId: string }
   [IPC.modelsConfigured]: void
   [IPC.sessionsList]: { agentId?: string; projectId?: string }
   [IPC.sessionPreview]: { sessionId: string }

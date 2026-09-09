@@ -144,6 +144,10 @@ export function registerIpc(core: JeffCore): void {
       return { catalog: Array.from(byProvider.values()) }
     },
     [IPC.modelsConfigured]: async () => ({ models: core.configuredModels() }),
+    [IPC.providersProbe]: async (p): Promise<import('@jeff/core').ProviderProbeResult> => {
+      const { provider, modelId } = p as { provider: import('@jeff/core').ProviderSetting; modelId: string }
+      return core.probeProvider(provider, modelId)
+    },
 
     // ---------- 历史会话（聊天记录） ----------
     [IPC.sessionsList]: async (p) => {

@@ -3,6 +3,7 @@ import { useStore } from '../store'
 import { api } from '../api'
 import { IPC, XIAOJIE_ID } from '@jeff/core'
 import { EmojiPickerButton } from './ui/EmojiPicker'
+import { useDirtyClose } from './ui/useDirtyClose'
 
 /** 发起群聊 = 创建项目群：群名/图标/群主/成员/工作空间目录 */
 export default function CreateGroupModal(props: { onClose: () => void }): React.JSX.Element {
@@ -14,6 +15,15 @@ export default function CreateGroupModal(props: { onClose: () => void }): React.
   const [memberIds, setMemberIds] = useState<string[]>([])
   const [workspaceDir, setWorkspaceDir] = useState('')
   const [error, setError] = useState<string | null>(null)
+
+  const dirty =
+    title.trim() !== '' ||
+    description.trim() !== '' ||
+    workspaceDir.trim() !== '' ||
+    leaderId !== '' ||
+    memberIds.length > 0 ||
+    icon !== '👥'
+  const { requestClose, guard } = useDirtyClose({ dirty, onClose: props.onClose })
 
   const toggleMember = (id: string) => {
     setMemberIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
@@ -44,9 +54,14 @@ export default function CreateGroupModal(props: { onClose: () => void }): React.
   }
 
   return (
-    <div className="modal-mask" data-testid="create-group-modal" onClick={props.onClose}>
+    <div className="modal-mask" data-testid="create-group-modal" onClick={requestClose}>
       <div className="modal form" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-title">发起群聊（创建项目）</div>
+        <div className="modal-title-row">
+          <div className="modal-title">发起群聊（创建项目）</div>
+          <button className="icon-btn" aria-label="关闭" onClick={requestClose}>
+            ×
+          </button>
+        </div>
         <label className="field">
           <span>群名 *</span>
           <input value={title} data-testid="group-title" onChange={(e) => setTitle(e.target.value)} placeholder="如：Jeff 官网开发" />
@@ -103,7 +118,7 @@ export default function CreateGroupModal(props: { onClose: () => void }): React.
         </div>
         <div className="modal-actions">
           {error && <span className="settings-error" style={{ marginRight: 'auto', alignSelf: 'center' }}>⚠️ {error}</span>}
-          <button className="btn" onClick={props.onClose}>取消</button>
+          <button className="btn" onClick={requestClose}>取消</button>
           <button className="btn primary" data-testid="group-create-confirm" disabled={!title.trim() || !leaderId} onClick={() => void save()}>
             建群
           </button>
@@ -112,6 +127,7 @@ export default function CreateGroupModal(props: { onClose: () => void }): React.
           提示：也可以直接跟小杰说「帮我建一个项目群」，让它代劳。
         </p>
       </div>
+      {guard}
     </div>
   )
 }

@@ -5,6 +5,7 @@ import { IPC, projectRoleLabel, type GroupMessage, type GroupThreadBrief, type P
 import Avatar from './Avatar'
 import { Markdown } from './Markdown'
 import { EmojiPickerButton } from './ui/EmojiPicker'
+import { useDirtyClose } from './ui/useDirtyClose'
 
 /** 群资料抽屉：上段群设置 + 下段项目级扁平聊天记录。busy（生成中）时禁用切换/新建/删除会话，防消息串线 */
 export default function GroupInfoDrawer(props: { project: ProjectInfo; busy?: boolean; onClose: () => void }): React.JSX.Element {
@@ -59,6 +60,15 @@ export default function GroupInfoDrawer(props: { project: ProjectInfo; busy?: bo
   }, [project.id])
 
   const candidateAgents = agents.filter((a) => !members.some((m) => m.agent_id === a.id))
+
+  // 群设置表单脏检查：任一字段相对当前 project 有变化即视为脏（成员增删是即时保存的，不参与）
+  const formDirty =
+    title !== project.title ||
+    icon !== (project.icon || '👥') ||
+    description !== (project.description || '') ||
+    workspaceDir !== (project.workspace_dir || '') ||
+    leaderId !== (project.leader_agent_id || '')
+  const { requestClose, guard } = useDirtyClose({ dirty: formDirty, onClose, disabled: addingMember })
 
   const saveSettings = async () => {
     if (!title.trim() || !leaderId) return
@@ -162,11 +172,11 @@ export default function GroupInfoDrawer(props: { project: ProjectInfo; busy?: bo
   }
 
   return (
-    <div className="drawer-mask" data-testid="group-info-drawer" onClick={onClose}>
+    <div className="drawer-mask" data-testid="group-info-drawer" onClick={requestClose}>
       <div className="drawer drawer-wide" onClick={(e) => e.stopPropagation()}>
         <div className="drawer-head">
           <span>群资料：{project.title}</span>
-          <button className="icon-btn" onClick={onClose}>
+          <button className="icon-btn" onClick={requestClose}>
             ✕
           </button>
         </div>
@@ -293,7 +303,11 @@ export default function GroupInfoDrawer(props: { project: ProjectInfo; busy?: bo
                           e.preventDefault()
                           void commitRename(t.id)
                         }
-                        if (e.key === 'Escape') setEditingId(null)
+                        if (e.key === 'Escape') {
+                          // 约定：消费 Esc 的组件 preventDefault，外层抽屉守卫（useDirtyClose）检测后跳过
+                          e.preventDefault()
+                          setEditingId(null)
+                        }
                       }}
                     />
                   ) : (
@@ -385,6 +399,7 @@ export default function GroupInfoDrawer(props: { project: ProjectInfo; busy?: bo
           />
         )}
       </div>
+      {guard}
     </div>
   )
 }
@@ -394,6 +409,14 @@ function AddMemberModal(props: {
   onClose: () => void
   onPick: (agentId: string) => Promise<void>
 }): React.JSX.Element {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') props.onClose()
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [props.onClose])
+
   return (
     <div className="modal-mask" data-testid="group-add-member-modal" onClick={props.onClose}>
       <div className="modal form" onClick={(e) => e.stopPropagation()}>
