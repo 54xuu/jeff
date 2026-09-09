@@ -175,9 +175,13 @@ d('E2E: 项目群聊 + 任务卡片', () => {
     expect(r.member).toBe('前端小王')
     expect(r.member).toBe('前端小王')
     expect(r.result).toBeTruthy()
-    // 群记录：公告 + 成员结果
+    // 群记录：leader 普通气泡派发（@成员 + 完整指令）+ 成员结果
     const history = core.groupChat.history(p.id)
-    expect(history.some((m) => m.role === 'system' && m.text.includes('委派任务给 前端小王'))).toBe(true)
+    const dispatch = history.find((m) => (m.meta as { phase?: string })?.phase === 'dispatch')
+    expect(dispatch?.role).toBe('assistant')
+    expect(dispatch?.agentId).toBe(XIAOJIE_ID)
+    expect(dispatch?.text).toContain('@前端小王')
+    expect(dispatch?.text).toContain('请把首页按钮改成圆角风格')
     expect(history.some((m) => m.sender_name === '前端小王' && (m.meta as { delegatedBy?: string })?.delegatedBy === XIAOJIE_ID)).toBe(true)
   }, 180000)
 })

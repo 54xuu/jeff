@@ -9,6 +9,17 @@ import { GroupThreadStore, groupMsgScope } from './groupThreads.js'
 /** 单次用户消息触发的串行协作流水线最大步数（防死循环） */
 const MAX_PIPELINE_HOPS = 5
 
+/**
+ * 群内单个智能体回合的应用级总预算（leader 首回合 / @派发 worker 回合 / leader 总结）。
+ * 长任务（读大文件、产出文档）可能超过旧默认 10 分钟；与 jeff_delegate 委派回合共用同一预算。
+ */
+export const GROUP_TURN_TIMEOUT_MS = 30 * 60 * 1000
+
+/** 回调/汇报消息确保带 @我（发起任务的用户）：模型没按约定输出时由编排器补一次，不重复添加 */
+export function ensureCallbackMention(content: string): string {
+  return content.includes('@我') ? content : `@我 ${content}`
+}
+
 /** 群消息发送结果：summaryFailed 表示 worker 成果已保留但 leader 最终总结失败（可手动再次请求总结） */
 export interface GroupSendResult {
   routedTo: string
@@ -27,6 +38,8 @@ export interface GroupChatHooks {
   defaultModel?: () => { providerID: string; modelID: string } | null
   /** 调试日志（消息处理失败等现场） */
   onDebugLog?: (tag: string, detail: unknown) => void
+  /** 单次群发送流水线完全结束（含锁内清理）后回调；用于 sidecar 待重启的延迟落闸 */
+  onPipelineIdle?: () => void
 }
 
 /**
@@ -50,6 +63,11 @@ export class GroupChat {
   /** 该项目群是否有在途发送（用于禁止切换/删除 thread，防止消息串线） */
   isBusy(projectId: string): boolean {
     return this.runStates.has(projectId)
+  }
+
+  /** 任意项目群是否有在途流水线（sidecar 重启会终止在途请求，重启前必须为空闲） */
+  hasBusyPipeline(): boolean {
+    return this.runStates.size > 0
   }
 
   /**
@@ -158,8 +176,6 @@ export class GroupChat {
     const agents = agentRepo(this.db)
     const members = projectAgentRepo(this.db).listByProject(projectId)
     const isLeaderBriefing = project.leader_agent_id === agentId
-    const leaderAgent = project.leader_agent_id ? agents.get(project.leader_agent_id) : undefined
-    const leaderName = leaderAgent?.name || '群主'
 
     const roster = members
       .map((m) => {
@@ -182,7 +198,7 @@ export class GroupChat {
 4. 系统调度器会严格按顺序驱动各 worker 串行执行并在群内向你汇报；待所有 worker 汇报完毕后，系统会自动触发你进行最终验收与向用户的汇总答复。`
       : `你是本群工作者（worker）。
 1. 当群主 @ 你并指派任务时，请根据指派要求全力执行（结合工作空间完成代码编写、文件查验等）；
-2. 任务执行完成后，你【必须】在回复最后以「@${leaderName} 汇报：<任务执行结果与结论总结>」的格式在群里公开汇报，以便群主验收与向用户汇总。`
+2. 任务执行完成后，你【必须】在回复最后以「@我 汇报：<任务执行结果与结论总结>」的格式在群里公开汇报（「我」指发起任务的用户），以便群主验收与向用户汇总。`
 
     const bg = (project.description || '').trim()
     return [
@@ -244,6 +260,7 @@ export class GroupChat {
     } finally {
       // 仅清理仍属于本次运行的状态（期间不可能有并发 send，防御性判断）
       if (this.runStates.get(projectId) === runState) this.runStates.delete(projectId)
+      this.hooks?.onPipelineIdle?.()
     }
   }
 
@@ -287,9 +304,6 @@ export class GroupChat {
     let queue: Array<{ agentId: string; source: string }> = this.parseAllMentions(first.content, memberInfos)
       .filter((m) => m.agent_id !== firstTargetId && !(firstTargetId !== leaderId && m.agent_id === leaderId))
       .map((m) => ({ agentId: m.agent_id, source: first.content }))
-    if (firstTargetId === leaderId && queue.length > 0) {
-      this.addSystemMessage(projectId, `📋 ${firstTarget.name} 已拆解任务，开始按序派发给 ${queue.length} 位成员执行…`, undefined, threadId)
-    }
     while (queue.length > 0 && hops < MAX_PIPELINE_HOPS) {
       if (runState.cancelled) return { routedTo }
       const item = queue.shift() as { agentId: string; source: string }
@@ -302,8 +316,8 @@ export class GroupChat {
       const taskText = this.extractMentionTask(item.source, worker.name, memberInfos)
       // 二级转派（worker → worker）时说明来源是同事，避免误导为群主指派
       const from = firstTargetId === leaderId ? `群主 ${agents.get(leaderId)?.name || '群主'} 在群里指派` : `${firstTarget.name} 转派`
-      const prompt = `【${from}】${taskText || text}\n请执行上述任务；完成后在群里以「@${agents.get(leaderId)?.name || '群主'} 汇报：<结果>」公开汇报。`
-      const turn = await this.runTurn({ projectId, threadId, agentId: workerId, text: prompt, runState })
+      const prompt = `【${from}】${taskText || text}\n请执行上述任务；完成后在群里以「@我 汇报：<结果>」公开汇报（「我」指发起任务的用户）。`
+      const turn = await this.runTurn({ projectId, threadId, agentId: workerId, text: prompt, runState, callbackMention: true })
       if (turn.stopped) return { routedTo }
       // worker 回复里继续 @ 的人：leader 代表汇报到位；其他 worker 续入队列串行执行（来源文本 = 该 worker 的回复）
       for (const nm of this.parseAllMentions(turn.content, memberInfos)) {
@@ -316,10 +330,11 @@ export class GroupChat {
       this.addSystemMessage(projectId, `⚠️ 本轮协作步数已达上限（${MAX_PIPELINE_HOPS} 步），剩余任务不再派发，由群主直接汇总。`, undefined, threadId)
     }
 
-    // 闭环：有派发（或用户直连 worker 且 worker 向 leader 汇报）时，唤醒 leader 做最终总结
+    // 闭环：有派发（或用户直连 worker 执行完毕）时，唤醒 leader 做最终总结
+    // （worker 汇报对象是「@我」= 发起任务的用户，不再以 @leader 提及作为汇报信号）
     let summaryFailed = false
     let summaryError: string | undefined
-    if (dispatchedAny || (firstTargetId !== leaderId && this.parseAllMentions(first.content, memberInfos).some((m) => m.agent_id === leaderId))) {
+    if (dispatchedAny || firstTargetId !== leaderId) {
       routedTo = leaderId
       const summaryPrompt = dispatchedAny
         ? '【系统通知】你派发的任务已全部由成员执行完毕并回群汇报。请对照各成员的汇报验收成果，直接向用户给出清晰、完整的最终总结答复（无需再派发新任务）。'
@@ -356,8 +371,9 @@ export class GroupChat {
   /**
    * 驱动单个 agent 回合一轮：调 opencode、落库、错误兜底。
    * 返回回复文本与是否被用户停止。
+   * callbackMention：worker 执行回合的回调落库确保带 @我（模型未按约定输出时补一次）。
    */
-  private async runTurn(input: { projectId: string; threadId: string; agentId: string; text: string; images?: Array<{ mime: string; dataUrl: string }>; runState?: { threadId: string; cancelled: boolean; sessionId: string | null } }): Promise<{ content: string; stopped: boolean }> {
+  private async runTurn(input: { projectId: string; threadId: string; agentId: string; text: string; images?: Array<{ mime: string; dataUrl: string }>; runState?: { threadId: string; cancelled: boolean; sessionId: string | null }; callbackMention?: boolean }): Promise<{ content: string; stopped: boolean }> {
     const { projectId, threadId, agentId, text } = input
     const agents = agentRepo(this.db)
     const target = agents.get(agentId)
@@ -381,6 +397,7 @@ export class GroupChat {
         ...(input.images && input.images.length ? { images: input.images } : {}),
         agent: agentSlug(agentId),
         system,
+        timeoutMs: GROUP_TURN_TIMEOUT_MS,
         ...opts,
       })
     } catch (err) {
@@ -412,11 +429,12 @@ export class GroupChat {
       .filter(Boolean)
     const toolParts = (reply.parts || []).filter((p) => p.type === 'tool') as Array<{ type: 'tool'; tool: string; state?: { status?: string; output?: string; error?: string } }>
     const content = textParts.map((p) => p.text).join('\n')
+    const finalContent = input.callbackMention ? ensureCallbackMention(content) : content
     chatMessageRepo(this.db).add({
       scope,
       sender_type: 'agent',
       sender_id: agentId,
-      content,
+      content: finalContent,
       meta: {
         sessionId,
         messageId: reply.id,
@@ -437,7 +455,7 @@ export class GroupChat {
     this.hooks?.afterReply?.({ kind: 'group', projectId, agentId })
     // 落库后刷新 thread 时间线，保证 worker 结果/失败状态能更新 thread 排序
     this.threads.touch(projectId, threadId)
-    return { content, stopped: false }
+    return { content: finalContent, stopped: false }
   }
 
   /** 读取当前（或指定）thread 的群消息 */

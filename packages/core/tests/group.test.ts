@@ -6,7 +6,7 @@ import { openDb } from '../src/db/db.js'
 import { agentSlug } from '../src/agents/registry.js'
 import { agentRepo, projectAgentRepo, projectRepo, taskRepo } from '../src/db/repos.js'
 import { buildPaths } from '../src/paths.js'
-import { GroupChat } from '../src/orchestrator/group.js'
+import { GroupChat, GROUP_TURN_TIMEOUT_MS } from '../src/orchestrator/group.js'
 import { taskCardMessage, statusLabel } from '../src/tools/projectTools.js'
 import { XIAOJIE_ID } from '../src/ipc/contract.js'
 import type { DB } from '../src/db/db.js'
@@ -67,7 +67,7 @@ describe('GroupChat', () => {
     expect(briefing).toContain('画图')
     expect(briefing).toContain('按执行顺序')
     const workerBriefing = group.buildBriefing(p.id, agentRepo(db).list().find((a) => a.name === '开发')!.id)
-    expect(workerBriefing).toContain('@架构师 汇报')
+    expect(workerBriefing).toContain('@我 汇报')
   })
 
   it('briefing 空简介时仍写入项目背景占位', () => {
@@ -97,10 +97,12 @@ describe('GroupChat', () => {
     expect(sent[1].system).toContain('成员')
 
     const history = group.history(p.id)
-    expect(history.length).toBe(4)
+    // @直达 worker 执行后 leader 自动验收总结（4+1=5 条：user/架构师 + user/开发/架构师总结）
+    expect(history.length).toBe(5)
     expect(history[0].role).toBe('user')
     expect(history[1].sender_name).toBe('架构师')
     expect(history[3].sender_name).toBe('开发')
+    expect(history[4].sender_name).toBe('架构师')
   })
 
   it('send：@成员使用该成员的 model/variant，忽略入参覆盖', async () => {
@@ -229,18 +231,53 @@ describe('GroupChat', () => {
     // 执行顺序：leader 拆解 → 开发 → UI → leader 总结
     expect(order).toEqual(['架构师', '开发', 'UI', '架构师'])
     expect(r.routedTo).toBe(leader.id)
-    // worker 收到的是带指派前缀与汇报要求的派发指令
+    // worker 收到的是带指派前缀与汇报要求的派发指令（汇报对象是发起任务的用户）
     expect(texts[1].text).toContain('群主 架构师 在群里指派')
     expect(texts[1].text).toContain('实现登录接口')
+    expect(texts[1].text).toContain('@我 汇报')
     expect(texts[2].text).toContain('出登录页设计稿')
     // 总结回合是系统唤醒提示
     expect(texts[3].text).toContain('系统通知')
-    // 群记录：公告 + 各成员消息 + 总结
+    // 群记录：各成员消息 + 总结；派发由 leader 普通消息承载，不再有灰色「已拆解任务」系统公告
     const history = group.history(p.id)
-    expect(history.some((m) => m.role === 'system' && m.text.includes('已拆解任务'))).toBe(true)
+    expect(history.some((m) => m.role === 'system' && m.text.includes('已拆解任务'))).toBe(false)
     expect(history.some((m) => m.sender_name === '开发' && m.text.includes('登录接口已完成'))).toBe(true)
     expect(history.some((m) => m.sender_name === 'UI' && m.text.includes('设计稿已产出'))).toBe(true)
     expect(history.some((m) => m.sender_name === '架构师' && m.text.includes('总结：'))).toBe(true)
+    // worker 回调落库确保带 @我（发起任务的用户）
+    expect(history.find((m) => m.sender_name === '开发')?.text.startsWith('@我')).toBe(true)
+  })
+
+  it('send：群回合统一 30 分钟超时预算，worker 未按约定 @我 时编排器兜底补前缀', async () => {
+    const p = projectRepo(db).list()[0]
+    const agents = agentRepo(db)
+    const leader = agents.list().find((a) => a.name === '架构师')!
+    const dev = agents.list().find((a) => a.name === '开发')!
+    const slugToName = new Map([
+      [agentSlug(leader.id), '架构师'],
+      [agentSlug(dev.id), '开发'],
+    ])
+    const calls: Array<{ agent?: string; timeoutMs?: number }> = []
+    const ocStub = {
+      getSession: async () => ({ id: 'x' }),
+      createSession: async () => ({ id: `ses_${Math.random().toString(36).slice(2, 8)}` }),
+      sendMessage: async (input: { agent?: string; timeoutMs?: number }) => {
+        calls.push({ agent: input.agent, timeoutMs: input.timeoutMs })
+        const name = slugToName.get(input.agent || '') || ''
+        if (name === '架构师') return { id: 'l1', parts: [{ type: 'text', text: '@开发 修一下登录页' }] }
+        // worker 故意不输出 @我 / @架构师：编排器须兜底补 @我，且不得把普通文本当新派发
+        return { id: 'w1', parts: [{ type: 'text', text: '登录页已修复' }] }
+      },
+    } as unknown as OcClient
+    group = new GroupChat(db, () => ocStub)
+
+    await group.send({ projectId: p.id, text: '修登录页' })
+    // leader 派发 → worker → leader 总结，每个回合都是 30 分钟总预算
+    expect(calls.length).toBe(3)
+    for (const c of calls) expect(c.timeoutMs).toBe(GROUP_TURN_TIMEOUT_MS)
+    const devMsg = group.history(p.id).find((m) => m.sender_name === '开发')
+    expect(devMsg?.text.startsWith('@我')).toBe(true)
+    expect(devMsg?.text).toContain('登录页已修复')
   })
 
   it('send：用户直连 @worker，worker 汇报后 leader 自动验收总结', async () => {

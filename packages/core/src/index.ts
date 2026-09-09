@@ -108,12 +108,13 @@ export class JeffCore extends EventEmitter {
     this.indexer = new SessionIndex(this.db)
     this.groupChat = new GroupChat(this.db, () => this.oc, this.chatHooks())
     this.privateChat = new PrivateChat(this.db, () => this.oc, this.chatHooks())
-    this.delegator = new Delegator(this.db, () => this.oc, this.groupChat, (projectId) => {
-      this.bus.emit('group-updated', { projectId })
+    this.delegator = new Delegator(this.db, () => this.oc, this.groupChat, (payload) => {
+      this.bus.emit('group-updated', payload)
     })
     // 委派回合与普通群回合一致：注入用户级/项目级 AGENTS.md 与记忆
     this.delegator.buildMemory = (agentId, projectId) => this.buildMemorySystem(agentId, projectId)
     this.delegator.onDebugLog = this.debugLog.fn()
+    this.delegator.onIdle = () => this.flushPendingRegistryRestart()
     this.sync = new SyncEngine(this.db, this.paths, this.memory, () => this.kv().getJSON<WebdavConfig | null>('settings:webdav', null), (r) => {
       this.lastSyncReport = r
       this.bus.emit('sync-report', r)
@@ -274,6 +275,7 @@ export class JeffCore extends EventEmitter {
   private chatHooks() {
     return {
       beforeEnsure: () => this.restartIfRegistryDirty(),
+      onPipelineIdle: () => this.flushPendingRegistryRestart(),
       onSessionCreated: (sessionId: string, meta: { kind: 'private' | 'group' | 'review'; agentId: string; projectId?: string }) => {
         this.kv().setJSON(sesMetaKey(sessionId), meta)
       },
@@ -945,8 +947,31 @@ export class JeffCore extends EventEmitter {
 
   private async restartIfRegistryDirty(): Promise<void> {
     if (!this.registryDirty || !this.sidecar) return
+    // 项目群长任务（流水线/委派回合）在途时推迟重启：sidecar 停止会杀掉正在生成的请求，
+    // 曾把 10 分钟级的群任务打断成回合失败；待流水线空闲（onPipelineIdle/onIdle）后再落闸
+    if (this.hasActiveGroupWork()) {
+      this.pendingRegistryRestart = true
+      return
+    }
     this.registryDirty = false
     await this.restartSidecar()
+  }
+
+  /** 是否有在途项目群工作（流水线或委派回合）——sidecar 重启会终止这些请求 */
+  private hasActiveGroupWork(): boolean {
+    return this.groupChat.hasBusyPipeline() || (this.delegator?.activeCount ?? 0) > 0
+  }
+
+  private pendingRegistryRestart = false
+
+  /** 群任务空闲后的延迟落闸：有待重启标记且当前无在途群工作时执行重启 */
+  private flushPendingRegistryRestart(): void {
+    if (!this.pendingRegistryRestart) return
+    if (this.hasActiveGroupWork()) return
+    this.pendingRegistryRestart = false
+    void this.restartIfRegistryDirty().catch((err) => {
+      this.debugLog.log('sidecar-restart', { error: String((err as Error)?.message || err) })
+    })
   }
 
   /** 重启 sidecar 并重建客户端/会话对象（互斥：并发调用只执行一次，共享同一结果） */

@@ -4,6 +4,7 @@ import { agentRepo, projectAgentRepo, projectRepo, chatMessageRepo } from '../db
 import { agentSlug } from '../agents/registry.js'
 import type { OcClient } from '../oc/client.js'
 import { agentPromptOpts } from '../util/modelKey.js'
+import { GROUP_TURN_TIMEOUT_MS, ensureCallbackMention } from './group.js'
 import type { GroupChat } from './group.js'
 import { groupMsgScope } from './groupThreads.js'
 
@@ -21,7 +22,8 @@ export interface DelegateResult {
   error?: string
 }
 
-const DELEGATE_TIMEOUT_MS = 10 * 60 * 1000
+/** 委派回合与普通群回合共用同一 30 分钟总预算（群任务可能远超 10 分钟） */
+const DELEGATE_TIMEOUT_MS = GROUP_TURN_TIMEOUT_MS
 const MAX_DELEGATIONS_PER_MESSAGE = 5
 
 /**
@@ -37,13 +39,20 @@ export class Delegator {
   onDebugLog?: (tag: string, detail: unknown) => void
   /** 规则/记忆注入（用户级+项目级 AGENTS.md 与记忆），与普通群回合保持一致；由 JeffCore 注入 */
   buildMemory?: (agentId: string, projectId: string) => string | undefined
+  /** 委派全部结束后回调（无在途委派时触发）；用于 sidecar 待重启的延迟落闸 */
+  onIdle?: () => void
 
   constructor(
     private db: DB,
     private getOc: () => OcClient,
     private groupChat: GroupChat,
-    private notify: (projectId: string) => void,
+    private notify: (payload: { projectId: string; threadId?: string }) => void,
   ) {}
+
+  /** 在途委派数（sidecar 重启前检查用：重启会终止正在执行的委派请求） */
+  get activeCount(): number {
+    return this.inflight.size
+  }
 
   /** 会话上下文 → 是否可委派（群主 + 群会话） */
   resolveDelegateScope(sessionId: string, agentId: string): DelegateCtx | null {
@@ -101,14 +110,15 @@ export class Delegator {
     const scope = groupMsgScope(ctx.projectId, threadId)
     const leaderName = agents.get(ctx.leaderAgentId)?.name || '群主'
     try {
-      // 1. 群里公告
+      // 1. 群里公告：以 leader 普通气泡发布，@发起用户（我）与被派发成员，完整指令不截断
       chatMessageRepo(this.db).add({
         scope,
-        sender_type: 'system',
-        content: `🔗 ${leaderName} 委派任务给 ${member.name}：${instruction.slice(0, 120)}${instruction.length > 120 ? '…' : ''}`,
-        meta: { type: 'delegation', projectId: ctx.projectId, leaderId: ctx.leaderAgentId, memberId },
+        sender_type: 'agent',
+        sender_id: ctx.leaderAgentId,
+        content: `@我 已将任务派发给 @${member.name}，任务要求如下：\n${instruction}`,
+        meta: { type: 'delegation', phase: 'dispatch', projectId: ctx.projectId, leaderId: ctx.leaderAgentId, memberId },
       })
-      this.notify(ctx.projectId)
+      this.notify({ projectId: ctx.projectId, threadId })
 
       // 2. 成员执行（独立会话，注入群上下文 + 指派说明；模型/思考用成员自己的设置）
       const sessionId = await this.groupChat.ensureSession(ctx.projectId, memberId, threadId)
@@ -128,19 +138,20 @@ export class Delegator {
       const parts = (reply.parts || []).filter((p) => p.type === 'text') as Array<{ type: 'text'; text: string }>
       const resultText = parts.map((p) => p.text).join('\n') || '（成员没有返回文本内容）'
 
-      // 3. 结果回群
+      // 3. 结果回群：worker 普通气泡，@发起用户；完整结果不截断
       chatMessageRepo(this.db).add({
         scope,
         sender_type: 'agent',
         sender_id: memberId,
-        content: resultText,
-        meta: { sessionId, messageId: reply.id, delegatedBy: ctx.leaderAgentId },
+        content: ensureCallbackMention(resultText),
+        meta: { type: 'delegation', phase: 'result', sessionId, messageId: reply.id, delegatedBy: ctx.leaderAgentId },
       })
       this.groupChat.threads.touch(ctx.projectId, threadId)
-      this.notify(ctx.projectId)
+      this.notify({ projectId: ctx.projectId, threadId })
       return { ok: true, memberName: member.name, result: resultText }
     } catch (err) {
-      const msg = String((err as Error)?.message || err).slice(0, 300)
+      // 失败回调也以 worker 普通气泡回群，完整错误 message 不截断（堆栈只进调试日志）
+      const msg = String((err as Error)?.message || err)
       this.onDebugLog?.('delegate-fail', {
         projectId: ctx.projectId,
         leaderAgentId: ctx.leaderAgentId,
@@ -151,13 +162,16 @@ export class Delegator {
       })
       chatMessageRepo(this.db).add({
         scope,
-        sender_type: 'system',
-        content: `⚠️ ${member.name} 执行委派任务失败：${msg}`,
+        sender_type: 'agent',
+        sender_id: memberId,
+        content: `@我 任务执行失败：${msg}`,
+        meta: { type: 'delegation', phase: 'failed', projectId: ctx.projectId, leaderId: ctx.leaderAgentId, memberId },
       })
-      this.notify(ctx.projectId)
+      this.notify({ projectId: ctx.projectId, threadId })
       return { ok: false, memberName: member.name, error: msg }
     } finally {
       this.inflight.delete(sig)
+      if (this.inflight.size === 0) this.onIdle?.()
     }
   }
 

@@ -62,10 +62,58 @@ describe('Delegator', () => {
     expect(sentTo[0].agent).toBe(agentSlug(devId))
     expect(sentTo[0].text).toContain('群主 架构师老王 指派')
     expect(sentTo[0].system).toContain('官网群')
-    // 群记录：公告 + 成员结果
+    // 群记录：leader 普通气泡派发（@我 + @成员 + 完整指令）+ worker 普通气泡结果（@我）
     const history = group.history(projectId)
-    expect(history.some((m) => m.role === 'system' && m.text.includes('委派任务给 开发小李'))).toBe(true)
-    expect(history.some((m) => m.sender_name === '开发小李' && m.text.includes('已处理'))).toBe(true)
+    const dispatch = history.find((m) => (m.meta as { phase?: string })?.phase === 'dispatch')
+    expect(dispatch?.role).toBe('assistant')
+    expect(dispatch?.agentId).toBe(leaderId)
+    expect(dispatch?.sender_name).toBe('架构师老王')
+    expect(dispatch?.text).toContain('@我')
+    expect(dispatch?.text).toContain('@开发小李')
+    expect(dispatch?.text).toContain('把首页 banner 改成新配色')
+    const result = history.find((m) => (m.meta as { phase?: string })?.phase === 'result')
+    expect(result?.sender_name).toBe('开发小李')
+    expect(result?.text.startsWith('@我')).toBe(true)
+    expect(result?.text).toContain('已处理')
+  })
+
+  it('派发公告完整保留超长指令（不再 120 字截断）', async () => {
+    sentTo = []
+    const tail = '结尾标记-XYZ9'
+    const instruction = `${'很长的任务说明。'.repeat(30)}${tail}`
+    await delegator.delegate({ projectId, leaderAgentId: leaderId }, devId, instruction, 'msg_long')
+    const dispatch = group.history(projectId).find((m) => (m.meta as { phase?: string })?.phase === 'dispatch')
+    expect(dispatch?.text).toContain(tail)
+  })
+
+  it('委派失败：worker 普通气泡 @我 回群，完整错误 message 不截断', async () => {
+    const longErr = 'E'.repeat(400)
+    const failOc = {
+      getSession: async () => ({ id: 'x' }),
+      createSession: async () => ({ id: 'ses_fail' }),
+      sendMessage: async () => {
+        throw new Error(longErr)
+      },
+    } as unknown as OcClient
+    const fd = new Delegator(db, () => failOc, group, () => {})
+    const r = await fd.delegate({ projectId, leaderAgentId: leaderId }, devId, '会失败的任务', 'msg_fail')
+    expect(r.ok).toBe(false)
+    const failed = group.history(projectId).find((m) => (m.meta as { phase?: string })?.phase === 'failed')
+    expect(failed?.role).toBe('assistant')
+    expect(failed?.agentId).toBe(devId)
+    expect(failed?.sender_name).toBe('开发小李')
+    expect(failed?.text).toBe(`@我 任务执行失败：${longErr}`)
+  })
+
+  it('notify 携带冻结的 threadId（防切换会话后刷新错线）', async () => {
+    sentTo = []
+    const payloads: Array<{ projectId: string; threadId?: string }> = []
+    const nid = new Delegator(db, () => ocStub, group, (pl) => payloads.push(pl))
+    await nid.delegate({ projectId, leaderAgentId: leaderId, threadId: 'thr_fixed' }, devId, '带 thread 的委派', 'msg_tid')
+    expect(payloads).toEqual([
+      { projectId, threadId: 'thr_fixed' },
+      { projectId, threadId: 'thr_fixed' },
+    ])
   })
 
   it('非群主不可委派', async () => {

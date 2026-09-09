@@ -61,6 +61,7 @@ if (!gotLock) {
     core.bus.on('data-changed', (what: string) => broadcast(what))
     core.bus.on('chat-updated', (p: unknown) => broadcast('chat-updated', p))
     core.bus.on('chat-stream', (p: unknown) => broadcast('chat-stream', p))
+    core.bus.on('group-updated', (p: unknown) => broadcast('group-updated', p))
     core.on('sidecar-status', (p: unknown) => broadcast('sidecar-status', p))
     core.on('sidecar-log', (line: string) => pushSidecarLog(line))
     registerIpc(core)
