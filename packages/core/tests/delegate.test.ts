@@ -113,4 +113,28 @@ describe('Delegator', () => {
     expect(delegator.resolveDelegateScope(leaderSession, leaderId)).toMatchObject({ projectId })
     expect(delegator.resolveDelegateScope(devSession, devId)).toBeNull()
   })
+
+  it('委派回合注入规则/记忆（与普通群回合一致，briefing 在前）', async () => {
+    sentTo = []
+    delegator.buildMemory = (agentId, pid) => {
+      expect(agentId).toBe(devId)
+      expect(pid).toBe(projectId)
+      return 'MEM-RULES-BLOCK'
+    }
+    const r = await delegator.delegate({ projectId, leaderAgentId: leaderId }, devId, '带规则的委派', 'msg_m1')
+    expect(r.ok).toBe(true)
+    const system = sentTo[0].system as string
+    expect(system).toContain('官网群') // 群 briefing
+    expect(system).toContain('MEM-RULES-BLOCK')
+    expect(system.indexOf('官网群')).toBeLessThan(system.indexOf('MEM-RULES-BLOCK'))
+    delegator.buildMemory = undefined
+  })
+
+  it('未注入 buildMemory 时退化为仅 briefing（向后兼容）', async () => {
+    sentTo = []
+    const r = await delegator.delegate({ projectId, leaderAgentId: leaderId }, devId, '不带规则的委派', 'msg_m2')
+    expect(r.ok).toBe(true)
+    expect(sentTo[0].system).toContain('官网群')
+    expect(sentTo[0].system).not.toContain('MEM-RULES-BLOCK')
+  })
 })

@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import Picker, { type Theme } from 'emoji-picker-react'
+import Picker, { EmojiStyle, type Theme } from 'emoji-picker-react'
 import { useDismissable } from '../../hooks/useDismissable'
 import { effectiveTheme } from '../../store'
 
@@ -50,7 +50,7 @@ export function EmojiPickerButton(props: {
               setOpen(false)
             }}
             theme={theme}
-            emojiStyle="native"
+            emojiStyle={EmojiStyle.NATIVE}
             searchPlaceholder="搜索 emoji…"
             lazyLoadEmojis
             previewConfig={{ showPreview: false }}

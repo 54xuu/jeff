@@ -35,6 +35,39 @@ export { openDb } from './db/db.js'
 const NUDGE_INTERVAL = 10 // 每 N 个用户触发一次后台记忆自省
 const NUDGE_REVIEW_MAX_CHARS = 6000
 
+/**
+ * AGENTS.md 注入块组装：用户级 + 项目级（仅一个来源，导出以便单测）。
+ * 项目级以 ~/.jeff/agents-md/<projectId>.md 权威副本为唯一执行来源（设置页编辑 + WebDAV 同步）；
+ * 权威副本缺失时才兼容读取工作空间旧 AGENTS.md 作为迁移来源，设置页保存后即写入权威副本。
+ */
+export function composeAgentsMdBlocks(paths: JeffPaths, db: DB, projectId?: string): string[] {
+  const out: string[] = []
+  try {
+    const userFile = paths.agentsMdUser
+    if (fs.existsSync(userFile)) {
+      const text = fs.readFileSync(userFile, 'utf8').trim()
+      if (text) out.push(`【AGENTS.md · 用户级】（${userFile}）\n${text}`)
+    }
+    if (projectId) {
+      const auth = path.join(paths.agentsMdDir, `${projectId}.md`)
+      if (fs.existsSync(auth)) {
+        const text = fs.readFileSync(auth, 'utf8').trim()
+        if (text) out.push(`【AGENTS.md · 项目级】（${auth}）\n${text}`)
+      } else {
+        const project = projectRepo(db).get(projectId)
+        const legacy = path.join(project?.workspace_dir || paths.workspaceDir, 'AGENTS.md')
+        if (fs.existsSync(legacy)) {
+          const text = fs.readFileSync(legacy, 'utf8').trim()
+          if (text) out.push(`【AGENTS.md · 项目级】（${legacy}）\n${text}`)
+        }
+      }
+    }
+  } catch {
+    /* 读取失败不注入 */
+  }
+  return out
+}
+
 /** Jeff 核心实例：桌面主进程与测试脚本共用 */
 export class JeffCore extends EventEmitter {
   paths: JeffPaths
@@ -77,6 +110,8 @@ export class JeffCore extends EventEmitter {
     this.delegator = new Delegator(this.db, () => this.oc, this.groupChat, (projectId) => {
       this.bus.emit('group-updated', { projectId })
     })
+    // 委派回合与普通群回合一致：注入用户级/项目级 AGENTS.md 与记忆
+    this.delegator.buildMemory = (agentId, projectId) => this.buildMemorySystem(agentId, projectId)
     this.delegator.onDebugLog = this.debugLog.fn()
     this.sync = new SyncEngine(this.db, this.paths, this.memory, () => this.kv().getJSON<WebdavConfig | null>('settings:webdav', null), (r) => {
       this.lastSyncReport = r
@@ -517,33 +552,9 @@ export class JeffCore extends EventEmitter {
     if (sessionId) await this.oc.abortSession(sessionId)
   }
 
-  /** AGENTS.md 注入块：用户级权威副本 + 项目级权威副本；工作空间旧文件仅作本机额外注入 */
+  /** AGENTS.md 注入块（见 composeAgentsMdBlocks） */
   agentsMdBlocks(projectId?: string): string[] {
-    const out: string[] = []
-    try {
-      const userFile = this.paths.agentsMdUser
-      if (fs.existsSync(userFile)) {
-        const text = fs.readFileSync(userFile, 'utf8').trim()
-        if (text) out.push(`【AGENTS.md · 用户级】（${userFile}）\n${text}`)
-      }
-      if (projectId) {
-        const auth = path.join(this.paths.agentsMdDir, `${projectId}.md`)
-        if (fs.existsSync(auth)) {
-          const text = fs.readFileSync(auth, 'utf8').trim()
-          if (text) out.push(`【AGENTS.md · 项目级】（${auth}）\n${text}`)
-        }
-        const project = projectRepo(this.db).get(projectId)
-        const dir = project?.workspace_dir || this.paths.workspaceDir
-        const legacy = path.join(dir, 'AGENTS.md')
-        if (fs.existsSync(legacy) && path.resolve(legacy) !== path.resolve(auth)) {
-          const text = fs.readFileSync(legacy, 'utf8').trim()
-          if (text) out.push(`【AGENTS.md · 工作空间】（${legacy}）\n${text}`)
-        }
-      }
-    } catch {
-      /* 读取失败不注入 */
-    }
-    return out
+    return composeAgentsMdBlocks(this.paths, this.db, projectId)
   }
 
   /** AGENTS.md 文件清单（设置页编辑用；项目级指向权威副本） */
@@ -1029,7 +1040,7 @@ Jeff 把「开发 + 项目管理」组织成三个概念（微信心智模型）
 
 ## 其他能力
 - **记忆**：每个智能体有自己的长期记忆；项目群有共享记忆；全局用户画像由小杰维护（用 jeff_memory 工具读写，用户说「记住/忘记/整理记忆」即可）。设置页可人工查看、删除单条；每个范围有字符预算防止 token 浪费。
-- **AGENTS.md**：用户级（数据目录 AGENTS.md）与项目级（工作空间目录 AGENTS.md）规则文件，每轮对话自动注入；设置 → 记忆页可编辑。
+- **AGENTS.md**：用户级（数据目录 AGENTS.md）与项目级规则文件，每轮对话自动注入；项目级按项目保存在数据目录 agents-md/ 下（设置 → 记忆页可编辑，随 WebDAV 同步）。旧版放在工作空间目录下的 AGENTS.md 仅在项目规则尚未创建时作为迁移来源，保存后即以数据目录为准。
 - **会话搜索**：所有历史对话全文可搜（jeff_session_search）。
 - **模型提供商**：设置页配置自定义提供商（Chat / Responses / Anthropic 三种 API 格式），每个模型可配上下文/最大输出/图片输入/思考档位（none/low/high/max）；模型与思考程度在智能体资料（通讯录 / 私聊「资料」）里配置，聊天输入框不再切换。新会话默认用第一个启用提供商的第一个模型。
 - **MCP**：设置页粘贴 JSON 导入（支持 mcpServers 包裹格式），可查看每个服务的连接状态与工具清单（请到设置配置，小杰无 MCP 工具）。

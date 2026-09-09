@@ -195,7 +195,8 @@ export default function MemorySettings(): React.JSX.Element {
 
       <h2 className="settings-title" style={{ marginTop: 24 }}>AGENTS.md（规则文件）</h2>
       <p className="settings-tip">
-        用户级 AGENTS.md 对所有对话生效；项目级放在各群工作空间目录下，仅该群的会话生效（每轮自动注入上下文）。
+        用户级 AGENTS.md 对所有对话生效；项目级按项目保存在 Jeff 数据目录（agents-md/）下，仅该群的会话生效（每轮自动注入上下文），并随 WebDAV 同步。
+        旧版放在工作空间目录下的 AGENTS.md 仅在项目规则尚未创建时作为迁移来源：首次编辑保存后会写入数据目录，此后以数据目录为准。
       </p>
       <div className="pv-detail">
         {agentsMds.length === 0 && <div className="empty-card">加载中…</div>}

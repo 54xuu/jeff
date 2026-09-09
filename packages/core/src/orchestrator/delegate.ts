@@ -35,6 +35,8 @@ export class Delegator {
   private static PRUNE_MS = 30 * 60 * 1000
   /** 调试日志（委派失败等现场） */
   onDebugLog?: (tag: string, detail: unknown) => void
+  /** 规则/记忆注入（用户级+项目级 AGENTS.md 与记忆），与普通群回合保持一致；由 JeffCore 注入 */
+  buildMemory?: (agentId: string, projectId: string) => string | undefined
 
   constructor(
     private db: DB,
@@ -112,11 +114,14 @@ export class Delegator {
       const sessionId = await this.groupChat.ensureSession(ctx.projectId, memberId, threadId)
       const instructionText = `【群主 ${leaderName} 指派】${instruction}`
       const opts = agentPromptOpts(member)
+      // 与普通群回合一致：briefing + 规则/记忆（用户级+项目级 AGENTS.md、成员与项目记忆）
+      const memory = this.buildMemory?.(memberId, ctx.projectId)
+      const system = [this.memberBriefing(ctx.projectId, memberId, leaderName), memory].filter(Boolean).join('\n\n')
       const reply = await this.getOc().sendMessage({
         sessionId,
         text: instructionText,
         agent: agentSlug(memberId),
-        system: this.memberBriefing(ctx.projectId, memberId, leaderName),
+        system,
         timeoutMs: DELEGATE_TIMEOUT_MS,
         ...opts,
       })
