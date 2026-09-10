@@ -2734,3 +2734,317 @@ body.composer-resizing * {
   display: flex;
   gap: 8px;
 }
+
+/* ===== 抽屉横向 Tabs（群资料 / 智能体资料） ===== */
+.drawer-tabs {
+  display: flex;
+  gap: 2px;
+  margin: 12px 0 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.drawer-tab {
+  appearance: none;
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text-2);
+  padding: 8px 14px 9px;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  white-space: nowrap;
+}
+
+.drawer-tab:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 4%, transparent);
+}
+
+.drawer-tab.active {
+  color: var(--green-dark);
+  border-bottom-color: var(--green);
+  font-weight: 600;
+}
+
+.drawer-files {
+  padding-bottom: 12px;
+}
+
+/* ===== 工作空间文件树 ===== */
+.file-tree {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-list);
+  overflow: hidden;
+}
+
+.file-tree-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-panel);
+}
+
+.file-tree-path {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--fs-xs);
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: rtl;
+  text-align: left;
+}
+
+.file-tree-actions {
+  display: flex;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.file-tree-body {
+  max-height: calc(100vh - 260px);
+  min-height: 200px;
+  overflow-y: auto;
+  padding: 4px 4px 8px;
+}
+
+.file-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.file-row:hover {
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+}
+
+.file-row-icon {
+  flex: none;
+  font-size: 13px;
+}
+
+.file-row-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-row.md .file-row-name {
+  color: var(--text);
+}
+
+.file-row.other .file-row-name {
+  color: var(--text-2);
+}
+
+.file-row-size {
+  flex: none;
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+}
+
+/* ===== 站内文件链接（消息正文 / 工具输出里的相对路径） ===== */
+.md-body .md-file-link,
+.tool-output .md-file-link {
+  color: #2563eb;
+  text-decoration: none;
+  cursor: pointer;
+  border-bottom: 1px solid color-mix(in srgb, #2563eb 45%, transparent);
+  font-weight: 500;
+}
+
+:root[data-theme='dark'] .md-body .md-file-link,
+:root[data-theme='dark'] .tool-output .md-file-link {
+  color: #7fa7ff;
+}
+
+.md-body .md-file-link:hover,
+.tool-output .md-file-link:hover {
+  text-decoration: underline;
+}
+
+/* ===== Mermaid 图表块 ===== */
+.md-mermaid {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  margin: 8px 0;
+  background: var(--bg-panel);
+}
+
+.md-mermaid-fig {
+  display: flex;
+  justify-content: center;
+  padding: 10px;
+  cursor: zoom-in;
+  overflow-x: auto;
+}
+
+.md-mermaid-fig svg {
+  max-width: 100%;
+  height: auto;
+}
+
+.md-mermaid-src {
+  margin: 0;
+  padding: 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 300px;
+  overflow: auto;
+}
+
+.md-mermaid-error {
+  padding: 10px;
+  font-size: var(--fs-sm);
+  color: var(--danger);
+}
+
+.md-mermaid-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 3px 10px 6px;
+  border-top: 1px dashed var(--border);
+}
+
+.mermaid-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  background: rgba(0, 0, 0, 0.72);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  cursor: zoom-out;
+}
+
+.mermaid-lightbox-fig {
+  max-width: 94vw;
+  max-height: 88vh;
+  overflow: auto;
+  background: var(--bg-panel);
+  border-radius: var(--radius-md);
+  padding: 18px;
+}
+
+.mermaid-lightbox-fig svg {
+  max-width: 88vw;
+  max-height: 82vh;
+  height: auto;
+}
+
+.mermaid-lightbox-tip {
+  margin-top: 10px;
+  font-size: var(--fs-xs);
+  color: #d8d8d8;
+}
+
+/* ===== Markdown 预览器（全局公共，只读） ===== */
+.preview-mask {
+  position: absolute;
+  inset: 0;
+  z-index: 150;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.preview-panel {
+  width: min(920px, 90vw);
+  height: 86vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-panel);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.preview-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.preview-name {
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.preview-warn {
+  flex: none;
+  font-size: var(--fs-xs);
+  color: var(--danger);
+}
+
+.preview-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.preview-path {
+  padding: 5px 14px;
+  font-size: var(--fs-xs);
+  font-family: ui-monospace, 'SF Mono', Consolas, monospace;
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border-bottom: 1px solid var(--border);
+  user-select: text;
+}
+
+.preview-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 22px 24px;
+  user-select: text;
+}
+
+.preview-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 34px;
+  transform: translateX(-50%);
+  z-index: 400;
+  max-width: 70vw;
+  padding: 9px 16px;
+  border-radius: var(--radius-pill);
+  font-size: var(--fs-sm);
+  box-shadow: var(--shadow);
+  background: var(--bg-panel);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+
+.preview-toast.error {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 40%, transparent);
+}

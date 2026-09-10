@@ -11,7 +11,7 @@ import ContextDrawer, { ContextUsageBar, fetchContextPreview } from './ContextDr
 
 /** 项目群聊天窗口（= 微信群） */
 export default function GroupWindow(props: { projectId: string }): React.JSX.Element {
-  const { projects, agents, groupMessages, groupThreads, sending, streaming, loadGroupHistory, sendGroup, stopGroup, settings } = useStore()
+  const { projects, agents, groupMessages, groupThreads, sending, streaming, loadGroupHistory, sendGroup, stopGroup, settings, appInfo } = useStore()
   const project = projects.find((p) => p.id === props.projectId)
   const msgs = groupMessages[props.projectId] || []
   const curThread = groupThreads[props.projectId]
@@ -101,6 +101,10 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
   }, [mention, members])
 
   if (!project) return <div className="empty-hint">项目群不存在</div>
+
+  // 群消息里的相对路径链接以群工作空间为基准（未配置 = Jeff 默认工作区）
+  const defaultWorkspace = appInfo ? `${appInfo.dataDir}/workspace` : ''
+  const workspaceDir = (project.workspace_dir || '').trim() || defaultWorkspace
 
   const onDraftChange = (value: string) => {
     setDraft(value)
@@ -199,7 +203,7 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
           </div>
         )}
         {msgs.map((m) => (
-          <GroupBubble key={m.id} msg={m} />
+          <GroupBubble key={m.id} msg={m} workspaceDir={workspaceDir} />
         ))}
         {busy && !stream && (
           <div className="msg-row left">
@@ -211,7 +215,7 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
             </div>
           </div>
         )}
-        {stream && <StreamingBubble avatar={stream.senderAvatar} name={stream.senderName} stream={stream} />}
+        {stream && <StreamingBubble avatar={stream.senderAvatar} name={stream.senderName} stream={stream} workspaceDir={workspaceDir} />}
       </div>
 
       <div className="composer" ref={composerRef}>
@@ -324,8 +328,8 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
   )
 }
 
-function GroupBubble(props: { msg: GroupMessage }): React.JSX.Element {
-  const { msg } = props
+function GroupBubble(props: { msg: GroupMessage; workspaceDir?: string }): React.JSX.Element {
+  const { msg, workspaceDir } = props
   if (msg.role === 'system') {
     return (
       <div className="msg-system">
@@ -342,10 +346,10 @@ function GroupBubble(props: { msg: GroupMessage }): React.JSX.Element {
         {!mine && <div className="msg-sender">{msg.sender_name}</div>}
         <div className="msg-bubble-wrap">
           <div className={`bubble ${mine ? 'user' : 'assistant'}`}>
-            {msg.role === 'assistant' && <AssistantExtras reasoning={msg.reasoning} tools={msg.tools} />}
+            {msg.role === 'assistant' && <AssistantExtras reasoning={msg.reasoning} tools={msg.tools} workspaceDir={workspaceDir} />}
             <MsgImages images={msg.images || []} />
             {msg.role === 'assistant' ? (
-              <Markdown text={msg.text} />
+              <Markdown text={msg.text} workspaceDir={workspaceDir} />
             ) : (
               msg.text.split('\n').map((line, i) => (
                 <p key={i}>{line || ' '}</p>

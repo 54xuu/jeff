@@ -8,6 +8,7 @@ import GroupWindow from './components/GroupWindow'
 import AgentsPage from './components/AgentsPage'
 import SettingsNav from './components/settings/SettingsNav'
 import SettingsContent from './components/settings/SettingsContent'
+import MarkdownPreviewModal, { PreviewNotice } from './components/preview/MarkdownPreviewModal'
 import type { SettingsSection } from './store'
 
 export default function App(): React.JSX.Element {
@@ -96,6 +97,9 @@ export default function App(): React.JSX.Element {
         {tab === 'contacts' && <AgentsPage />}
         {tab === 'settings' && <SettingsContent />}
       </div>
+      {/* 全局公共 Markdown 预览器（任意处调用）+ 轻提示 */}
+      <MarkdownPreviewModal />
+      <PreviewNotice />
     </div>
   )
 }

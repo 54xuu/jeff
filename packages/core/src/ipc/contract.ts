@@ -89,6 +89,10 @@ export const IPC = {
   syncConfigure: 'sync:configure',
   contextPreview: 'context:preview',
   contextCompress: 'context:compress',
+  // 工作空间文件浏览（资料抽屉「工作区文件」Tab + Markdown 预览器）
+  fsListFiles: 'fs:listFiles',
+  fsReadFile: 'fs:readFile',
+  fsOpenPath: 'fs:openPath',
   // 冒烟钩子（仅 JEFF_SMOKE=1 时注册）
   smokeShot: 'smoke:shot',
   smokeDone: 'smoke:done',
@@ -311,6 +315,24 @@ export interface SkillsRestoreApply {
   error?: string
 }
 
+/** 工作空间文件树节点（fsListFiles 返回；目录在前、按名排序） */
+export interface FileNode {
+  name: string
+  /** 相对列出目录的路径（POSIX 风格 / 分隔） */
+  rel: string
+  /** 绝对路径 */
+  abs: string
+  dir: boolean
+  ext: string
+  /** 字节（文件） */
+  size: number
+  /** 修改时间 ms */
+  mtime: number
+  children?: FileNode[]
+  /** 子节点被截断（超出单节点上限） */
+  truncated?: boolean
+}
+
 export type InvokeMap = {
   [IPC.appInfo]: void
   [IPC.agentsList]: void
@@ -393,6 +415,9 @@ export type InvokeMap = {
   }
   [IPC.contextPreview]: { agentId: string; projectId?: string; model?: { providerID: string; modelID: string } }
   [IPC.contextCompress]: { agentId: string; projectId?: string; model?: { providerID: string; modelID: string } }
+  [IPC.fsListFiles]: { dir: string }
+  [IPC.fsReadFile]: { file: string }
+  [IPC.fsOpenPath]: { target: string; reveal?: boolean }
   [IPC.smokeShot]: { name: string }
   [IPC.smokeDone]: void
 }

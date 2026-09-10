@@ -11,9 +11,11 @@ import ContextDrawer, { ContextUsageBar, fetchContextPreview } from './ContextDr
 import AgentProfileDrawer from './AgentProfileDrawer'
 
 export default function ChatWindow(props: { agentId: string }): React.JSX.Element {
-  const { agents, messages, sending, streaming, loadHistory, sendAgent, newAgentSession, stopAgent, catalog, settings } = useStore()
+  const { agents, messages, sending, streaming, loadHistory, sendAgent, newAgentSession, stopAgent, catalog, settings, appInfo } = useStore()
   const agent = agents.find((a) => a.id === props.agentId)
   const key = `agent:${props.agentId}`
+  // 私聊智能体的相对路径链接以 Jeff 默认工作区为基准
+  const workspaceDir = appInfo ? `${appInfo.dataDir}/workspace` : ''
   const msgs = messages[key] || []
   const sendingNow = !!sending[key]
   const stream = streaming[key]
@@ -141,7 +143,7 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
           </div>
         )}
         {msgs.map((m) => (
-          <MessageBubble key={m.id} msg={m} agentName={agent.name} agentAvatar={agent.avatar} />
+          <MessageBubble key={m.id} msg={m} agentName={agent.name} agentAvatar={agent.avatar} workspaceDir={workspaceDir} />
         ))}
         {sendingNow && !stream && (
           <div className="msg-row left">
@@ -153,7 +155,7 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
             </div>
           </div>
         )}
-        {stream && <StreamingBubble avatar={agent.avatar} name={agent.name} stream={stream} />}
+        {stream && <StreamingBubble avatar={agent.avatar} name={agent.name} stream={stream} workspaceDir={workspaceDir} />}
       </div>
 
       <div className="composer" ref={composerRef}>
@@ -259,8 +261,8 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
   )
 }
 
-export function MessageBubble(props: { msg: ChatMsg; agentName: string; agentAvatar: string }): React.JSX.Element {
-  const { msg, agentName, agentAvatar } = props
+export function MessageBubble(props: { msg: ChatMsg; agentName: string; agentAvatar: string; workspaceDir?: string }): React.JSX.Element {
+  const { msg, agentName, agentAvatar, workspaceDir } = props
   const mine = msg.role === 'user'
   const isMarkdown = !mine && msg.role === 'assistant'
   return (
@@ -270,10 +272,10 @@ export function MessageBubble(props: { msg: ChatMsg; agentName: string; agentAva
         {!mine && <div className="msg-sender">{agentName}</div>}
         <div className="msg-bubble-wrap">
           <div className={`bubble ${mine ? 'user' : 'assistant'}`}>
-            {isMarkdown && <AssistantExtras reasoning={msg.reasoning} tools={msg.tools} />}
+            {isMarkdown && <AssistantExtras reasoning={msg.reasoning} tools={msg.tools} workspaceDir={workspaceDir} />}
             <MsgImages images={msg.images || []} />
             {isMarkdown ? (
-              <Markdown text={msg.text} />
+              <Markdown text={msg.text} workspaceDir={workspaceDir} />
             ) : (
               msg.text.split('\n').map((line, i) => (
                 <p key={i}>{line || ' '}</p>

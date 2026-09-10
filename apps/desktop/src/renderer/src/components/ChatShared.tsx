@@ -3,6 +3,8 @@ import type { ChatImage } from '@jeff/core'
 import Avatar from './Avatar'
 import { Markdown } from './Markdown'
 import { CopyButton } from './ui/CopyButton'
+import { splitTextWithFileLinks } from './preview/linkify'
+import FileLink from './preview/FileLink'
 
 const COMPOSER_MIN_HEIGHT = 40
 const COMPOSER_MAX_HEIGHT = 320
@@ -13,8 +15,10 @@ export function StreamingBubble(props: {
   avatar: string
   name: string
   stream: { text: string; reasoning?: string; tools?: Array<{ tool: string; status?: string }> }
+  /** 工作空间目录：用于识别输出里的相对路径为可点击链接 */
+  workspaceDir?: string
 }): React.JSX.Element {
-  const { avatar, name, stream } = props
+  const { avatar, name, stream, workspaceDir } = props
   return (
     <div className="msg-row left">
       <Avatar emoji={avatar} size={34} />
@@ -22,8 +26,8 @@ export function StreamingBubble(props: {
         <div className="msg-sender">{name}</div>
         <div className="msg-bubble-wrap">
           <div className="bubble assistant">
-            <AssistantExtras reasoning={stream.reasoning ? [stream.reasoning] : undefined} tools={stream.tools} live />
-            <Markdown text={stream.text || '…'} />
+            <AssistantExtras reasoning={stream.reasoning ? [stream.reasoning] : undefined} tools={stream.tools} live workspaceDir={workspaceDir} />
+            <Markdown text={stream.text || '…'} workspaceDir={workspaceDir} />
             <span className="stream-caret" />
           </div>
           <CopyButton className="msg-copy" text={stream.text} label="复制消息" testId="msg-copy-streaming" />
@@ -163,14 +167,23 @@ const TOOL_STATUS_LABEL: Record<string, string> = {
 
 const TRUNCATE_LEN = 2000
 
-/** 工具输出预览：超长截断 + 展开全文 */
-function ToolOutput(props: { text: string }): React.JSX.Element {
+/** 工具输出预览：超长截断 + 展开全文；输出里的相对路径渲染为可点击链接 */
+function ToolOutput(props: { text: string; workspaceDir?: string }): React.JSX.Element {
   const [expanded, setExpanded] = useState(false)
   const full = props.text
   const truncated = full.length > TRUNCATE_LEN
+  const shown = expanded || !truncated ? full : `${full.slice(0, TRUNCATE_LEN)}…`
   return (
     <>
-      <pre className="tool-output">{expanded || !truncated ? full : `${full.slice(0, TRUNCATE_LEN)}…`}</pre>
+      <pre className="tool-output">
+        {splitTextWithFileLinks(shown).map((seg, i) =>
+          seg.type === 'path' ? (
+            <FileLink key={i} rel={seg.value} workspaceDir={props.workspaceDir} />
+          ) : (
+            <span key={i}>{seg.value}</span>
+          ),
+        )}
+      </pre>
       {truncated && (
         <button className="text-btn tool-expand" onClick={() => setExpanded((v) => !v)}>
           {expanded ? '收起' : `展开全文（${full.length} 字符）`}
@@ -185,6 +198,8 @@ export function AssistantExtras(props: {
   reasoning?: string[]
   tools?: Array<{ tool: string; status?: string; output?: string; error?: string }>
   live?: boolean
+  /** 工作空间目录：工具输出里的相对路径可点击打开 */
+  workspaceDir?: string
 }): React.JSX.Element | null {
   const { reasoning, tools, live } = props
   const hasReasoning = !!reasoning && reasoning.length > 0
@@ -224,7 +239,7 @@ export function AssistantExtras(props: {
                   <span className="extra-tool-name">{t.tool}</span>
                   <span className={`extra-tool-status ${t.status === 'error' ? 'danger' : ''}`}>{TOOL_STATUS_LABEL[t.status || ''] || t.status || ''}</span>
                 </summary>
-                {t.error ? <pre className="tool-output danger">{t.error}</pre> : <ToolOutput text={t.output || '（无输出）'} />}
+                {t.error ? <pre className="tool-output danger">{t.error}</pre> : <ToolOutput text={t.output || '（无输出）'} workspaceDir={props.workspaceDir} />}
               </details>
             ))}
           </div>

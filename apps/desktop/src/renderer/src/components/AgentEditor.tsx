@@ -9,6 +9,8 @@ import { EmojiPickerButton } from './ui/EmojiPicker'
 
 export type ThinkingTierOpt = '' | ThinkingTier
 
+export type EditorSection = 'all' | 'basic' | 'model'
+
 export type AgentEditorSave = {
   id?: string
   name: string
@@ -37,11 +39,16 @@ export default function AgentEditor(props: {
   onChat?: () => void
   /** 抽屉场景隐藏「发消息」等导航动作 */
   compact?: boolean
+  /** 分节显示：抽屉 Tabs 用（all = 全部，默认；basic = 基本资料；model = 模型与思考） */
+  section?: EditorSection
   /** 脏状态上报（抽屉关闭守卫用）：任一字段相对 initial 有变化即视为脏 */
   onDirtyChange?: (dirty: boolean) => void
 }): React.JSX.Element {
   const a = props.initial
   const locked = !!a.builtin && !a.isNew
+  const section = props.section || 'all'
+  const showBasic = section !== 'model'
+  const showModel = section !== 'basic'
   const initialModelKey = a.model_provider && a.model_id ? formatModelKey(a.model_provider, a.model_id) : ''
   const initialThinking: ThinkingTierOpt = (a.thinking as ThinkingTierOpt) || ''
   const [name, setName] = useState(a.name || '')
@@ -132,7 +139,12 @@ export default function AgentEditor(props: {
       </div>
 
       <div className="pv-grid">
-        {!locked && (
+        {showBasic && locked && (
+          <p className="settings-tip" style={{ gridColumn: '1 / -1' }}>
+            内置小杰：名称、头像与身份指令由 Jeff 内置，仅可调整模型与思考设置。
+          </p>
+        )}
+        {showBasic && !locked && (
           <>
             <Field label="名字 *">
               <input value={name} onChange={(e) => setName(e.target.value)} placeholder="如：架构师阿伟" data-testid="agent-name" />
@@ -145,25 +157,29 @@ export default function AgentEditor(props: {
             </Field>
           </>
         )}
-        {!locked && (
+        {showBasic && !locked && (
           <Field label="简介" span>
             <input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="一句话说明它是干嘛的" />
           </Field>
         )}
-        <Field label="模型（留空 = 默认用第一个启用提供商的第一个模型）" span>
-          <ModelPickerCombo value={modelKey} onChange={setModelKey} placeholderEmpty="跟随默认" />
-        </Field>
-        <Field label="思考程度（默认 = 跟随模型配置；选项来自该模型在供应商里勾选的档位）">
-          <select value={thinking} onChange={(e) => setThinking(e.target.value as ThinkingTierOpt)} data-testid="agent-thinking">
-            <option value="">默认</option>
-            {tiers.map((t) => (
-              <option key={t} value={t}>
-                {TIER_LABELS[t] || t}
-              </option>
-            ))}
-          </select>
-        </Field>
-        {!locked && (
+        {showModel && (
+          <Field label="模型（留空 = 默认用第一个启用提供商的第一个模型）" span>
+            <ModelPickerCombo value={modelKey} onChange={setModelKey} placeholderEmpty="跟随默认" />
+          </Field>
+        )}
+        {showModel && (
+          <Field label="思考程度（默认 = 跟随模型配置；选项来自该模型在供应商里勾选的档位）">
+            <select value={thinking} onChange={(e) => setThinking(e.target.value as ThinkingTierOpt)} data-testid="agent-thinking">
+              <option value="">默认</option>
+              {tiers.map((t) => (
+                <option key={t} value={t}>
+                  {TIER_LABELS[t] || t}
+                </option>
+              ))}
+            </select>
+          </Field>
+        )}
+        {showBasic && !locked && (
           <Field label="身份指令（system prompt）" span>
             <textarea rows={7} value={instructions} onChange={(e) => setInstructions(e.target.value)} placeholder="它擅长什么、行为规矩、输出格式…" data-testid="agent-instructions" />
           </Field>

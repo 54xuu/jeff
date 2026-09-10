@@ -6,12 +6,17 @@ import Avatar from './Avatar'
 import { Markdown } from './Markdown'
 import { EmojiPickerButton } from './ui/EmojiPicker'
 import { useDirtyClose } from './ui/useDirtyClose'
+import WorkspaceFileTree from './WorkspaceFileTree'
 
-/** 群资料抽屉：上段群设置 + 下段项目级扁平聊天记录。busy（生成中）时禁用切换/新建/删除会话，防消息串线 */
+type GroupDrawerTab = 'settings' | 'members' | 'history' | 'files'
+
+/** 群资料抽屉：横向 Tabs（群设置 / 群成员 / 会话记录 / 工作区文件）。busy（生成中）时禁用切换/新建/删除会话，防消息串线 */
 export default function GroupInfoDrawer(props: { project: ProjectInfo; busy?: boolean; onClose: () => void }): React.JSX.Element {
   const { project, busy, onClose } = props
   const agents = useStore((s) => s.agents)
+  const dataDir = useStore((s) => s.appInfo?.dataDir || '')
   const { refreshProjects, setActive, loadGroupHistory } = useStore()
+  const [tab, setTab] = useState<GroupDrawerTab>('settings')
   const [members, setMembers] = useState<Array<{ agent_id: string; role: string; name: string; avatar: string }>>([])
   const [addingMember, setAddingMember] = useState(false)
 
@@ -58,6 +63,9 @@ export default function GroupInfoDrawer(props: { project: ProjectInfo; busy?: bo
     void refreshMembers()
     void refreshThreads()
   }, [project.id])
+
+  // 「工作区文件」与消息里的相对路径链接都以已保存的群工作空间为准（未配置 = Jeff 默认工作区）
+  const workspaceForFiles = (project.workspace_dir || '').trim() || (dataDir ? `${dataDir}/workspace` : '')
 
   const candidateAgents = agents.filter((a) => !members.some((m) => m.agent_id === a.id))
 
@@ -181,210 +189,244 @@ export default function GroupInfoDrawer(props: { project: ProjectInfo; busy?: bo
           </button>
         </div>
 
-        <div className="drawer-sec">群设置</div>
-        <div className="group-settings" data-testid="group-settings">
-          <label className="field">
-            <span>群名 *</span>
-            <input value={title} data-testid="group-settings-title" onChange={(e) => setTitle(e.target.value)} placeholder="如：Jeff 官网开发" />
-          </label>
-          <label className="field" style={{ width: 110 }}>
-            <span>图标</span>
-            <div className="emoji-input-row">
-              <input value={icon} data-testid="group-settings-icon" onChange={(e) => setIcon(e.target.value)} />
-              <EmojiPickerButton value={icon} onPick={setIcon} testId="group-icon-picker" />
-            </div>
-          </label>
-          <label className="field">
-            <span>群简介 / 项目背景（注入群聊 system）</span>
-            <textarea
-              rows={5}
-              value={description}
-              data-testid="group-settings-desc"
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="项目背景、约束、验收口径…会作为固定上下文注入群聊"
-            />
-          </label>
-          <label className="field">
-            <span>工作空间目录（不选 = Jeff 默认工作区）</span>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <input
-                value={workspaceDir}
-                data-testid="group-settings-workspace"
-                onChange={(e) => setWorkspaceDir(e.target.value)}
-                placeholder="留空 = Jeff 默认工作区"
-                style={{ flex: 1 }}
+        <div className="drawer-tabs" data-testid="group-drawer-tabs">
+          <button className={`drawer-tab ${tab === 'settings' ? 'active' : ''}`} data-testid="group-tab-settings" onClick={() => setTab('settings')}>
+            群设置
+          </button>
+          <button className={`drawer-tab ${tab === 'members' ? 'active' : ''}`} data-testid="group-tab-members" onClick={() => setTab('members')}>
+            群成员（{members.length}）
+          </button>
+          <button className={`drawer-tab ${tab === 'history' ? 'active' : ''}`} data-testid="group-tab-history" onClick={() => setTab('history')}>
+            会话记录
+          </button>
+          <button className={`drawer-tab ${tab === 'files' ? 'active' : ''}`} data-testid="group-tab-files" onClick={() => setTab('files')}>
+            工作区文件
+          </button>
+        </div>
+
+        {/* 群设置 Tab（切 Tab 不卸载，避免表单草稿丢失） */}
+        <div style={{ display: tab === 'settings' ? undefined : 'none' }}>
+          <div className="drawer-sec">群设置</div>
+          <div className="group-settings" data-testid="group-settings">
+            <label className="field">
+              <span>群名 *</span>
+              <input value={title} data-testid="group-settings-title" onChange={(e) => setTitle(e.target.value)} placeholder="如：Jeff 官网开发" />
+            </label>
+            <label className="field" style={{ width: 110 }}>
+              <span>图标</span>
+              <div className="emoji-input-row">
+                <input value={icon} data-testid="group-settings-icon" onChange={(e) => setIcon(e.target.value)} />
+                <EmojiPickerButton value={icon} onPick={setIcon} testId="group-icon-picker" />
+              </div>
+            </label>
+            <label className="field">
+              <span>群简介 / 项目背景（注入群聊 system）</span>
+              <textarea
+                rows={5}
+                value={description}
+                data-testid="group-settings-desc"
+                onChange={(e) => setDescription(e.target.value)}
+                placeholder="项目背景、约束、验收口径…会作为固定上下文注入群聊"
               />
-              <button className="btn" type="button" onClick={() => void pickDir()}>
-                浏览…
+            </label>
+            <label className="field">
+              <span>工作空间目录（不选 = Jeff 默认工作区）</span>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <input
+                  value={workspaceDir}
+                  data-testid="group-settings-workspace"
+                  onChange={(e) => setWorkspaceDir(e.target.value)}
+                  placeholder="留空 = Jeff 默认工作区"
+                  style={{ flex: 1 }}
+                />
+                <button className="btn" type="button" onClick={() => void pickDir()}>
+                  浏览…
+                </button>
+              </div>
+            </label>
+            <label className="field">
+              <span>群主（leader）*</span>
+              <select value={leaderId} data-testid="group-settings-leader" onChange={(e) => setLeaderId(e.target.value)}>
+                <option value="">选择智能体…</option>
+                {agents.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.avatar} {a.name}
+                    {a.builtin ? '（内置）' : ''}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="settings-actions" style={{ justifyContent: 'flex-start', marginTop: 4 }}>
+              <button className="btn primary" data-testid="group-settings-save" disabled={saving || !title.trim() || !leaderId} onClick={() => void saveSettings()}>
+                {saving ? '保存中…' : '保存群设置'}
               </button>
+              {saveMsg && <span className="settings-tip">{saveMsg}</span>}
             </div>
-          </label>
-          <label className="field">
-            <span>群主（leader）*</span>
-            <select value={leaderId} data-testid="group-settings-leader" onChange={(e) => setLeaderId(e.target.value)}>
-              <option value="">选择智能体…</option>
-              {agents.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.avatar} {a.name}
-                  {a.builtin ? '（内置）' : ''}
-                </option>
-              ))}
-            </select>
-          </label>
-          <div className="settings-actions" style={{ justifyContent: 'flex-start', marginTop: 4 }}>
-            <button className="btn primary" data-testid="group-settings-save" disabled={saving || !title.trim() || !leaderId} onClick={() => void saveSettings()}>
-              {saving ? '保存中…' : '保存群设置'}
+          </div>
+
+          <div className="drawer-danger">
+            <button className="btn danger" data-testid="group-dissolve" onClick={() => void dissolve()}>
+              解散群
             </button>
-            {saveMsg && <span className="settings-tip">{saveMsg}</span>}
           </div>
         </div>
 
-        <div className="drawer-sec">
-          成员（{members.length}）
-          <button className="text-btn" data-testid="group-add-member" disabled={candidateAgents.length === 0} onClick={() => setAddingMember(true)}>
-            + 添加成员
-          </button>
-        </div>
-        <div className="member-list">
-          {members.map((m) => {
-            const isLeader = m.agent_id === (leaderId || project.leader_agent_id)
-            return (
-              <div key={m.agent_id} className="member-row">
-                <Avatar emoji={m.avatar} size={30} />
-                <span className="member-name">{m.name}</span>
-                <span className={`tag ${isLeader ? 'tag-green' : ''}`}>{projectRoleLabel(isLeader ? 'leader' : m.role)}</span>
-                {!isLeader && (
-                  <button
-                    className="text-btn danger"
-                    onClick={async () => {
-                      await api.invoke(IPC.projectRemoveMember, { projectId: project.id, agentId: m.agent_id })
-                      setMembers((prev) => prev.filter((x) => x.agent_id !== m.agent_id))
-                      await refreshProjects()
-                    }}
-                  >
-                    移出
-                  </button>
-                )}
-              </div>
-            )
-          })}
-        </div>
-
-        <div className="drawer-sec">
-          聊天记录
-          <button className="text-btn" data-testid="group-new-thread" disabled={busy} title={busy ? '生成中不可新建会话，请先停止或等待完成' : undefined} onClick={() => void newThread()}>
-            + 新会话
-          </button>
-        </div>
-        {busy && <p className="settings-error">⏳ 生成中：会话切换 / 新建 / 删除已临时禁用，防止消息串会话。</p>}
-        <p className="settings-tip" style={{ marginTop: 0 }}>
-          每一段都是整个项目群的对话历史（可由不同成员执行）；可改标题、继续或新开。
-        </p>
-        {sessionError && <p className="settings-error">⚠️ {sessionError}</p>}
-        {!threads && <p className="settings-tip">加载中…</p>}
-
-        <div className="group-task-layout" data-testid="group-chat-history">
-          <div className="group-task-list">
-            {threads?.length === 0 && <div className="kanban-empty">还没有会话</div>}
-            {(threads || []).map((t) => (
-              <div key={t.id} className={`history-item ${preview?.id === t.id ? 'previewing' : ''}`} onClick={() => void openPreview(t)}>
-                <div className="history-item-top">
-                  {editingId === t.id ? (
-                    <input
-                      className="history-rename-input"
-                      data-testid="session-rename-input"
-                      autoFocus
-                      value={editTitle}
-                      onClick={(e) => e.stopPropagation()}
-                      onChange={(e) => setEditTitle(e.target.value)}
-                      onBlur={() => void commitRename(t.id)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                          e.preventDefault()
-                          void commitRename(t.id)
-                        }
-                        if (e.key === 'Escape') {
-                          // 约定：消费 Esc 的组件 preventDefault，外层抽屉守卫（useDirtyClose）检测后跳过
-                          e.preventDefault()
-                          setEditingId(null)
-                        }
-                      }}
-                    />
-                  ) : (
-                    <span
-                      className="history-item-title"
-                      data-testid={`thread-title-${t.id}`}
-                      title="双击改标题"
-                      onDoubleClick={(e) => {
-                        e.stopPropagation()
-                        startRename(t)
+        {/* 群成员 Tab */}
+        <div style={{ display: tab === 'members' ? undefined : 'none' }}>
+          <div className="drawer-sec">
+            成员（{members.length}）
+            <button className="text-btn" data-testid="group-add-member" disabled={candidateAgents.length === 0} onClick={() => setAddingMember(true)}>
+              + 添加成员
+            </button>
+          </div>
+          <div className="member-list">
+            {members.map((m) => {
+              const isLeader = m.agent_id === (leaderId || project.leader_agent_id)
+              return (
+                <div key={m.agent_id} className="member-row">
+                  <Avatar emoji={m.avatar} size={30} />
+                  <span className="member-name">{m.name}</span>
+                  <span className={`tag ${isLeader ? 'tag-green' : ''}`}>{projectRoleLabel(isLeader ? 'leader' : m.role)}</span>
+                  {!isLeader && (
+                    <button
+                      className="text-btn danger"
+                      onClick={async () => {
+                        await api.invoke(IPC.projectRemoveMember, { projectId: project.id, agentId: m.agent_id })
+                        setMembers((prev) => prev.filter((x) => x.agent_id !== m.agent_id))
+                        await refreshProjects()
                       }}
                     >
-                      {t.title}
-                    </span>
-                  )}
-                  {t.active && <span className="tag tag-green">当前</span>}
-                </div>
-                <div className="history-item-sub">
-                  {fmtTime(t.updatedAt)}
-                  {typeof t.messageCount === 'number' ? ` · ${t.messageCount} 条` : ''}
-                </div>
-                <div className="history-item-actions" onClick={(e) => e.stopPropagation()}>
-                  <button className="text-btn" disabled={busy} title={busy ? '生成中不可操作会话' : undefined} onClick={() => startRename(t)}>
-                    改名
-                  </button>
-                  {!t.active && (
-                    <button className="text-btn" disabled={busy} title={busy ? '生成中不可切换会话' : undefined} onClick={() => void activate(t)}>
-                      继续
-                    </button>
-                  )}
-                  {!t.active && (
-                    <button className="text-btn danger" disabled={busy} title={busy ? '生成中不可删除会话' : undefined} onClick={() => void remove(t)}>
-                      删除
+                      移出
                     </button>
                   )}
                 </div>
-              </div>
-            ))}
-          </div>
-          <div className="history-preview">
-            {previewLoading && <p className="settings-tip history-tip">加载中…</p>}
-            {!previewLoading && !preview && <div className="empty-card">点击左侧会话查看完整历史</div>}
-            {!previewLoading && preview && (
-              <>
-                <div className="history-preview-msgs">
-                  {preview.msgs.length === 0 && <div className="empty-card">该会话还没有消息。</div>}
-                  {preview.msgs.map((m) => (
-                    <div key={m.id} className={`history-msg ${m.role}`}>
-                      <div className="history-msg-meta">
-                        {m.role === 'user' ? '我' : m.role === 'system' ? '系统' : m.sender_name || '对方'} · {fmtTime(m.time)}
-                      </div>
-                      {m.role === 'assistant' ? <Markdown text={m.text || '（无文本）'} /> : <pre className="history-msg-text">{m.text}</pre>}
-                    </div>
-                  ))}
-                </div>
-                <div className="history-preview-actions">
-                  {(() => {
-                    const t = (threads || []).find((x) => x.id === preview.id)
-                    return t && !t.active ? (
-                      <button className="btn primary" onClick={() => void activate(t)}>
-                        继续此会话
-                      </button>
-                    ) : (
-                      <span className="settings-tip">这是当前会话</span>
-                    )
-                  })()}
-                </div>
-              </>
-            )}
+              )
+            })}
           </div>
         </div>
 
-        <div className="drawer-danger">
-          <button className="btn danger" data-testid="group-dissolve" onClick={() => void dissolve()}>
-            解散群
-          </button>
+        {/* 会话记录 Tab */}
+        <div style={{ display: tab === 'history' ? undefined : 'none' }}>
+          <div className="drawer-sec">
+            聊天记录
+            <button className="text-btn" data-testid="group-new-thread" disabled={busy} title={busy ? '生成中不可新建会话，请先停止或等待完成' : undefined} onClick={() => void newThread()}>
+              + 新会话
+            </button>
+          </div>
+          {busy && <p className="settings-error">⏳ 生成中：会话切换 / 新建 / 删除已临时禁用，防止消息串会话。</p>}
+          <p className="settings-tip" style={{ marginTop: 0 }}>
+            每一段都是整个项目群的对话历史（可由不同成员执行）；可改标题、继续或新开。
+          </p>
+          {sessionError && <p className="settings-error">⚠️ {sessionError}</p>}
+          {!threads && <p className="settings-tip">加载中…</p>}
+
+          <div className="group-task-layout" data-testid="group-chat-history">
+            <div className="group-task-list">
+              {threads?.length === 0 && <div className="kanban-empty">还没有会话</div>}
+              {(threads || []).map((t) => (
+                <div key={t.id} className={`history-item ${preview?.id === t.id ? 'previewing' : ''}`} onClick={() => void openPreview(t)}>
+                  <div className="history-item-top">
+                    {editingId === t.id ? (
+                      <input
+                        className="history-rename-input"
+                        data-testid="session-rename-input"
+                        autoFocus
+                        value={editTitle}
+                        onClick={(e) => e.stopPropagation()}
+                        onChange={(e) => setEditTitle(e.target.value)}
+                        onBlur={() => void commitRename(t.id)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault()
+                            void commitRename(t.id)
+                          }
+                          if (e.key === 'Escape') {
+                            // 约定：消费 Esc 的组件 preventDefault，外层抽屉守卫（useDirtyClose）检测后跳过
+                            e.preventDefault()
+                            setEditingId(null)
+                          }
+                        }}
+                      />
+                    ) : (
+                      <span
+                        className="history-item-title"
+                        data-testid={`thread-title-${t.id}`}
+                        title="双击改标题"
+                        onDoubleClick={(e) => {
+                          e.stopPropagation()
+                          startRename(t)
+                        }}
+                      >
+                        {t.title}
+                      </span>
+                    )}
+                    {t.active && <span className="tag tag-green">当前</span>}
+                  </div>
+                  <div className="history-item-sub">
+                    {fmtTime(t.updatedAt)}
+                    {typeof t.messageCount === 'number' ? ` · ${t.messageCount} 条` : ''}
+                  </div>
+                  <div className="history-item-actions" onClick={(e) => e.stopPropagation()}>
+                    <button className="text-btn" disabled={busy} title={busy ? '生成中不可操作会话' : undefined} onClick={() => startRename(t)}>
+                      改名
+                    </button>
+                    {!t.active && (
+                      <button className="text-btn" disabled={busy} title={busy ? '生成中不可切换会话' : undefined} onClick={() => void activate(t)}>
+                        继续
+                      </button>
+                    )}
+                    {!t.active && (
+                      <button className="text-btn danger" disabled={busy} title={busy ? '生成中不可删除会话' : undefined} onClick={() => void remove(t)}>
+                        删除
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="history-preview">
+              {previewLoading && <p className="settings-tip history-tip">加载中…</p>}
+              {!previewLoading && !preview && <div className="empty-card">点击左侧会话查看完整历史</div>}
+              {!previewLoading && preview && (
+                <>
+                  <div className="history-preview-msgs">
+                    {preview.msgs.length === 0 && <div className="empty-card">该会话还没有消息。</div>}
+                    {preview.msgs.map((m) => (
+                      <div key={m.id} className={`history-msg ${m.role}`}>
+                        <div className="history-msg-meta">
+                          {m.role === 'user' ? '我' : m.role === 'system' ? '系统' : m.sender_name || '对方'} · {fmtTime(m.time)}
+                        </div>
+                        {m.role === 'assistant' ? <Markdown text={m.text || '（无文本）'} workspaceDir={workspaceForFiles} /> : <pre className="history-msg-text">{m.text}</pre>}
+                      </div>
+                    ))}
+                  </div>
+                  <div className="history-preview-actions">
+                    {(() => {
+                      const t = (threads || []).find((x) => x.id === preview.id)
+                      return t && !t.active ? (
+                        <button className="btn primary" onClick={() => void activate(t)}>
+                          继续此会话
+                        </button>
+                      ) : (
+                        <span className="settings-tip">这是当前会话</span>
+                      )
+                    })()}
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
         </div>
+
+        {/* 工作区文件 Tab */}
+        {tab === 'files' && (
+          <div className="drawer-files">
+            <p className="settings-tip" style={{ marginTop: 0 }}>
+              浏览当前群工作空间的所有文件与文件夹；点击 .md 用内置预览器打开，其它文件用系统程序打开。
+            </p>
+            <WorkspaceFileTree dir={workspaceForFiles} />
+          </div>
+        )}
 
         {addingMember && (
           <AddMemberModal

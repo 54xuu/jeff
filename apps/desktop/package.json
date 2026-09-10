@@ -1,7 +1,7 @@
 {
   "name": "jeff-desktop",
   "productName": "Jeff",
-  "version": "1.7.16",
+  "version": "1.7.17",
   "private": true,
   "type": "module",
   "main": "out/main/index.js",
@@ -19,6 +19,7 @@
   "dependencies": {
     "@jeff/core": "*",
     "emoji-picker-react": "^4.20.2",
+    "mermaid": "^11.17.2",
     "react-markdown": "^10.1.0",
     "rehype-highlight": "^7.0.2",
     "remark-gfm": "^4.0.1"

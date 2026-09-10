@@ -9,12 +9,21 @@ import { Markdown } from './Markdown'
  * - 私聊：该 agent 的全部会话；可改标题 / 继续 / 删除
  */
 export default function ChatHistoryDrawer(props: { agentId?: string; projectId?: string; onClose: () => void }): React.JSX.Element {
+  const appInfo = useStore((s) => s.appInfo)
+  const projects = useStore((s) => s.projects)
   const [sessions, setSessions] = useState<SessionBrief[] | null>(null)
   const [preview, setPreview] = useState<{ id: string; msgs: ChatMsg[] } | null>(null)
   const [previewLoading, setPreviewLoading] = useState(false)
   const [error, setError] = useState('')
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editTitle, setEditTitle] = useState('')
+  // 历史消息里的相对路径链接：群会话以群工作空间为基准，私聊用 Jeff 默认工作区
+  const defaultWs = appInfo ? `${appInfo.dataDir}/workspace` : ''
+  const workspaceDir = props.projectId
+    ? (projects.find((p) => p.id === props.projectId)?.workspace_dir || '').trim() || defaultWs
+    : props.agentId
+      ? defaultWs
+      : ''
 
   const load = async () => {
     try {
@@ -174,7 +183,7 @@ export default function ChatHistoryDrawer(props: { agentId?: string; projectId?:
                       <div className="history-msg-meta">
                         {m.role === 'user' ? '我' : m.role === 'system' ? '系统' : '对方'} · {fmtTime(m.time)}
                       </div>
-                      {m.role === 'assistant' ? <Markdown text={m.text || '（无文本）'} /> : <pre className="history-msg-text">{m.text}</pre>}
+                      {m.role === 'assistant' ? <Markdown text={m.text || '（无文本）'} workspaceDir={workspaceDir} /> : <pre className="history-msg-text">{m.text}</pre>}
                     </div>
                   ))}
                 </div>

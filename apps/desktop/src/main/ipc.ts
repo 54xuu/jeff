@@ -1,5 +1,6 @@
-import { app, ipcMain, nativeTheme, dialog } from 'electron'
+import { app, ipcMain, nativeTheme, dialog, shell } from 'electron'
 import fs from 'node:fs'
+import fsp from 'node:fs/promises'
 import path from 'node:path'
 import type {
   AgentInfo,
@@ -10,6 +11,7 @@ import type {
   ProviderCatalogItem,
   AppSettings,
   AppInfo,
+  FileNode,
 } from '@jeff/core'
 import { IPC, XIAOJIE_ID, agentRepo, projectRepo, projectAgentRepo, taskRepo, taskCardMessage, APP_VERSION, PrivateChatStoppedError, type ThinkingTier } from '@jeff/core'
 import type { MemoryScopeInfo } from '@jeff/core'
@@ -335,6 +337,27 @@ export function registerIpc(core: JeffCore): void {
       return r.canceled || r.filePaths.length === 0 ? null : r.filePaths[0]
     },
 
+    // ---------- 工作空间文件浏览 ----------
+    [IPC.fsListFiles]: async (p): Promise<{ dir: string; exists: boolean; nodes: FileNode[] }> => {
+      const { dir } = p as { dir: string }
+      return listFileTree(dir)
+    },
+    [IPC.fsReadFile]: async (p): Promise<{ file: string; content: string; size: number; truncated: boolean }> => {
+      const { file } = p as { file: string }
+      return readTextFile(file)
+    },
+    [IPC.fsOpenPath]: async (p): Promise<{ ok: boolean }> => {
+      const { target, reveal } = p as { target: string; reveal?: boolean }
+      const { shell } = await import('electron')
+      if (reveal) {
+        shell.showItemInFolder(target)
+        return { ok: true }
+      }
+      const err = await shell.openPath(target)
+      if (err) throw new Error(err)
+      return { ok: true }
+    },
+
     // ---------- skills 备份/恢复 ----------
     [IPC.skillsBackupNow]: async () => core.skillsBackupNow(),
     [IPC.skillsLast]: async () => core.lastSkillsBackup(),
@@ -566,4 +589,92 @@ function toTaskInfo(row: TaskRow): TaskInfo {
     assignee_id: row.assignee_id,
     parent_task_id: row.parent_task_id,
   }
+}
+
+// ---------- 工作空间文件浏览 ----------
+
+/** 文件树忽略名单：版本控制/依赖/构建产物等常规噪音（不滤 dist/out，任务可能输出到那里） */
+const FS_IGNORE = new Set(['.git', 'node_modules', '.tmp', '.DS_Store', 'Thumbs.db', '__pycache__', '.venv', '.idea', '.vscode', '.pytest_cache', '.next', '.cache', 'desktop.ini'])
+const FS_MAX_DEPTH = 12
+const FS_MAX_NODES = 4000
+
+/** 递归列出目录树：目录在前按名排序；超上限截断并标记 truncated */
+async function listFileTree(dir: string): Promise<{ dir: string; exists: boolean; nodes: FileNode[] }> {
+  let st
+  try {
+    st = await fsp.stat(dir)
+  } catch {
+    return { dir, exists: false, nodes: [] }
+  }
+  if (!st.isDirectory()) return { dir, exists: false, nodes: [] }
+  let budget = FS_MAX_NODES
+  const nodes = await listDirLevel(dir, '', 0, () => --budget > 0)
+  return { dir, exists: true, nodes }
+
+  async function listDirLevel(absDir: string, relBase: string, depth: number, hasBudget: () => boolean): Promise<FileNode[]> {
+    if (depth > FS_MAX_DEPTH) return []
+    let entries
+    try {
+      entries = await fsp.readdir(absDir, { withFileTypes: true })
+    } catch {
+      return []
+    }
+    const out: FileNode[] = []
+    const dirs: Array<{ name: string; e: import('node:fs').Dirent }> = []
+    const files: Array<{ name: string; e: import('node:fs').Dirent }> = []
+    for (const e of entries) {
+      if (FS_IGNORE.has(e.name) || e.name.startsWith('.jeff-')) continue
+      if (e.isDirectory()) dirs.push({ name: e.name, e })
+      else files.push({ name: e.name, e })
+    }
+    const byName = (a: { name: string }, b: { name: string }) => a.name.localeCompare(b.name, 'zh-CN')
+    dirs.sort(byName)
+    files.sort(byName)
+    for (const d of [...dirs, ...files]) {
+      if (!hasBudget()) break
+      const rel = relBase ? `${relBase}/${d.name}` : d.name
+      const abs = path.join(absDir, d.name)
+      let isDir = d.e.isDirectory()
+      let size = 0
+      let mtime = 0
+      try {
+        const s = await fsp.stat(abs)
+        isDir = s.isDirectory()
+        size = s.size
+        mtime = s.mtimeMs
+      } catch {
+        /* 竞态删除：仍保留条目 */
+      }
+      const node: FileNode = {
+        name: d.name,
+        rel,
+        abs,
+        dir: isDir,
+        ext: isDir ? '' : path.extname(d.name).slice(1).toLowerCase(),
+        size,
+        mtime,
+      }
+      if (isDir) {
+        node.children = await listDirLevel(abs, rel, depth + 1, hasBudget)
+        if (node.children.length === 0 && !hasBudget()) node.truncated = true
+      }
+      out.push(node)
+    }
+    return out
+  }
+}
+
+/** 单文件上限 8MB，超出返回截断内容（不炸渲染层） */
+const FS_READ_LIMIT = 8 * 1024 * 1024
+
+async function readTextFile(file: string): Promise<{ file: string; content: string; size: number; truncated: boolean }> {
+  const st = await fsp.stat(file).catch(() => null)
+  if (!st) throw new Error('文件不存在或已被移动')
+  if (st.isDirectory()) throw new Error('这是一个目录，无法预览')
+  const size = st.size
+  const truncated = size > FS_READ_LIMIT
+  const buf = await fsp.readFile(file)
+  // 二进制探测：首 8KB 含 NUL 视为二进制，拒绝 UTF-8 预览
+  if (buf.subarray(0, 8192).includes(0)) throw new Error('二进制文件不支持预览，可用系统程序打开')
+  return { file, content: buf.subarray(0, FS_READ_LIMIT).toString('utf8'), size, truncated }
 }
