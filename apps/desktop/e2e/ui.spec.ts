@@ -158,7 +158,10 @@ test.describe('Jeff UI 封闭清单', () => {
       await expect(page.getByTestId('group-settings-desc')).toHaveJSProperty('tagName', 'TEXTAREA')
       await expect(page.getByText('任务看板')).toHaveCount(0)
       await expect(page.getByText('每个成员下的会话')).toHaveCount(0)
+      // 会话记录（原「任务看板」）现在是独立 Tab，切过去才可见
+      await page.getByTestId('group-tab-history').click()
       await expect(page.getByTestId('group-chat-history')).toBeVisible()
+      await page.getByTestId('group-tab-settings').click()
       await page.getByTestId('group-settings-title').fill('E2E改名群')
       await page.getByTestId('group-settings-desc').fill('E2E 项目背景：验证群简介注入。')
       await page.getByTestId('group-settings-save').click()

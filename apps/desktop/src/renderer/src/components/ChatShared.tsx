@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { extractThinkTags, mergeReasoning } from '@jeff/core'
 import type { ChatImage } from '@jeff/core'
 import Avatar from './Avatar'
 import { Markdown } from './Markdown'
@@ -19,6 +20,10 @@ export function StreamingBubble(props: {
   workspaceDir?: string
 }): React.JSX.Element {
   const { avatar, name, stream, workspaceDir } = props
+  // 有些模型把思考写在正文的 <think> 里而不是原生 reasoning 字段，这里统一剥出来给折叠区
+  const parsed = useMemo(() => extractThinkTags(stream.text), [stream.text])
+  const reasoning = useMemo(() => mergeReasoning(stream.reasoning, parsed.reasoning), [stream.reasoning, parsed.reasoning])
+  const bodyStarted = parsed.text.trim().length > 0
   return (
     <div className="msg-row left">
       <Avatar emoji={avatar} size={34} />
@@ -26,11 +31,11 @@ export function StreamingBubble(props: {
         <div className="msg-sender">{name}</div>
         <div className="msg-bubble-wrap">
           <div className="bubble assistant">
-            <AssistantExtras reasoning={stream.reasoning ? [stream.reasoning] : undefined} tools={stream.tools} live workspaceDir={workspaceDir} />
-            <Markdown text={stream.text || '…'} workspaceDir={workspaceDir} />
+            <AssistantExtras reasoning={reasoning} tools={stream.tools} live bodyStarted={bodyStarted} workspaceDir={workspaceDir} />
+            <Markdown text={parsed.text || '…'} workspaceDir={workspaceDir} live />
             <span className="stream-caret" />
           </div>
-          <CopyButton className="msg-copy" text={stream.text} label="复制消息" testId="msg-copy-streaming" />
+          <CopyButton className="msg-copy" text={parsed.text} label="复制消息" testId="msg-copy-streaming" />
         </div>
       </div>
     </div>
@@ -82,6 +87,35 @@ export function useComposerResize(containerRef: React.RefObject<HTMLElement | nu
 
 export const COMPOSER_MIN_HEIGHT_PX = COMPOSER_MIN_HEIGHT
 export const COMPOSER_MAX_HEIGHT_PX = COMPOSER_MAX_HEIGHT
+
+/** 距离底部多少像素内算「贴在底部」，超过就认为用户在往上翻历史 */
+const STICK_THRESHOLD = 80
+
+/**
+ * 聊天区自动滚动：仅当用户贴在底部时跟随新内容，并用 requestAnimationFrame 合并写入，
+ * 避免每个流式 token 都读 scrollHeight / 写 scrollTop 触发强制重排（卡顿主因之一）。
+ */
+export function useAutoScroll(bodyRef: React.RefObject<HTMLElement | null>, signal: string): void {
+  const stickRef = useRef(true)
+  useEffect(() => {
+    const el = bodyRef.current
+    if (!el) return
+    const onScroll = () => {
+      stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < STICK_THRESHOLD
+    }
+    onScroll()
+    el.addEventListener('scroll', onScroll, { passive: true })
+    return () => el.removeEventListener('scroll', onScroll)
+  }, [bodyRef])
+  useEffect(() => {
+    const el = bodyRef.current
+    if (!el || !stickRef.current) return
+    const id = requestAnimationFrame(() => {
+      el.scrollTop = el.scrollHeight
+    })
+    return () => cancelAnimationFrame(id)
+  }, [bodyRef, signal])
+}
 
 
 /** 读取 File 为 dataURL（图片附件用） */
@@ -198,25 +232,49 @@ export function AssistantExtras(props: {
   reasoning?: string[]
   tools?: Array<{ tool: string; status?: string; output?: string; error?: string }>
   live?: boolean
+  /** 正文已开始输出：思考区自动收起，把版面让给答案 */
+  bodyStarted?: boolean
   /** 工作空间目录：工具输出里的相对路径可点击打开 */
   workspaceDir?: string
 }): React.JSX.Element | null {
-  const { reasoning, tools, live } = props
+  const { reasoning, tools, live, bodyStarted } = props
   const hasReasoning = !!reasoning && reasoning.length > 0
   const hasTools = !!tools && tools.length > 0
+  const reasonRef = useRef<HTMLDivElement>(null)
+  const [userOpen, setUserOpen] = useState<boolean | null>(null)
+  // 思考进行中（还没出正文）：自动展开小窗；开始出正文或输出结束：自动收起
+  const thinking = !!live && !bodyStarted
+  const autoOpen = thinking
+  useEffect(() => {
+    setUserOpen(null)
+  }, [autoOpen])
+  const reasonText = reasoning ? reasoning.join('\n') : ''
+  // 思考小窗内部跟随最新一行滚动（窗口本身限高，不撑爆气泡）
+  useEffect(() => {
+    const el = reasonRef.current
+    if (el) el.scrollTop = el.scrollHeight
+  }, [reasonText, autoOpen])
   if (!hasReasoning && !hasTools) return null
+  const reasonOpen = userOpen ?? autoOpen
   return (
     <div className="msg-extras">
       {hasReasoning && (
-        <details className="msg-extra">
+        <details
+          className="msg-extra"
+          open={reasonOpen}
+          onToggle={(e) => {
+            // 只记录用户手动开合（React 自己改 open 时 DOM 与渲染值一致，忽略）
+            if (e.currentTarget.open !== reasonOpen) setUserOpen(e.currentTarget.open)
+          }}
+        >
           <summary>
             <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.5 10.9c.6.5 1 1.2 1 2.1h5c0-.9.4-1.6 1-2.1A6 6 0 0 0 12 3z" />
             </svg>
             思考过程
-            {live && <span className="extra-live">思考中…</span>}
+            {thinking && <span className="extra-live">思考中…</span>}
           </summary>
-          <div className="extra-reasoning">
+          <div className={`extra-reasoning${thinking ? ' thinking' : ''}`} ref={reasonRef}>
             {reasoning!.map((r, i) => (
               <p key={i}>{r}</p>
             ))}

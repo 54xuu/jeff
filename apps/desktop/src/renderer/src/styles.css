@@ -2133,7 +2133,13 @@ body.composer-resizing * {
   white-space: pre-wrap;
   word-break: break-word;
   border-top: 1px dashed var(--line);
+  /* 展开复盘时限高 + 内部滚动，避免长篇推导撑爆聊天窗 */
+  max-height: 320px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
+/* 思考进行中：固定成一个小窗口，内容在窗内跟随滚动 */
+.extra-reasoning.thinking { max-height: 140px; }
 .extra-reasoning p { margin: 6px 0 0; }
 .extra-tools { border-top: 1px dashed var(--line); }
 .extra-tool { border-bottom: 1px solid var(--line); }

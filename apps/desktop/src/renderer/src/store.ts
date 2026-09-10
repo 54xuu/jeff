@@ -58,6 +58,48 @@ interface JeffState {
   handlePush: (what: string, payload?: unknown) => void
 }
 
+/**
+ * 流式事件合并窗口：模型每秒可能吐几十上百个 token，逐个写 store 会让 React 一直重渲染（界面假死）。
+ * 合并窗口随文本长度自适应放宽——每次刷新都要把「整篇」文本重新解析成 Markdown，
+ * 文档越长单次渲染越贵，只有拉长间隔才能把每秒渲染占用控制在常量级。
+ */
+function flushDelayFor(len: number): number {
+  if (len < 3000) return 40
+  if (len < 10000) return 80
+  if (len < 24000) return 130
+  return 200
+}
+
+let streamBuf = new Map<string, StreamState>()
+let streamTimer: ReturnType<typeof setTimeout> | null = null
+
+/** 把缓冲里的流式增量一次性写进 store（同一 key 只保留最新值） */
+function flushStreamBuf(): void {
+  streamTimer = null
+  if (streamBuf.size === 0) return
+  const pending = streamBuf
+  streamBuf = new Map()
+  useStore.setState((s) => {
+    const streaming = { ...s.streaming }
+    for (const [key, value] of pending) streaming[key] = value
+    return { streaming }
+  })
+}
+
+function scheduleStream(key: string, value: StreamState): void {
+  streamBuf.set(key, value)
+  // 已有待写数据时不再重置计时器：避免长文档持续输出时被无限推迟
+  if (streamTimer !== null) return
+  let len = 0
+  for (const v of streamBuf.values()) len = Math.max(len, v.text.length + (v.reasoning?.length ?? 0))
+  streamTimer = setTimeout(flushStreamBuf, flushDelayFor(len))
+}
+
+/** 丢弃某个 key 的待写增量（完成/中断时避免旧数据把已清空的流又写回来） */
+function dropStreamBuf(key: string): void {
+  streamBuf.delete(key)
+}
+
 export const useStore = create<JeffState>((set, get) => ({
   tab: 'chats',
   active: null,
@@ -224,6 +266,7 @@ export const useStore = create<JeffState>((set, get) => ({
       const p = (payload || {}) as { kind: 'private' | 'group'; agentId: string; projectId?: string; threadId?: string; text: string; reasoning?: string; tools?: Array<{ tool: string; status?: string }>; done: boolean }
       const key = p.kind === 'group' ? `group:${p.projectId}` : `agent:${p.agentId}`
       if (p.done) {
+        dropStreamBuf(key)
         set((s) => {
           if (!(key in s.streaming)) return s
           const streaming = { ...s.streaming }
@@ -232,12 +275,17 @@ export const useStore = create<JeffState>((set, get) => ({
         })
       } else {
         const agent = get().agents.find((a) => a.id === p.agentId)
-        set((s) => ({
-          streaming: {
-            ...s.streaming,
-            [key]: { agentId: p.agentId, projectId: p.projectId, threadId: p.threadId, senderName: agent?.name || '对方', senderAvatar: agent?.avatar || '🤖', text: p.text, ...(p.reasoning ? { reasoning: p.reasoning } : {}), ...(p.tools?.length ? { tools: p.tools } : {}) },
-          },
-        }))
+        // 不直接写 store：进缓冲区，50ms 合并一次，避免每个 token 触发一轮 React 渲染
+        scheduleStream(key, {
+          agentId: p.agentId,
+          projectId: p.projectId,
+          threadId: p.threadId,
+          senderName: agent?.name || '对方',
+          senderAvatar: agent?.avatar || '🤖',
+          text: p.text,
+          ...(p.reasoning ? { reasoning: p.reasoning } : {}),
+          ...(p.tools?.length ? { tools: p.tools } : {}),
+        })
       }
     } else if (what === 'menu-action') {
       // 应用菜单动作（主进程转发）
@@ -262,6 +310,7 @@ export const useStore = create<JeffState>((set, get) => ({
     } else if (what === 'chat-updated') {
       const { agentId } = (payload || {}) as { agentId?: string; sessionId?: string }
       const key = `agent:${agentId}`
+      dropStreamBuf(key)
       set((s) => {
         if (!(key in s.streaming)) return s
         const streaming = { ...s.streaming }
@@ -274,6 +323,7 @@ export const useStore = create<JeffState>((set, get) => ({
     } else if (what === 'group-updated') {
       const { projectId, threadId } = (payload || {}) as { projectId?: string; threadId?: string }
       const key = `group:${projectId}`
+      dropStreamBuf(key)
       set((s) => {
         if (!(key in s.streaming)) return s
         const streaming = { ...s.streaming }

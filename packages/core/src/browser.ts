@@ -5,3 +5,4 @@
 export * from './ipc/contract.js'
 export { formatModelKey, parseModelKey, modelDisplayLabel } from './util/modelKey.js'
 export { normalizeProjectRole, projectRoleLabel, PROJECT_ROLES, type ProjectRole } from './util/projectRole.js'
+export { extractThinkTags, mergeReasoning, type ThinkExtractResult } from './util/thinkTag.js'

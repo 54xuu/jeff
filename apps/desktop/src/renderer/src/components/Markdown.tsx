@@ -7,22 +7,30 @@ import { FILE_HREF_PREFIX, linkifyWorkspaceMarkdown, nodeText } from './preview/
 import MermaidBlock from './preview/MermaidBlock'
 import FileLink from './preview/FileLink'
 
+/** 高亮插件列表：仅在非流式（输出已完成）时挂载 */
+type RehypePlugins = React.ComponentProps<typeof ReactMarkdown>['rehypePlugins']
+const REHYPE: RehypePlugins = [[rehypeHighlight, { detect: true, ignoreMissing: true }]]
+
 /**
  * 聊天消息的 Markdown 渲染：GFM（表格/删除线/任务列表）+ 代码高亮 + 代码块复制按钮
  * + mermaid 图表（渲染/放大/源码）+ 工作空间相对路径蓝色链接（点击调用预览器）。
  * react-markdown 默认不渲染裸 HTML，无 XSS 风险。
  */
-function MarkdownInner(props: { text: string; workspaceDir?: string }): React.JSX.Element {
+function MarkdownInner(props: { text: string; workspaceDir?: string; live?: boolean }): React.JSX.Element {
   const text = props.workspaceDir ? linkifyWorkspaceMarkdown(props.text) : props.text
   return (
     <div className="md-body">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
-        rehypePlugins={[[rehypeHighlight, { detect: true, ignoreMissing: true }]]}
+        // 流式输出中跳过 rehype-highlight：每来一个 token 就把全文重新做一遍语法高亮是卡顿主因；
+        // 输出完成后转由历史消息渲染，届时全量高亮一次到位。
+        rehypePlugins={props.live ? undefined : REHYPE}
         components={{
           pre: (preProps) => {
             const block = extractCode(preProps)
-            if (block.lang === 'mermaid') return <MermaidBlock code={block.raw} />
+            // 流式中 mermaid 源码往往还不完整，渲染它既报错又极耗 CPU（每次增量都要重跑一遍），
+            // 先按普通代码块展示，等输出完成转历史消息渲染时再出图。
+            if (block.lang === 'mermaid' && !props.live) return <MermaidBlock code={block.raw} />
             return <CodeBlock lang={block.lang} raw={block.raw} preProps={preProps as Record<string, unknown>} />
           },
           a: (aProps) => {

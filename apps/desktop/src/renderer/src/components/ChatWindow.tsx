@@ -1,11 +1,11 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useStore } from '../store'
 import { api } from '../api'
-import { IPC, modelDisplayLabel, type ChatMsg, type ContextPreviewInfo } from '@jeff/core'
+import { IPC, extractThinkTags, mergeReasoning, modelDisplayLabel, type ChatMsg, type ContextPreviewInfo } from '@jeff/core'
 import Avatar from './Avatar'
 import { Markdown } from './Markdown'
 import { CopyButton } from './ui/CopyButton'
-import { useImages, ImagePreviews, MsgImages, AssistantExtras, StreamingBubble, useComposerResize } from './ChatShared'
+import { useImages, ImagePreviews, MsgImages, AssistantExtras, StreamingBubble, useAutoScroll, useComposerResize } from './ChatShared'
 import ChatHistoryDrawer from './ChatHistoryDrawer'
 import ContextDrawer, { ContextUsageBar, fetchContextPreview } from './ContextDrawer'
 import AgentProfileDrawer from './AgentProfileDrawer'
@@ -61,10 +61,8 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
     }
   }, [props.agentId, currentModel?.providerID, currentModel?.modelID, msgs.length, sendingNow])
 
-  useEffect(() => {
-    const el = bodyRef.current
-    if (el) el.scrollTop = el.scrollHeight
-  }, [msgs.length, sendingNow, stream?.text])
+  // 贴底时才跟随滚动；流式期间用 RAF 合并，避免每 token 强制重排
+  useAutoScroll(bodyRef, `${msgs.length}:${sendingNow}:${stream?.text.length ?? 0}:${stream?.reasoning?.length ?? 0}`)
 
   if (!agent) return <div className="empty-hint">智能体不存在</div>
 
@@ -265,6 +263,10 @@ export function MessageBubble(props: { msg: ChatMsg; agentName: string; agentAva
   const { msg, agentName, agentAvatar, workspaceDir } = props
   const mine = msg.role === 'user'
   const isMarkdown = !mine && msg.role === 'assistant'
+  // 历史消息里同样剥掉 <think>：与流式气泡保持一致的清爽版面
+  const parsed = useMemo(() => (isMarkdown ? extractThinkTags(msg.text) : null), [isMarkdown, msg.text])
+  const reasoning = useMemo(() => (parsed ? mergeReasoning(msg.reasoning, parsed.reasoning) : undefined), [msg.reasoning, parsed])
+  const body = parsed ? parsed.text : msg.text
   return (
     <div className={`msg-row ${mine ? 'right' : 'left'}`}>
       {!mine && <Avatar emoji={agentAvatar} size={34} />}
@@ -272,17 +274,17 @@ export function MessageBubble(props: { msg: ChatMsg; agentName: string; agentAva
         {!mine && <div className="msg-sender">{agentName}</div>}
         <div className="msg-bubble-wrap">
           <div className={`bubble ${mine ? 'user' : 'assistant'}`}>
-            {isMarkdown && <AssistantExtras reasoning={msg.reasoning} tools={msg.tools} workspaceDir={workspaceDir} />}
+            {isMarkdown && <AssistantExtras reasoning={reasoning} tools={msg.tools} workspaceDir={workspaceDir} />}
             <MsgImages images={msg.images || []} />
             {isMarkdown ? (
-              <Markdown text={msg.text} workspaceDir={workspaceDir} />
+              <Markdown text={body} workspaceDir={workspaceDir} />
             ) : (
               msg.text.split('\n').map((line, i) => (
                 <p key={i}>{line || ' '}</p>
               ))
             )}
           </div>
-          <CopyButton className="msg-copy" text={msg.text} label="复制消息" testId="msg-copy" />
+          <CopyButton className="msg-copy" text={body} label="复制消息" testId="msg-copy" />
         </div>
       </div>
       {mine && <div className="self-avatar">🧑</div>}

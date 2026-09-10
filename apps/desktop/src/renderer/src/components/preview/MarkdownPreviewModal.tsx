@@ -1,6 +1,7 @@
 /**
  * 全局公共 Markdown 预览器（只读）：大模态层，标题栏带文件名/完整路径，
  * 支持刷新、在系统中打开、复制路径；Esc 关闭。由 previewStore 全局控制。
+ * 注意：点遮罩空白处**不**关闭（内容预览时容易误触），只有右上角 ✕ / Esc 关闭。
  */
 import { useEffect } from 'react'
 import { usePreviewStore } from './previewStore'
@@ -35,8 +36,8 @@ export default function MarkdownPreviewModal(): React.JSX.Element | null {
   }
 
   return (
-    <div className="preview-mask" data-testid="md-preview-modal" onClick={close}>
-      <div className="preview-panel" onClick={(e) => e.stopPropagation()}>
+    <div className="preview-mask" data-testid="md-preview-modal">
+      <div className="preview-panel">
         <div className="preview-head">
           <span className="preview-name" data-testid="md-preview-title">
             📄 {file.title}

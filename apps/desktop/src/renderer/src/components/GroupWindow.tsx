@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useStore } from '../store'
 import { api } from '../api'
-import { IPC, type ContextPreviewInfo, type GroupMessage } from '@jeff/core'
+import { IPC, extractThinkTags, mergeReasoning, type ContextPreviewInfo, type GroupMessage } from '@jeff/core'
 import Avatar from './Avatar'
 import GroupInfoDrawer from './GroupInfoDrawer'
 import { Markdown } from './Markdown'
 import { CopyButton } from './ui/CopyButton'
-import { useImages, ImagePreviews, MsgImages, AssistantExtras, StreamingBubble, useComposerResize } from './ChatShared'
+import { useImages, ImagePreviews, MsgImages, AssistantExtras, StreamingBubble, useAutoScroll, useComposerResize } from './ChatShared'
 import ContextDrawer, { ContextUsageBar, fetchContextPreview } from './ContextDrawer'
 
 /** 项目群聊天窗口（= 微信群） */
@@ -56,10 +56,8 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
     if (stream?.agentId) setCtxAgentId(stream.agentId)
   }, [stream?.agentId])
 
-  useEffect(() => {
-    const el = bodyRef.current
-    if (el) el.scrollTop = el.scrollHeight
-  }, [msgs.length, busy, stream?.text])
+  // 贴底时才跟随滚动；流式期间用 RAF 合并，避免每 token 强制重排
+  useAutoScroll(bodyRef, `${msgs.length}:${busy}:${stream?.text.length ?? 0}:${stream?.reasoning?.length ?? 0}`)
 
   const ctxAgent = agents.find((a) => a.id === ctxAgentId)
   const currentModel =
@@ -330,6 +328,11 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
 
 function GroupBubble(props: { msg: GroupMessage; workspaceDir?: string }): React.JSX.Element {
   const { msg, workspaceDir } = props
+  const isAssistant = msg.role === 'assistant'
+  // 历史消息里同样剥掉 <think>：与流式气泡保持一致的清爽版面
+  const parsed = useMemo(() => (isAssistant ? extractThinkTags(msg.text) : null), [isAssistant, msg.text])
+  const reasoning = useMemo(() => (parsed ? mergeReasoning(msg.reasoning, parsed.reasoning) : undefined), [msg.reasoning, parsed])
+  const body = parsed ? parsed.text : msg.text
   if (msg.role === 'system') {
     return (
       <div className="msg-system">
@@ -346,17 +349,17 @@ function GroupBubble(props: { msg: GroupMessage; workspaceDir?: string }): React
         {!mine && <div className="msg-sender">{msg.sender_name}</div>}
         <div className="msg-bubble-wrap">
           <div className={`bubble ${mine ? 'user' : 'assistant'}`}>
-            {msg.role === 'assistant' && <AssistantExtras reasoning={msg.reasoning} tools={msg.tools} workspaceDir={workspaceDir} />}
+            {isAssistant && <AssistantExtras reasoning={reasoning} tools={msg.tools} workspaceDir={workspaceDir} />}
             <MsgImages images={msg.images || []} />
-            {msg.role === 'assistant' ? (
-              <Markdown text={msg.text} workspaceDir={workspaceDir} />
+            {isAssistant ? (
+              <Markdown text={body} workspaceDir={workspaceDir} />
             ) : (
               msg.text.split('\n').map((line, i) => (
                 <p key={i}>{line || ' '}</p>
               ))
             )}
           </div>
-          <CopyButton className="msg-copy" text={msg.text} label="复制消息" testId="msg-copy" />
+          <CopyButton className="msg-copy" text={body} label="复制消息" testId="msg-copy" />
         </div>
       </div>
       {mine && <div className="self-avatar">🧑</div>}
