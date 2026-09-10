@@ -121,6 +121,66 @@ describe('OcClient 网络诊断与超时', () => {
     expect(reply.parts?.length).toBe(1)
   })
 
+  it('sendMessage：合并同一轮更早 assistant 消息的 reasoning/tool part（工具调用不再一落库就丢）', async () => {
+    const port = await startServer([
+      { match: (m, u) => m === 'POST' && u.includes('/message'), reply: (_req, res) => json(res, { info: { id: 'msg_final', role: 'assistant' } }) },
+      {
+        match: (m, u) => m === 'GET' && u.includes('/message'),
+        reply: (_req, res) =>
+          json(res, [
+            { info: { id: 'msg_user', role: 'user' }, parts: [{ id: 'u1', type: 'text', text: '看看目录' }] },
+            {
+              info: { id: 'msg_tool', role: 'assistant', parentID: 'msg_user', time: { created: 1, completed: 2 } },
+              parts: [
+                { id: 'r1', type: 'reasoning', text: '需要用 ls 看一下' },
+                { id: 't1', type: 'tool', tool: 'bash', state: { status: 'completed', output: 'a.txt' } },
+              ],
+            },
+            {
+              info: { id: 'msg_final', role: 'assistant', parentID: 'msg_user', time: { created: 3, completed: 4 } },
+              parts: [{ id: 'f1', type: 'text', text: '目录里有 a.txt' }],
+            },
+          ]),
+      },
+    ])
+    const client = makeClient(port, [])
+    const reply = await client.sendMessage({ sessionId: 'ses_turn', text: 'hi', timeoutMs: 5000 })
+    const parts = (reply.parts || []) as Array<{ type: string; text?: string; tool?: string }>
+    expect(parts.map((p) => p.type)).toEqual(['reasoning', 'tool', 'text'])
+    expect(parts.find((p) => p.type === 'tool')?.tool).toBe('bash')
+    // 正文仍只取最后一条 assistant 消息，调用方对回复内容的判定不变
+    const textParts = parts.filter((p) => p.type === 'text')
+    expect(textParts.length).toBe(1)
+    expect(textParts[0].text).toBe('目录里有 a.txt')
+  })
+
+  it('sendMessage：不合并其它轮次（parentID 不同）的 part', async () => {
+    const port = await startServer([
+      { match: (m, u) => m === 'POST' && u.includes('/message'), reply: (_req, res) => json(res, { info: { id: 'msg_b', role: 'assistant' } }) },
+      {
+        match: (m, u) => m === 'GET' && u.includes('/message'),
+        reply: (_req, res) =>
+          json(res, [
+            { info: { id: 'msg_user_old', role: 'user' }, parts: [{ id: 'ou', type: 'text', text: '上一轮' }] },
+            {
+              info: { id: 'msg_tool_old', role: 'assistant', parentID: 'msg_user_old', time: { created: 1, completed: 2 } },
+              parts: [{ id: 'ot', type: 'tool', tool: 'bash', state: { status: 'completed', output: 'old' } }],
+            },
+            { info: { id: 'msg_user_new', role: 'user' }, parts: [{ id: 'nu', type: 'text', text: '这一轮' }] },
+            {
+              info: { id: 'msg_b', role: 'assistant', parentID: 'msg_user_new', time: { created: 3, completed: 4 } },
+              parts: [{ id: 'nb', type: 'text', text: '这一轮答复' }],
+            },
+          ]),
+      },
+    ])
+    const client = makeClient(port, [])
+    const reply = await client.sendMessage({ sessionId: 'ses_two', text: 'hi', timeoutMs: 5000 })
+    const parts = (reply.parts || []) as Array<{ type: string; text?: string }>
+    expect(parts.map((p) => p.type)).toEqual(['text'])
+    expect(parts[0].text).toBe('这一轮答复')
+  })
+
   it('abortSession：/abort 失败写入 abort-fail 诊断日志且不抛出', async () => {
     const port = await startServer([
       { match: (m, u) => m === 'POST' && u.includes('/abort'), reply: (_req, res) => { res.writeHead(503); res.end() } },

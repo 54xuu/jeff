@@ -2121,10 +2121,45 @@ body.composer-resizing * {
   color: var(--text-2);
   user-select: none;
   list-style: none;
+  /* 折叠条恒为单行：标题/徽标不换行、不压缩，实时预览负责省略 */
+  min-width: 0;
+  white-space: nowrap;
 }
 .msg-extra > summary::-webkit-details-marker { display: none; }
 .msg-extra > summary:hover { color: var(--text); }
-.extra-live { color: var(--green); font-size: 11px; }
+.extra-label { flex: 0 0 auto; }
+/* 流式状态徽标：呼吸小圆点，一眼看出「还在跑」 */
+.extra-live {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--green);
+  font-size: 11px;
+}
+.extra-live::before {
+  content: '';
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: extra-live-pulse 1.2s ease-in-out infinite;
+}
+@keyframes extra-live-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.25; }
+}
+/* 单行实时预览：最新一段思考 / 当前执行的工具名，超出省略不换行 */
+.extra-preview {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  font-style: italic;
+  color: var(--text-reasoning);
+}
 .extra-reasoning {
   padding: 2px 10px 8px;
   color: var(--text-reasoning);

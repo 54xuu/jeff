@@ -227,12 +227,26 @@ function ToolOutput(props: { text: string; workspaceDir?: string }): React.JSX.E
   )
 }
 
-/** assistant 气泡内折叠区：思考过程 + 工具调用（历史消息与流式共用） */
+/** 单行流式预览：只取末尾片段（最新生成的内容），过长交给 CSS 省略号截断 */
+function tailPreview(text: string, max = 140): string {
+  const lines = text
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean)
+  const last = lines.length > 0 ? lines[lines.length - 1] : text.trim()
+  return last.length > max ? `…${last.slice(-max)}` : last
+}
+
+/**
+ * assistant 气泡内折叠区：思考过程 + 工具调用（历史消息与流式共用）。
+ * 统一「一行折叠条」形态：流式期间也不自动展开，只在同一行内滚动展示最新内容，
+ * 不撑爆版面；要看完整推导或工具明细由用户点开。
+ */
 export function AssistantExtras(props: {
   reasoning?: string[]
   tools?: Array<{ tool: string; status?: string; output?: string; error?: string }>
   live?: boolean
-  /** 正文已开始输出：思考区自动收起，把版面让给答案 */
+  /** 正文已开始输出：不再显示思考实时预览 */
   bodyStarted?: boolean
   /** 工作空间目录：工具输出里的相对路径可点击打开 */
   workspaceDir?: string
@@ -241,38 +255,30 @@ export function AssistantExtras(props: {
   const hasReasoning = !!reasoning && reasoning.length > 0
   const hasTools = !!tools && tools.length > 0
   const reasonRef = useRef<HTMLDivElement>(null)
-  const [userOpen, setUserOpen] = useState<boolean | null>(null)
-  // 思考进行中（还没出正文）：自动展开小窗；开始出正文或输出结束：自动收起
-  const thinking = !!live && !bodyStarted
-  const autoOpen = thinking
-  useEffect(() => {
-    setUserOpen(null)
-  }, [autoOpen])
+  // 恒为收起：一行折叠条是常态，展开只由用户点击触发
+  const [reasonOpen, setReasonOpen] = useState(false)
   const reasonText = reasoning ? reasoning.join('\n') : ''
-  // 思考小窗内部跟随最新一行滚动（窗口本身限高，不撑爆气泡）
+  // 思考进行中（流式且正文未开始）：单行预览最新推导
+  const thinking = !!live && !bodyStarted
+  const reasonPreview = thinking ? tailPreview(reasonText) : ''
+  const runningTool = live ? (tools || []).find((t) => t.status === 'running') : undefined
+  // 用户展开时小窗内部跟随最新一行滚动（窗口本身限高，不撑爆气泡）
   useEffect(() => {
     const el = reasonRef.current
     if (el) el.scrollTop = el.scrollHeight
-  }, [reasonText, autoOpen])
+  }, [reasonText, reasonOpen])
   if (!hasReasoning && !hasTools) return null
-  const reasonOpen = userOpen ?? autoOpen
   return (
     <div className="msg-extras">
       {hasReasoning && (
-        <details
-          className="msg-extra"
-          open={reasonOpen}
-          onToggle={(e) => {
-            // 只记录用户手动开合（React 自己改 open 时 DOM 与渲染值一致，忽略）
-            if (e.currentTarget.open !== reasonOpen) setUserOpen(e.currentTarget.open)
-          }}
-        >
+        <details className="msg-extra" open={reasonOpen} onToggle={(e) => setReasonOpen(e.currentTarget.open)}>
           <summary>
             <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.5 10.9c.6.5 1 1.2 1 2.1h5c0-.9.4-1.6 1-2.1A6 6 0 0 0 12 3z" />
             </svg>
-            思考过程
+            <span className="extra-label">思考过程</span>
             {thinking && <span className="extra-live">思考中…</span>}
+            {reasonPreview && <span className="extra-preview">{reasonPreview}</span>}
           </summary>
           <div className={`extra-reasoning${thinking ? ' thinking' : ''}`} ref={reasonRef}>
             {reasoning!.map((r, i) => (
@@ -287,8 +293,9 @@ export function AssistantExtras(props: {
             <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M14.7 6.3a4.5 4.5 0 0 0-6 6L3 18l3 3 5.7-5.7a4.5 4.5 0 0 0 6-6L14 13l-3-3 3.7-3.7z" />
             </svg>
-            工具调用 {tools!.length}
-            {live && tools!.some((t) => t.status === 'running') && <span className="extra-live">运行中…</span>}
+            <span className="extra-label">工具调用 {tools!.length}</span>
+            {runningTool && <span className="extra-live">运行中…</span>}
+            {runningTool && <span className="extra-preview">{runningTool.tool}</span>}
           </summary>
           <div className="extra-tools">
             {tools!.map((t, i) => (

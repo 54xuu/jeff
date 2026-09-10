@@ -231,11 +231,39 @@ export class OcClient extends EventEmitter {
           const hint = /certificate/i.test(raw) ? '（如为企业网络证书拦截，可在 设置→引擎服务 开启「跳过 LLM 证书校验」）' : ''
           throw new Error(`assistant 消息出错: ${raw.slice(0, 300)}${hint}`)
         }
-        if (found.time?.completed) return found
+        if (found.time?.completed) {
+          this.mergeTurnParts(found, msgs)
+          return found
+        }
       }
       if (Date.now() > deadline) throw new Error('等待 assistant 回复超时')
       await sleep(400)
     }
+  }
+
+  /**
+   * 一轮对话里 opencode 会为每次「模型 -> 工具 -> 模型」往返各建一条 assistant 消息：
+   * sendMessage 只返回最后一条（纯文本那条），更早那条上的 reasoning / tool part 就丢了，
+   * 表现为流式期间能看到「思考过程 / 工具调用」，落库后整段消失。
+   * 这里把同一轮（同一个触发它的 user 消息之后、最后一条之前）assistant 消息的
+   * reasoning / tool part 合并进返回值。文本仍只取最后一条，不改变调用方对回复正文的判定。
+   */
+  private mergeTurnParts(last: AssistantInfo, msgs: SessionMessage[]): void {
+    const parentID = last.parentID as string | undefined
+    if (!parentID) return
+    const lastIdx = msgs.findIndex((m) => m.info?.id === last.id)
+    if (lastIdx < 0) return
+    const userIdx = msgs.findIndex((m) => m.info?.id === parentID)
+    const extras: Part[] = []
+    for (const m of msgs.slice(userIdx >= 0 ? userIdx + 1 : 0, lastIdx)) {
+      if ((m.info as { role?: string })?.role !== 'assistant') continue
+      for (const p of m.parts || []) {
+        const type = (p as { type?: string }).type
+        if (type === 'reasoning' || type === 'tool') extras.push(p)
+      }
+    }
+    if (!extras.length) return
+    last.parts = [...extras, ...(last.parts || [])]
   }
 
   /** 用户主动停止过的会话 → 时间戳（区分「已停止生成」与 provider 真实失败） */
