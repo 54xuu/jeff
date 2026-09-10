@@ -154,6 +154,40 @@ describe('OcClient 网络诊断与超时', () => {
     expect(textParts[0].text).toBe('目录里有 a.txt')
   })
 
+  it('sendMessage：工具步的正文（推导/前言）转为 reasoning 保留，正文仍只取最后一条', async () => {
+    // 硅基流动 DeepSeek-V3.2 关 thinking 时，工具调用前的推导写在正文里；
+    // 只返回最后一条 assistant 会让这段正文「流式可见、落库消失」，这里必须并入思考区。
+    const port = await startServer([
+      { match: (m, u) => m === 'POST' && u.includes('/message'), reply: (_req, res) => json(res, { info: { id: 'msg_final2', role: 'assistant' } }) },
+      {
+        match: (m, u) => m === 'GET' && u.includes('/message'),
+        reply: (_req, res) =>
+          json(res, [
+            { info: { id: 'msg_u2', role: 'user' }, parts: [{ id: 'u2', type: 'text', text: '算一下' }] },
+            {
+              info: { id: 'msg_tool2', role: 'assistant', parentID: 'msg_u2', time: { created: 1, completed: 2 } },
+              parts: [
+                { id: 'preamble', type: 'text', text: '思路：先读数据再求和' },
+                { id: 't2', type: 'tool', tool: 'read', state: { status: 'completed', output: '1,2,3' } },
+              ],
+            },
+            {
+              info: { id: 'msg_final2', role: 'assistant', parentID: 'msg_u2', time: { created: 3, completed: 4 } },
+              parts: [{ id: 'f2', type: 'text', text: '总和是 6' }],
+            },
+          ]),
+      },
+    ])
+    const client = makeClient(port, [])
+    const reply = await client.sendMessage({ sessionId: 'ses_preamble', text: 'hi', timeoutMs: 5000 })
+    const parts = (reply.parts || []) as Array<{ type: string; text?: string }>
+    expect(parts.map((p) => p.type)).toEqual(['reasoning', 'tool', 'text'])
+    expect(parts.find((p) => p.type === 'reasoning')?.text).toBe('思路：先读数据再求和')
+    const textParts = parts.filter((p) => p.type === 'text')
+    expect(textParts.length).toBe(1)
+    expect(textParts[0].text).toBe('总和是 6')
+  })
+
   it('sendMessage：不合并其它轮次（parentID 不同）的 part', async () => {
     const port = await startServer([
       { match: (m, u) => m === 'POST' && u.includes('/message'), reply: (_req, res) => json(res, { info: { id: 'msg_b', role: 'assistant' } }) },

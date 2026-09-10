@@ -146,18 +146,28 @@ export class PrivateChat {
 
   async mapSessionMessages(sessionId: string): Promise<ChatMsg[]> {
     const msgs = await this.getOc().getMessages(sessionId)
+    // 末尾 assistant 消息 = 本轮最终答复；只有它之前的「工具步」正文才算推导/前言。
+    let lastAssistantIdx = -1
+    msgs.forEach((m, i) => {
+      if ((m.info as { role?: string })?.role === 'assistant') lastAssistantIdx = i
+    })
     const out: ChatMsg[] = []
-    for (const m of msgs) {
+    for (let mi = 0; mi < msgs.length; mi++) {
+      const m = msgs[mi]
       const info = m.info as { id: string; role?: string; time?: { created?: number }; agent?: string; error?: unknown }
       const role = info.role === 'user' ? 'user' : info.role === 'assistant' ? 'assistant' : 'system'
-      const parts = m.parts || (info as { parts?: unknown[] }).parts || []
+      const parts = (m.parts || (info as { parts?: unknown[] }).parts || []) as Array<Record<string, unknown>>
       let text = ''
       const reasoning: string[] = []
       const tools: NonNullable<ChatMsg['tools']> = []
       const images: NonNullable<ChatMsg['images']> = []
-      for (const p of parts as Array<Record<string, unknown>>) {
+      // 中间步（带工具调用、且后面还有最终答复）：它的正文是「工具调用前的推导/前言」，
+      // 流式期间由思考区展示，历史回放同样收进思考区，避免同一内容在流式/历史两处位置不一致。
+      const toolStep = mi < lastAssistantIdx && parts.some((p) => p.type === 'tool')
+      for (const p of parts) {
         if (p.type === 'text' && !p.synthetic && typeof p.text === 'string' && p.text.trim()) {
-          text += (text ? '\n' : '') + p.text
+          if (toolStep) reasoning.push(p.text)
+          else text += (text ? '\n' : '') + p.text
         } else if (p.type === 'reasoning' && typeof p.text === 'string' && p.text.trim()) {
           reasoning.push(p.text)
         } else if (p.type === 'file' && typeof p.url === 'string' && p.url.startsWith('data:')) {

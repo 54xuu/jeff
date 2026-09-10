@@ -42,7 +42,14 @@ const ocStub = {
   createSession: async (input: { title?: string }) => ({ id: `ses_${Math.random().toString(36).slice(2, 8)}`, title: input?.title }),
   sendMessage: async (input: { sessionId: string; agent?: string; text?: string; system?: string }) => {
     sentTo.push(input)
-    return { id: `msg_${Math.random().toString(36).slice(2, 8)}`, parts: [{ type: 'text', text: `完成！[${input.agent}] 已处理：${input.text?.slice(0, 30)}` }] }
+    return {
+      id: `msg_${Math.random().toString(36).slice(2, 8)}`,
+      parts: [
+        { type: 'reasoning', text: '先读文件再改配置' },
+        { type: 'tool', tool: 'read', state: { status: 'completed', output: 'banner.css' } },
+        { type: 'text', text: `完成！[${input.agent}] 已处理：${input.text?.slice(0, 30)}` },
+      ],
+    }
   },
 } as unknown as OcClient
 
@@ -75,6 +82,9 @@ describe('Delegator', () => {
     expect(result?.sender_name).toBe('开发小李')
     expect(result?.text.startsWith('@我')).toBe(true)
     expect(result?.text).toContain('已处理')
+    // 成员的思考过程与工具调用必须一并落库（否则「流式能看到、完成后消失」）
+    expect(result?.reasoning).toEqual(['先读文件再改配置'])
+    expect(result?.tools?.map((t) => t.tool)).toEqual(['read'])
   })
 
   it('派发公告完整保留超长指令（不再 120 字截断）', async () => {

@@ -27,6 +27,32 @@ describe('mapSessionMessages（v1.3 思考/工具提取）', () => {
     expect(out[0].text).toBe('完成')
   })
 
+  it('中间工具步的正文归入 reasoning（非最后一条），最终答复仍在正文', async () => {
+    // 回归：部分模型把工具调用前的推导写在正文里，只返回最后一条会导致「流式可见、历史消失」
+    const msgs: SessionMessage[] = [
+      { info: { id: 'u1', role: 'user', time: { created: 1 } }, parts: [{ type: 'text', text: '算数据' }] } as unknown as SessionMessage,
+      {
+        info: { id: 'a1', role: 'assistant', time: { created: 2 } },
+        parts: [
+          { type: 'text', text: '思路：先读 CSV 再求和' },
+          { type: 'tool', tool: 'read', state: { status: 'completed', output: '88,92,75' } },
+        ],
+      } as unknown as SessionMessage,
+      {
+        info: { id: 'a2', role: 'assistant', time: { created: 3 } },
+        parts: [{ type: 'text', text: '总分 255' }],
+      } as unknown as SessionMessage,
+    ]
+    const chat = new PrivateChat({} as never, () => fakeClient(msgs))
+    const out = await chat.mapSessionMessages('s1')
+    const a1 = out.find((m) => m.id === 'a1')
+    const a2 = out.find((m) => m.id === 'a2')
+    expect(a1?.reasoning).toEqual(['思路：先读 CSV 再求和'])
+    expect(a1?.text).toBe('')
+    expect(a2?.text).toBe('总分 255')
+    expect(a2?.reasoning).toBeUndefined()
+  })
+
   it('没有 reasoning 时不产出 reasoning 字段；纯 reasoning assistant 消息（无文本无工具）被跳过', async () => {
     const chat = new PrivateChat({} as never, () => fakeClient([
       assistantMsg([{ type: 'text', text: 'hi' }]),

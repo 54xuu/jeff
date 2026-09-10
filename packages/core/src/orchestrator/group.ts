@@ -20,6 +20,35 @@ export function ensureCallbackMention(content: string): string {
   return content.includes('@我') ? content : `@我 ${content}`
 }
 
+/** 助手回复 parts 的统一视图：正文 / 思考 / 工具三路分开，群回合与委派回合共用 */
+export interface ReplyPartsView {
+  text: string
+  reasoning: string[]
+  tools: Array<{ tool: string; status?: string; output?: string; error?: string }>
+}
+
+/**
+ * 从 opencode 回复里提取正文、思考与工具调用。
+ * 必须三路都取：只取 text 会让「思考与工具调用」在流式期间可见、落库后消失（用户实测问题）。
+ */
+export function extractReplyParts(reply: { parts?: unknown[] }): ReplyPartsView {
+  const parts = (reply.parts || []) as Array<Record<string, unknown>>
+  const texts: string[] = []
+  const reasoning: string[] = []
+  const tools: ReplyPartsView['tools'] = []
+  for (const p of parts) {
+    if (p.type === 'text' && typeof p.text === 'string' && p.text.trim()) {
+      texts.push(p.text)
+    } else if (p.type === 'reasoning' && typeof p.text === 'string' && p.text.trim()) {
+      reasoning.push(p.text)
+    } else if (p.type === 'tool') {
+      const st = (p.state || {}) as { status?: string; output?: string; error?: string }
+      tools.push({ tool: String(p.tool || ''), status: st.status, output: (st.output || '').slice(0, 2000), error: st.error })
+    }
+  }
+  return { text: texts.join('\n'), reasoning, tools }
+}
+
 /** 群消息发送结果：summaryFailed 表示 worker 成果已保留但 leader 最终总结失败（可手动再次请求总结） */
 export interface GroupSendResult {
   routedTo: string
@@ -422,13 +451,7 @@ export class GroupChat {
       throw err
     }
 
-    const textParts = (reply.parts || []).filter((p) => p.type === 'text') as Array<{ type: 'text'; text: string }>
-    const reasoningParts = (reply.parts || [])
-      .filter((p) => p.type === 'reasoning')
-      .map((p) => (p as { text?: string }).text || '')
-      .filter(Boolean)
-    const toolParts = (reply.parts || []).filter((p) => p.type === 'tool') as Array<{ type: 'tool'; tool: string; state?: { status?: string; output?: string; error?: string } }>
-    const content = textParts.map((p) => p.text).join('\n')
+    const { text: content, reasoning: reasoningParts, tools: toolParts } = extractReplyParts(reply)
     const finalContent = input.callbackMention ? ensureCallbackMention(content) : content
     chatMessageRepo(this.db).add({
       scope,
@@ -440,16 +463,7 @@ export class GroupChat {
         messageId: reply.id,
         threadId,
         ...(reasoningParts.length ? { reasoning: reasoningParts } : {}),
-        ...(toolParts.length
-          ? {
-              tools: toolParts.map((t) => ({
-                tool: t.tool,
-                status: t.state?.status,
-                output: (t.state?.output || '').slice(0, 2000),
-                error: t.state?.error,
-              })),
-            }
-          : {}),
+        ...(toolParts.length ? { tools: toolParts } : {}),
       },
     })
     this.hooks?.afterReply?.({ kind: 'group', projectId, agentId })

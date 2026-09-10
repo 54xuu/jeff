@@ -626,8 +626,14 @@ export class JeffCore extends EventEmitter {
         const sessionId = this.privateChat.getSessionId(scope.agentId)
         if (sessionId) void this.indexSession(sessionId, `private:${scope.agentId}`)
       } else {
+        // 群消息实际 scope 是 group:<projectId>:<threadId>；索引 scope 仍用 group:<projectId>
+        // （memory 检索按 `group:<projectId>` 精确过滤），但取消息必须跨 thread 用前缀匹配，
+        // 否则一条都取不到 → 群聊内容永远进不了记忆库。
         const scopeKey = `group:${scope.projectId}`
-        const msgs = chatMessageRepo(this.db).listByScope(scopeKey, 4)
+        const repo = chatMessageRepo(this.db)
+        const msgs = [...repo.listByScopePrefix(`${scopeKey}:`, 4), ...repo.listByScope(scopeKey, 4)]
+          .sort((a, b) => a.created_at - b.created_at)
+          .slice(-4)
         const agents = agentRepo(this.db)
         for (const m of msgs) {
           if (this.indexer.has(`chat:${m.id}`)) continue
@@ -782,6 +788,12 @@ export class JeffCore extends EventEmitter {
 
   /** SSE 事件 → bus（UI 刷新信号 + 流式增量） */
   private streamParts = new Map<string, { text: string; reasoning: string }>() // key: sessionId:messageId:partId
+  /**
+   * partID → part 类型。opencode 的 message.part.delta 对「正文」与「思考」推来的 field 都是 'text'
+   * （field 是 part 的 text 属性名，不是 part 类型），只有 message.part.updated 带 part.type。
+   * 因此必须记住类型，否则思考会被当成正文流式展示、完成后又被收进折叠区（用户看到长推导「消失」）。
+   */
+  private streamPartTypes = new Map<string, string>()
   private streamTools = new Map<string, Map<string, { tool: string; status?: string }>>() // key: sessionId:messageId → partId → tool
   private msgRoles = new Map<string, string>() // messageId → role（过滤用户消息的 part 回显）
   /** 流式诊断去重：每条消息只记一次 start，每个会话只记一次 drop */
@@ -820,10 +832,13 @@ export class JeffCore extends EventEmitter {
       if (!messageID || !partID || !delta) return
       if (field !== 'text' && field !== 'reasoning') return
       if (this.msgRoles.get(messageID) && this.msgRoles.get(messageID) !== 'assistant') return
+      // 类型优先取 part.updated 记录的真实 part.type；未知时退回 field（兼容旧版 sidecar 用 field 区分）
+      const partType = this.streamPartTypes.get(partID)
+      const isReasoning = partType ? partType === 'reasoning' : field === 'reasoning'
       const key = `${sessionId}:${messageID}:${partID}`
       const cur = this.streamParts.get(key) || { text: '', reasoning: '' }
-      if (field === 'text') cur.text += delta
-      else cur.reasoning += delta
+      if (isReasoning) cur.reasoning += delta
+      else cur.text += delta
       this.streamParts.set(key, cur)
       const startKey = `${sessionId}:${messageID}`
       if (!this.streamStarted.has(startKey)) {
@@ -840,6 +855,13 @@ export class JeffCore extends EventEmitter {
       const part = props.part as { id?: string; messageID?: string; type?: string; text?: string; tool?: string; state?: { status?: string } } | undefined
       if (!part?.id || !part.messageID) return
       if (this.msgRoles.get(part.messageID) && this.msgRoles.get(part.messageID) !== 'assistant') return
+      // 记住 part 类型：后续 delta 只有 field（正文/思考都是 'text'），靠这里区分
+      if (part.type) {
+        this.streamPartTypes.set(part.id, part.type)
+        if (this.streamPartTypes.size > 4000) {
+          this.streamPartTypes.delete(this.streamPartTypes.keys().next().value as string)
+        }
+      }
       if (part.type === 'text' && typeof part.text === 'string') {
         const key = `${sessionId}:${part.messageID}:${part.id}`
         const cur = this.streamParts.get(key)
@@ -872,7 +894,11 @@ export class JeffCore extends EventEmitter {
       if (!completed) return
       const resolved = this.resolveSession(sessionId)
       for (const key of Array.from(this.streamParts.keys())) {
-        if (key.startsWith(`${sessionId}:`)) this.streamParts.delete(key)
+        if (key.startsWith(`${sessionId}:`)) {
+          // 同时回收该 part 的类型记录（streamPartTypes 以 partID 为键，只能借 streamParts 的键回溯）
+          this.streamPartTypes.delete(key.slice(key.lastIndexOf(':') + 1))
+          this.streamParts.delete(key)
+        }
       }
       for (const key of Array.from(this.streamTools.keys())) {
         if (key.startsWith(`${sessionId}:`)) this.streamTools.delete(key)

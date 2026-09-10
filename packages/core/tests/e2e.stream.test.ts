@@ -40,6 +40,7 @@ d('E2E: 流式输出与图片消息', () => {
 
     mockServer = await startMockLlm(MOCK_PORT, {
       imageReply: '【mock 已收到图片】图中是 1x1 像素测试图。',
+      reasoningReply: '我需要先想想：用户说的是推理题，那么我应该给出结论。',
     })
 
     const paths = buildPaths(home)
@@ -82,6 +83,27 @@ d('E2E: 流式输出与图片消息', () => {
     }
     expect(incremental[incremental.length - 1].text.length).toBeGreaterThan(0)
   }, 120000)
+
+  it('流式：思考增量归入 reasoning，不混进正文（回归：长推导完成后「消失」）', async () => {
+    const events: Array<{ text: string; reasoning?: string; done: boolean }> = []
+    const handler = (p: unknown) => {
+      const e = p as { kind: string; agentId: string; text: string; reasoning?: string; done: boolean }
+      if (e.kind === 'private' && e.agentId === XIAOJIE_ID) events.push({ text: e.text, reasoning: e.reasoning, done: e.done })
+    }
+    core.bus.on('chat-stream', handler)
+    try {
+      await core.privateChat.send(XIAOJIE_ID, '小杰', '请推理：1+1 等于几？')
+      await waitFor(() => events.some((e) => e.done), 120000)
+    } finally {
+      core.bus.off('chat-stream', handler)
+    }
+    const incremental = events.filter((e) => !e.done)
+    // 思考内容必须出现在 reasoning 通道
+    expect(incremental.some((e) => (e.reasoning || '').includes('我需要先想想'))).toBe(true)
+    // 且不得混进正文通道（正文只在最后出结论）
+    expect(incremental.map((e) => e.text).join('')).not.toContain('我需要先想想')
+    expect(events[events.length - 1].text || incremental[incremental.length - 1]?.text || '').toBeTruthy()
+  }, 180000)
 
   it('图片：file part 透传到 LLM，历史回放还原 images', async () => {
     const reply = await core.privateChat.send(XIAOJIE_ID, '小杰', '这张图里是什么？', undefined, [

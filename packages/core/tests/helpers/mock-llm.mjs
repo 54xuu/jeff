@@ -68,6 +68,17 @@ export function startMockLlm(port, opts = {}) {
           res.end()
           return
         }
+        // 可控思考（reasoning_content）：验证「思考增量不得混进正文」。
+        // 触发词：消息含「推理」或「思考」。
+        if (opts.reasoningReply && /推理|思考/.test(userText)) {
+          res.write(chunk({ role: 'assistant' }))
+          for (const c of String(opts.reasoningReply).match(/[\s\S]{1,20}/g) || []) res.write(chunk({ reasoning_content: c }))
+          const finalText = `【结论】${String(userText).slice(0, 20)}`
+          for (const c of finalText.match(/[\s\S]{1,20}/g) || []) res.write(chunk({ content: c }))
+          res.write(finishLine())
+          res.end()
+          return
+        }
         // 可控工具调用：opts.toolCall = { trigger: 'regex 源', name: '工具名', args: {...} }
         const tc = opts.toolCall
         if (tc && new RegExp(tc.trigger, 'i').test(userText) && tools.some((t) => t?.function?.name === tc.name)) {
@@ -111,6 +122,9 @@ if (process.argv[1] && process.argv[1].endsWith('mock-llm.mjs')) {
   }
   if (process.env.MOCK_CUSTOM_REPLY) {
     opts.customReply = () => process.env.MOCK_CUSTOM_REPLY
+  }
+  if (process.env.MOCK_REASONING_REPLY) {
+    opts.reasoningReply = process.env.MOCK_REASONING_REPLY
   }
   void startMockLlm(port, opts).then(() => console.log(`mock llm on :${port}`))
 }

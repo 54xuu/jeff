@@ -247,6 +247,10 @@ export class OcClient extends EventEmitter {
    * 表现为流式期间能看到「思考过程 / 工具调用」，落库后整段消失。
    * 这里把同一轮（同一个触发它的 user 消息之后、最后一条之前）assistant 消息的
    * reasoning / tool part 合并进返回值。文本仍只取最后一条，不改变调用方对回复正文的判定。
+   *
+   * 另外：部分模型（如硅基流动的 DeepSeek-V3.2 关闭 thinking 时）把工具调用前的推导/前言
+   * 直接写进正文 text part。这类「工具步正文」同样只在流式中可见，落库即丢；
+   * 这里把它转成 reasoning part 一并保留（仍然不进正文，@提及解析与回调判定不受影响）。
    */
   private mergeTurnParts(last: AssistantInfo, msgs: SessionMessage[]): void {
     const parentID = last.parentID as string | undefined
@@ -257,9 +261,14 @@ export class OcClient extends EventEmitter {
     const extras: Part[] = []
     for (const m of msgs.slice(userIdx >= 0 ? userIdx + 1 : 0, lastIdx)) {
       if ((m.info as { role?: string })?.role !== 'assistant') continue
-      for (const p of m.parts || []) {
-        const type = (p as { type?: string }).type
-        if (type === 'reasoning' || type === 'tool') extras.push(p)
+      const parts = (m.parts || []) as Array<{ id?: string; type?: string; text?: string }>
+      const toolStep = parts.some((p) => p.type === 'tool')
+      for (const p of parts) {
+        if (p.type === 'reasoning' || p.type === 'tool') {
+          extras.push(p as Part)
+        } else if (p.type === 'text' && toolStep && typeof p.text === 'string' && p.text.trim()) {
+          extras.push({ id: p.id || `txt_${extras.length}`, type: 'reasoning', text: p.text } as Part)
+        }
       }
     }
     if (!extras.length) return

@@ -152,6 +152,22 @@ describe('chatMessageRepo', () => {
     expect(msgs[0].sender_type).toBe('user')
     expect(JSON.parse(msgs[1].meta)).toEqual({ foo: 1 })
   })
+
+  it('listByScopePrefix：跨 thread 取同项目消息，且不误伤其它项目', async () => {
+    // 回归：群消息 scope 是 group:<pid>:<tid>，按 group:<pid> 精确查永远为空 → 群聊进不了记忆库
+    const repo = chatMessageRepo(db)
+    repo.add({ scope: 'group:prjA:t1', sender_type: 'user', content: 'A 的会话1' })
+    await new Promise((r) => setTimeout(r, 5))
+    repo.add({ scope: 'group:prjA:t2', sender_type: 'agent', sender_id: 'agt_x', content: 'A 的会话2' })
+    await new Promise((r) => setTimeout(r, 5))
+    repo.add({ scope: 'group:prjAB:t1', sender_type: 'user', content: '另一个项目' })
+    const msgs = repo.listByScopePrefix('group:prjA:')
+    expect(msgs.map((m) => m.content)).toEqual(['A 的会话1', 'A 的会话2'])
+    // 下划线/百分号要按字面匹配（LIKE 通配符已转义）
+    repo.add({ scope: 'group:prj_t:t1', sender_type: 'user', content: '下划线项目' })
+    const escaped = repo.listByScopePrefix('group:prj_t:')
+    expect(escaped.map((m) => m.content)).toEqual(['下划线项目'])
+  })
 })
 
 describe('kvRepo', () => {

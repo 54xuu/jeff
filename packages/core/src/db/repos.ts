@@ -351,6 +351,14 @@ export const chatMessageRepo = (db: DB) => ({
       .all(scope, limit)
       .reverse() as unknown as ChatMessageRow[]
   },
+  /** 按 scope 前缀取最近消息（群 scope 为 group:<projectId>:<threadId>，需跨 thread 时用） */
+  listByScopePrefix(prefix: string, limit = 200): ChatMessageRow[] {
+    const escaped = prefix.replace(/[\\%_]/g, (c) => `\\${c}`)
+    return db
+      .prepare("SELECT * FROM chat_message WHERE scope LIKE ? ESCAPE '\\' ORDER BY created_at DESC LIMIT ?")
+      .all(`${escaped}%`, limit)
+      .reverse() as unknown as ChatMessageRow[]
+  },
   add(row: { scope: string; sender_type: ChatMessageRow['sender_type']; sender_id?: string; content?: string; meta?: unknown; id?: string }): ChatMessageRow {
     const rec: ChatMessageRow = {
       id: row.id ?? genId('msg'),

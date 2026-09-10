@@ -4,7 +4,7 @@ import { agentRepo, projectAgentRepo, projectRepo, chatMessageRepo } from '../db
 import { agentSlug } from '../agents/registry.js'
 import type { OcClient } from '../oc/client.js'
 import { agentPromptOpts } from '../util/modelKey.js'
-import { GROUP_TURN_TIMEOUT_MS, ensureCallbackMention } from './group.js'
+import { GROUP_TURN_TIMEOUT_MS, ensureCallbackMention, extractReplyParts } from './group.js'
 import type { GroupChat } from './group.js'
 import { groupMsgScope } from './groupThreads.js'
 
@@ -138,13 +138,23 @@ export class Delegator {
       const parts = (reply.parts || []).filter((p) => p.type === 'text') as Array<{ type: 'text'; text: string }>
       const resultText = parts.map((p) => p.text).join('\n') || '（成员没有返回文本内容）'
 
-      // 3. 结果回群：worker 普通气泡，@发起用户；完整结果不截断
+      // 3. 结果回群：worker 普通气泡，@发起用户；完整结果不截断。
+      //    同时把成员的思考过程与工具调用一并落库——只回文本会让成员「流式期间很长、完成后整段消失」。
+      const { reasoning, tools } = extractReplyParts(reply)
       chatMessageRepo(this.db).add({
         scope,
         sender_type: 'agent',
         sender_id: memberId,
         content: ensureCallbackMention(resultText),
-        meta: { type: 'delegation', phase: 'result', sessionId, messageId: reply.id, delegatedBy: ctx.leaderAgentId },
+        meta: {
+          type: 'delegation',
+          phase: 'result',
+          sessionId,
+          messageId: reply.id,
+          delegatedBy: ctx.leaderAgentId,
+          ...(reasoning.length ? { reasoning } : {}),
+          ...(tools.length ? { tools } : {}),
+        },
       })
       this.groupChat.threads.touch(ctx.projectId, threadId)
       this.notify({ projectId: ctx.projectId, threadId })
