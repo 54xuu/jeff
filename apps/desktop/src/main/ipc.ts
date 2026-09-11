@@ -89,7 +89,7 @@ export function registerIpc(core: JeffCore): void {
       const { agentId } = p as { agentId: string }
       return core.privateChat.history(agentId)
     },
-    [IPC.chatSend]: async (p): Promise<{ ok: boolean; stopped?: boolean }> => {
+    [IPC.chatSend]: async (p): Promise<{ ok: boolean; stopped?: boolean; cancelled?: boolean }> => {
       const { agentId, text, images } = p as { agentId: string; text: string; images?: Array<{ mime: string; dataUrl: string }> }
       const row = core.agents.get(agentId)
       if (!row) throw new Error('智能体不存在')
@@ -99,7 +99,8 @@ export function registerIpc(core: JeffCore): void {
         return { ok: true }
       } catch (err) {
         // 用户主动停止是预期结果：返回 stopped，UI 不弹「发送失败」
-        if (err instanceof PrivateChatStoppedError) return { ok: true, stopped: true }
+        // cancelled=true 表示请求从未发出（引擎历史里没有这条用户消息），界面需保留本地记录
+        if (err instanceof PrivateChatStoppedError) return { ok: true, stopped: true, cancelled: err.cancelled }
         throw err
       }
     },
@@ -112,8 +113,9 @@ export function registerIpc(core: JeffCore): void {
     },
     [IPC.chatStop]: async (p): Promise<void> => {
       const { agentId } = p as { agentId: string }
-      const sessionId = core.privateChat.getSessionId(agentId)
-      if (sessionId) await core.oc.abortSession(sessionId)
+      // 会话未建好时停止请求要记成「意图」而不是丢弃（见 PrivateChat.stop）
+      const r = await core.privateChat.stop(agentId)
+      core.debugLog.log('chat-stop-req', { agentId, sessionId: r.sessionId, deferred: r.deferred })
     },
 
     // ---------- provider / 设置 ----------
@@ -328,6 +330,14 @@ export function registerIpc(core: JeffCore): void {
       core.setDebugLog(!!enabled)
       core.bus.emit('data-changed', 'settings')
       return { ok: true }
+    },
+    [IPC.debugLogOpenDir]: async (): Promise<{ ok: boolean; dir: string }> => {
+      const dir = core.paths.logDir
+      fs.mkdirSync(dir, { recursive: true })
+      const { shell } = await import('electron')
+      const err = await shell.openPath(dir)
+      if (err) throw new Error(err)
+      return { ok: true, dir }
     },
     [IPC.dialogPickDir]: async (p): Promise<string | null> => {
       const d = p as { title?: string; defaultPath?: string }

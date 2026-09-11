@@ -79,6 +79,7 @@ export const IPC = {
   llmTlsSet: 'llmTls:set',
   debugLogGet: 'debugLog:get',
   debugLogSet: 'debugLog:set',
+  debugLogOpenDir: 'debugLog:openDir',
   dialogPickDir: 'dialog:pickDir',
   skillsBackupNow: 'skills:backupNow',
   skillsLast: 'skills:last',
@@ -397,6 +398,7 @@ export type InvokeMap = {
   [IPC.llmTlsSet]: { skip: boolean }
   [IPC.debugLogGet]: void
   [IPC.debugLogSet]: { enabled: boolean }
+  [IPC.debugLogOpenDir]: void
   [IPC.dialogPickDir]: { title?: string; defaultPath?: string }
   [IPC.skillsBackupNow]: void
   [IPC.skillsLast]: void

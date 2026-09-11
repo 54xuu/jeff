@@ -60,8 +60,16 @@ export default function EngineSettings(): React.JSX.Element {
     }
   }
 
-  const restart = async () => {
-    setRestarting(true)
+  const openLogDir = async () => {
+    setToggleError(null)
+    try {
+      await api.invoke(IPC.debugLogOpenDir)
+    } catch (err) {
+      setToggleError(`打开日志目录失败：${String((err as Error).message).slice(0, 160)}`)
+    }
+  }
+
+  const restart = async () => {    setRestarting(true)
     try {
       await api.invoke(IPC.sidecarRestart)
       await refreshAppInfo()
@@ -101,8 +109,12 @@ export default function EngineSettings(): React.JSX.Element {
         </label>
         <label className="field check-field">
           <input type="checkbox" disabled={toggling !== null} checked={debugEnabled} onChange={(e) => void toggleDebug(e.target.checked)} />
-          <span>调试模式（记录引擎输出与消息处理日志到 数据目录/logs/debug-日期.log，可能包含聊天内容）</span>
+          <span>调试模式（记录引擎输出、工具调用与消息处理日志，可能包含聊天内容；默认开启）</span>
         </label>
+        <div className="field" style={{ gap: 8, alignItems: 'center' }}>
+          <button className="text-btn" onClick={() => void openLogDir()} data-testid="open-log-dir">打开日志目录</button>
+          <span className="settings-tip" style={{ margin: 0 }}>反馈问题请附上该目录下最新的 debug-日期.log</span>
+        </div>
         {toggleError && <p className="settings-error">⚠️ {toggleError}</p>}
       </div>
       <details className="mcp-tools" open={!!appInfo?.sidecarError}>

@@ -143,4 +143,23 @@ describe('writeSidecarConfig（v1.2 三格式 + variants）', () => {
     expect(cfg['model']).toBeUndefined()
     expect(cfg['small_model']).toBeUndefined()
   })
+
+  // 回归：未显式放行的权限在 opencode 里默认 action=ask，会挂起等待桌面端授权弹窗
+  // （Jeff 没有该 UI）→ 请求卡到超时。读取项目外文件必须先过 external_directory。
+  it('权限放行工具类、deny 交互类（question/plan_*）', () => {
+    const p = buildPaths(tmp)
+    writeSidecarConfig(p, [])
+    const cfg = JSON.parse(fs.readFileSync(path.join(p.ocConfigDir, 'opencode.json'), 'utf8')) as Record<string, unknown>
+    const perm = cfg['permission'] as Record<string, string>
+    expect(perm['*']).toBe('allow')
+    expect(perm['read']).toBe('allow')
+    expect(perm['external_directory']).toBe('allow')
+    expect(perm['skill']).toBe('allow')
+    // 交互型权限：deny 而非 ask/allow —— allow 会 publish question.asked 后永久等待作答
+    expect(perm['question']).toBe('deny')
+    expect(perm['plan_enter']).toBe('deny')
+    expect(perm['plan_exit']).toBe('deny')
+    // 不允许出现任何 ask
+    expect(Object.values(perm).some((v) => v === 'ask')).toBe(false)
+  })
 })

@@ -5,6 +5,7 @@ import { IPC, extractThinkTags, mergeReasoning, type ContextPreviewInfo, type Gr
 import Avatar from './Avatar'
 import GroupInfoDrawer from './GroupInfoDrawer'
 import { Markdown } from './Markdown'
+import { fmtFullTime } from '../format'
 import { CopyButton } from './ui/CopyButton'
 import { useImages, ImagePreviews, MsgImages, AssistantExtras, StreamingBubble, useAutoScroll, useComposerResize } from './ChatShared'
 import ContextDrawer, { ContextUsageBar, fetchContextPreview } from './ContextDrawer'
@@ -213,7 +214,15 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
             </div>
           </div>
         )}
-        {stream && <StreamingBubble avatar={stream.senderAvatar} name={stream.senderName} stream={stream} workspaceDir={workspaceDir} />}
+        {stream && (
+          <StreamingBubble
+            avatar={stream.senderAvatar}
+            name={stream.senderName}
+            stream={stream}
+            workspaceDir={workspaceDir}
+            time={[...msgs].reverse().find((m) => m.role === 'user')?.time}
+          />
+        )}
       </div>
 
       <div className="composer" ref={composerRef}>
@@ -337,6 +346,7 @@ function GroupBubble(props: { msg: GroupMessage; workspaceDir?: string }): React
     return (
       <div className="msg-system">
         <span>{msg.text}</span>
+        <span className="msg-time">{fmtFullTime(msg.time)}</span>
         <CopyButton className="msg-copy msg-copy-system" text={msg.text} label="复制消息" testId="msg-copy-system" />
       </div>
     )
@@ -346,7 +356,13 @@ function GroupBubble(props: { msg: GroupMessage; workspaceDir?: string }): React
     <div className={`msg-row ${mine ? 'right' : 'left'}`}>
       {!mine && <Avatar emoji={msg.sender_avatar || '🤖'} size={34} />}
       <div className="msg-stack">
-        {!mine && <div className="msg-sender">{msg.sender_name}</div>}
+        {!mine && (
+          <div className="msg-sender">
+            {msg.sender_name}
+            <span className="msg-time">{fmtFullTime(msg.time)}</span>
+          </div>
+        )}
+        {mine && <div className="msg-meta-user"><span className="msg-time">{fmtFullTime(msg.time)}</span></div>}
         <div className="msg-bubble-wrap">
           <div className={`bubble ${mine ? 'user' : 'assistant'}`}>
             {isAssistant && <AssistantExtras reasoning={reasoning} tools={msg.tools} workspaceDir={workspaceDir} />}

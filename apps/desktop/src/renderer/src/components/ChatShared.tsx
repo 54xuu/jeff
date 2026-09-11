@@ -6,6 +6,7 @@ import { Markdown } from './Markdown'
 import { CopyButton } from './ui/CopyButton'
 import { splitTextWithFileLinks } from './preview/linkify'
 import FileLink from './preview/FileLink'
+import { fmtFullTime } from '../format'
 
 const COMPOSER_MIN_HEIGHT = 40
 const COMPOSER_MAX_HEIGHT = 320
@@ -18,8 +19,10 @@ export function StreamingBubble(props: {
   stream: { text: string; reasoning?: string; tools?: Array<{ tool: string; status?: string }> }
   /** 工作空间目录：用于识别输出里的相对路径为可点击链接 */
   workspaceDir?: string
+  /** 本轮触发时间（用户发送时刻）：流式期间也显示时间，便于估算轮次耗时 */
+  time?: number
 }): React.JSX.Element {
-  const { avatar, name, stream, workspaceDir } = props
+  const { avatar, name, stream, workspaceDir, time } = props
   // 有些模型把思考写在正文的 <think> 里而不是原生 reasoning 字段，这里统一剥出来给折叠区
   const parsed = useMemo(() => extractThinkTags(stream.text), [stream.text])
   const reasoning = useMemo(() => mergeReasoning(stream.reasoning, parsed.reasoning), [stream.reasoning, parsed.reasoning])
@@ -28,7 +31,10 @@ export function StreamingBubble(props: {
     <div className="msg-row left">
       <Avatar emoji={avatar} size={34} />
       <div className="msg-stack">
-        <div className="msg-sender">{name}</div>
+        <div className="msg-sender">
+          {name}
+          <span className="msg-time">{fmtFullTime(time)}</span>
+        </div>
         <div className="msg-bubble-wrap">
           <div className="bubble assistant">
             <AssistantExtras reasoning={reasoning} tools={stream.tools} live bodyStarted={bodyStarted} workspaceDir={workspaceDir} />

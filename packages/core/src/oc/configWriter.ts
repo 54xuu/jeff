@@ -196,7 +196,32 @@ export function writeSidecarConfig(
     delete cfg['model']
     delete cfg['small_model']
   }
-  cfg['permission'] = { edit: 'allow', bash: 'allow', webfetch: 'allow' }
+  // Jeff 无桌面端权限确认 UI：opencode 未命中规则时默认 action=ask，会挂起等待授权（永不超时），
+  // 直到外层 10 分钟 fetch 超时（表现为「卡死几分钟后 TimeoutError」）。因此除下面三个交互型权限外全部放行。
+  // 实测：读项目外文件先过 external_directory（默认 {"*":"ask"}）→ 必挂。
+  cfg['permission'] = {
+    '*': 'allow',
+    read: 'allow',
+    edit: 'allow',
+    glob: 'allow',
+    grep: 'allow',
+    list: 'allow',
+    bash: 'allow',
+    task: 'allow',
+    external_directory: 'allow',
+    todowrite: 'allow',
+    webfetch: 'allow',
+    websearch: 'allow',
+    lsp: 'allow',
+    skill: 'allow',
+    doom_loop: 'allow',
+    // 交互型权限必须 deny（opencode 非交互 CLI 同样注入 deny）：这几项不是「允许执行」，
+    // 而是「允许向用户提问/切换计划模式」，publish question.asked 后无限等待作答，
+    // Jeff 没有作答 UI → 又一个永久挂起源。deny 会让工具快速失败并把原因回给模型继续推进。
+    question: 'deny',
+    plan_enter: 'deny',
+    plan_exit: 'deny',
+  }
   fs.mkdirSync(p.ocConfigDir, { recursive: true })
   fs.writeFileSync(configFile, JSON.stringify(cfg, null, 2), 'utf8')
 

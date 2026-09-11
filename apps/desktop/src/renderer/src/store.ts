@@ -44,7 +44,7 @@ interface JeffState {
   setSettingsSection: (s: SettingsSection) => void
   refreshAgents: () => Promise<void>
   refreshProjects: () => Promise<void>
-  loadHistory: (key: string) => Promise<void>
+  loadHistory: (key: string, opts?: { resetLocal?: boolean }) => Promise<void>
   loadGroupHistory: (projectId: string) => Promise<void>
   loadTasks: (projectId: string) => Promise<void>
   sendAgent: (agentId: string, text: string, images?: ChatImage[]) => Promise<void>
@@ -100,6 +100,30 @@ function dropStreamBuf(key: string): void {
   streamBuf.delete(key)
 }
 
+/** 本地追加条目的 id 前缀（乐观用户消息 / 已停止 / 发送失败）——引擎历史里没有这些条目 */
+const LOCAL_MSG_ID = /^(local|stop|err)-/
+
+/**
+ * 历史重拉是整段替换，会把本地追加的条目一起冲掉。这不是理论问题：回复结束时服务端会推
+ * chat-updated 触发重拉，而「已停止 / 发送失败」提示恰好在同一时刻写入 → 提示被冲掉，
+ * 用户看不到任何反馈（停止按钮点了像没反应）。这里改成合并：
+ *  - 服务端消息为准；
+ *  - 本地条目里，乐观用户消息若服务端已有同内容回显则丢弃（正常情况），否则保留（本轮没发出去）；
+ *  - 提示类（已停止 / 发送失败）与未被回显的用户消息按时间插回原位置（不能统一追加到末尾，
+ *    否则新一轮的消息会排在上一轮提示之前，时间线错乱）。
+ */
+function mergeLocalMessages(local: ChatMsg[], server: ChatMsg[]): ChatMsg[] {
+  const echoed = new Set(server.filter((m) => m.role === 'user').map((m) => m.text))
+  const kept = local.filter((m) => LOCAL_MSG_ID.test(m.id) && !(m.role === 'user' && echoed.has(m.text)))
+  if (kept.length === 0) return server
+  const out = [...server]
+  for (const m of kept.sort((a, b) => a.time - b.time)) {
+    const idx = out.findIndex((x) => x.time > m.time)
+    out.splice(idx < 0 ? out.length : idx, 0, m)
+  }
+  return out
+}
+
 export const useStore = create<JeffState>((set, get) => ({
   tab: 'chats',
   active: null,
@@ -130,12 +154,11 @@ export const useStore = create<JeffState>((set, get) => ({
     set({ projects })
   },
 
-  loadHistory: async (key) => {
-    if (key.startsWith('agent:')) {
-      const agentId = key.slice(6)
-      const msgs = await api.invoke<ChatMsg[]>(IPC.chatHistory, { agentId })
-      set((s) => ({ messages: { ...s.messages, [key]: msgs } }))
-    }
+  loadHistory: async (key, opts) => {
+    if (!key.startsWith('agent:')) return
+    const agentId = key.slice(6)
+    const msgs = await api.invoke<ChatMsg[]>(IPC.chatHistory, { agentId })
+    set((s) => ({ messages: { ...s.messages, [key]: opts?.resetLocal ? msgs : mergeLocalMessages(s.messages[key] || [], msgs) } }))
   },
 
   loadGroupHistory: async (projectId) => {
@@ -151,25 +174,23 @@ export const useStore = create<JeffState>((set, get) => ({
   sendAgent: async (agentId, text, images) => {
     const key = `agent:${agentId}`
     const now = Date.now()
+    const localUser: ChatMsg = { id: `local-${now}`, role: 'user', text, time: now, ...(images && images.length ? { images } : {}) }
     set((s) => ({ sending: { ...s.sending, [key]: true } }))
-    set((s) => ({
-      messages: {
-        ...s.messages,
-        [key]: [...(s.messages[key] || []), { id: `local-${now}`, role: 'user', text, time: now, ...(images && images.length ? { images } : {}) }],
-      },
-    }))
+    set((s) => ({ messages: { ...s.messages, [key]: [...(s.messages[key] || []), localUser] } }))
     try {
-      const r = await api.invoke<{ ok: boolean; stopped?: boolean }>(IPC.chatSend, { agentId, text, ...(images && images.length ? { images } : {}) })
-      // 用户主动停止是预期结果：显示「已停止」而非「发送失败」
-      if (r?.stopped) {
-        set((s) => ({
-          messages: {
-            ...s.messages,
-            [key]: [...(s.messages[key] || []), { id: `stop-${now}`, role: 'system', text: '⏹️ 已停止生成', time: Date.now() }],
-          },
-        }))
-      }
+      const r = await api.invoke<{ ok: boolean; stopped?: boolean; cancelled?: boolean }>(IPC.chatSend, { agentId, text, ...(images && images.length ? { images } : {}) })
+      // 先重拉历史（整段替换）再补提示，否则刚插入的提示会被冲掉
       await get().loadHistory(key)
+      if (r?.stopped) {
+        // 用户主动停止是预期结果：显示「已停止」而非「发送失败」
+        set((s) => {
+          const cur = s.messages[key] || []
+          // cancelled：本轮在建会话期间就被取消，请求从未发给引擎 —— 引擎历史里没有这条用户消息，
+          // 直接采用重拉结果会让用户刚敲的内容凭空消失，这里补回本地记录
+          const base = r.cancelled && !cur.some((m) => m.id === localUser.id) ? [...cur, localUser] : cur
+          return { messages: { ...s.messages, [key]: [...base, { id: `stop-${now}`, role: 'system', text: '⏹️ 已停止生成', time: Date.now() }] } }
+        })
+      }
     } catch (err) {
       // 真失败：保留本地用户消息与失败气泡（重拉历史会把刚插入的提示瞬间冲掉，用户再也看不到失败原因）
       set((s) => ({
@@ -221,7 +242,8 @@ export const useStore = create<JeffState>((set, get) => ({
     const key = `agent:${agentId}`
     if (get().sending[key]) return
     await api.invoke(IPC.chatNew, { agentId })
-    await get().loadHistory(key)
+    // 换了会话：上一会话的本地提示（已停止/发送失败）不再适用
+    await get().loadHistory(key, { resetLocal: true })
   },
 
   stopAgent: async (agentId) => {

@@ -278,8 +278,24 @@ export class OcClient extends EventEmitter {
   /** 用户主动停止过的会话 → 时间戳（区分「已停止生成」与 provider 真实失败） */
   private aborts = new Map<string, number>()
 
+  /**
+   * 应答 opencode 的权限询问（POST /permission/{id}/reply）。
+   * Jeff 没有确认弹窗，权限在 opencode.json 里已全量放行；这是兜底：万一某条 agent 级规则
+   * 仍把权限路由成 ask，opencode 会 publish asked 后无限等待，表现为界面卡死到请求超时。
+   */
+  async replyPermission(requestId: string, reply: 'once' | 'always' | 'reject' = 'once'): Promise<void> {
+    await this.req('POST', `/permission/${encodeURIComponent(requestId)}/reply`, { reply })
+  }
+
+  /** 拒绝 opencode 的提问（POST /question/{id}/reject）：Jeff 无作答 UI，让工具快速失败并把原因回给模型 */
+  async rejectQuestion(requestId: string): Promise<void> {
+    await this.req('POST', `/question/${encodeURIComponent(requestId)}/reject`)
+  }
+
   async abortSession(sessionId: string): Promise<void> {
     this.aborts.set(sessionId, Date.now())
+    // 记录中断尝试：只记失败的话，「点了停止但没停住」在日志里完全看不到（无法判断请求是否发出）
+    this.log?.('abort', { sessionId })
     await this.req('POST', `/session/${sessionId}/abort`).catch((err) => {
       // /abort 失败不再完全静默：留诊断现场（会话可能已结束或 sidecar 不可达）
       this.log?.('abort-fail', { sessionId, error: String((err as Error)?.message || err) })

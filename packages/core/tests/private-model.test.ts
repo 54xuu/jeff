@@ -85,8 +85,7 @@ describe('PrivateChat.send 模型归属', () => {
     expect(createCalls).toBe(1)
   })
 
-  it('用户主动停止抛 PrivateChatStoppedError，与 provider 失败可区分', async () => {
-    const oc = {
+  it('用户主动停止抛 PrivateChatStoppedError，与 provider 失败可区分', async () => {    const oc = {
       getSession: async () => ({ id: 'x' }),
       createSession: async () => ({ id: 'ses_stop' }),
       sendMessage: async () => {
@@ -108,5 +107,53 @@ describe('PrivateChat.send 模型归属', () => {
     const chat2 = new PrivateChat(db, () => oc2)
     await expect(chat2.send('agt_fail', '乙', 'hi')).rejects.toThrow(/aborted/)
     expect(chat2).toBeDefined()
+  })
+
+  // 回归：界面「发送中」是同步置位的，停止按钮在建会话期间就可点；此时 KV 还没有 sessionId。
+  // 旧实现 `if (sessionId)` 会静默丢弃停止 → 用户点了停止却继续生成（实测卡到超时）。
+  it('会话建成前点停止：停止意图被保留，建好后立即中止本轮且不发出请求', async () => {
+    let sendCalls = 0
+    const oc = {
+      getSession: async () => {
+        throw new Error('not found')
+      },
+      createSession: async () => {
+        await new Promise((r) => setTimeout(r, 80))
+        return { id: 'ses_race' }
+      },
+      sendMessage: async () => {
+        sendCalls += 1
+        return { id: 'msg', parts: [{ type: 'text', text: '不该被调用' }] }
+      },
+      abortSession: async () => {},
+    } as unknown as OcClient
+    const logs: Array<{ tag: string; detail: unknown }> = []
+    const chat = new PrivateChat(db, () => oc, { onDebugLog: (tag, detail) => logs.push({ tag, detail }) })
+
+    const sending = chat.send('agt_race', '甲', 'hi')
+    await new Promise((r) => setTimeout(r, 20)) // 让 send 进入「建会话中」
+    const r = await chat.stop('agt_race')
+    expect(r).toEqual({ sessionId: null, deferred: true })
+    await expect(sending).rejects.toThrow(PrivateChatStoppedError)
+    expect(sendCalls, '停止后不应真正发出请求').toBe(0)
+    expect(logs[0]?.tag).toBe('private-send-stop')
+  })
+
+  it('停止意图只作用于在途发送：空闲时点停止不会污染下一轮', async () => {
+    let sendCalls = 0
+    const oc = {
+      getSession: async () => ({ id: 'x' }),
+      createSession: async () => ({ id: 'ses_idle' }),
+      sendMessage: async () => {
+        sendCalls += 1
+        return { id: 'msg', parts: [{ type: 'text', text: 'ok' }] }
+      },
+      abortSession: async () => {},
+    } as unknown as OcClient
+    const chat = new PrivateChat(db, () => oc)
+    const r = await chat.stop('agt_idle')
+    expect(r).toEqual({ sessionId: null, deferred: false })
+    await expect(chat.send('agt_idle', '甲', 'hi')).resolves.toBeTruthy()
+    expect(sendCalls).toBe(1)
   })
 })

@@ -36,6 +36,34 @@ export { openDb } from './db/db.js'
 const NUDGE_INTERVAL = 10 // 每 N 个用户触发一次后台记忆自省
 const NUDGE_REVIEW_MAX_CHARS = 6000
 
+/** opencode 流式 part（只声明诊断用到的字段，避免依赖 sidecar 的完整 schema） */
+interface OcStreamPart {
+  id?: string
+  messageID?: string
+  type?: string
+  text?: string
+  tool?: string
+  callID?: string
+  state?: {
+    status?: string
+    title?: string
+    input?: unknown
+    output?: unknown
+    error?: unknown
+    time?: { start?: number; end?: number }
+  }
+}
+
+/** 日志摘要截断：工具入参/输出可能极大，只留够定位问题的开头 */
+function truncateText(v: unknown, max = 600): string | undefined {
+  if (v === undefined || v === null) return undefined
+  const s = typeof v === 'string' ? v : JSON.stringify(v)
+  return s.length > max ? `${s.slice(0, max)}…(+${s.length - max})` : s
+}
+function truncateJson(v: unknown, max = 400): string | undefined {
+  return truncateText(v, max)
+}
+
 /**
  * AGENTS.md 注入块组装：用户级 + 项目级（仅一个来源，导出以便单测）。
  * 项目级以 ~/.jeff/agents-md/<projectId>.md 权威副本为唯一执行来源（设置页编辑 + WebDAV 同步）；
@@ -102,7 +130,8 @@ export class JeffCore extends EventEmitter {
     this.db = openDb(this.paths)
     this.seedXiaojie()
     this.debugLog = new DebugLogger(this.paths)
-    this.debugLog.setEnabled(this.kv().getJSON<{ enabled?: boolean } | null>('settings:debugLog', null)?.enabled ?? false)
+    // 默认开启：卡死/超时类问题只有事前开着日志才留得下现场（用户无须预先设置）；用户可在设置里关掉
+    this.debugLog.setEnabled(this.kv().getJSON<{ enabled?: boolean } | null>('settings:debugLog', null)?.enabled ?? true)
     this.registry = new AgentRegistry(this.db, this.paths)
     this.memory = new MemoryStore(this.paths)
     this.indexer = new SessionIndex(this.db)
@@ -799,6 +828,8 @@ export class JeffCore extends EventEmitter {
   /** 流式诊断去重：每条消息只记一次 start，每个会话只记一次 drop */
   private streamStarted = new Set<string>()
   private streamDropLogged = new Set<string>()
+  /** 工具调用诊断：partId → 首次出现时间与上次状态（只在状态迁移时落日志，避免高频刷屏） */
+  private toolTrace = new Map<string, { tool: string; callId?: string; startedAt: number; lastStatus?: string }>()
 
   /** 绑定 OcClient 事件（opencode 事件分发 + SSE 生命周期诊断日志）；每次重建客户端后调用 */
   private wireOcClient(): void {
@@ -813,6 +844,29 @@ export class JeffCore extends EventEmitter {
     const props = (evt.properties || {}) as Record<string, unknown>
     const sessionId = props.sessionID as string | undefined
     if (!sessionId) return
+
+    // 兜底：正常情况下配置已全量放行、走不到这里；一旦出现（agent 级规则覆盖 / opencode 改版），
+    // opencode 会 publish 后无限等待用户应答 —— Jeff 没有对应 UI，必须自动放行/拒绝，否则卡到请求超时。
+    if (evt.type === 'permission.asked') {
+      const { id, permission, patterns, metadata } = props as { id?: string; permission?: string; patterns?: string[]; metadata?: unknown }
+      this.debugLog.log('permission-auto-allow', { sessionId, requestId: id, permission, patterns, metadata })
+      if (id) {
+        void this.oc
+          .replyPermission(id, 'once')
+          .catch((err) => this.debugLog.log('permission-reply-fail', { sessionId, requestId: id, error: String((err as Error)?.message || err) }))
+      }
+      return
+    }
+    if (evt.type === 'question.asked') {
+      const { id, questions } = props as { id?: string; questions?: unknown }
+      this.debugLog.log('question-auto-reject', { sessionId, requestId: id, questions })
+      if (id) {
+        void this.oc
+          .rejectQuestion(id)
+          .catch((err) => this.debugLog.log('question-reject-fail', { sessionId, requestId: id, error: String((err as Error)?.message || err) }))
+      }
+      return
+    }
 
     // 记录消息角色（流式只推 assistant 的 part，避免用户消息回显被当成流式气泡）
     if (evt.type === 'message.updated') {
@@ -852,7 +906,7 @@ export class JeffCore extends EventEmitter {
 
     // 流式纠偏：part.updated 带全量文本，比增量拼接长则以它为准；tool part 更新运行状态
     if (evt.type === 'message.part.updated') {
-      const part = props.part as { id?: string; messageID?: string; type?: string; text?: string; tool?: string; state?: { status?: string } } | undefined
+      const part = props.part as OcStreamPart | undefined
       if (!part?.id || !part.messageID) return
       if (this.msgRoles.get(part.messageID) && this.msgRoles.get(part.messageID) !== 'assistant') return
       // 记住 part 类型：后续 delta 只有 field（正文/思考都是 'text'），靠这里区分
@@ -882,6 +936,7 @@ export class JeffCore extends EventEmitter {
         const tools = this.streamTools.get(`${sessionId}:${part.messageID}`) || new Map()
         tools.set(part.id, { tool: part.tool, status: part.state?.status })
         this.streamTools.set(`${sessionId}:${part.messageID}`, tools)
+        this.logToolPart(sessionId, part)
         this.emitStream(sessionId, part.messageID)
       }
       return
@@ -916,7 +971,43 @@ export class JeffCore extends EventEmitter {
     }
   }
 
-  /** 把某会话某消息的流式增量发给渲染层（review/未知会话跳过） */
+  /**
+   * 工具调用诊断：opencode 用 part.state.status 表达进度（pending → running → completed/error）。
+   * pending 表示已发起但尚未真正执行 —— 权限确认、交互提问等挂起就停在这个状态，
+   * 表现为「界面长时间没动静，最后 TimeoutError」。因此把状态迁移、耗时、入参/输出摘要
+   * 都落进 debug 日志，出问题时可直接看出卡在哪个工具、卡了多久、报了什么。
+   */
+  private logToolPart(sessionId: string, part: OcStreamPart): void {
+    const status = part.state?.status
+    if (!status || !part.id) return
+    const prev = this.toolTrace.get(part.id)
+    if (prev?.lastStatus === status) return
+    const now = Date.now()
+    const startedAt = prev?.startedAt ?? part.state?.time?.start ?? now
+    this.toolTrace.set(part.id, { tool: part.tool || prev?.tool || '?', callId: part.callID, startedAt, lastStatus: status })
+    if (this.toolTrace.size > 400) this.toolTrace.delete(this.toolTrace.keys().next().value as string)
+    const base = {
+      sessionId,
+      messageId: part.messageID,
+      callId: part.callID,
+      tool: part.tool,
+      status,
+      title: part.state?.title,
+      elapsedMs: now - startedAt,
+    }
+    if (status === 'completed') {
+      this.debugLog.log('tool-done', { ...base, args: truncateJson(part.state?.input), output: truncateText(part.state?.output) })
+    } else if (status === 'error') {
+      this.debugLog.log('tool-error', { ...base, args: truncateJson(part.state?.input), error: truncateText(part.state?.error) })
+    } else if (status === 'pending') {
+      // pending 长期不流转 = 疑似等权限/等交互（历史卡死根因）
+      this.debugLog.log('tool-pending', { ...base, args: truncateJson(part.state?.input) })
+    } else {
+      this.debugLog.log('tool-start', { ...base, args: truncateJson(part.state?.input) })
+    }
+  }
+
+
   private emitStream(sessionId: string, messageId: string): void {
     const resolved = this.resolveSession(sessionId)
     if (!resolved || resolved.kind === 'review') {

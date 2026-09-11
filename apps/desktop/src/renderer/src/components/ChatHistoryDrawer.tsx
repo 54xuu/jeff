@@ -66,7 +66,7 @@ export default function ChatHistoryDrawer(props: { agentId?: string; projectId?:
   const activate = async (s: SessionBrief) => {
     if (!props.agentId && !props.projectId) return
     await api.invoke(IPC.sessionActivate, { scope: props.projectId ? 'group' : 'private', agentId: s.agentId, projectId: props.projectId, sessionId: s.id })
-    if (props.agentId) await useStore.getState().loadHistory(`agent:${props.agentId}`)
+    if (props.agentId) await useStore.getState().loadHistory(`agent:${props.agentId}`, { resetLocal: true })
     if (props.projectId) await useStore.getState().loadGroupHistory(props.projectId)
     await load()
     props.onClose()

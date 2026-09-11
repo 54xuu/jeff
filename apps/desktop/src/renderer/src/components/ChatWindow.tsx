@@ -4,6 +4,7 @@ import { api } from '../api'
 import { IPC, extractThinkTags, mergeReasoning, modelDisplayLabel, type ChatMsg, type ContextPreviewInfo } from '@jeff/core'
 import Avatar from './Avatar'
 import { Markdown } from './Markdown'
+import { fmtFullTime } from '../format'
 import { CopyButton } from './ui/CopyButton'
 import { useImages, ImagePreviews, MsgImages, AssistantExtras, StreamingBubble, useAutoScroll, useComposerResize } from './ChatShared'
 import ChatHistoryDrawer from './ChatHistoryDrawer'
@@ -153,7 +154,15 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
             </div>
           </div>
         )}
-        {stream && <StreamingBubble avatar={agent.avatar} name={agent.name} stream={stream} workspaceDir={workspaceDir} />}
+        {stream && (
+          <StreamingBubble
+            avatar={agent.avatar}
+            name={agent.name}
+            stream={stream}
+            workspaceDir={workspaceDir}
+            time={[...msgs].reverse().find((m) => m.role === 'user')?.time}
+          />
+        )}
       </div>
 
       <div className="composer" ref={composerRef}>
@@ -267,11 +276,27 @@ export function MessageBubble(props: { msg: ChatMsg; agentName: string; agentAva
   const parsed = useMemo(() => (isMarkdown ? extractThinkTags(msg.text) : null), [isMarkdown, msg.text])
   const reasoning = useMemo(() => (parsed ? mergeReasoning(msg.reasoning, parsed.reasoning) : undefined), [msg.reasoning, parsed])
   const body = parsed ? parsed.text : msg.text
+  // 系统提示（已停止 / 发送失败）不是智能体说的话：用居中提示条，避免挂在智能体名下造成误读
+  if (msg.role === 'system') {
+    return (
+      <div className="msg-system">
+        <span>{msg.text}</span>
+        <span className="msg-time">{fmtFullTime(msg.time)}</span>
+        <CopyButton className="msg-copy msg-copy-system" text={msg.text} label="复制消息" testId="msg-copy-system" />
+      </div>
+    )
+  }
   return (
     <div className={`msg-row ${mine ? 'right' : 'left'}`}>
       {!mine && <Avatar emoji={agentAvatar} size={34} />}
       <div className="msg-stack">
-        {!mine && <div className="msg-sender">{agentName}</div>}
+        {!mine && (
+          <div className="msg-sender">
+            {agentName}
+            <span className="msg-time">{fmtFullTime(msg.time)}</span>
+          </div>
+        )}
+        {mine && <div className="msg-meta-user"><span className="msg-time">{fmtFullTime(msg.time)}</span></div>}
         <div className="msg-bubble-wrap">
           <div className={`bubble ${mine ? 'user' : 'assistant'}`}>
             {isMarkdown && <AssistantExtras reasoning={reasoning} tools={msg.tools} workspaceDir={workspaceDir} />}

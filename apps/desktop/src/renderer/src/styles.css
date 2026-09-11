@@ -418,6 +418,26 @@ body {
   margin: 0 4px 3px;
 }
 
+/* 发送时间（YYYY-MM-DD HH:mm:ss）：跟在发送人名后（自己发的消息则单独一行），比名字更弱一档 */
+.msg-time {
+  margin-left: 8px;
+  color: var(--text-reasoning);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 自己发的消息：时间与气泡一起右对齐（气泡仍是栈内最宽元素，不受时间宽度影响） */
+.msg-row.right .msg-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+.msg-meta-user {
+  margin: 0 4px 3px;
+  font-size: 11px;
+  line-height: 1;
+}
+
 .self-avatar {
   width: 34px;
   height: 34px;
