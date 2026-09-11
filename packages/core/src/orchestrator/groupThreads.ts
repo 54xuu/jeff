@@ -1,12 +1,18 @@
 import type { DB } from '../db/db.js'
 import { chatMessageRepo, kvRepo } from '../db/repos.js'
 import { genId } from '../util/id.js'
+import { composeAutoTitle, placeholderTitle } from '../util/title.js'
 
 export interface GroupThreadMeta {
   id: string
   title: string
   createdAt: number
   updatedAt: number
+  /**
+   * 自动命名会话：标题先是 `{时间戳}-新会话` 占位，首条用户消息落库后补任务名。
+   * 显式命名、手动改名、以及本次改动之前建的旧会话都没有这个字段（视为 false）。
+   */
+  autoTitle?: boolean
 }
 
 const ACTIVE_KEY = (projectId: string) => `group:activeThread:${projectId}`
@@ -22,12 +28,6 @@ export function groupMsgScope(projectId: string, threadId: string): string {
 
 export function legacyGroupMsgScope(projectId: string): string {
   return `group:${projectId}`
-}
-
-function defaultTitle(): string {
-  const when = new Date()
-  const stamp = `${when.getMonth() + 1}/${when.getDate()} ${String(when.getHours()).padStart(2, '0')}:${String(when.getMinutes()).padStart(2, '0')}`
-  return `会话 · ${stamp}`
 }
 
 /** 群话题（thread）读写与旧数据迁移 */
@@ -55,7 +55,7 @@ export class GroupThreadStore {
       kv.set(ACTIVE_KEY(projectId), list[0].id)
       return list[0].id
     }
-    return this.createThread(projectId, '默认会话').id
+    return this.createThread(projectId).id
   }
 
   getMeta(projectId: string, threadId: string): GroupThreadMeta | null {
@@ -80,9 +80,12 @@ export class GroupThreadStore {
   createThread(projectId: string, title?: string): GroupThreadMeta {
     const id = genId('thr')
     const now = Date.now()
+    const explicit = (title || '').trim()
     const meta: GroupThreadMeta = {
       id,
-      title: (title || '').trim() || defaultTitle(),
+      // 未显式命名 = 自动命名会话：先占位，首条用户消息落库后补上任务名
+      title: explicit || placeholderTitle(now),
+      autoTitle: !explicit,
       createdAt: now,
       updatedAt: now,
     }
@@ -90,6 +93,22 @@ export class GroupThreadStore {
     kv.setJSON(THREAD_KEY(projectId, id), meta)
     kv.set(ACTIVE_KEY(projectId), id)
     return meta
+  }
+
+  /**
+   * 首条用户消息落库后补任务名：`{创建时间戳}-{任务中文名称}`。
+   * 只作用于自动命名的会话；显式命名/手动改名过/旧会话（autoTitle 非 true）一律不动。
+   */
+  autoTitleFromFirstMessage(projectId: string, threadId: string, text: string): void {
+    const cur = this.getMeta(projectId, threadId)
+    if (!cur || cur.autoTitle !== true) return
+    const next: GroupThreadMeta = {
+      ...cur,
+      title: composeAutoTitle(cur.createdAt, text),
+      autoTitle: false,
+      updatedAt: Date.now(),
+    }
+    this.kv().setJSON(THREAD_KEY(projectId, threadId), next)
   }
 
   setActive(projectId: string, threadId: string): void {
@@ -102,7 +121,7 @@ export class GroupThreadStore {
     if (!t) throw new Error('标题不能为空')
     const cur = this.getMeta(projectId, threadId)
     if (!cur) throw new Error('会话不存在')
-    const next: GroupThreadMeta = { ...cur, title: t, updatedAt: Date.now() }
+    const next: GroupThreadMeta = { ...cur, title: t, updatedAt: Date.now(), autoTitle: false }
     this.kv().setJSON(THREAD_KEY(projectId, threadId), next)
     return next
   }
@@ -131,7 +150,7 @@ export class GroupThreadStore {
       kv.delete(ACTIVE_KEY(projectId))
       const rest = this.listThreads(projectId)
       if (rest.length > 0) kv.set(ACTIVE_KEY(projectId), rest[0].id)
-      else this.createThread(projectId, '默认会话')
+      else this.createThread(projectId)
     }
     return { ocSessionIds, wasActive }
   }
@@ -179,9 +198,12 @@ export class GroupThreadStore {
     if (!threadId || !kv.get(THREAD_KEY(projectId, threadId))) {
       const now = Date.now()
       threadId = genId('thr')
+      // 承载旧数据的迁移会话保留原命名且不参与自动命名：用「当下时间」改写历史会话的名字会失真
+      const hasLegacy = msgs.length > 0 || legacySessions.length > 0
       const meta: GroupThreadMeta = {
         id: threadId,
-        title: msgs.length > 0 || legacySessions.length > 0 ? '默认会话' : defaultTitle(),
+        title: hasLegacy ? '默认会话' : placeholderTitle(now),
+        autoTitle: !hasLegacy,
         createdAt: now,
         updatedAt: now,
       }

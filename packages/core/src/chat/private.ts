@@ -3,6 +3,7 @@ import { agentRepo, kvRepo } from '../db/repos.js'
 import { agentSlug } from '../agents/registry.js'
 import type { OcClient, AssistantInfo } from '../oc/client.js'
 import { agentPromptOpts } from '../util/modelKey.js'
+import { composeAutoTitle, placeholderTitle } from '../util/title.js'
 
 /** UI 侧聊天消息（私聊与群聊共用形状） */
 export interface ChatMsg {
@@ -20,6 +21,11 @@ export interface ChatMsg {
 }
 
 const SESSION_KEY = (agentId: string) => `session:private:${agentId}`
+/**
+ * 自动命名标记，值为会话创建时刻（毫秒）。
+ * 存在 = 还没补任务名；首条消息补完后删除，手动改名也会删除（手动命名优先）。
+ */
+export const autoTitleKey = (sessionId: string) => `sesauto:${sessionId}`
 
 export interface PrivateChatHooks {
   /** 每次确保会话前调用（用于惰性重启 sidecar 等） */
@@ -105,10 +111,33 @@ export class PrivateChat {
         kv.delete(SESSION_KEY(agentId))
       }
     }
-    const s = await this.getOc().createSession({ title: `与 ${agentName} 的聊天`, agent: agentSlug(agentId) })
+    const now = Date.now()
+    const s = await this.getOc().createSession({ title: placeholderTitle(now), agent: agentSlug(agentId) })
     kv.set(SESSION_KEY(agentId), s.id)
+    kv.set(autoTitleKey(s.id), String(now))
     this.hooks?.onSessionCreated?.(s.id, { kind: 'private', agentId })
     return s.id
+  }
+
+  /**
+   * 首条用户消息发出前补会话名：`{创建时间戳}-{任务中文名称}`。
+   * 标记位（值为创建时刻）保证只补一次，且手动改名后不再补。
+   * 改名失败只记日志并保留标记（下一条消息重试），绝不打断用户发送。
+   */
+  private async maybeAutoTitle(sessionId: string, text: string): Promise<void> {
+    const kv = kvRepo(this.db)
+    const key = autoTitleKey(sessionId)
+    const createdAt = Number(kv.get(key))
+    if (!createdAt) return
+    try {
+      await this.getOc().updateSession(sessionId, { title: composeAutoTitle(createdAt, text) })
+      kv.delete(key)
+    } catch (err) {
+      this.hooks?.onDebugLog?.('private-autotitle-fail', {
+        sessionId,
+        error: String((err as Error)?.message || err),
+      })
+    }
   }
 
   /** 开启全新会话（旧会话保留在 opencode 历史中） */
@@ -155,6 +184,7 @@ export class PrivateChat {
       this.hooks?.onDebugLog?.('private-send-stop', { agentId, sessionId, reason: 'stopped-before-session-ready' })
       throw new PrivateChatStoppedError(sessionId, true)
     }
+    await this.maybeAutoTitle(sessionId, text)
     const agent = agentRepo(this.db).get(agentId)
     const opts = agentPromptOpts(agent, this.hooks?.defaultModel?.() ?? null)
     try {

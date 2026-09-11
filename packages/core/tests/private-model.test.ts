@@ -3,9 +3,9 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { openDb } from '../src/db/db.js'
-import { agentRepo } from '../src/db/repos.js'
+import { agentRepo, kvRepo } from '../src/db/repos.js'
 import { buildPaths } from '../src/paths.js'
-import { PrivateChat, PrivateChatStoppedError } from '../src/chat/private.js'
+import { PrivateChat, PrivateChatStoppedError, autoTitleKey } from '../src/chat/private.js'
 import { XIAOJIE_ID } from '../src/ipc/contract.js'
 import type { DB } from '../src/db/db.js'
 import type { OcClient } from '../src/oc/client.js'
@@ -155,5 +155,70 @@ describe('PrivateChat.send 模型归属', () => {
     expect(r).toEqual({ sessionId: null, deferred: false })
     await expect(chat.send('agt_idle', '甲', 'hi')).resolves.toBeTruthy()
     expect(sendCalls).toBe(1)
+  })
+})
+
+describe('私聊会话默认命名 {YYYYMMDD-HHmm}-{任务中文名称}', () => {
+  it('建会话先用「时间戳-新会话」占位，首条消息补任务名且只补一次', async () => {
+    const patches: Array<{ title?: string }> = []
+    let createdTitle = ''
+    const oc = {
+      getSession: async () => ({ id: 'ses_n1' }),
+      createSession: async (input: { title?: string }) => {
+        createdTitle = input.title || ''
+        return { id: 'ses_n1' }
+      },
+      updateSession: async (_id: string, patch: { title?: string }) => {
+        patches.push(patch)
+        return { id: 'ses_n1', title: patch.title }
+      },
+      sendMessage: async () => ({ id: 'msg', parts: [{ type: 'text', text: 'ok' }] }),
+    } as unknown as OcClient
+    const chat = new PrivateChat(db, () => oc)
+
+    await chat.send('agt_n1', '甲', '修复登录按钮')
+
+    expect(createdTitle).toMatch(/^\d{8}-\d{4}-新会话$/)
+    const stamp = createdTitle.slice(0, 13)
+    expect(patches).toEqual([{ title: `${stamp}-修复登录按钮` }])
+    // 补完即删标记，第二条消息不会再改名
+    expect(kvRepo(db).get(autoTitleKey('ses_n1'))).toBeNull()
+    await chat.send('agt_n1', '甲', '第二句话')
+    expect(patches).toHaveLength(1)
+  })
+
+  it('补名失败不影响发送：只记日志，保留标记等下次重试', async () => {
+    const logs: Array<{ tag: string; detail: unknown }> = []
+    const oc = {
+      getSession: async () => ({ id: 'ses_f' }),
+      createSession: async () => ({ id: 'ses_f' }),
+      updateSession: async () => {
+        throw new Error('engine down')
+      },
+      sendMessage: async () => ({ id: 'msg', parts: [{ type: 'text', text: 'ok' }] }),
+    } as unknown as OcClient
+    const chat = new PrivateChat(db, () => oc, { onDebugLog: (tag, detail) => logs.push({ tag, detail }) })
+
+    await expect(chat.send('agt_f', '甲', '修复登录按钮')).resolves.toBeTruthy()
+    expect(logs.some((l) => l.tag === 'private-autotitle-fail')).toBe(true)
+    expect(kvRepo(db).get(autoTitleKey('ses_f'))).not.toBeNull()
+  })
+
+  it('已存在的旧会话不补名（只对新会话生效）', async () => {
+    kvRepo(db).set('session:private:agt_old', 'ses_old')
+    const patches: unknown[] = []
+    const oc = {
+      getSession: async () => ({ id: 'ses_old' }),
+      createSession: async () => ({ id: 'ses_never' }),
+      updateSession: async (_id: string, patch: unknown) => {
+        patches.push(patch)
+        return { id: 'ses_old' }
+      },
+      sendMessage: async () => ({ id: 'msg', parts: [{ type: 'text', text: 'ok' }] }),
+    } as unknown as OcClient
+    const chat = new PrivateChat(db, () => oc)
+
+    await chat.send('agt_old', '甲', '随便说点什么')
+    expect(patches).toHaveLength(0)
   })
 })

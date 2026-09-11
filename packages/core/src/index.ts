@@ -14,7 +14,7 @@ import { registerAdminTools } from './tools/adminTools.js'
 import { registerProjectTools, taskCardMessage } from './tools/projectTools.js'
 import { registerMemoryTools, DELEGATE_TOOL, sesMetaKey, type SessionScopeCtx } from './tools/memoryTools.js'
 import { allToolDefs } from './tools/definitions.js'
-import { PrivateChat } from './chat/private.js'
+import { PrivateChat, autoTitleKey } from './chat/private.js'
 import { GroupChat } from './orchestrator/group.js'
 import { Delegator } from './orchestrator/delegate.js'
 import { MemoryStore } from './memory/store.js'
@@ -465,6 +465,8 @@ export class JeffCore extends EventEmitter {
     const t = title.trim()
     if (!t) throw new Error('标题不能为空')
     const s = await this.oc.updateSession(sessionId, { title: t })
+    // 手动命名优先：清掉自动命名标记，避免首条消息把用户起的名字覆盖掉
+    this.kv().delete(autoTitleKey(sessionId))
     return { id: s.id, title: s.title || t }
   }
 

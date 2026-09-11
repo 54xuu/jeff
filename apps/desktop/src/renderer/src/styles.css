@@ -27,6 +27,8 @@
   --bubble-user-text: #191919;
   --bubble-ai: #ffffff;
   --danger: var(--weui-RED);
+  /* 正文超链接（亮色） */
+  --link: #2563eb;
   --shadow: 0 4px 20px rgba(0, 0, 0, 0.12);
   /* 字号阶 / 间距 / 圆角 */
   --fs-xs: 11px;
@@ -68,6 +70,8 @@
   --bubble-user-text: #0d1a10;
   --bubble-ai: #2c2c2c;
   --danger: var(--weui-RED);
+  /* 正文超链接（暗色）：亮蓝，保证在深色气泡上的对比度 */
+  --link: #7fa7ff;
   --shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
 }
 
@@ -1086,7 +1090,9 @@ body.composer-resizing * {
   font-size: 13px;
 }
 
-.mention-item:hover {
+/* 鼠标悬停与键盘 ↑↓ 高亮同一套视觉 */
+.mention-item:hover,
+.mention-item.active {
   background: color-mix(in srgb, var(--green) 10%, transparent);
 }
 
@@ -1671,6 +1677,17 @@ body.composer-resizing * {
 
 .md-body p {
   margin: 4px 0;
+}
+
+/* 正文超链接：默认色是浏览器暗蓝 #0000EE，暗色主题下几乎看不清，统一吃 --link */
+.md-body a {
+  color: var(--link);
+  text-decoration: none;
+  border-bottom: 1px solid color-mix(in srgb, var(--link) 45%, transparent);
+}
+
+.md-body a:hover {
+  text-decoration: underline;
 }
 
 .md-body h1,
@@ -2922,16 +2939,16 @@ body.composer-resizing * {
 /* ===== 站内文件链接（消息正文 / 工具输出里的相对路径） ===== */
 .md-body .md-file-link,
 .tool-output .md-file-link {
-  color: #2563eb;
+  color: var(--link);
   text-decoration: none;
   cursor: pointer;
-  border-bottom: 1px solid color-mix(in srgb, #2563eb 45%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--link) 45%, transparent);
   font-weight: 500;
 }
 
 :root[data-theme='dark'] .md-body .md-file-link,
 :root[data-theme='dark'] .tool-output .md-file-link {
-  color: #7fa7ff;
+  color: var(--link);
 }
 
 .md-body .md-file-link:hover,

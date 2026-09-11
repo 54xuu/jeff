@@ -1,7 +1,7 @@
 {
   "name": "jeff-monorepo",
   "private": true,
-  "version": "1.7.21",
+  "version": "1.7.22",
   "description": "Jeff — 个人「开发 + 项目管理」agent 桌面应用",
   "workspaces": [
     "packages/*",

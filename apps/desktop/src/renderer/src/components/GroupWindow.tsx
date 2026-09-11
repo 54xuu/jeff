@@ -30,6 +30,8 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
   const [ctxAgentId, setCtxAgentId] = useState<string | null>(null)
   const [members, setMembers] = useState<Array<{ agentId: string; name: string }>>([])
   const [mention, setMention] = useState<{ query: string; start: number } | null>(null)
+  /** @ 候选的键盘高亮项（↑↓ 移动，Enter/Tab 选中） */
+  const [mentionIndex, setMentionIndex] = useState(0)
   const [dragOver, setDragOver] = useState(false)
   const attachments = useImages()
   const bodyRef = useRef<HTMLDivElement>(null)
@@ -99,6 +101,11 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
       .slice(0, 5)
   }, [mention, members])
 
+  // 候选集变化（继续输入/@ 被删）后高亮回到第一项，避免索引指向已消失的成员
+  useEffect(() => {
+    setMentionIndex(0)
+  }, [mention?.query, mentionCandidates.length])
+
   if (!project) return <div className="empty-hint">项目群不存在</div>
 
   // 群消息里的相对路径链接以群工作空间为基准（未配置 = Jeff 默认工作区）
@@ -121,10 +128,18 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
   const pickMention = (name: string) => {
     if (!mention) return
     const before = draft.slice(0, mention.start)
-    const after = draft.slice((inputRef.current?.selectionStart ?? draft.length))
-    setDraft(`${before}@${name} ${after}`)
+    // 补全范围由 mention 自身决定：键盘导航时 textarea 光标未必还停在查询串末尾
+    const end = mention.start + 1 + mention.query.length
+    setDraft(`${before}@${name} ${draft.slice(end)}`)
     setMention(null)
-    inputRef.current?.focus()
+    // 光标落到插入内容之后，接着输入不用手动挪
+    const caret = before.length + name.length + 2
+    requestAnimationFrame(() => {
+      const el = inputRef.current
+      if (!el) return
+      el.focus()
+      el.setSelectionRange(caret, caret)
+    })
   }
 
   const doSend = async () => {
@@ -255,9 +270,16 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
           }}
         >
           {mentionCandidates.length > 0 && (
-            <div className="mention-pop">
-              {mentionCandidates.map((a) => (
-                <button key={a.id} className="mention-item" onClick={() => pickMention(a.name)}>
+            <div className="mention-pop" data-testid="mention-pop">
+              {mentionCandidates.map((a, i) => (
+                <button
+                  key={a.id}
+                  type="button"
+                  data-testid={`mention-item-${i}`}
+                  className={`mention-item ${i === mentionIndex ? 'active' : ''}`}
+                  onMouseEnter={() => setMentionIndex(i)}
+                  onClick={() => pickMention(a.name)}
+                >
                   {a.avatar} <b>{a.name}</b>
                   <span className="mention-desc">{a.description}</span>
                 </button>
@@ -297,7 +319,31 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
               }
             }}
             onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+              // 输入法组字期间方向键/回车归 IME 选词，不能抢
+              if (e.nativeEvent.isComposing) return
+              if (mention && mentionCandidates.length > 0) {
+                if (e.key === 'ArrowDown') {
+                  e.preventDefault()
+                  setMentionIndex((i) => (i + 1) % mentionCandidates.length)
+                  return
+                }
+                if (e.key === 'ArrowUp') {
+                  e.preventDefault()
+                  setMentionIndex((i) => (i - 1 + mentionCandidates.length) % mentionCandidates.length)
+                  return
+                }
+                if (e.key === 'Enter' || e.key === 'Tab') {
+                  e.preventDefault()
+                  pickMention((mentionCandidates[mentionIndex] ?? mentionCandidates[0]).name)
+                  return
+                }
+                if (e.key === 'Escape') {
+                  e.preventDefault()
+                  setMention(null)
+                  return
+                }
+              }
+              if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault()
                 void doSend()
               }

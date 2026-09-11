@@ -313,6 +313,8 @@ export class GroupChat {
       ...(input.images && input.images.length ? { meta: { images: input.images } } : {}),
     })
     this.threads.touch(projectId, threadId)
+    // 自动命名的会话在这里补上任务名（须在 runTurn 之前：agent 会话标题取自 thread 标题）
+    this.threads.autoTitleFromFirstMessage(projectId, threadId, text)
 
     const memberInfos = members.map((m) => ({ agent_id: m.agent_id, name: agents.get(m.agent_id)?.name || '' }))
     const mentioned = this.parseMention(text, memberInfos)

@@ -110,3 +110,65 @@ describe('GroupThreadStore', () => {
     expect(kvRepo(db).get(`session:group:last:${projectId}`)).toBeNull()
   })
 })
+
+describe('会话默认命名 {YYYYMMDD-HHmm}-{任务中文名称}', () => {
+  const ocStub = () =>
+    ({
+      getSession: async () => ({ id: 'x' }),
+      createSession: async () => ({ id: 'ses_t' }),
+      sendMessage: async () => ({ id: 'msg', parts: [{ type: 'text', text: 'ok' }] }),
+    }) as unknown as OcClient
+
+  it('新建自动命名会话先用「时间戳-新会话」占位', () => {
+    const t = threads.createThread(projectId)
+    expect(t.title).toMatch(/^\d{8}-\d{4}-新会话$/)
+    expect(t.autoTitle).toBe(true)
+  })
+
+  it('显式命名的会话不参与自动命名', () => {
+    const t = threads.createThread(projectId, '手工标题')
+    expect(t.title).toBe('手工标题')
+    expect(t.autoTitle).toBe(false)
+  })
+
+  it('首条用户消息补任务名，时间戳仍是创建时刻', async () => {
+    group = new GroupChat(db, () => ocStub())
+    threads = group.threads
+    const tid = threads.createThread(projectId).id
+    const created = threads.getMeta(projectId, tid)
+    const stamp = created!.title.slice(0, 13)
+
+    await group.send({ projectId, text: '@架构师 修复登录按钮' })
+
+    const after = threads.getMeta(projectId, tid)
+    expect(after?.title).toBe(`${stamp}-修复登录按钮`)
+    expect(after?.autoTitle).toBe(false)
+  })
+
+  it('只有首条消息改名：后续消息与手动改名都不会再覆盖', async () => {
+    group = new GroupChat(db, () => ocStub())
+    threads = group.threads
+    const tid = threads.createThread(projectId).id
+
+    await group.send({ projectId, text: '第一件事' })
+    expect(threads.getMeta(projectId, tid)?.title).toMatch(/^\d{8}-\d{4}-第一件事$/)
+
+    await group.send({ projectId, text: '第二件事' })
+    expect(threads.getMeta(projectId, tid)?.title).toMatch(/^\d{8}-\d{4}-第一件事$/)
+
+    threads.rename(projectId, tid, '我自己起的名字')
+    await group.send({ projectId, text: '第三件事' })
+    expect(threads.getMeta(projectId, tid)?.title).toBe('我自己起的名字')
+  })
+
+  it('迁移承载旧数据的会话保持「默认会话」且不参与自动命名', async () => {
+    const msgs = chatMessageRepo(db)
+    msgs.add({ scope: legacyGroupMsgScope(projectId), sender_type: 'user', content: '旧群消息' })
+    const active = threads.ensureActiveThread(projectId)
+    expect(threads.getMeta(projectId, active)?.title).toBe('默认会话')
+    expect(threads.getMeta(projectId, active)?.autoTitle).toBe(false)
+
+    threads.autoTitleFromFirstMessage(projectId, active, '不该生效')
+    expect(threads.getMeta(projectId, active)?.title).toBe('默认会话')
+  })
+})
