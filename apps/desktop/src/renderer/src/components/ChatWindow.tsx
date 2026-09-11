@@ -7,9 +7,9 @@ import { Markdown } from './Markdown'
 import { fmtFullTime } from '../format'
 import { CopyButton } from './ui/CopyButton'
 import { useImages, ImagePreviews, MsgImages, AssistantExtras, StreamingBubble, useAutoScroll, useComposerResize } from './ChatShared'
-import ChatHistoryDrawer from './ChatHistoryDrawer'
 import ContextDrawer, { ContextUsageBar, fetchContextPreview } from './ContextDrawer'
 import AgentProfileDrawer from './AgentProfileDrawer'
+import { IconCompress, IconNewSession, IconProfile } from './ui/Icons'
 
 export default function ChatWindow(props: { agentId: string }): React.JSX.Element {
   const { agents, messages, sending, streaming, loadHistory, sendAgent, newAgentSession, stopAgent, catalog, settings, appInfo } = useStore()
@@ -21,7 +21,6 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
   const sendingNow = !!sending[key]
   const stream = streaming[key]
   const [draft, setDraft] = useState('')
-  const [historyOpen, setHistoryOpen] = useState(false)
   const [profileOpen, setProfileOpen] = useState(false)
   const [contextOpen, setContextOpen] = useState(false)
   const [ctxPreview, setCtxPreview] = useState<ContextPreviewInfo | null>(null)
@@ -104,31 +103,25 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
         <div className="chat-header-actions">
           <ContextUsageBar preview={ctxPreview} loading={ctxLoading} onOpen={() => setContextOpen(true)} />
           <button
-            className="text-btn"
+            className={`icon-btn ${compressing ? 'is-busy' : ''}`}
             data-testid="chat-compress"
             disabled={compressing || sendingNow || !ctxPreview?.sessionId}
             onClick={() => void doCompress()}
-            title="手动压缩当前会话上下文"
+            title={compressing ? '压缩中…' : '手动压缩当前会话上下文'}
           >
-            {compressing ? '压缩中…' : '压缩'}
+            <IconCompress />
           </button>
           <button
-            className="text-btn"
+            className="icon-btn"
             data-testid="chat-new-session"
             disabled={sendingNow}
             onClick={() => void newAgentSession(agent.id)}
-            title={sendingNow ? '生成中不能开新会话，请先停止或等待完成' : '开启新会话（旧会话保留在聊天记录里）'}
+            title={sendingNow ? '生成中不能开新会话，请先停止或等待完成' : '开启新会话（旧会话保留在「资料 → 聊天记录」里）'}
           >
-            新会话
+            <IconNewSession />
           </button>
-          <button className="icon-btn" title="聊天记录" data-testid="chat-history" onClick={() => setHistoryOpen(true)}>
-            <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="12" cy="12" r="9" />
-              <path d="M12 7v5l3.5 2" />
-            </svg>
-          </button>
-          <button className="text-btn" data-testid="chat-profile" onClick={() => setProfileOpen(true)} title="查看 / 编辑智能体资料">
-            资料
+          <button className="icon-btn" data-testid="chat-profile" onClick={() => setProfileOpen(true)} title="资料 / 聊天记录">
+            <IconProfile />
           </button>
         </div>
       </div>
@@ -254,7 +247,6 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
         </div>
       </div>
 
-      {historyOpen && <ChatHistoryDrawer agentId={agent.id} onClose={() => setHistoryOpen(false)} />}
       {profileOpen && <AgentProfileDrawer agent={agent} onClose={() => setProfileOpen(false)} />}
       {contextOpen && (
         <ContextDrawer

@@ -3,10 +3,11 @@ import { useStore } from '../store'
 import { api } from '../api'
 import { IPC, projectRoleLabel, type GroupMessage, type GroupThreadBrief, type ProjectInfo } from '@jeff/core'
 import Avatar from './Avatar'
-import { Markdown } from './Markdown'
 import { EmojiPickerButton } from './ui/EmojiPicker'
 import { useDirtyClose } from './ui/useDirtyClose'
 import WorkspaceFileTree from './WorkspaceFileTree'
+import SessionHistoryPanel from './SessionHistoryPanel'
+import { IconClose } from './ui/Icons'
 
 type GroupDrawerTab = 'settings' | 'members' | 'history' | 'files'
 
@@ -28,12 +29,6 @@ export default function GroupInfoDrawer(props: { project: ProjectInfo; busy?: bo
   const [saving, setSaving] = useState(false)
   const [saveMsg, setSaveMsg] = useState<string | null>(null)
 
-  const [threads, setThreads] = useState<GroupThreadBrief[] | null>(null)
-  const [preview, setPreview] = useState<{ id: string; msgs: GroupMessage[] } | null>(null)
-  const [previewLoading, setPreviewLoading] = useState(false)
-  const [editingId, setEditingId] = useState<string | null>(null)
-  const [editTitle, setEditTitle] = useState('')
-  const [sessionError, setSessionError] = useState('')
 
   useEffect(() => {
     setTitle(project.title)
@@ -48,20 +43,8 @@ export default function GroupInfoDrawer(props: { project: ProjectInfo; busy?: bo
     setMembers(list)
   }
 
-  const refreshThreads = async () => {
-    try {
-      const r = await api.invoke<{ threads: GroupThreadBrief[] }>(IPC.groupThreadsList, { projectId: project.id })
-      setThreads(r.threads)
-      setSessionError('')
-    } catch (err) {
-      setSessionError(String((err as Error).message).slice(0, 160))
-      setThreads([])
-    }
-  }
-
   useEffect(() => {
     void refreshMembers()
-    void refreshThreads()
   }, [project.id])
 
   // 「工作区文件」与消息里的相对路径链接都以已保存的群工作空间为准（未配置 = Jeff 默认工作区）
@@ -115,77 +98,13 @@ export default function GroupInfoDrawer(props: { project: ProjectInfo; busy?: bo
     onClose()
   }
 
-  const openPreview = async (t: GroupThreadBrief) => {
-    if (preview?.id === t.id) return
-    setPreviewLoading(true)
-    try {
-      const r = await api.invoke<{ messages: GroupMessage[] }>(IPC.groupThreadPreview, { projectId: project.id, threadId: t.id })
-      setPreview({ id: t.id, msgs: r.messages })
-    } catch (err) {
-      setSessionError(String((err as Error).message).slice(0, 160))
-    } finally {
-      setPreviewLoading(false)
-    }
-  }
-
-  const activate = async (t: GroupThreadBrief) => {
-    try {
-      await api.invoke(IPC.groupThreadActivate, { projectId: project.id, threadId: t.id })
-      await loadGroupHistory(project.id)
-      await refreshThreads()
-      onClose()
-    } catch (err) {
-      setSessionError(String((err as Error).message).slice(0, 160))
-    }
-  }
-
-  const remove = async (t: GroupThreadBrief) => {
-    if (!confirm(`删除会话「${t.title}」？该段聊天记录不可恢复。`)) return
-    try {
-      await api.invoke(IPC.groupThreadDelete, { projectId: project.id, threadId: t.id })
-      if (preview?.id === t.id) setPreview(null)
-      await loadGroupHistory(project.id)
-      await refreshThreads()
-    } catch (err) {
-      setSessionError(String((err as Error).message).slice(0, 160))
-    }
-  }
-
-  const startRename = (t: GroupThreadBrief) => {
-    setEditingId(t.id)
-    setEditTitle(t.title)
-  }
-
-  const commitRename = async (threadId: string) => {
-    const next = editTitle.trim()
-    setEditingId(null)
-    if (!next) return
-    try {
-      await api.invoke(IPC.groupThreadRename, { projectId: project.id, threadId, title: next })
-      await refreshThreads()
-    } catch (err) {
-      setSessionError(String((err as Error).message).slice(0, 160))
-    }
-  }
-
-  const newThread = async () => {
-    try {
-      await api.invoke(IPC.groupThreadNew, { projectId: project.id })
-      await loadGroupHistory(project.id)
-      await refreshThreads()
-      onClose()
-    } catch (err) {
-      setSessionError(String((err as Error).message).slice(0, 160))
-    }
-  }
-
   return (
     <div className="drawer-mask" data-testid="group-info-drawer" onClick={requestClose}>
       <div className="drawer drawer-wide" onClick={(e) => e.stopPropagation()}>
         <div className="drawer-head">
           <span>群资料：{project.title}</span>
-          <button className="icon-btn" onClick={requestClose}>
-            ✕
+          <button className="icon-btn" title="关闭" onClick={requestClose}>
+            <IconClose />
           </button>
         </div>
 
@@ -305,117 +224,37 @@ export default function GroupInfoDrawer(props: { project: ProjectInfo; busy?: bo
           </div>
         </div>
 
-        {/* 会话记录 Tab */}
+        {/* 会话记录 Tab：与私聊「资料 → 聊天记录」共用同一面板（列表 + 预览，交互一致） */}
         <div style={{ display: tab === 'history' ? undefined : 'none' }}>
-          <div className="drawer-sec">
-            聊天记录
-            <button className="text-btn" data-testid="group-new-thread" disabled={busy} title={busy ? '生成中不可新建会话，请先停止或等待完成' : undefined} onClick={() => void newThread()}>
-              + 新会话
-            </button>
-          </div>
-          {busy && <p className="settings-error">⏳ 生成中：会话切换 / 新建 / 删除已临时禁用，防止消息串会话。</p>}
-          <p className="settings-tip" style={{ marginTop: 0 }}>
-            每一段都是整个项目群的对话历史（可由不同成员执行）；可改标题、继续或新开。
-          </p>
-          {sessionError && <p className="settings-error">⚠️ {sessionError}</p>}
-          {!threads && <p className="settings-tip">加载中…</p>}
-
-          <div className="group-task-layout" data-testid="group-chat-history">
-            <div className="group-task-list">
-              {threads?.length === 0 && <div className="kanban-empty">还没有会话</div>}
-              {(threads || []).map((t) => (
-                <div key={t.id} className={`history-item ${preview?.id === t.id ? 'previewing' : ''}`} onClick={() => void openPreview(t)}>
-                  <div className="history-item-top">
-                    {editingId === t.id ? (
-                      <input
-                        className="history-rename-input"
-                        data-testid="session-rename-input"
-                        autoFocus
-                        value={editTitle}
-                        onClick={(e) => e.stopPropagation()}
-                        onChange={(e) => setEditTitle(e.target.value)}
-                        onBlur={() => void commitRename(t.id)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') {
-                            e.preventDefault()
-                            void commitRename(t.id)
-                          }
-                          if (e.key === 'Escape') {
-                            // 约定：消费 Esc 的组件 preventDefault，外层抽屉守卫（useDirtyClose）检测后跳过
-                            e.preventDefault()
-                            setEditingId(null)
-                          }
-                        }}
-                      />
-                    ) : (
-                      <span
-                        className="history-item-title"
-                        data-testid={`thread-title-${t.id}`}
-                        title="双击改标题"
-                        onDoubleClick={(e) => {
-                          e.stopPropagation()
-                          startRename(t)
-                        }}
-                      >
-                        {t.title}
-                      </span>
-                    )}
-                    {t.active && <span className="tag tag-green">当前</span>}
-                  </div>
-                  <div className="history-item-sub">
-                    {fmtTime(t.updatedAt)}
-                    {typeof t.messageCount === 'number' ? ` · ${t.messageCount} 条` : ''}
-                  </div>
-                  <div className="history-item-actions" onClick={(e) => e.stopPropagation()}>
-                    <button className="text-btn" disabled={busy} title={busy ? '生成中不可操作会话' : undefined} onClick={() => startRename(t)}>
-                      改名
-                    </button>
-                    {!t.active && (
-                      <button className="text-btn" disabled={busy} title={busy ? '生成中不可切换会话' : undefined} onClick={() => void activate(t)}>
-                        继续
-                      </button>
-                    )}
-                    {!t.active && (
-                      <button className="text-btn danger" disabled={busy} title={busy ? '生成中不可删除会话' : undefined} onClick={() => void remove(t)}>
-                        删除
-                      </button>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-            <div className="history-preview">
-              {previewLoading && <p className="settings-tip history-tip">加载中…</p>}
-              {!previewLoading && !preview && <div className="empty-card">点击左侧会话查看完整历史</div>}
-              {!previewLoading && preview && (
-                <>
-                  <div className="history-preview-msgs">
-                    {preview.msgs.length === 0 && <div className="empty-card">该会话还没有消息。</div>}
-                    {preview.msgs.map((m) => (
-                      <div key={m.id} className={`history-msg ${m.role}`}>
-                        <div className="history-msg-meta">
-                          {m.role === 'user' ? '我' : m.role === 'system' ? '系统' : m.sender_name || '对方'} · {fmtTime(m.time)}
-                        </div>
-                        {m.role === 'assistant' ? <Markdown text={m.text || '（无文本）'} workspaceDir={workspaceForFiles} /> : <pre className="history-msg-text">{m.text}</pre>}
-                      </div>
-                    ))}
-                  </div>
-                  <div className="history-preview-actions">
-                    {(() => {
-                      const t = (threads || []).find((x) => x.id === preview.id)
-                      return t && !t.active ? (
-                        <button className="btn primary" onClick={() => void activate(t)}>
-                          继续此会话
-                        </button>
-                      ) : (
-                        <span className="settings-tip">这是当前会话</span>
-                      )
-                    })()}
-                  </div>
-                </>
-              )}
-            </div>
-          </div>
+          <SessionHistoryPanel
+            busy={busy}
+            emptyText="还没有会话"
+            tip="每一段都是整个项目群的对话历史（可由不同成员执行）；可改标题、继续或新开。"
+            workspaceDir={workspaceForFiles}
+            testId="group-chat-history"
+            newBtnTestId="group-new-thread"
+            titleTestIdPrefix="thread-title-"
+            loadItems={async () => (await api.invoke<{ threads: GroupThreadBrief[] }>(IPC.groupThreadsList, { projectId: project.id })).threads}
+            loadPreview={async (threadId) =>
+              (await api.invoke<{ messages: GroupMessage[] }>(IPC.groupThreadPreview, { projectId: project.id, threadId })).messages
+            }
+            rename={async (threadId, next) => {
+              await api.invoke(IPC.groupThreadRename, { projectId: project.id, threadId, title: next })
+            }}
+            activate={async (threadId) => {
+              await api.invoke(IPC.groupThreadActivate, { projectId: project.id, threadId })
+              await loadGroupHistory(project.id)
+              onClose()
+            }}
+            remove={async (threadId) => {
+              await api.invoke(IPC.groupThreadDelete, { projectId: project.id, threadId })
+            }}
+            createNew={async () => {
+              await api.invoke(IPC.groupThreadNew, { projectId: project.id })
+              await loadGroupHistory(project.id)
+              onClose()
+            }}
+          />
         </div>
 
         {/* 工作区文件 Tab */}
@@ -482,12 +321,4 @@ function AddMemberModal(props: {
       </div>
     </div>
   )
-}
-
-function fmtTime(t: number): string {
-  if (!t) return '—'
-  const d = new Date(t)
-  const today = new Date()
-  const sameDay = d.toDateString() === today.toDateString()
-  return sameDay ? d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) : d.toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' })
 }

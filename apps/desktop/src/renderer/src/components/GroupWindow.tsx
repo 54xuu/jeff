@@ -8,6 +8,7 @@ import { Markdown } from './Markdown'
 import { fmtFullTime } from '../format'
 import { CopyButton } from './ui/CopyButton'
 import { useImages, ImagePreviews, MsgImages, AssistantExtras, StreamingBubble, useAutoScroll, useComposerResize } from './ChatShared'
+import { IconCompress, IconNewSession, IconGroupProfile } from './ui/Icons'
 import ContextDrawer, { ContextUsageBar, fetchContextPreview } from './ContextDrawer'
 
 /** 项目群聊天窗口（= 微信群） */
@@ -190,18 +191,19 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
         <div className="chat-header-actions">
           <ContextUsageBar preview={ctxPreview} loading={ctxLoading} onOpen={() => setContextOpen(true)} />
           <button
-            className="text-btn"
+            className={`icon-btn ${compressing ? 'is-busy' : ''}`}
+            data-testid="group-compress"
             disabled={compressing || busy || !ctxPreview?.sessionId}
             onClick={() => void doCompress()}
-            title="手动压缩当前成员会话上下文"
+            title={compressing ? '压缩中…' : '手动压缩当前成员会话上下文'}
           >
-            {compressing ? '压缩中…' : '压缩'}
+            <IconCompress />
           </button>
-          <button className="text-btn" data-testid="group-new-session" disabled={busy} onClick={() => void doNewThread()} title="开启新会话（旧记录保留在群资料 → 聊天记录）">
-            新会话
+          <button className="icon-btn" data-testid="group-new-session" disabled={busy} onClick={() => void doNewThread()} title="开启新会话（旧记录保留在「群资料 → 会话记录」）">
+            <IconNewSession />
           </button>
-          <button className="text-btn" data-testid="group-info-btn" onClick={() => setDrawer(true)}>
-            群资料
+          <button className="icon-btn" data-testid="group-info-btn" title="群资料 / 会话记录" onClick={() => setDrawer(true)}>
+            <IconGroupProfile />
           </button>
         </div>
       </div>

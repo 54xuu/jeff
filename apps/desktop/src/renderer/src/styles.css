@@ -179,6 +179,28 @@ body {
   color: var(--text);
 }
 
+.icon-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  background: transparent;
+}
+
+/* 图标按钮的「进行中」呼吸态：原来靠「压缩中…」文案反馈，改图标后用它兜住反馈 */
+.icon-btn.is-busy svg {
+  animation: icon-pulse 1s ease-in-out infinite;
+}
+
+@keyframes icon-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.3;
+  }
+}
+
 .list-section {
   padding: 10px 16px 4px;
   font-size: 12px;
@@ -362,6 +384,12 @@ body {
 
 .text-btn.danger {
   color: var(--danger);
+}
+
+.text-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  background: transparent;
 }
 
 .chat-body {

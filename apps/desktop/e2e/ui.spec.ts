@@ -161,6 +161,12 @@ test.describe('Jeff UI 封闭清单', () => {
       // 会话记录（原「任务看板」）现在是独立 Tab，切过去才可见
       await page.getByTestId('group-tab-history').click()
       await expect(page.getByTestId('group-chat-history')).toBeVisible()
+      // 共用面板的行内改名（群侧一定有会话，稳定覆盖这条交互）
+      await page.locator('[data-testid^="session-rename-"]').first().click()
+      await expect(page.getByTestId('session-rename-input')).toBeVisible()
+      await page.getByTestId('session-rename-input').fill('E2E群会话改名')
+      await page.getByTestId('session-rename-input').press('Enter')
+      await expect(page.getByText('E2E群会话改名')).toBeVisible({ timeout: 10000 })
       await page.getByTestId('group-tab-settings').click()
       await page.getByTestId('group-settings-title').fill('E2E改名群')
       await page.getByTestId('group-settings-desc').fill('E2E 项目背景：验证群简介注入。')
@@ -174,10 +180,12 @@ test.describe('Jeff UI 封闭清单', () => {
       await page.getByTestId('group-new-session').click()
       await expect(page.getByText(/这是项目/)).toBeVisible({ timeout: 10000 })
 
-      // ---- 私聊历史可改名入口 ----
+      // ---- 私聊历史：并入「资料 → 聊天记录」，与群「会话记录」共用同一面板 ----
       await page.getByTestId('chat-agent-小杰').click()
-      await page.getByTestId('chat-history').click()
-      await expect(page.getByTestId('chat-history-drawer')).toBeVisible({ timeout: 15000 })
+      await page.getByTestId('chat-profile').click()
+      await expect(page.getByTestId('agent-profile-drawer')).toBeVisible({ timeout: 15000 })
+      await page.getByTestId('agent-tab-history').click()
+      await expect(page.getByTestId('agent-chat-history')).toBeVisible()
       const renameBtn = page.locator('[data-testid^="session-rename-"]').first()
       if ((await renameBtn.count()) > 0) {
         await renameBtn.click()
@@ -186,7 +194,8 @@ test.describe('Jeff UI 封闭清单', () => {
         await page.getByTestId('session-rename-input').press('Enter')
         await expect(page.getByText('E2E改名会话')).toBeVisible({ timeout: 10000 })
       }
-      await page.getByTestId('chat-history-drawer').getByText('关闭').click()
+      await page.getByTestId('agent-profile-drawer').locator('.drawer-head .icon-btn').click()
+      await expect(page.getByTestId('agent-profile-drawer')).toHaveCount(0)
 
       await page.getByTestId('chat-group-E2E改名群').click()
       const groupDraft = page.getByTestId('chat-draft')

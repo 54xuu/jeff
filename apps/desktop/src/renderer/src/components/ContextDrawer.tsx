@@ -3,6 +3,7 @@ import { api } from '../api'
 import { useStore } from '../store'
 import { IPC, type ChatMsg, type ContextPreviewInfo } from '@jeff/core'
 import { Markdown } from './Markdown'
+import { IconClose, IconCompress } from './ui/Icons'
 
 function fmtTokens(n: number): string {
   if (n >= 1000) return `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k`
@@ -141,10 +142,18 @@ export default function ContextDrawer(props: {
         <div className="history-head">
           <span>上下文</span>
           <div className="history-head-actions">
-            <button className="text-btn" disabled={compressing || loading || !preview?.sessionId} onClick={() => void compress()} data-testid="context-compress">
-              {compressing ? '压缩中…' : '压缩'}
+            <button
+              className={`icon-btn ${compressing ? 'is-busy' : ''}`}
+              disabled={compressing || loading || !preview?.sessionId}
+              onClick={() => void compress()}
+              data-testid="context-compress"
+              title={compressing ? '压缩中…' : '手动压缩当前会话上下文'}
+            >
+              <IconCompress />
             </button>
-            <button className="text-btn" onClick={props.onClose}>关闭</button>
+            <button className="icon-btn" title="关闭" onClick={props.onClose}>
+              <IconClose />
+            </button>
           </div>
         </div>
 
