@@ -384,7 +384,7 @@ export type InvokeMap = {
   [IPC.settingsGet]: void
   [IPC.settingsSet]: { theme?: AppSettings['theme']; themePack?: AppSettings['themePack'] }
   [IPC.mcpList]: void
-  [IPC.mcpSave]: { servers: Record<string, { type: 'local' | 'remote'; enabled: boolean; command?: string[]; url?: string; headers?: Record<string, string> }> }
+  [IPC.mcpSave]: { servers: Record<string, { type: 'local' | 'remote'; enabled: boolean; command?: string[]; environment?: Record<string, string>; url?: string; headers?: Record<string, string> }> }
   [IPC.mcpProbe]: void
   [IPC.memoryScopes]: void
   [IPC.memoryGet]: { kind: 'user' | 'agent' | 'project'; id: string }

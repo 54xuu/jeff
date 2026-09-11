@@ -65,6 +65,16 @@ function truncateJson(v: unknown, max = 400): string | undefined {
 }
 
 /**
+ * 联网搜索指引（每轮注入）：opencode 内置 websearch 工具依赖搜索服务密钥（Exa 等），
+ * Jeff 未配置该密钥，直接调用会报错；本机已装 byted-web-search 技能（火山引擎豆包搜索，
+ * 依赖环境变量 WEB_SEARCH_API_KEY），缺凭证时引导用户去控制台获取。
+ */
+export const WEB_SEARCH_GUIDE = [
+  '【联网搜索（Jeff）】需要联网搜索/查询时效性信息时，优先使用 byted-web-search 技能（skill 工具，火山引擎豆包搜索）。',
+  '不要使用内置 websearch 工具（Jeff 未配置其搜索服务密钥，调用会失败）。若 byted-web-search 返回「未找到凭证/invalid_api_key/10403」，向用户说明：需要配置环境变量 WEB_SEARCH_API_KEY（从火山引擎豆包搜索控制台获取）后重启 Jeff。',
+].join('\n')
+
+/**
  * AGENTS.md 注入块组装：用户级 + 项目级（仅一个来源，导出以便单测）。
  * 项目级以 ~/.jeff/agents-md/<projectId>.md 权威副本为唯一执行来源（设置页编辑 + WebDAV 同步）；
  * 权威副本缺失时才兼容读取工作空间旧 AGENTS.md 作为迁移来源，设置页保存后即写入权威副本。
@@ -320,7 +330,7 @@ export class JeffCore extends EventEmitter {
 
   /** 记忆注入：agent 记忆 + 项目记忆（群聊）+ 全局用户画像 + AGENTS.md（用户级/项目级） */
   buildMemorySystem(agentId: string, projectId?: string): string | undefined {
-    const blocks: string[] = []
+    const blocks: string[] = [WEB_SEARCH_GUIDE]
     for (const md of this.agentsMdBlocks(projectId)) blocks.push(md)
     const agentBlock = this.memory.renderBlock({ kind: 'agent', agentId })
     if (agentBlock) blocks.push(agentBlock)

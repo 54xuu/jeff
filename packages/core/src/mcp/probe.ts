@@ -3,6 +3,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js'
 import type { McpServerCfg } from './parse.js'
+import { augmentedPath } from '../util/nodePath.js'
 
 export interface McpProbe {
   ok: boolean
@@ -57,9 +58,10 @@ export async function probeMcpServer(name: string, cfg: McpServerCfg, timeoutMs 
 }
 
 function minimalEnv(): Record<string, string> {
-  // 子进程 MCP server 最小环境：PATH/HOME 必需（npx / uvx 等依赖）
-  const { PATH, HOME, LANG, TMPDIR } = process.env
-  return { ...(PATH ? { PATH } : {}), ...(HOME ? { HOME } : {}), ...(LANG ? { LANG } : {}), ...(TMPDIR ? { TMPDIR } : {}) }
+  // 子进程 MCP server 最小环境：PATH/HOME 必需（npx / uvx 等依赖）。
+  // PATH 走增强版：GUI 启动的 Electron 常缺 nvm 的 bin，直接继承会导致 npx 找不到。
+  const { HOME, LANG, TMPDIR } = process.env
+  return { PATH: augmentedPath(), ...(HOME ? { HOME } : {}), ...(LANG ? { LANG } : {}), ...(TMPDIR ? { TMPDIR } : {}) }
 }
 
 /** 并发探测全部（每个独立超时，失败不影响其他） */

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // 下载 opencode CLI 二进制到 apps/desktop/resources/oc-bin/<platform>/，
 // 供 electron-builder extraResources 打包进安装包。
-// 用法：node scripts/fetch-opencode.mjs [version] [targets...]（默认 1.18.26 全平台）
+// 用法：node scripts/fetch-opencode.mjs [version] [targets...]（默认 1.18.30 全平台）
 import { execSync } from 'node:child_process'
 import zlib from 'node:zlib'
 import fs from 'node:fs'
@@ -11,7 +11,7 @@ import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { fileURLToPath } from 'node:url'
 
-const VERSION = process.argv[2] || '1.18.26'
+const VERSION = process.argv[2] || '1.18.30'
 const TARGETS = process.argv.slice(3).length ? process.argv.slice(3) : ['linux-x64', 'windows-x64']
 const desktopDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const outDir = path.join(desktopDir, 'resources', 'oc-bin')

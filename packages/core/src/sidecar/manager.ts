@@ -4,6 +4,7 @@ import net from 'node:net'
 import path from 'node:path'
 import { EventEmitter } from 'node:events'
 import type { JeffPaths } from '../paths.js'
+import { augmentedPath } from '../util/nodePath.js'
 
 export type SidecarStatus = 'stopped' | 'starting' | 'running' | 'crashed'
 
@@ -85,6 +86,8 @@ export class SidecarManager extends EventEmitter {
   private sidecarEnv(): NodeJS.ProcessEnv {
     return {
       ...process.env,
+      // GUI 启动时 PATH 常缺 nvm 的 bin，opencode 拉起的 MCP local 命令（npx/uvx）会找不到
+      PATH: augmentedPath(),
       XDG_CONFIG_HOME: this.opts.paths.ocConfigHome,
       XDG_DATA_HOME: this.opts.paths.ocDataHome,
       // 强制 opencode 只用我们的配置目录（否则会回退加载 ~/.opencode/opencode.json 用户全局配置）

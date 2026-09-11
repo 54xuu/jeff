@@ -40,7 +40,7 @@ jobs:
     permissions:
       contents: write
     env:
-      OPENCODE_VERSION: '1.18.26'
+      OPENCODE_VERSION: '1.18.30'
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
