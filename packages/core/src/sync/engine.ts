@@ -659,8 +659,14 @@ export class SyncEngine {
    * - 全量对齐：远端 skills/ 始终与本地目录一致——新增/变化上传，本地已删除的文件远端同步删除
    * - 覆盖或删除前先把远端旧版归档到 <base>/skills-versions/<rel>/<时间戳>（误删可从归档找回）
    * - 相对路径统一 posix（/），Windows 备份的内容 Linux 可直接恢复
-   * - 安全阀：本地目录不存在，或本地为空而远端有备份时，报错跳过不改远端（防错误路径/空目录把远端清空）
-   * - 性能：并发上传/删除（每请求带超时）+ 目录创建缓存；数百文件应在数十秒内完成
+   * - 安全阀：本地目录不存在，或本地为空而远端有备份时，报错跳过不改远端（防错误路径/空目录把远端清空）；
+   *   镜像删除加熔断：单次要删的文件超过远端文件数的 30% 且 >10 个时报错中止（再点一次「立即备份」确认才执行），
+   *   防本地目录暂缺/误判把远端备份大面积误删
+   * - 自愈：跳过判定 = 本地哈希未变 且 远端列表里确实还有该文件——远端被中断的备份删掉过文件时，
+   *   下次备份会自动补传，不会出现「本地哈希说已上传、远端实际没有」的永久不一致
+   * - 清单：备份完成后写 <base>/skills-manifest.json（全部文件相对路径）；部分服务器列不出含 index.html
+   *   的目录（PROPFIND 405），恢复端靠清单把这些目录下的文件按直连路径补全下载
+   * - 性能：并发列目录/上传/删除（每请求带超时）+ 目录创建缓存；数百文件应在数十秒内完成
    */
   async backupSkills(): Promise<SkillsBackupReport> {
     const startedAt = Date.now()
@@ -690,6 +696,7 @@ export class SyncEngine {
 
       await this.ensureCollection(remoteDir)
       const lastHashes = this.skillsKv<Record<string, string>>('hashes', {})
+      const remoteSet = new Set(remoteFiles)
       const hashes: Record<string, string> = {}
       // 目录创建缓存：同一目录只探测/创建一次（collectionExists 每次要 2~3 个请求）
       const ensuredDirs = new Set<string>([remoteDir, versionsDir])
@@ -699,12 +706,13 @@ export class SyncEngine {
         ensuredDirs.add(dir)
       }
 
-      // 1) 并发上传：新增（不在 hashes）直接 PUT；有变化的先归档远端旧版再覆盖
+      // 1) 并发上传：新增（不在 hashes 或远端已丢失）直接 PUT；有变化的先归档远端旧版再覆盖
       const toUpload = files.filter((rel) => {
         const content = fs.readFileSync(path.join(root, rel))
         const hash = contentHash(content)
         hashes[rel] = hash
-        if (lastHashes[rel] === hash) {
+        // 自愈：哈希相同但远端列表里已经没有该文件（上次备份被中断/误删）→ 不能跳过，必须补传
+        if (lastHashes[rel] === hash && remoteSet.has(rel)) {
           report.skipped += 1
           return false
         }
@@ -741,9 +749,26 @@ export class SyncEngine {
         report.uploaded += 1
       })
 
+      // 上传阶段先落一次哈希：即使后续删除阶段被中断，也已上传的文件不会因哈希缺失而反复重传
+      this.skillsKvSet('hashes', hashes)
+
       // 2) 并发镜像删除：远端有、本地没有的文件 → 归档后从远端删除（本地删除操作传播到远端/其他平台）
       const localSet = new Set(files)
       const toDelete = remoteFiles.filter((rel) => !localSet.has(rel))
+      // 熔断：单次删除超过远端文件数的 30% 且 >10 个 → 中止等人工确认（再点一次备份且待删集合一致才执行），
+      // 防本地目录暂缺（编辑中/挂载异常/误判）把远端备份大面积清掉
+      const exceeds = toDelete.length > 10 && toDelete.length * 100 > remoteFiles.length * 30
+      const pendingSig = this.skillsKv<string | null>('pendingDelete', null)
+      if (toDelete.length > 0 && exceeds) {
+        const sig = [...toDelete].sort().join('\n')
+        if (sig !== pendingSig) {
+          this.skillsKvSet('pendingDelete', sig)
+          report.error = `本次备份要删除远端 ${toDelete.length} 个文件（远端共 ${remoteFiles.length} 个，超过 30% 安全阈值），已中止。若确属你主动批量删除，请再点一次「立即备份 skills」确认执行；若是本地目录暂缺/误删，请先恢复本地文件。示例：${toDelete.slice(0, 3).join('、')}。本次已上传 ${report.uploaded} 个文件，远端删除未执行。`
+          this.skillsKvSet('last', report)
+          return report
+        }
+      }
+      if (pendingSig) this.skillsKvSet('pendingDelete', null)
       await pMap(toDelete, 8, async (rel) => {
         const remotePath = `${remoteDir}/${rel}`
         let old: Buffer | null = null
@@ -765,6 +790,13 @@ export class SyncEngine {
 
       hashes.__uploadedAt = String(Date.now())
       this.skillsKvSet('hashes', hashes)
+      // 写备份清单（全部文件相对路径）：部分服务器列不出含 index.html 的目录（PROPFIND 405），
+      // 恢复端靠清单把这些目录下的文件按直连路径补全下载；放在 skills/ 之外避免被镜像删除逻辑当作多余文件
+      const manifest = JSON.stringify({ at: Date.now(), files })
+      await client.putFileContents(`${base}/skills-manifest.json`, Buffer.from(manifest, 'utf8'), {
+        overwrite: true,
+        ...reqOpts(),
+      })
       this.skillsKvSet('last', { ...report, ok: true, fileCount: files.length, elapsedMs: Date.now() - startedAt })
       report.ok = true
     } catch (err) {
@@ -805,6 +837,23 @@ export class SyncEngine {
       }
       if (files.length === 0) {
         return { ok: false, files: [], total: 0, error: `远端 ${remoteDir} 下没有任何备份文件。先在已有完整 skills 的设备上点「立即备份 skills」。` }
+      }
+      // 备份清单补全：部分服务器列不出含 index.html 的目录（PROPFIND 405），目录列表缺的文件按清单直连下载
+      let manifestFiles: string[] | null = null
+      try {
+        const mbuf = await davGetWithRetry(client, `${base}/skills-manifest.json`, timeoutMs)
+        const parsed = JSON.parse(mbuf.toString('utf8')) as { files?: unknown }
+        if (Array.isArray(parsed?.files)) manifestFiles = parsed.files.filter((x): x is string => typeof x === 'string')
+      } catch {
+        /* 旧备份没有清单，忽略 */
+      }
+      if (manifestFiles && manifestFiles.length > 0) {
+        const listed = new Set(files)
+        const extra = manifestFiles.filter((rel) => !listed.has(rel))
+        if (extra.length > 0) {
+          warnings.push(`有 ${extra.length} 个文件在服务器目录列表中看不到（服务端无法列出其所在目录），已按备份清单补全下载`)
+          files = [...files, ...extra]
+        }
       }
       const failed: string[] = []
       await pMap(files, 8, async (rel) => {
@@ -901,7 +950,13 @@ export class SyncEngine {
     }
   }
 
-  /** 递归列远端目录文件（相对 baseDir 的 posix 相对路径）；跳过 self 引用防死循环 */
+  /**
+   * 递归列远端目录文件（相对 baseDir 的 posix 相对路径）；跳过 self 引用防死循环。
+   * 目录按有界并发（8）列举——数百目录的串行 PROPFIND 会拖到分钟级。
+   * strict（恢复前检查）：目录列不动时分级探测——stat 404 = 不存在（可能是被标成目录的无扩展名文件，
+   * 尝试按文件下载收进列表）；stat 207 = 目录真实存在但列不出（服务端怪癖，其下文件由备份清单补全）；
+   * stat 401/405 = 确定性坏条目，跳过并告警；其余错误中止，防用不完整列表做恢复。
+   */
   private async listRemoteFiles(baseDir: string, timeoutMs?: number, opts?: { strict?: boolean; warnings?: string[] }): Promise<string[]> {
     const client = this.client()
     const out: string[] = []
@@ -918,29 +973,52 @@ export class SyncEngine {
         items = (await davListWithRetry(client, dir, perReq)) as Array<{ filename: string; basename: string; type: string }>
       } catch (err) {
         if (opts?.strict) {
-          // 有的服务器把无扩展名文件标成目录；先探测能否当作文件下载，能则收进文件列表
+          // 分级探测：Depth 0 PROPFIND（stat）区分「目录真实存在但列不出 / 不存在 / 坏条目」
+          let statState: 'ok' | 'notfound' | 'blocked' | 'other' = 'other'
+          let statErr: unknown
           try {
-            const buf = await davGetWithRetry(client, dir, perReq)
-            out.push(rel.replace(/\/+$/, ''))
-            void buf
-            return
-          } catch {
-            // 401/405 = 服务端确定性坏条目（既不能列也不能下也不能删），跳过并告警；其余错误中止以防不完整列表
-            if (isAuthzOrMethodError(err)) {
-              opts.warnings?.push(`服务端坏条目已跳过：${dir}（无法列目录/下载/删除，建议在 WebDAV 服务器上手工清理）`)
-              return
-            }
-            throw new Error(`列目录失败：${dir}（${String((err as Error)?.message || err).slice(0, 120)}）——为防用不完整的列表做恢复，已中止`)
+            await davStatWithRetry(client, dir, perReq)
+            statState = 'ok'
+          } catch (e) {
+            statErr = e
+            if (isNotFoundError(e)) statState = 'notfound'
+            else if (isAuthzOrMethodError(e)) statState = 'blocked'
           }
+          if (statState === 'ok') {
+            // Depth 0 PROPFIND 通了但 Depth 1 列不出：目录真实存在，只是服务端列不出（如含 index.html 的目录）
+            opts.warnings?.push(`服务端无法列出目录（其下文件由备份清单补全）：${dir}`)
+            return
+          }
+          if (statState === 'notfound') {
+            // 目录不存在：有的服务器把无扩展名文件标成目录；先探测能否当作文件下载，能则收进文件列表
+            try {
+              const buf = await davGetWithRetry(client, dir, perReq)
+              out.push(rel.replace(/\/+$/, ''))
+              void buf
+              return
+            } catch (getErr) {
+              // 401/405 = 服务端确定性坏条目（既不能列也不能下也不能删），跳过并告警
+              if (isAuthzOrMethodError(getErr)) {
+                opts.warnings?.push(`服务端坏条目已跳过：${dir}（无法列目录/下载/删除，建议在 WebDAV 服务器上手工清理）`)
+                return
+              }
+              throw new Error(`列目录失败：${dir}（${String((getErr as Error)?.message || getErr).slice(0, 120)}）——为防用不完整的列表做恢复，已中止`)
+            }
+          }
+          if (statState === 'blocked') {
+            opts.warnings?.push(`服务端无法列出目录（405/401，其下文件由备份清单补全）：${dir}`)
+            return
+          }
+          throw new Error(`列目录失败：${dir}（${String((statErr as Error)?.message || statErr).slice(0, 120)}）——为防用不完整的列表做恢复，已中止`)
         }
         return
       }
-      for (const item of items) {
+      await pMap(items, 8, async (item) => {
         // 防御：部分服务器/代理会返回目录自身 href（带尾斜杠），不能当作子项递归
-        if (norm(item.filename) === key) continue
+        if (norm(item.filename) === key) return
         if (item.type === 'directory') await walk(item.filename, `${rel}${item.basename}/`)
         else out.push(`${rel}${item.basename}`)
-      }
+      })
     }
     await walk(baseDir, '')
     return out
@@ -1054,6 +1132,17 @@ async function davGetWithRetry(client: WebDAVClient, fileUrl: string, timeoutMs:
     if (isNotFoundError(err)) throw err
     await new Promise((r) => setTimeout(r, DAV_RETRY_DELAY_MS))
     return (await client.getFileContents(fileUrl, { signal: AbortSignal.timeout(timeoutMs) })) as Buffer
+  }
+}
+
+/** Depth 0 PROPFIND（stat）重试助手：探测路径是否存在（207）/ 不存在（404）/ 坏条目（401/405） */
+async function davStatWithRetry(client: WebDAVClient, fileUrl: string, timeoutMs: number): Promise<unknown> {
+  try {
+    return await client.stat(fileUrl, { signal: AbortSignal.timeout(timeoutMs) })
+  } catch (err) {
+    if (isNotFoundError(err)) throw err
+    await new Promise((r) => setTimeout(r, DAV_RETRY_DELAY_MS))
+    return await client.stat(fileUrl, { signal: AbortSignal.timeout(timeoutMs) })
   }
 }
 

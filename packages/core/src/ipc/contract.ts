@@ -299,6 +299,8 @@ export interface SkillsBackupReport {
   skipped: number
   /** 远端删除的文件数（本地已不存在 → 远端同步删除，删除前归档） */
   deleted: number
+  /** 本次备份的本地文件总数（ok 时返回；设置页展示） */
+  fileCount?: number
   /** 本次备份总耗时 ms（设置页展示） */
   elapsedMs?: number
   error?: string

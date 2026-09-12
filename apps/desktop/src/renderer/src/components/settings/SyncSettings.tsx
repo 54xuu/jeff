@@ -158,6 +158,14 @@ function SkillsBackup(): React.JSX.Element {
     try {
       const r = await api.invoke<SkillsBackupReport>(IPC.skillsBackupNow)
       setLast({ ...r })
+      if (r.ok) {
+        alert(
+          `skills 备份完成：共 ${r.fileCount ?? '?'} 个文件 · 上传 ${r.uploaded} · 远端删除 ${r.deleted} · 归档旧版 ${r.archived} · 未变化 ${r.skipped}` +
+            (r.elapsedMs != null ? ` · 耗时 ${(r.elapsedMs / 1000).toFixed(1)}s` : ''),
+        )
+      } else {
+        alert(`skills 备份失败：${r.error ?? '未知错误'}`)
+      }
     } finally {
       setBusy('')
     }
@@ -227,7 +235,12 @@ function SkillsBackup(): React.JSX.Element {
               </div>
             </>
           ) : (
-            <p className="settings-error">⚠️ 检查备份失败：{staged.error}（远端还没有备份？先点「立即备份 skills」）</p>
+            <p className="settings-error">
+              ⚠️ 检查备份失败：{staged.error}
+              {staged.error?.includes('下载失败')
+                ? '（远端备份不完整：可能上次备份被中断或正在被其他设备操作，请在有完整 skills 的设备上重新点「立即备份 skills」后再试）'
+                : '（远端还没有备份？先点「立即备份 skills」）'}
+            </p>
           )}
         </div>
       )}

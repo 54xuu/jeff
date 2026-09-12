@@ -76,6 +76,22 @@ export function startMockWebdav(port, rootDir) {
         return
       }
       if (method === 'PROPFIND') {
+        // 测试注入：与 GET 共用 .dav-fail 规则（模拟服务端对含 index.html 的目录回 405 等怪癖）
+        const failFile = path.join(rootDir, '.dav-fail')
+        if (fs.existsSync(failFile)) {
+          try {
+            const rules = JSON.parse(fs.readFileSync(failFile, 'utf8'))
+            for (const [suffix, code] of Object.entries(rules)) {
+              if (urlPath.endsWith(String(suffix))) {
+                res.writeHead(Number(code) || 500)
+                res.end('injected failure')
+                return
+              }
+            }
+          } catch {
+            /* ignore bad fail file */
+          }
+        }
         const depth = String(req.headers.depth || '0')
         if (!fs.existsSync(fsPath)) {
           res.writeHead(404)

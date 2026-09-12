@@ -190,6 +190,84 @@ describe('SyncEngine skills 整目录镜像备份（远端=本地全量对齐）
     expect(apNone.error).toContain('暂存区为空')
   })
 
+  it('自愈：远端文件丢失（上次备份被中断）后，下次备份自动补传而不是跳过', async () => {
+    const engine = makeEngine('sk6')
+    fs.writeFileSync(path.join(skillsDir, 'a.md'), 'A')
+    fs.writeFileSync(path.join(skillsDir, 'b.md'), 'B')
+    expect((await engine.backupSkills()).ok).toBe(true)
+    expect(fs.existsSync(path.join(davRoot, 'dav/sk6/skills-manifest.json'))).toBe(true)
+
+    // 模拟事故：镜像删除阶段被中断 → 远端文件没了，但本地 kv 哈希仍认为已上传
+    fs.rmSync(path.join(davRoot, 'dav/sk6/skills/b.md'), { force: true })
+    const rHeal = await engine.backupSkills()
+    expect(rHeal.ok).toBe(true)
+    expect(rHeal.uploaded, '哈希未变但远端丢失 → 必须补传').toBe(1)
+    expect(fs.readFileSync(path.join(davRoot, 'dav/sk6/skills/b.md'), 'utf8')).toBe('B')
+
+    // 自愈后再备份：全部跳过（不反复重传）
+    const rStable = await engine.backupSkills()
+    expect(rStable.ok).toBe(true)
+    expect(rStable.uploaded).toBe(0)
+  })
+
+  it('熔断：单次删除超过远端 30% 且 >10 个 → 中止等确认；同样内容再点一次才执行', async () => {
+    const engine = makeEngine('sk7')
+    for (let i = 0; i < 30; i++) fs.writeFileSync(path.join(skillsDir, `f${String(i).padStart(2, '0')}.md`), `F${i}`)
+    expect((await engine.backupSkills()).ok).toBe(true)
+
+    // 误删大半本地文件 → 备份应熔断中止，远端原样保留
+    for (let i = 0; i < 20; i++) fs.rmSync(path.join(skillsDir, `f${String(i).padStart(2, '0')}.md`))
+    const r1 = await engine.backupSkills()
+    expect(r1.ok).toBe(false)
+    expect(r1.error).toContain('确认')
+    expect(r1.deleted).toBe(0)
+    expect(fs.existsSync(path.join(davRoot, 'dav/sk7/skills/f00.md'))).toBe(true)
+
+    // 第二次点击（待删集合一致）→ 放行执行
+    const r2 = await engine.backupSkills()
+    expect(r2.ok).toBe(true)
+    expect(r2.deleted).toBe(20)
+    expect(fs.existsSync(path.join(davRoot, 'dav/sk7/skills/f00.md'))).toBe(false)
+
+    // 状态变化后不再放行旧确认：恢复文件再全量备份，然后换一批删除 → 重新熔断
+    for (let i = 0; i < 20; i++) fs.writeFileSync(path.join(skillsDir, `f${String(i).padStart(2, '0')}.md`), `F${i}v2`)
+    expect((await engine.backupSkills()).ok).toBe(true)
+    for (let i = 10; i < 30; i++) fs.rmSync(path.join(skillsDir, `f${String(i).padStart(2, '0')}.md`))
+    const r3 = await engine.backupSkills()
+    expect(r3.ok).toBe(false)
+    expect(r3.error).toContain('确认')
+  })
+
+  it('清单补全：服务端列不出的目录（PROPFIND 405），恢复时按备份清单直连下载补齐', async () => {
+    fs.writeFileSync(path.join(davRoot, '.dav-fail'), JSON.stringify({ 'hidden/': 405 }))
+    try {
+      const engine = makeEngine('sk8')
+      fs.writeFileSync(path.join(skillsDir, 'top.md'), 'T')
+      fs.mkdirSync(path.join(skillsDir, 'pak', 'hidden'), { recursive: true })
+      fs.writeFileSync(path.join(skillsDir, 'pak', 'hidden', 'index.html'), '<html>hi</html>')
+      fs.writeFileSync(path.join(skillsDir, 'pak', 'hidden', 'readme.txt'), 'R')
+      const rb = await engine.backupSkills()
+      expect(rb.ok).toBe(true)
+      expect(rb.uploaded).toBe(3)
+      // 405 目录下的文件确实已备份到远端（直连可下）
+      expect(fs.readFileSync(path.join(davRoot, 'dav/sk8/skills/pak/hidden/index.html'), 'utf8')).toBe('<html>hi</html>')
+
+      // 恢复端：目录列表里看不到 hidden/ 下的文件 → 靠 manifest 补全
+      fs.rmSync(skillsDir, { recursive: true })
+      fs.mkdirSync(skillsDir, { recursive: true })
+      const st = await engine.restoreSkillsStage()
+      expect(st.ok, `stage 失败：${st.error}`).toBe(true)
+      expect(st.files.sort()).toEqual(['pak/hidden/index.html', 'pak/hidden/readme.txt', 'top.md'])
+      expect(st.warnings?.some((w) => w.includes('备份清单'))).toBe(true)
+      const ap = await engine.restoreSkillsApply()
+      expect(ap.ok).toBe(true)
+      expect(fs.readFileSync(path.join(skillsDir, 'pak', 'hidden', 'index.html'), 'utf8')).toBe('<html>hi</html>')
+      expect(fs.readFileSync(path.join(skillsDir, 'pak', 'hidden', 'readme.txt'), 'utf8')).toBe('R')
+    } finally {
+      fs.rmSync(path.join(davRoot, '.dav-fail'), { force: true })
+    }
+  })
+
   it('重入锁：并发 sync 时后到者等待上一轮结束（不交叉执行）', async () => {
     // 起一个响应 400ms 的假 DAV：保证第一个 sync 还在跑时第二个就到
     const delay = http.createServer((req, res) => {

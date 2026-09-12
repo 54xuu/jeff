@@ -79,8 +79,7 @@ afterAll(async () => {
 })
 
 describe.skipIf(!GATED)('skills 镜像备份/恢复（真实 WebDAV）', () => {
-  d('跨平台闭环：备份 → 恢复 → 删除传播 → 再恢复', async () => {
-    // 平台 A：初始化 skills 并全量备份
+  d('跨平台闭环：备份 → 恢复 → 删除传播 → 再恢复', async () => {    // 平台 A：初始化 skills 并全量备份
     process.env.JEFF_SKILLS_DIR = dirA
     write('alpha/SKILL.md', '# alpha v1\n')
     write('beta/SKILL.md', '# beta v1\n')
@@ -136,4 +135,36 @@ describe.skipIf(!GATED)('skills 镜像备份/恢复（真实 WebDAV）', () => {
     expect(r3.deleted).toBe(0)
     expect(r3.skipped).toBe(3)
   }, 300_000)
+
+  d('自愈 + 熔断：远端丢文件自动补传；批量删除需二次确认', async () => {
+    process.env.JEFF_SKILLS_DIR = dirA
+    // 准备 40 个文件
+    for (let i = 0; i < 40; i++) write(`bulk/s${String(i).padStart(2, '0')}.md`, `S${i}`)
+    const r1 = await engineA.backupSkills()
+    expect(r1.ok, `首次备份失败：${r1.error}`).toBe(true)
+    expect(r1.uploaded).toBe(40)
+
+    // 自愈：直接在远端删掉 3 个文件（模拟备份中断/误删），本地哈希未变 → 下次备份应补传
+    const client = createClient(process.env.SKILLS_LIVE_URL!, {
+      username: process.env.SKILLS_LIVE_USER!,
+      password: process.env.SKILLS_LIVE_PASS ?? '',
+    })
+    for (const rel of ['bulk/s00.md', 'bulk/s01.md', 'bulk/s02.md']) {
+      await client.deleteFile(`${BASE}/skills/${rel}`)
+    }
+    const rHeal = await engineA.backupSkills()
+    expect(rHeal.ok, `自愈备份失败：${rHeal.error}`).toBe(true)
+    expect(rHeal.uploaded, '远端丢失的 3 个文件应被补传').toBe(3)
+
+    // 熔断：本地删 30/40（75% > 30%）→ 首次中止、远端不动；二次确认后执行
+    for (let i = 10; i < 40; i++) fs.rmSync(path.join(dirA, 'bulk', `s${String(i).padStart(2, '0')}.md`))
+    const rTrip = await engineA.backupSkills()
+    expect(rTrip.ok).toBe(false)
+    expect(rTrip.error).toContain('确认')
+    const still = await client.exists(`${BASE}/skills/bulk/s39.md`)
+    expect(still, '熔断后远端文件应原样保留').toBe(true)
+    const rGo = await engineA.backupSkills()
+    expect(rGo.ok, `二次确认备份失败：${rGo.error}`).toBe(true)
+    expect(rGo.deleted).toBe(30)
+  }, 600_000)
 })
