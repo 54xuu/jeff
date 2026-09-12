@@ -1,4 +1,4 @@
-// 极简 WebDAV mock：MKCOL / PUT / GET / PROPFIND（Depth 0/1），文件落在指定根目录
+// 极简 WebDAV mock：MKCOL / PUT / GET / DELETE / PROPFIND（Depth 0/1），文件落在指定根目录
 import http from 'node:http'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -58,6 +58,17 @@ export function startMockWebdav(port, rootDir) {
           const buf = fs.readFileSync(fsPath)
           res.writeHead(200, { 'content-type': 'application/octet-stream', 'content-length': buf.length })
           res.end(buf)
+        } else {
+          res.writeHead(404)
+          res.end('not found')
+        }
+        return
+      }
+      if (method === 'DELETE') {
+        if (fs.existsSync(fsPath) && fs.statSync(fsPath).isFile()) {
+          fs.rmSync(fsPath, { force: true })
+          res.writeHead(204)
+          res.end()
         } else {
           res.writeHead(404)
           res.end('not found')

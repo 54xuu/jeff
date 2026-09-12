@@ -72,7 +72,7 @@ export interface SyncReport {
  * - settings 含 providers/defaultModel/theme/themePack/mcp（webdav 配置本身不同步）
  * - 项目 workspace_dir 按设备保留（应用远端时忽略路径）
  * - 会话数据不同步（chat_message / opencode 会话）
- * - skills 目录（~/.agents/skills）为单向备份：只上传不下载、本地删除不传播、覆盖前归档旧版本
+ * - skills 目录（~/.agents/skills）为整目录镜像备份：备份 = 远端 skills/ 与本地完全一致（本地删除 → 远端也删，删前归档）；恢复 = 本地整个目录被备份替换。相对路径统一 posix，跨 Windows/Linux 通用
  */
 
 /** 404 / 文件不存在 → 当作远端尚无此文件；其它错误必须抛出，禁止当成空数组回推覆盖远端 */
@@ -649,22 +649,30 @@ export class SyncEngine {
   }
 
   /**
-   * 单向备份 ~/.agents/skills → <base>/skills/**：
-   * - 只上传：本地删除不传播（远端永不因本地消失而删）
-   * - 内容变化时先把远端旧文件归档到 <base>/skills-versions/<rel>/<时间戳> 再覆盖（多设备互不抹历史）
+   * 整目录镜像备份 ~/.agents/skills → <base>/skills/**：
+   * - 全量对齐：远端 skills/ 始终与本地目录一致——新增/变化上传，本地已删除的文件远端同步删除
+   * - 覆盖或删除前先把远端旧版归档到 <base>/skills-versions/<rel>/<时间戳>（误删可从归档找回）
+   * - 相对路径统一 posix（/），Windows 备份的内容 Linux 可直接恢复
+   * - 本地目录不存在时报错跳过（不把远端清空——可能是新机器还没装 skills）
    */
   async backupSkills(): Promise<SkillsBackupReport> {
-    const report: SkillsBackupReport = { ok: false, at: Date.now(), uploaded: 0, archived: 0, skipped: 0 }
+    const report: SkillsBackupReport = { ok: false, at: Date.now(), uploaded: 0, archived: 0, skipped: 0, deleted: 0 }
     try {
       const client = this.client()
       const base = this.base()
-      await this.ensureCollection(`${base}/skills`)
       const root = this.skillsDir()
+      if (!fs.existsSync(root)) {
+        report.error = `本地 skills 目录不存在（${root}），已跳过备份；为防误清空，未改动远端`
+        this.skillsKvSet('last', report)
+        return report
+      }
+      await this.ensureCollection(`${base}/skills`)
       const files = this.listSkillFiles(root)
       const lastHashes = this.skillsKv<Record<string, string>>('hashes', {})
       const hashes: Record<string, string> = {}
       const rawTimeout = this.cfg().timeoutMs
       const timeoutMs = typeof rawTimeout === 'number' && rawTimeout > 0 ? rawTimeout : 60_000
+      const reqOpts = { signal: AbortSignal.timeout(timeoutMs) }
       for (const rel of files) {
         const content = fs.readFileSync(path.join(root, rel))
         const hash = contentHash(content)
@@ -674,7 +682,6 @@ export class SyncEngine {
           report.skipped += 1
           continue
         }
-        const reqOpts = { signal: AbortSignal.timeout(timeoutMs) }
         const remotePath = `${base}/skills/${rel}`
         const fileDir = remotePath.slice(0, remotePath.lastIndexOf('/'))
         if (fileDir !== `${base}/skills`) await this.ensureCollection(fileDir)
@@ -698,7 +705,7 @@ export class SyncEngine {
           continue
         }
         if (remoteContent && remoteContent.length > 0) {
-          const verPath = `${base}/skills-versions/${rel}/${Date.now()}`
+          const verPath = `${base}/skills-versions/${rel}/${Date.now()}-${report.archived}`
           const verDir = verPath.slice(0, verPath.lastIndexOf('/'))
           await this.ensureCollection(verDir)
           await client.putFileContents(verPath, remoteContent, { overwrite: false, ...reqOpts }).catch(() => {})
@@ -706,6 +713,29 @@ export class SyncEngine {
         }
         await client.putFileContents(remotePath, content, { overwrite: true, ...reqOpts })
         report.uploaded += 1
+      }
+      // 镜像删除：远端有、本地没有的文件 → 归档后从远端删除（本地删除操作传播到远端/其他平台）
+      const localSet = new Set(files)
+      const remoteFiles = await this.listRemoteFiles(`${base}/skills`)
+      for (const rel of remoteFiles) {
+        if (localSet.has(rel)) continue
+        const remotePath = `${base}/skills/${rel}`
+        let old: Buffer | null = null
+        try {
+          old = (await client.getFileContents(remotePath, reqOpts)) as Buffer
+        } catch {
+          old = null
+        }
+        if (old && old.length > 0) {
+          const verPath = `${base}/skills-versions/${rel}/${Date.now()}-del${report.deleted}`
+          const verDir = verPath.slice(0, verPath.lastIndexOf('/'))
+          await this.ensureCollection(verDir)
+          await client.putFileContents(verPath, old, { overwrite: false, ...reqOpts }).catch(() => {})
+          report.archived += 1
+        }
+        await client.deleteFile(remotePath).catch(() => {})
+        delete hashes[rel]
+        report.deleted += 1
       }
       hashes.__uploadedAt = String(Date.now())
       this.skillsKvSet('hashes', hashes)
@@ -745,24 +775,29 @@ export class SyncEngine {
   }
 
   /**
-   * 恢复第二段（显式确认后）：先把本地 skills 全量快照到 <data>/backups/skills-<时间戳>/，
-   * 再把暂存区文件覆盖进 ~/.agents/skills。只覆盖备份中存在的文件，绝不删除本地多出的文件。
+   * 恢复第二段（显式确认后）：把本地 skills 整个目录替换为备份内容。
+   * 1. 先把本地现状全量快照到 <data>/backups/skills-<时间戳>/（可手工回退的兜底）；
+   * 2. 删除本地 skills 目录全部内容，再把暂存区文件原样拷回——「整个目录替换」，
+   *    其他平台删除的文件在本地同步消失（跨平台镜像语义）。
    */
   async restoreSkillsApply(): Promise<SkillsRestoreApply> {
     const staging = path.join(this.paths.restoreStagingDir, 'skills')
     const root = this.skillsDir()
     try {
       const files = this.listSkillFiles(staging)
-      if (files.length === 0) return { ok: false, restored: 0, snapshotDir: '', error: '暂存区为空：请先执行「检查备份」' }
+      if (files.length === 0) return { ok: false, restored: 0, removed: 0, snapshotDir: '', error: '暂存区为空：请先执行「检查备份」' }
       // 1. 本地快照（可手工回退的兜底）
+      const localFiles = this.listSkillFiles(root)
       const snapshotDir = path.join(this.paths.backupsDir, `skills-${Date.now()}`)
       fs.mkdirSync(snapshotDir, { recursive: true })
-      for (const rel of this.listSkillFiles(root)) {
+      for (const rel of localFiles) {
         const target = path.join(snapshotDir, ...rel.split('/'))
         fs.mkdirSync(path.dirname(target), { recursive: true })
         fs.copyFileSync(path.join(root, rel), target)
       }
-      // 2. 覆盖式恢复（不删除本地多出的文件）
+      // 2. 整目录替换：清空本地 → 拷贝备份
+      fs.rmSync(root, { recursive: true, force: true })
+      fs.mkdirSync(root, { recursive: true })
       let restored = 0
       for (const rel of files) {
         const target = path.join(root, ...rel.split('/'))
@@ -770,9 +805,16 @@ export class SyncEngine {
         fs.copyFileSync(path.join(staging, ...rel.split('/')), target)
         restored += 1
       }
-      return { ok: true, restored, snapshotDir }
+      // 目录状态变了：用刚恢复的内容（= 远端备份内容）重建 hashes，下次备份无需全量重传
+      const newHashes: Record<string, string> = {}
+      for (const rel of files) newHashes[rel] = contentHash(fs.readFileSync(path.join(staging, ...rel.split('/'))))
+      newHashes.__uploadedAt = String(Date.now())
+      this.skillsKvSet('hashes', newHashes)
+      const backupSet = new Set(files)
+      const removed = localFiles.filter((r) => !backupSet.has(r)).length
+      return { ok: true, restored, removed, snapshotDir }
     } catch (err) {
-      return { ok: false, restored: 0, snapshotDir: '', error: String((err as Error)?.message || err).slice(0, 300) }
+      return { ok: false, restored: 0, removed: 0, snapshotDir: '', error: String((err as Error)?.message || err).slice(0, 300) }
     }
   }
 

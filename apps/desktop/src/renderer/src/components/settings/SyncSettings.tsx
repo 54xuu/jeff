@@ -143,7 +143,7 @@ export default function SyncSettings(): React.JSX.Element {
   )
 }
 
-/** Skills 目录备份（~/.agents/skills → WebDAV）：单向备份、永不自动写回本地、恢复需两步确认 */
+/** Skills 目录备份（~/.agents/skills → WebDAV）：整目录镜像、恢复整目录替换、两步确认 */
 function SkillsBackup(): React.JSX.Element {
   const [last, setLast] = useState<(SkillsBackupReport & { fileCount?: number }) | null>(null)
   const [busy, setBusy] = useState('')
@@ -175,13 +175,13 @@ function SkillsBackup(): React.JSX.Element {
 
   const apply = async () => {
     if (!confirm(
-      '恢复将覆盖本地 ~/.agents/skills 中与备份同名的文件（不会删除本地多出的文件）。\n恢复前 Jeff 会先把本地整个 skills 目录快照到数据目录 backups/ 下，可手工回退。\n\n确认恢复？',
+      '恢复将把本地 ~/.agents/skills 整个目录替换为备份内容：备份里没有的本地文件会被删除（跨平台删除同步生效）。\n恢复前 Jeff 会先把本地整个 skills 目录快照到数据目录 backups/ 下，可手工回退。\n\n确认恢复？',
     )) return
     setBusy('apply')
     try {
       const r = await api.invoke<SkillsRestoreApply>(IPC.skillsRestoreApply)
       if (r.ok) {
-        alert(`已恢复 ${r.restored} 个文件。\n恢复前本地快照：${r.snapshotDir}`)
+        alert(`已恢复 ${r.restored} 个文件，移除本地多出 ${r.removed} 个文件。\n恢复前本地快照：${r.snapshotDir}`)
         setStaged(null)
         void backupNow()
       } else {
@@ -196,8 +196,8 @@ function SkillsBackup(): React.JSX.Element {
     <>
       <h2 className="settings-title" style={{ marginTop: 24 }}>Skills 目录备份</h2>
       <p className="settings-tip">
-        自动把 <code>~/.agents/skills</code>（所有 skill 文件）备份到 WebDAV 的 <code>skills/</code> 目录。
-        <b>单向备份</b>：本地文件永不自动修改；远端只增不删；内容被覆盖前旧版本归档到远端 <code>skills-versions/</code>。多台设备同时备份不会互相破坏。
+        把 <code>~/.agents/skills</code>（所有 skill 文件）整目录镜像备份到 WebDAV 的 <code>skills/</code> 目录：本地新增/修改会上传，<b>本地删除的文件远端也同步删除</b>（删除/覆盖前旧版本先归档到远端 <code>skills-versions/</code>，可找回）。
+        在任一台设备上维护 skills 后备份，其他设备「从备份恢复」即得到完全一致的目录；相对路径跨 Windows / Linux 通用。
       </p>
       <div className="settings-actions" style={{ justifyContent: 'flex-start' }}>
         <button className="btn primary" disabled={!!busy} onClick={() => void backupNow()}>{busy === 'backup' ? '备份中…' : '立即备份 skills'}</button>
@@ -206,7 +206,7 @@ function SkillsBackup(): React.JSX.Element {
       {last && (
         <div className="sync-report" style={{ marginTop: 6 }}>
           <p className="settings-tip" style={{ marginBottom: 4 }}>
-            上次备份：{last.ok ? '✅' : '❌'} {new Date(last.at).toLocaleString()} · 共 {last.fileCount ?? '?'} 个文件 · 上传 {last.uploaded} · 旧版本归档 {last.archived} · 未变化 {last.skipped}
+            上次备份：{last.ok ? '✅' : '❌'} {new Date(last.at).toLocaleString()} · 共 {last.fileCount ?? '?'} 个文件 · 上传 {last.uploaded} · 远端删除 {last.deleted} · 旧版本归档 {last.archived} · 未变化 {last.skipped}
           </p>
           {last.error && <pre className="settings-error sync-error-text">{last.error}</pre>}
         </div>

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -38,13 +38,18 @@ beforeAll(async () => {
   process.env.JEFF_SKILLS_DIR = skillsDir
 })
 
+beforeEach(() => {
+  fs.rmSync(skillsDir, { recursive: true, force: true })
+  fs.mkdirSync(skillsDir, { recursive: true })
+})
+
 afterAll(() => {
   server?.close()
   delete process.env.JEFF_SKILLS_DIR
 })
 
-describe('SyncEngine skills 单向备份（安全模型）', () => {
-  it('上传 → 远端有备份；本地删除不传播；内容覆盖前归档旧版本；恢复前本地快照', async () => {
+describe('SyncEngine skills 整目录镜像备份（远端=本地全量对齐）', () => {
+  it('备份 → 远端与本地完全一致；本地删除传播到远端（删前归档）；本地目录缺失不清空远端', async () => {
     const engine = makeEngine('sk1')
     fs.writeFileSync(path.join(skillsDir, 'SKILL.md'), '# hello')
     fs.mkdirSync(path.join(skillsDir, 'sub'), { recursive: true })
@@ -54,6 +59,7 @@ describe('SyncEngine skills 单向备份（安全模型）', () => {
     const r1 = await engine.backupSkills()
     expect(r1.ok).toBe(true)
     expect(r1.uploaded).toBe(2)
+    expect(r1.deleted).toBe(0)
     expect(fs.existsSync(path.join(davRoot, 'dav/sk1/skills/SKILL.md'))).toBe(true)
     expect(fs.existsSync(path.join(davRoot, 'dav/sk1/skills/sub/a.md'))).toBe(true)
 
@@ -62,39 +68,93 @@ describe('SyncEngine skills 单向备份（安全模型）', () => {
     expect(r2.ok).toBe(true)
     expect(r2.uploaded).toBe(0)
     expect(r2.skipped).toBe(2)
+    expect(r2.deleted).toBe(0)
 
-    // 3. 本地删除不传播：删掉 sub/a.md 后远端仍在
+    // 3. 镜像删除：本地删掉 sub/a.md 后远端同步消失，旧版本先归档
     fs.rmSync(path.join(skillsDir, 'sub'), { recursive: true })
     const r3 = await engine.backupSkills()
     expect(r3.ok).toBe(true)
-    expect(fs.existsSync(path.join(davRoot, 'dav/sk1/skills/sub/a.md'))).toBe(true)
+    expect(r3.deleted).toBe(1)
+    expect(r3.archived).toBe(1)
+    expect(fs.existsSync(path.join(davRoot, 'dav/sk1/skills/sub/a.md'))).toBe(false)
+    const delVerDir = path.join(davRoot, 'dav/sk1/skills-versions/sub/a.md')
+    expect(fs.existsSync(delVerDir)).toBe(true)
+    expect(fs.readFileSync(path.join(delVerDir, fs.readdirSync(delVerDir)[0]), 'utf8')).toBe('aaa')
 
     // 4. 内容变化：远端旧版本归档后再覆盖
     fs.writeFileSync(path.join(skillsDir, 'SKILL.md'), '# hello v2')
     const r4 = await engine.backupSkills()
     expect(r4.ok).toBe(true)
     expect(r4.archived).toBe(1)
-    expect(fs.existsSync(path.join(davRoot, 'dav/sk1/skills/SKILL.md'))).toBe(true)
     expect(fs.readFileSync(path.join(davRoot, 'dav/sk1/skills/SKILL.md'), 'utf8')).toBe('# hello v2')
     const verDir = path.join(davRoot, 'dav/sk1/skills-versions/SKILL.md')
     expect(fs.readdirSync(verDir).length).toBe(1)
     expect(fs.readFileSync(path.join(verDir, fs.readdirSync(verDir)[0]), 'utf8')).toBe('# hello')
 
-    // 5. 恢复 stage：下载到暂存区（含步骤 3 里本地已删的 sub/a.md）
+    // 5. 本地目录缺失：报错跳过，远端不清空（新机器保护）
+    fs.rmSync(skillsDir, { recursive: true })
+    const r5 = await engine.backupSkills()
+    expect(r5.ok).toBe(false)
+    expect(r5.error).toContain('不存在')
+    expect(fs.existsSync(path.join(davRoot, 'dav/sk1/skills/SKILL.md'))).toBe(true)
+    fs.mkdirSync(skillsDir, { recursive: true })
+    fs.writeFileSync(path.join(skillsDir, 'SKILL.md'), '# hello v2')
+  })
+
+  it('恢复 = 整目录替换：备份里没有的本地文件被移除；快照可回退；恢复后备份不重传', async () => {
+    const engine = makeEngine('sk2')
+    fs.writeFileSync(path.join(skillsDir, 'a.md'), 'A')
+    fs.writeFileSync(path.join(skillsDir, 'b.md'), 'B')
+    expect((await engine.backupSkills()).ok).toBe(true)
+
+    // 模拟「另一台平台」删掉 b.md 后重新备份 → 远端镜像只剩 a.md
+    fs.rmSync(path.join(skillsDir, 'b.md'))
+    const rb = await engine.backupSkills()
+    expect(rb.ok).toBe(true)
+    expect(rb.deleted).toBe(1)
+    expect(fs.existsSync(path.join(davRoot, 'dav/sk2/skills/b.md'))).toBe(false)
+
+    // 本机场景：本地仍留着 b.md 与本地新增 c.md；恢复后都应消失（整目录替换）
+    fs.writeFileSync(path.join(skillsDir, 'b.md'), 'B-local')
+    fs.writeFileSync(path.join(skillsDir, 'c.md'), 'C-local')
+
     const staged = await engine.restoreSkillsStage()
     expect(staged.ok).toBe(true)
-    expect(staged.files.sort()).toEqual(['SKILL.md', 'sub/a.md'])
+    expect(staged.files).toEqual(['a.md'])
 
-    // 6. 恢复 apply：先快照本地 → 覆盖；本地多出的文件不被删除
-    fs.writeFileSync(path.join(skillsDir, 'local-only.md'), 'keep me')
     const applied = await engine.restoreSkillsApply()
     expect(applied.ok).toBe(true)
-    expect(applied.restored).toBe(2)
-    expect(fs.existsSync(applied.snapshotDir)).toBe(true)
-    expect(fs.readFileSync(path.join(applied.snapshotDir, 'SKILL.md'), 'utf8')).toBe('# hello v2') // 快照含恢复前内容
-    expect(fs.readFileSync(path.join(skillsDir, 'SKILL.md'), 'utf8')).toBe('# hello v2') // 被覆盖为备份版本（备份里即 v2）
-    expect(fs.existsSync(path.join(skillsDir, 'sub', 'a.md'))).toBe(true)
-    expect(fs.readFileSync(path.join(skillsDir, 'local-only.md'), 'utf8')).toBe('keep me') // 不删除
+    expect(applied.restored).toBe(1)
+    expect(applied.removed).toBe(2) // b.md + c.md 被移除
+    expect(fs.existsSync(path.join(skillsDir, 'a.md'))).toBe(true)
+    expect(fs.readFileSync(path.join(skillsDir, 'a.md'), 'utf8')).toBe('A')
+    expect(fs.existsSync(path.join(skillsDir, 'b.md'))).toBe(false)
+    expect(fs.existsSync(path.join(skillsDir, 'c.md'))).toBe(false)
+    // 快照含恢复前全部内容（b/c 都在，可手工回退）
+    expect(fs.readFileSync(path.join(applied.snapshotDir, 'b.md'), 'utf8')).toBe('B-local')
+    expect(fs.readFileSync(path.join(applied.snapshotDir, 'c.md'), 'utf8'), 'c.md 也应在快照里').toBe('C-local')
+
+    // 恢复后立即备份：内容与远端一致 → 全部跳过，不误删远端
+    const rAfter = await engine.backupSkills()
+    expect(rAfter.ok).toBe(true)
+    expect(rAfter.uploaded).toBe(0)
+    expect(rAfter.deleted).toBe(0)
+    expect(rAfter.skipped).toBe(1)
+  })
+
+  it('posix 相对路径跨平台：备份里子目录文件恢复后落回子目录', async () => {
+    const engine = makeEngine('sk3')
+    fs.mkdirSync(path.join(skillsDir, 'deep', 'nest'), { recursive: true })
+    fs.writeFileSync(path.join(skillsDir, 'deep', 'nest', 'x.md'), 'X')
+    expect((await engine.backupSkills()).ok).toBe(true)
+    expect(fs.existsSync(path.join(davRoot, 'dav/sk3/skills/deep/nest/x.md'))).toBe(true)
+
+    fs.rmSync(path.join(skillsDir, 'deep'), { recursive: true })
+    const staged = await engine.restoreSkillsStage()
+    expect(staged.files).toEqual(['deep/nest/x.md'])
+    const applied = await engine.restoreSkillsApply()
+    expect(applied.ok).toBe(true)
+    expect(fs.readFileSync(path.join(skillsDir, 'deep', 'nest', 'x.md'), 'utf8')).toBe('X')
   })
 
   it('重入锁：并发 sync 时后到者等待上一轮结束（不交叉执行）', async () => {

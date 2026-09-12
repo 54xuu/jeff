@@ -287,20 +287,22 @@ export interface ProviderProbeResult {
   elapsedMs: number
 }
 
-/** skills 备份报告（单向备份，永不删除远端） */
+/** skills 备份报告（整目录镜像：远端 skills/ 与本地 ~/.agents/skills 保持一致） */
 export interface SkillsBackupReport {
   ok: boolean
   at: number
-  /** 上传/归档的文件数 */
+  /** 上传的文件数（新增 + 内容变化） */
   uploaded: number
-  /** 归档到 skills-versions 的旧版本数 */
+  /** 归档到 skills-versions 的旧版本数（覆盖或删除前各归档一次） */
   archived: number
   /** 跳过（内容未变化）的文件数 */
   skipped: number
+  /** 远端删除的文件数（本地已不存在 → 远端同步删除，删除前归档） */
+  deleted: number
   error?: string
 }
 
-/** skills 恢复（两段式：stage 下载到暂存区预览 → apply 快照本地后覆盖） */
+/** skills 恢复（两段式：stage 下载到暂存区预览 → apply 快照本地后整目录替换） */
 export interface SkillsRestoreStage {
   ok: boolean
   files: string[]
@@ -310,7 +312,10 @@ export interface SkillsRestoreStage {
 
 export interface SkillsRestoreApply {
   ok: boolean
+  /** 从备份恢复的文件数 */
   restored: number
+  /** 替换前本地原有、备份中没有而被移除的文件数 */
+  removed: number
   /** 恢复前本地快照目录（可手工回退） */
   snapshotDir: string
   error?: string
