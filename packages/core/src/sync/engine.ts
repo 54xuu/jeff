@@ -225,7 +225,7 @@ export class SyncEngine {
       cur += `/${part}`
       if (await this.collectionExists(cur)) continue
       try {
-        await this.client().createDirectory(cur)
+        await this.client().createDirectory(cur, { signal: AbortSignal.timeout(this.requestTimeoutMs()) })
       } catch (err) {
         const msg = String((err as Error)?.message || err)
         // 已存在
@@ -240,19 +240,25 @@ export class SyncEngine {
   }
 
   /** 目录是否存在；优先带尾斜杠（避免 Apache 301 后部分客户端丢认证变 401） */
+  private requestTimeoutMs(): number {
+    const raw = this.cfg().timeoutMs
+    return typeof raw === 'number' && raw > 0 ? raw : 60_000
+  }
+
   private async collectionExists(path: string): Promise<boolean> {
     const client = this.client()
     const bare = path.replace(/\/+$/, '') || '/'
     const withSlash = bare === '/' ? '/' : `${bare}/`
+    const signal = () => AbortSignal.timeout(this.requestTimeoutMs())
     for (const p of [withSlash, bare]) {
       try {
-        const st = (await client.stat(p)) as { type?: string }
+        const st = (await client.stat(p, { signal: signal() })) as { type?: string }
         if (st) return true
       } catch {
         /* try next */
       }
       try {
-        await client.getDirectoryContents(p)
+        await client.getDirectoryContents(p, { signal: signal() })
         return true
       } catch {
         /* try next */
@@ -653,93 +659,113 @@ export class SyncEngine {
    * - 全量对齐：远端 skills/ 始终与本地目录一致——新增/变化上传，本地已删除的文件远端同步删除
    * - 覆盖或删除前先把远端旧版归档到 <base>/skills-versions/<rel>/<时间戳>（误删可从归档找回）
    * - 相对路径统一 posix（/），Windows 备份的内容 Linux 可直接恢复
-   * - 本地目录不存在时报错跳过（不把远端清空——可能是新机器还没装 skills）
+   * - 安全阀：本地目录不存在，或本地为空而远端有备份时，报错跳过不改远端（防错误路径/空目录把远端清空）
+   * - 性能：并发上传/删除（每请求带超时）+ 目录创建缓存；数百文件应在数十秒内完成
    */
   async backupSkills(): Promise<SkillsBackupReport> {
-    const report: SkillsBackupReport = { ok: false, at: Date.now(), uploaded: 0, archived: 0, skipped: 0, deleted: 0 }
+    const startedAt = Date.now()
+    const report: SkillsBackupReport = { ok: false, at: startedAt, uploaded: 0, archived: 0, skipped: 0, deleted: 0 }
     try {
       const client = this.client()
       const base = this.base()
       const root = this.skillsDir()
+      const rawTimeout = this.cfg().timeoutMs
+      const timeoutMs = typeof rawTimeout === 'number' && rawTimeout > 0 ? rawTimeout : 60_000
+      const reqOpts = () => ({ signal: AbortSignal.timeout(timeoutMs) })
+      const remoteDir = `${base}/skills`
+      const versionsDir = `${base}/skills-versions`
+
       if (!fs.existsSync(root)) {
         report.error = `本地 skills 目录不存在（${root}），已跳过备份；为防误清空，未改动远端`
         this.skillsKvSet('last', report)
         return report
       }
-      await this.ensureCollection(`${base}/skills`)
       const files = this.listSkillFiles(root)
+      const remoteFiles = await this.listRemoteFiles(remoteDir, timeoutMs)
+      if (files.length === 0 && remoteFiles.length > 0) {
+        report.error = `本地 skills 目录为空，但远端备份有 ${remoteFiles.length} 个文件。为防误清空远端，本次未做任何改动；如确要清空，请先在设置里从备份恢复或手工处理。`
+        this.skillsKvSet('last', report)
+        return report
+      }
+
+      await this.ensureCollection(remoteDir)
       const lastHashes = this.skillsKv<Record<string, string>>('hashes', {})
       const hashes: Record<string, string> = {}
-      const rawTimeout = this.cfg().timeoutMs
-      const timeoutMs = typeof rawTimeout === 'number' && rawTimeout > 0 ? rawTimeout : 60_000
-      const reqOpts = { signal: AbortSignal.timeout(timeoutMs) }
-      for (const rel of files) {
+      // 目录创建缓存：同一目录只探测/创建一次（collectionExists 每次要 2~3 个请求）
+      const ensuredDirs = new Set<string>([remoteDir, versionsDir])
+      const ensureDir = async (dir: string): Promise<void> => {
+        if (ensuredDirs.has(dir)) return
+        await this.ensureCollection(dir)
+        ensuredDirs.add(dir)
+      }
+
+      // 1) 并发上传：新增（不在 hashes）直接 PUT；有变化的先归档远端旧版再覆盖
+      const toUpload = files.filter((rel) => {
         const content = fs.readFileSync(path.join(root, rel))
         const hash = contentHash(content)
         hashes[rel] = hash
-        // 本地相对上次成功备份未变 → 跳过远端（skills 可达数百/上千文件）
         if (lastHashes[rel] === hash) {
           report.skipped += 1
-          continue
+          return false
         }
-        const remotePath = `${base}/skills/${rel}`
-        const fileDir = remotePath.slice(0, remotePath.lastIndexOf('/'))
-        if (fileDir !== `${base}/skills`) await this.ensureCollection(fileDir)
-
-        // 从未备份过该文件：直接 PUT，不做远端 GET（首次全量探测会拖死 sync 锁）
+        return true
+      })
+      await pMap(toUpload, 8, async (rel) => {
+        const content = fs.readFileSync(path.join(root, rel))
+        const remotePath = `${remoteDir}/${rel}`
+        await ensureDir(remotePath.slice(0, remotePath.lastIndexOf('/')))
+        // 从未备份过该文件：直接 PUT，不做远端 GET（首次全量探测会拖死备份）
         if (!(rel in lastHashes)) {
-          await client.putFileContents(remotePath, content, { overwrite: true, ...reqOpts })
+          await client.putFileContents(remotePath, content, { overwrite: true, ...reqOpts() })
           report.uploaded += 1
-          continue
+          return
         }
-
         // 内容相对上次备份有变：先拉远端旧版归档，再覆盖
         let remoteContent: Buffer | null = null
         try {
-          remoteContent = (await client.getFileContents(remotePath, reqOpts)) as Buffer
+          remoteContent = await davGetWithRetry(client, remotePath, timeoutMs)
         } catch {
           remoteContent = null
         }
-        if (remoteContent && contentHash(remoteContent) === hash) {
+        if (remoteContent && contentHash(remoteContent) === contentHash(content)) {
           report.skipped += 1
-          continue
+          return
         }
         if (remoteContent && remoteContent.length > 0) {
-          const verPath = `${base}/skills-versions/${rel}/${Date.now()}-${report.archived}`
-          const verDir = verPath.slice(0, verPath.lastIndexOf('/'))
-          await this.ensureCollection(verDir)
-          await client.putFileContents(verPath, remoteContent, { overwrite: false, ...reqOpts }).catch(() => {})
+          const verPath = `${versionsDir}/${rel}/${Date.now()}-${report.archived}`
+          await ensureDir(verPath.slice(0, verPath.lastIndexOf('/')))
+          await client.putFileContents(verPath, remoteContent, { overwrite: false, ...reqOpts() }).catch(() => {})
           report.archived += 1
         }
-        await client.putFileContents(remotePath, content, { overwrite: true, ...reqOpts })
+        await client.putFileContents(remotePath, content, { overwrite: true, ...reqOpts() })
         report.uploaded += 1
-      }
-      // 镜像删除：远端有、本地没有的文件 → 归档后从远端删除（本地删除操作传播到远端/其他平台）
+      })
+
+      // 2) 并发镜像删除：远端有、本地没有的文件 → 归档后从远端删除（本地删除操作传播到远端/其他平台）
       const localSet = new Set(files)
-      const remoteFiles = await this.listRemoteFiles(`${base}/skills`)
-      for (const rel of remoteFiles) {
-        if (localSet.has(rel)) continue
-        const remotePath = `${base}/skills/${rel}`
+      const toDelete = remoteFiles.filter((rel) => !localSet.has(rel))
+      await pMap(toDelete, 8, async (rel) => {
+        const remotePath = `${remoteDir}/${rel}`
         let old: Buffer | null = null
         try {
-          old = (await client.getFileContents(remotePath, reqOpts)) as Buffer
+          old = await davGetWithRetry(client, remotePath, timeoutMs)
         } catch {
           old = null
         }
         if (old && old.length > 0) {
-          const verPath = `${base}/skills-versions/${rel}/${Date.now()}-del${report.deleted}`
-          const verDir = verPath.slice(0, verPath.lastIndexOf('/'))
-          await this.ensureCollection(verDir)
-          await client.putFileContents(verPath, old, { overwrite: false, ...reqOpts }).catch(() => {})
+          const verPath = `${versionsDir}/${rel}/${Date.now()}-del${report.deleted}`
+          await ensureDir(verPath.slice(0, verPath.lastIndexOf('/')))
+          await client.putFileContents(verPath, old, { overwrite: false, ...reqOpts() }).catch(() => {})
           report.archived += 1
         }
-        await client.deleteFile(remotePath).catch(() => {})
+        await client.deleteFile(remotePath, reqOpts()).catch(() => {})
         delete hashes[rel]
         report.deleted += 1
-      }
+      })
+
       hashes.__uploadedAt = String(Date.now())
       this.skillsKvSet('hashes', hashes)
-      this.skillsKvSet('last', { ...report, ok: true, fileCount: files.length })
+      this.skillsKvSet('last', { ...report, ok: true, fileCount: files.length, elapsedMs: Date.now() - startedAt })
       report.ok = true
     } catch (err) {
       report.error = formatWebdavError(err)
@@ -753,22 +779,48 @@ export class SyncEngine {
     return this.skillsKv<(SkillsBackupReport & { fileCount?: number }) | null>('last', null)
   }
 
-  /** 恢复第一段：下载远端 skills 全量到暂存目录（<data>/restore-staging/skills），绝不碰本地 skills */
+  /**
+   * 恢复第一段：下载远端 skills 全量到暂存目录（<data>/restore-staging/skills），绝不碰本地 skills。
+   * 并发下载（每请求带超时）；远端没有备份文件时返回失败（设置页不会给出「确认恢复」入口，防误清空）。
+   */
   async restoreSkillsStage(): Promise<SkillsRestoreStage> {
     try {
       const client = this.client()
       const base = this.base()
+      const remoteDir = `${base}/skills`
       const staging = path.join(this.paths.restoreStagingDir, 'skills')
       fs.rmSync(staging, { recursive: true, force: true })
       fs.mkdirSync(staging, { recursive: true })
-      const files = await this.listRemoteFiles(`${base}/skills`)
-      for (const rel of files) {
-        const buf = (await client.getFileContents(`${base}/skills/${rel}`)) as Buffer
-        const target = path.join(staging, ...rel.split('/'))
-        fs.mkdirSync(path.dirname(target), { recursive: true })
-        fs.writeFileSync(target, buf)
+      const rawTimeout = this.cfg().timeoutMs
+      const timeoutMs = typeof rawTimeout === 'number' && rawTimeout > 0 ? rawTimeout : 60_000
+      let files: string[]
+      const warnings: string[] = []
+      try {
+        files = await this.listRemoteFiles(remoteDir, timeoutMs, { strict: true, warnings })
+      } catch (err) {
+        if (isNotFoundError(err)) {
+          return { ok: false, files: [], total: 0, error: `远端 ${remoteDir} 下还没有备份文件。先在已有完整 skills 的设备上点「立即备份 skills」。` }
+        }
+        return { ok: false, files: [], total: 0, error: String((err as Error)?.message || err).slice(0, 300) }
       }
-      return { ok: true, files, total: files.length }
+      if (files.length === 0) {
+        return { ok: false, files: [], total: 0, error: `远端 ${remoteDir} 下没有任何备份文件。先在已有完整 skills 的设备上点「立即备份 skills」。` }
+      }
+      const failed: string[] = []
+      await pMap(files, 8, async (rel) => {
+        try {
+          const buf = await davGetWithRetry(client, `${remoteDir}/${rel}`, timeoutMs)
+          const target = path.join(staging, ...rel.split('/'))
+          fs.mkdirSync(path.dirname(target), { recursive: true })
+          fs.writeFileSync(target, buf)
+        } catch (err) {
+          failed.push(`${rel}: ${String((err as Error)?.message || err).slice(0, 80)}`)
+        }
+      })
+      if (failed.length > 0) {
+        return { ok: false, files: [], total: 0, error: `有 ${failed.length} 个备份文件下载失败（已中止恢复，本地未改动）：${failed.slice(0, 3).join('；')}` }
+      }
+      return { ok: true, files, total: files.length, warnings: warnings.length > 0 ? warnings : undefined }
     } catch (err) {
       return { ok: false, files: [], total: 0, error: String((err as Error)?.message || err).slice(0, 300) }
     }
@@ -777,33 +829,64 @@ export class SyncEngine {
   /**
    * 恢复第二段（显式确认后）：把本地 skills 整个目录替换为备份内容。
    * 1. 先把本地现状全量快照到 <data>/backups/skills-<时间戳>/（可手工回退的兜底）；
-   * 2. 删除本地 skills 目录全部内容，再把暂存区文件原样拷回——「整个目录替换」，
-   *    其他平台删除的文件在本地同步消失（跨平台镜像语义）。
+   * 2. 把暂存区完整拷成本地 ready 目录并逐文件校验后，再替换本地 skills——
+   *    「先备好、再换入」：换入阶段失败自动从快照回滚，绝不把本地留在半空状态
+   *    （其他平台删除的文件在本地同步消失，跨平台镜像语义）。
    */
   async restoreSkillsApply(): Promise<SkillsRestoreApply> {
     const staging = path.join(this.paths.restoreStagingDir, 'skills')
     const root = this.skillsDir()
+    let snapshotDir = ''
     try {
       const files = this.listSkillFiles(staging)
       if (files.length === 0) return { ok: false, restored: 0, removed: 0, snapshotDir: '', error: '暂存区为空：请先执行「检查备份」' }
       // 1. 本地快照（可手工回退的兜底）
       const localFiles = this.listSkillFiles(root)
-      const snapshotDir = path.join(this.paths.backupsDir, `skills-${Date.now()}`)
+      snapshotDir = path.join(this.paths.backupsDir, `skills-${Date.now()}`)
       fs.mkdirSync(snapshotDir, { recursive: true })
       for (const rel of localFiles) {
         const target = path.join(snapshotDir, ...rel.split('/'))
         fs.mkdirSync(path.dirname(target), { recursive: true })
         fs.copyFileSync(path.join(root, rel), target)
       }
-      // 2. 整目录替换：清空本地 → 拷贝备份
-      fs.rmSync(root, { recursive: true, force: true })
-      fs.mkdirSync(root, { recursive: true })
-      let restored = 0
+      // 2. 在数据目录里先把「恢复后的完整目录」备好并校验（此时本地 skills 尚未动）
+      const readyDir = path.join(this.paths.restoreStagingDir, `skills-ready-${Date.now()}`)
+      fs.rmSync(readyDir, { recursive: true, force: true })
+      fs.mkdirSync(readyDir, { recursive: true })
       for (const rel of files) {
-        const target = path.join(root, ...rel.split('/'))
+        const target = path.join(readyDir, ...rel.split('/'))
         fs.mkdirSync(path.dirname(target), { recursive: true })
         fs.copyFileSync(path.join(staging, ...rel.split('/')), target)
-        restored += 1
+      }
+      if (this.listSkillFiles(readyDir).length !== files.length) {
+        throw new Error('恢复目录准备不完整，已中止（本地未被改动）')
+      }
+      // 3. 换入：优先 rename（同盘原子）；跨盘降级为 rm+copy，失败即从快照回滚
+      let restored = 0
+      fs.rmSync(root, { recursive: true, force: true })
+      try {
+        try {
+          fs.renameSync(readyDir, root)
+          restored = files.length
+        } catch {
+          fs.mkdirSync(root, { recursive: true })
+          for (const rel of files) {
+            const target = path.join(root, ...rel.split('/'))
+            fs.mkdirSync(path.dirname(target), { recursive: true })
+            fs.copyFileSync(path.join(readyDir, ...rel.split('/')), target)
+            restored += 1
+          }
+        }
+      } catch (copyErr) {
+        // 回滚：把快照原样拷回，本地不丢数据
+        fs.rmSync(root, { recursive: true, force: true })
+        fs.mkdirSync(root, { recursive: true })
+        for (const rel of this.listSkillFiles(snapshotDir)) {
+          const target = path.join(root, ...rel.split('/'))
+          fs.mkdirSync(path.dirname(target), { recursive: true })
+          fs.copyFileSync(path.join(snapshotDir, ...rel.split('/')), target)
+        }
+        throw new Error(`恢复换入失败，已从恢复前快照回滚本地目录：${String((copyErr as Error)?.message || copyErr).slice(0, 200)}`)
       }
       // 目录状态变了：用刚恢复的内容（= 远端备份内容）重建 hashes，下次备份无需全量重传
       const newHashes: Record<string, string> = {}
@@ -819,19 +902,37 @@ export class SyncEngine {
   }
 
   /** 递归列远端目录文件（相对 baseDir 的 posix 相对路径）；跳过 self 引用防死循环 */
-  private async listRemoteFiles(baseDir: string): Promise<string[]> {
+  private async listRemoteFiles(baseDir: string, timeoutMs?: number, opts?: { strict?: boolean; warnings?: string[] }): Promise<string[]> {
     const client = this.client()
     const out: string[] = []
     const visited = new Set<string>()
     const norm = (p: string) => p.replace(/\/+$/, '')
+    const perReq = timeoutMs ?? this.requestTimeoutMs()
     const walk = async (dir: string, rel: string): Promise<void> => {
       const key = norm(dir)
       if (visited.has(key)) return
       visited.add(key)
       let items: Array<{ filename: string; basename: string; type: string }>
       try {
-        items = (await client.getDirectoryContents(dir)) as Array<{ filename: string; basename: string; type: string }>
-      } catch {
+        // 长连接偶发被服务端/代理静默断开 → 请求永久挂起；重试一次走新连接
+        items = (await davListWithRetry(client, dir, perReq)) as Array<{ filename: string; basename: string; type: string }>
+      } catch (err) {
+        if (opts?.strict) {
+          // 有的服务器把无扩展名文件标成目录；先探测能否当作文件下载，能则收进文件列表
+          try {
+            const buf = await davGetWithRetry(client, dir, perReq)
+            out.push(rel.replace(/\/+$/, ''))
+            void buf
+            return
+          } catch {
+            // 401/405 = 服务端确定性坏条目（既不能列也不能下也不能删），跳过并告警；其余错误中止以防不完整列表
+            if (isAuthzOrMethodError(err)) {
+              opts.warnings?.push(`服务端坏条目已跳过：${dir}（无法列目录/下载/删除，建议在 WebDAV 服务器上手工清理）`)
+              return
+            }
+            throw new Error(`列目录失败：${dir}（${String((err as Error)?.message || err).slice(0, 120)}）——为防用不完整的列表做恢复，已中止`)
+          }
+        }
         return
       }
       for (const item of items) {
@@ -925,4 +1026,46 @@ function contentHash(buf: Buffer): string {
     h = Math.imul(h, 0x01000193)
   }
   return `${(h >>> 0).toString(16)}:${buf.length}`
+}
+
+/** 服务端确定性坏条目：目录列不动 + 下载也不行的路径（401/405），只能跳过并提示用户手工清理 */
+function isAuthzOrMethodError(err: unknown): boolean {
+  return /Invalid response:\s*(401|405)\b/i.test(String((err as Error)?.message || err))
+}
+
+/** GET 类请求重试助手：长连接被静默断开时请求会永久挂起（或到超时才断），重试走新连接即可恢复 */
+const DAV_RETRY_DELAY_MS = 800
+
+async function davListWithRetry(client: WebDAVClient, dir: string, timeoutMs: number): Promise<unknown> {
+  try {
+    return await client.getDirectoryContents(dir, { signal: AbortSignal.timeout(timeoutMs) })
+  } catch (err) {
+    if (isNotFoundError(err)) throw err
+    // 重试 = 新请求新信号；被中止的连接已被销毁，重试大概率拿到新连接即成功
+    await new Promise((r) => setTimeout(r, DAV_RETRY_DELAY_MS))
+    return await client.getDirectoryContents(dir, { signal: AbortSignal.timeout(timeoutMs) })
+  }
+}
+
+async function davGetWithRetry(client: WebDAVClient, fileUrl: string, timeoutMs: number): Promise<Buffer> {
+  try {
+    return (await client.getFileContents(fileUrl, { signal: AbortSignal.timeout(timeoutMs) })) as Buffer
+  } catch (err) {
+    if (isNotFoundError(err)) throw err
+    await new Promise((r) => setTimeout(r, DAV_RETRY_DELAY_MS))
+    return (await client.getFileContents(fileUrl, { signal: AbortSignal.timeout(timeoutMs) })) as Buffer
+  }
+}
+
+/** 有界并发跑异步任务（保持完成计数；单个任务抛错则整体 reject） */
+async function pMap<T>(items: T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {
+  let next = 0
+  const workers = Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, async () => {
+    for (;;) {
+      const i = next++
+      if (i >= items.length) return
+      await fn(items[i])
+    }
+  })
+  await Promise.all(workers)
 }

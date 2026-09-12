@@ -299,6 +299,8 @@ export interface SkillsBackupReport {
   skipped: number
   /** 远端删除的文件数（本地已不存在 → 远端同步删除，删除前归档） */
   deleted: number
+  /** 本次备份总耗时 ms（设置页展示） */
+  elapsedMs?: number
   error?: string
 }
 
@@ -307,6 +309,8 @@ export interface SkillsRestoreStage {
   ok: boolean
   files: string[]
   total: number
+  /** 服务端坏条目等非致命告警（已跳过，不阻塞恢复） */
+  warnings?: string[]
   error?: string
 }
 

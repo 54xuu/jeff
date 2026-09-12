@@ -206,7 +206,7 @@ function SkillsBackup(): React.JSX.Element {
       {last && (
         <div className="sync-report" style={{ marginTop: 6 }}>
           <p className="settings-tip" style={{ marginBottom: 4 }}>
-            上次备份：{last.ok ? '✅' : '❌'} {new Date(last.at).toLocaleString()} · 共 {last.fileCount ?? '?'} 个文件 · 上传 {last.uploaded} · 远端删除 {last.deleted} · 旧版本归档 {last.archived} · 未变化 {last.skipped}
+            上次备份：{last.ok ? '✅' : '❌'} {new Date(last.at).toLocaleString()} · 共 {last.fileCount ?? '?'} 个文件 · 上传 {last.uploaded} · 远端删除 {last.deleted} · 旧版本归档 {last.archived} · 未变化 {last.skipped}{last.elapsedMs != null && ` · 耗时 ${(last.elapsedMs / 1000).toFixed(1)}s`}
           </p>
           {last.error && <pre className="settings-error sync-error-text">{last.error}</pre>}
         </div>
@@ -216,6 +216,7 @@ function SkillsBackup(): React.JSX.Element {
           {staged.ok ? (
             <>
               <p className="settings-tip">远端备份共 <b>{staged.total}</b> 个文件，前 30 个：</p>
+              {staged.warnings?.map((w) => <p key={w} className="settings-tip" style={{ color: '#d97706' }}>⚠️ {w}</p>)}
               <div className="mcp-tool-list">
                 {staged.files.slice(0, 30).map((f) => <span key={f} className="tag">{f}</span>)}
                 {staged.total > 30 && <span className="tag">…共 {staged.total} 个</span>}

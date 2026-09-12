@@ -157,6 +157,39 @@ describe('SyncEngine skills 整目录镜像备份（远端=本地全量对齐）
     expect(fs.readFileSync(path.join(skillsDir, 'deep', 'nest', 'x.md'), 'utf8')).toBe('X')
   })
 
+  it('安全阀：本地为空不清空远端备份；远端无备份时 stage 失败并拒绝恢复', async () => {
+    // 1) 平台 X 备份出一份远端
+    const ex = makeEngine('sk4')
+    fs.writeFileSync(path.join(skillsDir, 'keep.md'), 'keep')
+    expect((await ex.backupSkills()).ok).toBe(true)
+
+    // 2) 另一台设备本地 skills 为空（如新机器/路径配错）→ 备份必须报错跳过，远端原样保留
+    fs.rmSync(skillsDir, { recursive: true })
+    fs.mkdirSync(skillsDir, { recursive: true })
+    const rEmpty = await ex.backupSkills()
+    expect(rEmpty.ok).toBe(false)
+    expect(rEmpty.error, '空本地备份应报防误清空错误').toContain('为空')
+    expect(fs.existsSync(path.join(davRoot, 'dav/sk4/skills/keep.md'))).toBe(true)
+
+    // 3) 该设备「从备份恢复」：远端有备份可正常恢复
+    const st = await ex.restoreSkillsStage()
+    expect(st.ok).toBe(true)
+    expect(st.files).toEqual(['keep.md'])
+    const ap = await ex.restoreSkillsApply()
+    expect(ap.ok).toBe(true)
+    expect(fs.readFileSync(path.join(skillsDir, 'keep.md'), 'utf8')).toBe('keep')
+
+    // 4) 远端没有任何备份文件 → stage 失败（UI 不会出现「确认恢复」）
+    const ex2 = makeEngine('sk5')
+    const stNone = await ex2.restoreSkillsStage()
+    expect(stNone.ok).toBe(false)
+    expect(stNone.error, '空远端 stage 应失败并提示先备份').toContain('没有')
+    // 暂存区为空时 apply 也拒绝
+    const apNone = await ex2.restoreSkillsApply()
+    expect(apNone.ok).toBe(false)
+    expect(apNone.error).toContain('暂存区为空')
+  })
+
   it('重入锁：并发 sync 时后到者等待上一轮结束（不交叉执行）', async () => {
     // 起一个响应 400ms 的假 DAV：保证第一个 sync 还在跑时第二个就到
     const delay = http.createServer((req, res) => {
