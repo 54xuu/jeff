@@ -798,6 +798,9 @@ export class SyncEngine {
         ...reqOpts(),
       })
       this.skillsKvSet('last', { ...report, ok: true, fileCount: files.length, elapsedMs: Date.now() - startedAt })
+      // fileCount/elapsedMs 必须同时挂到返回值上：设置页弹窗用的是 IPC 立即返回值，不是 kv 里的 last
+      report.fileCount = files.length
+      report.elapsedMs = Date.now() - startedAt
       report.ok = true
     } catch (err) {
       report.error = formatWebdavError(err)
