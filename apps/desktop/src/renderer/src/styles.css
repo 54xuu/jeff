@@ -3037,30 +3037,43 @@ body.composer-resizing * {
   background: rgba(0, 0, 0, 0.72);
   display: flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
   cursor: zoom-out;
+  /* 放大超出视口后可滚动查看；margin:auto 让小图保持居中 */
+  overflow: auto;
+  padding: 3vh 2vw;
 }
 
 .mermaid-lightbox-fig {
-  max-width: 94vw;
-  max-height: 88vh;
-  overflow: auto;
+  /* 宽度由 MermaidBlock 按「视口填满基准 × 滚轮倍率」以内联 px 给出，这里绝不收缩：
+     width=100% 的 svg 放进 shrink-to-fit 盒会解析成默认 300px（「放大反而变小」的根因） */
+  margin: auto;
   background: var(--bg-panel);
   border-radius: var(--radius-md);
   padding: 18px;
+  cursor: default;
 }
 
 .mermaid-lightbox-fig svg {
-  max-width: 88vw;
-  max-height: 82vh;
-  height: auto;
+  /* max-width 必须 !important：mermaid 给 svg 写了内联 style="max-width: NNNpx"，
+     样式表的普通声明压不过它，放大就被原始宽度锁死 */
+  width: 100% !important;
+  height: auto !important;
+  max-width: none !important;
+  max-height: none !important;
+  display: block;
 }
 
 .mermaid-lightbox-tip {
-  margin-top: 10px;
+  /* 固定在视口底部：图放大到超屏滚动时提示也不丢 */
+  position: fixed;
+  bottom: 12px;
+  left: 0;
+  right: 0;
+  margin: 0;
+  text-align: center;
   font-size: var(--fs-xs);
   color: #d8d8d8;
+  pointer-events: none;
 }
 
 /* ===== Markdown 预览器（全局公共，只读） ===== */

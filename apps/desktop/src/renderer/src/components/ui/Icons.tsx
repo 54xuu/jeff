@@ -81,3 +81,37 @@ export function IconClose(props: IconProps): React.JSX.Element {
     </Svg>
   )
 }
+
+/** 查看源码（</> 代码符号） */
+export function IconCode(props: IconProps): React.JSX.Element {
+  return (
+    <Svg {...props}>
+      <path d="m16 18 6-6-6-6" />
+      <path d="m8 6-6 6 6 6" />
+    </Svg>
+  )
+}
+
+/** 查看图形（图表符号）——源码态切回图形用 */
+export function IconDiagram(props: IconProps): React.JSX.Element {
+  return (
+    <Svg {...props}>
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <path d="M8 16v-5" />
+      <path d="M12 16V8" />
+      <path d="M16 16v-3" />
+    </Svg>
+  )
+}
+
+/** 放大查看（放大镜加号） */
+export function IconZoomIn(props: IconProps): React.JSX.Element {
+  return (
+    <Svg {...props}>
+      <circle cx="11" cy="11" r="7" />
+      <path d="m21 21-4.3-4.3" />
+      <path d="M11 8v6" />
+      <path d="M8 11h6" />
+    </Svg>
+  )
+}

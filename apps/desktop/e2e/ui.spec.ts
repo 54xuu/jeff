@@ -1,17 +1,18 @@
 import { test, expect } from '@playwright/test'
 import path from 'node:path'
-import { closeJeff, launchJeff, REPO_ROOT } from './helpers/launch.js'
+import { closeJeff, launchJeff, loadE2eEnv, REPO_ROOT } from './helpers/launch.js'
 
 test.describe.configure({ mode: 'serial' })
 
 test.describe('Jeff UI 封闭清单', () => {
-  test('导航轨 / 主题 / 通讯录模型保存 / 设置 / 私聊 / 建群', async () => {
-    test.setTimeout(240_000)
+  test('导航轨 / 主题 / 通讯录模型保存 / 设置 / 私聊 / 建群 / mermaid', async () => {
+    test.setTimeout(720_000)
     const home = path.join(REPO_ROOT, '.tmp/jeff-e2e-ui-home')
+    const env = loadE2eEnv()
     const { app, page } = await launchJeff({
       home,
       seed: {
-        apiKey: process.env.SILICONFLOW_API_KEY || '',
+        apiKey: process.env.SILICONFLOW_API_KEY || env.SILICONFLOW_API_KEY || '',
       },
     })
 
@@ -249,6 +250,57 @@ test.describe('Jeff UI 封闭清单', () => {
       await groupDraft.fill('群聊 E2E：只回「收到」。')
       await page.getByTestId('chat-send').click()
       await expect(page.getByTestId('chat-draft')).toHaveValue('', { timeout: 10000 })
+
+      // ---- mermaid：模型输出图表 → 图标工具栏 / 放大灯箱不小于原图（回归「放大反而变小」）/ 滚轮缩放 ----
+      await page.getByTestId('chat-agent-小杰').click()
+      await expect(page.getByTestId('chat-window')).toBeVisible()
+      await page.getByTestId('chat-stop').waitFor({ state: 'visible', timeout: 30_000 }).catch(() => {})
+      await expect(page.getByTestId('chat-stop')).toHaveCount(0, { timeout: 300_000 })
+      await chatDraft.fill(
+        '请原样只输出下面这段代码，不要任何解释或修改：\n```mermaid\ngraph TD\n  A[开始] --> B{判断}\n  B -->|是| C[结束]\n  B -->|否| A\n```',
+      )
+      await page.getByTestId('chat-send').click()
+      await page.getByTestId('chat-stop').waitFor({ state: 'visible', timeout: 60_000 })
+      await expect(page.getByTestId('chat-stop')).toHaveCount(0, { timeout: 300_000 })
+      const mmBlock = page.getByTestId('md-mermaid').first()
+      await expect(mmBlock.locator('.md-mermaid-fig svg')).toBeVisible({ timeout: 60_000 })
+      // 工具栏改为图标（无文字按钮），图标按钮在位
+      await expect(mmBlock.locator('.md-mermaid-bar')).toHaveText('')
+      await expect(page.getByTestId('md-mermaid-toggle-src')).toBeVisible()
+      await expect(page.getByTestId('md-mermaid-zoom')).toBeVisible()
+      // 查看源码 ⇄ 查看图形
+      await page.getByTestId('md-mermaid-toggle-src').click()
+      await expect(mmBlock.locator('.md-mermaid-src')).toBeVisible()
+      await page.getByTestId('md-mermaid-toggle-src').click()
+      await expect(mmBlock.locator('.md-mermaid-fig svg')).toBeVisible()
+      // 放大灯箱：宽度必须不小于聊天气泡里的内联图，且至少一维填满视口（窄高图按高度填满，宽扁图按宽度填满）
+      const inlineW = await mmBlock.locator('.md-mermaid-fig svg').evaluate((el) => el.getBoundingClientRect().width)
+      await page.getByTestId('md-mermaid-zoom').click()
+      const lightbox = page.getByTestId('mermaid-lightbox')
+      await expect(lightbox).toBeVisible()
+      const lbSvg = lightbox.locator('.mermaid-lightbox-fig svg')
+      const lb0 = await lbSvg.evaluate((el) => {
+        const r = el.getBoundingClientRect()
+        return { w: r.width, h: r.height, iw: window.innerWidth, ih: window.innerHeight }
+      })
+      expect(lb0.w, `放大后宽（${lb0.w}）应不小于内联图（${inlineW}）——回归「放大反而变小」`).toBeGreaterThanOrEqual(inlineW)
+      expect(
+        Math.max(lb0.w / (0.88 * lb0.iw), lb0.h / (0.78 * lb0.ih)),
+        '放大后至少一维应填到视口约束的 80% 以上',
+      ).toBeGreaterThanOrEqual(0.8)
+      // 滚轮放大 → 变宽；滚轮缩小 → 变窄（preventDefault，不滚动页面）
+      const figBox = await lightbox.locator('.mermaid-lightbox-fig').boundingBox()
+      await page.mouse.move(figBox!.x + figBox!.width / 2, figBox!.y + figBox!.height / 2)
+      await page.mouse.wheel(0, -240)
+      await expect.poll(async () => lbSvg.evaluate((el) => el.getBoundingClientRect().width), { timeout: 10_000 }).toBeGreaterThan(lb0.w)
+      const wZoomIn = await lbSvg.evaluate((el) => el.getBoundingClientRect().width)
+      await page.mouse.wheel(0, 480)
+      await expect.poll(async () => lbSvg.evaluate((el) => el.getBoundingClientRect().width), { timeout: 10_000 }).toBeLessThan(wZoomIn)
+      // 双击复位 → 点击空白处关闭
+      await lightbox.locator('.mermaid-lightbox-fig').dblclick()
+      await expect.poll(async () => lbSvg.evaluate((el) => el.getBoundingClientRect().width), { timeout: 10_000 }).toBeCloseTo(lb0.w, -1)
+      await page.mouse.click(15, 15)
+      await expect(lightbox).toHaveCount(0)
     } finally {
       await closeJeff(app)
     }
