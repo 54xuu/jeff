@@ -67,6 +67,29 @@ test.describe('Jeff UI 封闭清单', () => {
       await page.getByTestId('theme-mode-light').click()
       await expect.poll(async () => page.evaluate(() => document.documentElement.dataset.theme)).toBe('light')
 
+      // ---- 设置：通知与提醒（试听/测试通知不报错；开关真的落库，关闭的 false 不被默认值吃掉）----
+      await page.getByTestId('settings-nav-notification').click()
+      await expect(page.getByTestId('notification-settings')).toBeVisible()
+      await page.getByTestId('notify-try-sound').click()
+      await page.getByTestId('notify-try-desktop').click()
+      const readSetting = (key: string) =>
+        page.evaluate(
+          (k) =>
+            (window as unknown as { jeff: { invoke: (c: string) => Promise<Record<string, unknown>> } }).jeff
+              .invoke('settings:get')
+              .then((s) => s[k]),
+          key,
+        )
+      for (const [testid, key] of [
+        ['notify-sound', 'notifySound'],
+        ['notify-only-background', 'notifyOnlyBackground'],
+      ] as const) {
+        await page.getByTestId(testid).uncheck()
+        await expect.poll(() => readSetting(key), { timeout: 15000 }).toBe(false)
+        await page.getByTestId(testid).check()
+        await expect.poll(() => readSetting(key), { timeout: 15000 }).toBe(true)
+      }
+
       // ---- 设置：引擎 / 记忆 ----
       await page.getByTestId('settings-nav-engine').click()
       await expect(page.getByTestId('engine-settings')).toBeVisible()

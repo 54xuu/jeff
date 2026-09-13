@@ -4,6 +4,7 @@ import McpSettings from './McpSettings'
 import MemorySettings from './MemorySettings'
 import EngineSettings from './EngineSettings'
 import SyncSettings from './SyncSettings'
+import NotificationSettings from './NotificationSettings'
 import AppearanceSettings from './AppearanceSettings'
 import AboutSettings from './AboutSettings'
 
@@ -17,6 +18,7 @@ export default function SettingsContent(): React.JSX.Element {
       {settingsSection === 'memory' && <MemorySettings />}
       {settingsSection === 'engine' && <EngineSettings />}
       {settingsSection === 'sync' && <SyncSettings />}
+      {settingsSection === 'notification' && <NotificationSettings />}
       {settingsSection === 'appearance' && <AppearanceSettings />}
       {settingsSection === 'about' && <AboutSettings />}
     </div>

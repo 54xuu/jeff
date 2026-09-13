@@ -373,6 +373,9 @@ export class SyncEngine {
       defaultModel: this.kvGet('settings:defaultModel'),
       theme: this.kvGet('settings:theme'),
       themePack: this.kvGet('settings:themePack'),
+      notifyDesktop: this.kvGet('settings:notifyDesktop'),
+      notifySound: this.kvGet('settings:notifySound'),
+      notifyOnlyBackground: this.kvGet('settings:notifyOnlyBackground'),
       mcp: this.kvGet('settings:mcp'),
       // webdav 配置本身不同步（每台设备自己的连接信息）
     }
@@ -381,6 +384,9 @@ export class SyncEngine {
       this.kvUpdatedAt('settings:defaultModel'),
       this.kvUpdatedAt('settings:theme'),
       this.kvUpdatedAt('settings:themePack'),
+      this.kvUpdatedAt('settings:notifyDesktop'),
+      this.kvUpdatedAt('settings:notifySound'),
+      this.kvUpdatedAt('settings:notifyOnlyBackground'),
       this.kvUpdatedAt('settings:mcp'),
     )
     out.set('settings', { id: 'settings', updatedAt: settingsUpdated, deletedAt: null, data: settings, memoryFile: null })
@@ -446,12 +452,19 @@ export class SyncEngine {
             defaultModel?: unknown
             theme?: unknown
             themePack?: unknown
+            notifyDesktop?: unknown
+            notifySound?: unknown
+            notifyOnlyBackground?: unknown
             mcp?: unknown
           }
           this.kvSetJSON('settings:providers', d.providers ?? [])
           this.kvSetJSON('settings:defaultModel', d.defaultModel ?? null)
           this.kvSetJSON('settings:theme', d.theme ?? 'system')
           this.kvSetJSON('settings:themePack', d.themePack ?? 'weui')
+          // 老备份里没有这三个键（undefined）：保留本机设置，不要被 null 覆盖成"关闭"
+          if (typeof d.notifyDesktop === 'boolean') this.kvSetJSON('settings:notifyDesktop', d.notifyDesktop)
+          if (typeof d.notifySound === 'boolean') this.kvSetJSON('settings:notifySound', d.notifySound)
+          if (typeof d.notifyOnlyBackground === 'boolean') this.kvSetJSON('settings:notifyOnlyBackground', d.notifyOnlyBackground)
           this.kvSetJSON('settings:mcp', d.mcp ?? {})
           n += 1
           continue

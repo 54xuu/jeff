@@ -64,6 +64,7 @@ export const IPC = {
   groupThreadPreview: 'group:threadPreview',
   settingsGet: 'settings:get',
   settingsSet: 'settings:set',
+  notifyDesktop: 'notify:desktop',
   mcpList: 'mcp:list',
   mcpSave: 'mcp:save',
   mcpProbe: 'mcp:probe',
@@ -203,6 +204,12 @@ export interface AppSettings {
   theme: 'system' | 'light' | 'dark'
   /** 主题包（视觉皮肤）；当前仅 weui，为后续扩展预留 */
   themePack: 'weui'
+  /** AI 回复完成时弹系统桌面通知（文本提醒） */
+  notifyDesktop: boolean
+  /** AI 回复完成时播放提示音（声音提醒） */
+  notifySound: boolean
+  /** 仅当 Jeff 不在前台时才弹桌面通知（前台查看别的会话时只响提示音，不打扰视线） */
+  notifyOnlyBackground: boolean
   /** 会话无覆盖且 agent 无绑定时的兜底模型（动态计算 = 第一个启用提供商的第一个模型） */
   defaultModel: { providerID: string; modelID: string } | null
   webdav?: {
@@ -393,7 +400,8 @@ export type InvokeMap = {
   [IPC.groupThreadDelete]: { projectId: string; threadId: string }
   [IPC.groupThreadPreview]: { projectId: string; threadId: string }
   [IPC.settingsGet]: void
-  [IPC.settingsSet]: { theme?: AppSettings['theme']; themePack?: AppSettings['themePack'] }
+  [IPC.settingsSet]: Partial<Pick<AppSettings, 'theme' | 'themePack' | 'notifyDesktop' | 'notifySound' | 'notifyOnlyBackground'>>
+  [IPC.notifyDesktop]: { title: string; body?: string; kind?: 'agent' | 'group'; id?: string }
   [IPC.mcpList]: void
   [IPC.mcpSave]: { servers: Record<string, { type: 'local' | 'remote'; enabled: boolean; command?: string[]; environment?: Record<string, string>; url?: string; headers?: Record<string, string> }> }
   [IPC.mcpProbe]: void

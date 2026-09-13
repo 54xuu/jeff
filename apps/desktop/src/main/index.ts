@@ -1,9 +1,13 @@
-import { app, BrowserWindow, shell, Tray, Menu, dialog, nativeImage } from 'electron'
+import { app, BrowserWindow, shell, Tray, Menu, dialog, nativeImage, Notification } from 'electron'
 import type { MenuItemConstructorOptions } from 'electron'
 import fs from 'node:fs'
 import path from 'node:path'
 import { JeffCore } from '@jeff/core'
 import { registerIpc } from './ipc.js'
+
+// Windows 下 Toast 通知必须带 AppUserModelID，否则静默丢弃；取值需与 electron-builder 的 appId、
+// 安装器写入的开始菜单快捷方式 AUMID 一致。必须在 app ready 之前设置（越早越稳）。
+if (process.platform === 'win32') app.setAppUserModelId('com.jeffxuu.jeff')
 
 let win: BrowserWindow | null = null
 let core: JeffCore | null = null
@@ -42,10 +46,7 @@ if (!gotLock) {
 } else {
   if (process.env.JEFF_E2E !== '1' && process.env.JEFF_SMOKE !== '1') {
     app.on('second-instance', () => {
-      if (win) {
-        if (win.isMinimized()) win.restore()
-        win.focus()
-      }
+      if (win) focusMainWindow()
     })
   }
 
@@ -211,12 +212,8 @@ function setupTray(): void {
         {
           label: '显示主窗口',
           click: () => {
-            if (win) {
-              win.show()
-              win.focus()
-            } else {
-              createWindow()
-            }
+            if (win) focusMainWindow()
+            else createWindow()
           },
         },
         {
@@ -234,10 +231,7 @@ function setupTray(): void {
       ]),
     )
     tray.on('double-click', () => {
-      if (win) {
-        win.show()
-        win.focus()
-      }
+      if (win) focusMainWindow()
     })
   } catch (err) {
     console.error('[jeff] 托盘创建失败:', err)
@@ -247,6 +241,42 @@ function setupTray(): void {
 function broadcast(what: string, payload?: unknown): void {
   if (!win || win.isDestroyed()) return
   win.webContents.send(`jeff:push`, { what, payload })
+}
+
+/** 唤起主窗口（托盘/通知点击/二次启动共用）：还原最小化、取消隐藏、抢焦点 */
+function focusMainWindow(): void {
+  if (!win || win.isDestroyed()) return
+  if (win.isMinimized()) win.restore()
+  if (!win.isVisible()) win.show()
+  win.focus()
+}
+
+/**
+ * 系统桌面文本通知（AI 回复完成时由渲染层判定后调用）。
+ *
+ * silent 恒为 true：提示音由应用自己播放（Linux 通知无默认音效、Windows 通知音受系统免打扰影响，
+ * 交给系统会出现「有的平台响有的不响」），关掉应用提示音即彻底安静，行为可预期。
+ * 点击通知 → 唤起窗口并跳转到对应会话。
+ */
+export function showDesktopNotification(p: { title: string; body?: string; kind?: 'agent' | 'group'; id?: string }): { ok: boolean; error?: string } {
+  if (!Notification.isSupported()) return { ok: false, error: '当前系统不支持桌面通知' }
+  try {
+    const icon = iconPath()
+    const n = new Notification({
+      title: p.title,
+      body: (p.body || '').slice(0, 200),
+      silent: true,
+      ...(icon ? { icon } : {}),
+    })
+    n.on('click', () => {
+      focusMainWindow()
+      if (p.kind && p.id) broadcast('navigate-chat', { kind: p.kind, id: p.id })
+    })
+    n.show()
+    return { ok: true }
+  } catch (err) {
+    return { ok: false, error: String((err as Error)?.message || err).slice(0, 200) }
+  }
 }
 
 function createWindow(): void {

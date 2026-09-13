@@ -16,7 +16,7 @@ import type {
 import { IPC, XIAOJIE_ID, agentRepo, projectRepo, projectAgentRepo, taskRepo, taskCardMessage, APP_VERSION, PrivateChatStoppedError, type ThinkingTier } from '@jeff/core'
 import type { MemoryScopeInfo } from '@jeff/core'
 import type { JeffCore, TaskRow } from '@jeff/core'
-import { getMainWindow, getSidecarLogs } from './index.js'
+import { getMainWindow, getSidecarLogs, showDesktopNotification } from './index.js'
 
 type Handler = (payload: unknown) => Promise<unknown>
 
@@ -214,12 +214,16 @@ export function registerIpc(core: JeffCore): void {
       return {
         theme: kv.getJSON<AppSettings['theme']>('settings:theme', 'system'),
         themePack: kv.getJSON<AppSettings['themePack']>('settings:themePack', 'weui'),
+        // 提醒类开关默认全开：新装用户开箱即有提醒
+        notifyDesktop: kv.getJSON<boolean>('settings:notifyDesktop', true),
+        notifySound: kv.getJSON<boolean>('settings:notifySound', true),
+        notifyOnlyBackground: kv.getJSON<boolean>('settings:notifyOnlyBackground', true),
         defaultModel: core.defaultModel(),
         webdav: kv.getJSON<AppSettings['webdav']>('settings:webdav', null) ?? undefined,
       }
     },
     [IPC.settingsSet]: async (p) => {
-      const { theme, themePack } = p as { theme?: AppSettings['theme']; themePack?: AppSettings['themePack'] }
+      const { theme, themePack, notifyDesktop, notifySound, notifyOnlyBackground } = p as Partial<AppSettings>
       let changed = false
       if (theme) {
         core.kv().setJSON('settings:theme', theme)
@@ -230,8 +234,25 @@ export function registerIpc(core: JeffCore): void {
         core.kv().setJSON('settings:themePack', themePack)
         changed = true
       }
+      // 提醒开关是布尔值，用 typeof 判断而不是真值判断：关掉（false）也必须落库
+      if (typeof notifyDesktop === 'boolean') {
+        core.kv().setJSON('settings:notifyDesktop', notifyDesktop)
+        changed = true
+      }
+      if (typeof notifySound === 'boolean') {
+        core.kv().setJSON('settings:notifySound', notifySound)
+        changed = true
+      }
+      if (typeof notifyOnlyBackground === 'boolean') {
+        core.kv().setJSON('settings:notifyOnlyBackground', notifyOnlyBackground)
+        changed = true
+      }
       if (changed) core.bus.emit('data-changed', 'settings')
       return { ok: true }
+    },
+    [IPC.notifyDesktop]: async (p) => {
+      const d = p as { title: string; body?: string; kind?: 'agent' | 'group'; id?: string }
+      return showDesktopNotification(d)
     },
 
     // ---------- WebDAV 同步 ----------

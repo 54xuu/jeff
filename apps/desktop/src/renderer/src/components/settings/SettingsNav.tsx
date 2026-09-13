@@ -54,6 +54,17 @@ const SECTIONS: Array<{ id: SettingsSection; label: string; desc: string; icon: 
     ),
   },
   {
+    id: 'notification',
+    label: '通知与提醒',
+    desc: '桌面通知 / 提示音',
+    icon: (
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M18 9a6 6 0 1 0-12 0c0 5-2 6-2 6h16s-2-1-2-6" />
+        <path d="M10.5 20a2 2 0 0 0 3 0" />
+      </svg>
+    ),
+  },
+  {
     id: 'appearance',
     label: '外观',
     desc: '亮色 / 深夜 / 跟随系统',

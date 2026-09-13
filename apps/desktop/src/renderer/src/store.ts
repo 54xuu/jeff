@@ -1,11 +1,12 @@
 import { create } from 'zustand'
 import { api } from './api'
+import { playNotifySound, showDesktopNotify, summarize, windowFocused } from './notify'
 import type { AgentInfo, ChatMsg, AppInfo, AppSettings, ProviderCatalogItem, ProjectInfo, ProjectMember, TaskInfo, GroupMessage, ChatImage } from '@jeff/core'
 import { IPC } from '@jeff/core'
 
 export type Tab = 'chats' | 'contacts' | 'settings'
 export type ActiveChat = { kind: 'agent'; id: string } | { kind: 'group'; id: string } | null
-export type SettingsSection = 'providers' | 'mcp' | 'memory' | 'engine' | 'sync' | 'appearance' | 'about'
+export type SettingsSection = 'providers' | 'mcp' | 'memory' | 'engine' | 'sync' | 'notification' | 'appearance' | 'about'
 
 /** 进行中的流式回复（key: agent:<id> / group:<id>） */
 export interface StreamState {
@@ -124,6 +125,63 @@ function mergeLocalMessages(local: ChatMsg[], server: ChatMsg[]): ChatMsg[] {
   return out
 }
 
+/** 取最后一条助手消息（通知摘要用） */
+function lastAssistantOf<T extends { role: string }>(list?: T[]): T | null {
+  if (!list) return null
+  for (let i = list.length - 1; i >= 0; i--) {
+    if (list[i].role === 'assistant') return list[i]
+  }
+  return null
+}
+
+/**
+ * AI 回复完成 → 按设置响铃 / 弹系统桌面通知。
+ *
+ * 判定规则对齐 IM 桌面端的惯例：
+ *  - 用户正盯着这个会话（窗口在前台 + 停在聊天页 + 选中的就是它）→ 什么都不做，别打扰视线；
+ *  - 其余情况 → 响提示音；桌面通知再看窗口是否在前台（设置里可放开「仅后台提醒」）。
+ *
+ * 触发点是「一轮发送真正结束」（sendAgent/sendGroup 的 await 返回），而不是流式 done 事件：
+ * 群聊一轮可能串行跑多个 agent，流式 done 每跳都会来一次，按它提醒会把用户轰炸 3~5 次。
+ */
+function notifyTurnDone(key: string, kind: 'agent' | 'group', threadId?: string): void {
+  // 提醒只是收尾的副作用，绝不能让它把"发送成功"变成"发送失败"（调用点在 send 的 try 里）
+  try {
+    notifyTurnDoneInner(key, kind, threadId)
+  } catch {
+    /* 忽略：提醒失败不影响聊天 */
+  }
+}
+
+function notifyTurnDoneInner(key: string, kind: 'agent' | 'group', threadId?: string): void {
+  const s = useStore.getState()
+  const st = s.settings
+  if (st?.notifySound === false && st?.notifyDesktop === false) return
+  const id = kind === 'agent' ? key.slice('agent:'.length) : key
+  const active = s.active
+  // 群聊还要对上会话（thread）：用户切到了同一个群的下一个话题时，旧话题的回复也算"没在看"
+  const onThisChat =
+    s.tab === 'chats' && active?.kind === kind && active.id === id && (kind !== 'group' || !threadId || s.groupThreads[id] === threadId)
+  if (onThisChat && windowFocused()) return
+
+  const focused = windowFocused()
+  if (st?.notifySound !== false) playNotifySound()
+
+  const wantDesktop = st?.notifyDesktop !== false && (!focused || st?.notifyOnlyBackground === false)
+  if (!wantDesktop) return
+
+  if (kind === 'agent') {
+    const agent = s.agents.find((a) => a.id === id)
+    const last = lastAssistantOf(s.messages[key])
+    showDesktopNotify({ title: agent?.name || '新回复', body: (last && summarize(last.text)) || '有新回复', kind, id })
+  } else {
+    const project = s.projects.find((p) => p.id === id)
+    const last = lastAssistantOf(s.groupMessages[id])
+    const body = last ? `${last.sender_name ? `${last.sender_name}：` : ''}${summarize(last.text) || '有新回复'}` : '群里有新回复'
+    showDesktopNotify({ title: project?.title || '项目群', body, kind, id })
+  }
+}
+
 export const useStore = create<JeffState>((set, get) => ({
   tab: 'chats',
   active: null,
@@ -190,6 +248,9 @@ export const useStore = create<JeffState>((set, get) => ({
           const base = r.cancelled && !cur.some((m) => m.id === localUser.id) ? [...cur, localUser] : cur
           return { messages: { ...s.messages, [key]: [...base, { id: `stop-${now}`, role: 'system', text: '⏹️ 已停止生成', time: Date.now() }] } }
         })
+      } else {
+        // 正常回复完成：此刻历史已重拉，摘要取的就是刚落库的正文
+        notifyTurnDone(key, 'agent')
       }
     } catch (err) {
       // 真失败：保留本地用户消息与失败气泡（重拉历史会把刚插入的提示瞬间冲掉，用户再也看不到失败原因）
@@ -206,6 +267,8 @@ export const useStore = create<JeffState>((set, get) => ({
 
   sendGroup: async (projectId, text, images) => {
     const key = projectId
+    // 先记下这轮落在哪个话题：用户中途切了话题，回复就不算"正在看的会话"
+    const threadId = get().groupThreads[projectId]
     const now = Date.now()
     set((s) => ({ sending: { ...s.sending, [`group:${key}`]: true } }))
     set((s) => ({
@@ -221,6 +284,8 @@ export const useStore = create<JeffState>((set, get) => ({
       await api.invoke(IPC.groupSend, { projectId, text, ...(images && images.length ? { images } : {}) })
       await get().loadGroupHistory(key)
       await get().loadTasks(key)
+      // 整条协作流水线跑完（await 返回）才提醒一次，中间每一跳的流式 done 不响
+      notifyTurnDone(key, 'group', threadId)
     } catch (err) {
       // 同私聊：失败时保留本地气泡与失败原因，不用历史刷新覆盖
       set((s) => ({
@@ -329,6 +394,10 @@ export const useStore = create<JeffState>((set, get) => ({
           set({ tab: 'chats', active: { kind: 'agent', id: xiaojie.id } })
         }
       }
+    } else if (what === 'navigate-chat') {
+      // 点击系统通知 → 主进程唤起窗口并指路，这里切到对应会话（ChatWindow 挂载时会自己拉历史）
+      const { kind, id } = (payload || {}) as { kind?: 'agent' | 'group'; id?: string }
+      if ((kind === 'agent' || kind === 'group') && id) set({ tab: 'chats', active: { kind, id } })
     } else if (what === 'chat-updated') {
       const { agentId } = (payload || {}) as { agentId?: string; sessionId?: string }
       const key = `agent:${agentId}`

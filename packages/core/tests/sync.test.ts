@@ -59,6 +59,9 @@ function seed(side: Side): void {
   kvRepo(side.db).setJSON('settings:mcp', {
     demo: { type: 'remote', enabled: true, url: 'https://mcp.example.com' },
   })
+  // 提醒开关随 settings 包同步（notifySound=false 是关键用例：关掉的「假值」不能被当成「没配」丢掉）
+  kvRepo(side.db).setJSON('settings:notifySound', false)
+  kvRepo(side.db).setJSON('settings:notifyDesktop', true)
   fs.writeFileSync(side.paths.agentsMdUser, '# 用户级 AGENTS\n用简体中文', 'utf8')
   fs.writeFileSync(path.join(side.paths.agentsMdDir, `${p.id}.md`), '# 项目 AGENTS\n用 vite', 'utf8')
 }
@@ -103,6 +106,8 @@ describe('SyncEngine（实体级双向合并）', () => {
     expect(kvRepo(B.db).getJSON<Record<string, unknown>>('settings:mcp', {})).toMatchObject({
       demo: { type: 'remote', url: 'https://mcp.example.com' },
     })
+    expect(kvRepo(B.db).getJSON<boolean>('settings:notifySound', true)).toBe(false)
+    expect(kvRepo(B.db).getJSON<boolean>('settings:notifyDesktop', true)).toBe(true)
     expect(fs.readFileSync(B.paths.agentsMdUser, 'utf8')).toContain('用户级 AGENTS')
     expect(fs.readFileSync(path.join(B.paths.agentsMdDir, `${projects[0].id}.md`), 'utf8')).toContain('用 vite')
     fs.rmSync(A.home, { recursive: true, force: true })
