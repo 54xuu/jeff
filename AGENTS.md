@@ -99,9 +99,14 @@ ls apps/desktop/release/win-unpacked/resources/oc-bin/windows-x64/opencode.exe
 npm test                    # @jeff/core 单测（含版本一致性校验，bump 后跑可防漂移）
 npm run typecheck           # core/desktop 包级 tsc；根 tsconfig 有 3 个存量 e2e helper 报错，改动前就在，不算新增
 cd apps/desktop && npm run test:e2e   # mock UI E2E（自带 build）
+# 新增功能块的封闭 UI 测试（无需模型）：分组 / 定时任务 / 插件 / `/` 指令 / 内置浏览器
+cd apps/desktop && npx playwright test -c e2e/playwright.config.ts --project=v18
 ```
 
 三条全绿才能进入打包。单测红了先修，不许跳过或改断言凑绿。
+
+> `--project=v18`（`apps/desktop/e2e/v18.spec.ts`）是 v1.8.0 五大功能的封闭测试，用 `testAgent: true` 的 seed home；
+> **坑**：`seedJeffHomeSync` 会先 `rmSync(home)`，所以插件目录等预置文件必须在 `launchJeff` **之后**写。
 
 ### 第二层：涉及「聊天 / 流式 / 工具 / MCP / 权限 / 群协作」的改动必跑真实模型 E2E
 
@@ -120,9 +125,12 @@ deb：`dpkg -l jeff-desktop` 版本正确 + `/opt/Jeff` 与 `linux-unpacked` 的
 
 ## 产品心智模型
 
-- **智能体** = 聊天好友（通讯录可配；私聊顶栏「资料」可改）
+- **智能体** = 聊天好友（通讯录可配，按「分组分类」折叠归类；私聊顶栏「资料」可改）
 - **项目群** = 微信群（群资料抽屉可改群名/工作空间/群主/成员；任务看板同抽屉）
-- **小杰** = 内置管家，可用 `jeff_agent_*` / `jeff_project_*` 等工具代操配置
+- **小杰** = 内置管家，可用 `jeff_agent_*` / `jeff_project_*` / `jeff_cron_*` / `jeff_plugin_list` 等工具代操配置
+- **定时任务** = 到点自动向某个私聊/项目群发消息（如护士长 8 点在群里问病区动态、订阅 AI 资讯早报）。见 `docs/schedules.md`
+- **插件** = 「必须用但不通用」的能力打包（智慧病房等）：启用即自动接入其 MCP（免手工配 MCP）+ 提供 `/` 快捷指令 + 首页用内置浏览器打开。见 `docs/plugins.md`，样例在 `examples/plugins/`
+- **内置浏览器** = 界面右侧独立面板（webview），人与 agent 操作同一个页面；agent 用 `jeff_browser_*` 工具。见 `docs/built-in-browser.md`
 
 ## 开发常用命令
 

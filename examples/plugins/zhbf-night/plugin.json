@@ -1,0 +1,27 @@
+{
+  "id": "zhbf-night",
+  "name": "智慧病房",
+  "version": "1.0.0",
+  "icon": "🏥",
+  "description": "病区动态、异常检验、交班与呼叫联动（zhbf-night 的 MCP 能力包装：免手工配 MCP）",
+  "homepage": "http://localhost:5173/dashboard",
+  "commands": [
+    {
+      "name": "/zhbf",
+      "description": "查看病区整体动态",
+      "prompt": "请通过智慧病房插件查询当前病区概况（在院患者、异常检验、待办医嘱），用要点汇总，并指出需要立即关注的患者。"
+    },
+    {
+      "name": "/labs",
+      "description": "查近 3 天异常检验",
+      "prompt": "请通过智慧病房插件查询最近 3 天的异常检验结果（含 H/L 标记），按床号列出，并给出优先处理建议。"
+    }
+  ],
+  "mcp": {
+    "url": "http://127.0.0.1:8080/mcp",
+    "headers": {
+      "X-Agent-Token": "${SECRET}"
+    },
+    "tools": ["ward_overview", "ward_labs"]
+  }
+}
