@@ -6,6 +6,33 @@ import type { ToolBridge } from './bridge.js'
 /** 定时任务工具名（小杰代操用：「每天早上 8 点帮我问 AI 资讯助手」→ jeff_cron_create） */
 export const CRON_TOOL_NAMES = ['jeff_cron_create', 'jeff_cron_list', 'jeff_cron_update', 'jeff_cron_delete'] as const
 
+/**
+ * 空串/空白一律视为「没传」。
+ *
+ * 为什么必须有这层：真模型改任务时会把自己没打算改的字段补成空值（live12 在插件上实测过），
+ * 而 `'' !== undefined`，于是 `name:''` 清空任务名、`miss_policy:''` 把「错过跳过」改回「补跑」、
+ * `enabled:''` 被当成 false **静默停用**任务——用户看到的是「我只是让它改个时间，任务怎么停了」。
+ */
+function nonEmpty(v: unknown): string | undefined {
+  if (v == null) return undefined
+  if (typeof v === 'string') return v.trim() ? v : undefined
+  if (typeof v === 'number' || typeof v === 'boolean') return String(v)
+  return undefined
+}
+
+/** enabled 的三态归一：true/false（含 'true'/'false'/'1'/'0'/'启用'/'停用'）；空值/无法识别 = 没传 */
+function boolOrUndefined(v: unknown): boolean | undefined {
+  if (typeof v === 'boolean') return v
+  if (typeof v === 'number') return v === 1 ? true : v === 0 ? false : undefined
+  if (typeof v === 'string') {
+    const t = v.trim().toLowerCase()
+    if (!t) return undefined
+    if (['true', '1', 'yes', 'on', '启用', '开启'].includes(t)) return true
+    if (['false', '0', 'no', 'off', '停用', '关闭'].includes(t)) return false
+  }
+  return undefined
+}
+
 export type CronToolDeps = {
   db: DB
   /** 变更后通知 UI */
@@ -77,18 +104,27 @@ export function registerCronTools(reg: ToolBridge, deps: CronToolDeps): void {
     const cur = tasks.get(args.id)
     if (!cur) throw new Error(`定时任务不存在: ${args.id}`)
     const patch: Parameters<typeof tasks.update>[1] = {}
-    if (args.name !== undefined) patch.name = args.name
-    if (args.prompt !== undefined) patch.prompt = args.prompt
-    if (args.miss_policy !== undefined) patch.miss_policy = args.miss_policy === 'skip' ? 'skip' : 'catchup'
-    if (args.enabled !== undefined) patch.enabled = args.enabled ? 1 : 0
-    if (args.cron_expr !== undefined) {
-      if (!isValidCron(args.cron_expr)) throw new Error(`cron 表达式非法: ${args.cron_expr}`)
-      patch.cron_expr = args.cron_expr
-      patch.next_run_at = nextRunAt(args.cron_expr, Date.now())
+    // 只认「真的有值」的字段：空串/空数组一律跳过（否则模型一次补默认值就会抹掉已有配置）
+    const name = nonEmpty(args.name)
+    if (name !== undefined) patch.name = name
+    const prompt = nonEmpty(args.prompt)
+    if (prompt !== undefined) patch.prompt = prompt
+    const miss = nonEmpty(args.miss_policy)
+    if (miss !== undefined) patch.miss_policy = miss === 'skip' ? 'skip' : 'catchup'
+    const enabled = boolOrUndefined(args.enabled)
+    if (enabled !== undefined) patch.enabled = enabled ? 1 : 0
+    const expr = nonEmpty(args.cron_expr)
+    if (expr !== undefined) {
+      if (!isValidCron(expr)) throw new Error(`cron 表达式非法: ${expr}`)
+      patch.cron_expr = expr
+      patch.next_run_at = nextRunAt(expr, Date.now())
+    }
+    if (Object.keys(patch).length === 0) {
+      throw new Error('没有要修改的字段：name / cron_expr / prompt / miss_policy / enabled 至少要传一个有值的（空串会被当成没传）')
     }
     const row = tasks.update(args.id, patch)
     deps.onChanged()
-    return { id: row!.id, name: row!.name, enabled: !!row!.enabled, next_run_at: row!.next_run_at }
+    return { id: row!.id, name: row!.name, enabled: !!row!.enabled, next_run_at: row!.next_run_at, changed: Object.keys(patch) }
   })
 
   reg.register(T_DELETE, async (args: { id?: string }) => {

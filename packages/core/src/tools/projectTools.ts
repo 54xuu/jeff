@@ -1,12 +1,28 @@
 import type { ToolBridge } from './bridge.js'
 import type { DB } from '../db/db.js'
-import { agentRepo, projectAgentRepo, projectRepo, taskRepo } from '../db/repos.js'
+import { PROJECT_STATUSES, TASK_PRIORITIES, TASK_STATUSES, agentRepo, projectAgentRepo, projectRepo, taskRepo } from '../db/repos.js'
 
 export interface ProjectToolDeps {
   db: DB
   /** 任务/项目变化后回调：写群系统消息（任务卡片）+ 通知 UI */
   onTaskChanged: (projectId: string, taskId?: string) => void
   onProjectChanged: () => void
+}
+
+/**
+ * 「没打算改的字段」的识别：模型改一处时会把自己没打算改的字段补成空串（v1.8.2 插件、v1.8.3 定时任务
+ * 都实测过），而空串 !== undefined，于是 `title:''` 会把群名/任务标题清空。统一按「空串 = 未提供」处理。
+ */
+function nonBlank(v: unknown): string | undefined {
+  if (v == null) return undefined
+  const s = String(v).trim()
+  return s === '' ? undefined : s
+}
+
+function onlyProvided(patch: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  for (const [k, v] of Object.entries(patch)) if (v !== undefined) out[k] = v
+  return out
 }
 
 /** 注册项目群与任务工具（小杰与 leader 可用） */
@@ -49,18 +65,24 @@ export function registerProjectTools(reg: ToolBridge, deps: ProjectToolDeps): vo
 
   reg.register('jeff_project_update', async (args: { id?: string; title?: string; description?: string; icon?: string; status?: string; leader_agent_id?: string; workspace_dir?: string }) => {
     if (!args.id) throw new Error('id 不能为空')
-    const row = projects.update(args.id, {
-      ...(args.title !== undefined ? { title: args.title } : {}),
-      ...(args.description !== undefined ? { description: args.description } : {}),
-      ...(args.icon !== undefined ? { icon: args.icon } : {}),
-      ...(args.status !== undefined ? { status: args.status } : {}),
-      ...(args.leader_agent_id !== undefined ? { leader_agent_id: args.leader_agent_id } : {}),
+    const patch = onlyProvided({
+      title: nonBlank(args.title),
+      description: nonBlank(args.description),
+      icon: nonBlank(args.icon),
+      status: nonBlank(args.status),
+      leader_agent_id: nonBlank(args.leader_agent_id),
+      // 例外：工作空间目录明确支持「传空串 = 清除为默认工作区」（工具说明里写明了）
       ...(args.workspace_dir !== undefined ? { workspace_dir: String(args.workspace_dir).trim() } : {}),
     })
-    if (!row) throw new Error(`项目不存在: ${args.id}`)
-    if (args.leader_agent_id) members.add(args.id, args.leader_agent_id, 'leader')
+    if (Object.keys(patch).length === 0) throw new Error('没有要修改的字段（title / description / icon / status / leader_agent_id / workspace_dir 至少要传一个有值的）')
+    if (patch.status && !(PROJECT_STATUSES as readonly string[]).includes(String(patch.status))) {
+      throw new Error(`status 非法：${String(patch.status)}（可用：${PROJECT_STATUSES.join('/')}）`)
+    }
+    const row = projects.update(args.id, patch)
+    if (!row) throw new Error(`项目不存在或更新失败: ${args.id}`)
+    if (patch.leader_agent_id) members.add(args.id, String(patch.leader_agent_id), 'leader')
     deps.onProjectChanged()
-    return { id: row.id, title: row.title, workspace_dir: row.workspace_dir || '' }
+    return { id: row.id, title: row.title, workspace_dir: row.workspace_dir || '', changed: Object.keys(patch) }
   })
 
   reg.register('jeff_project_list', async () => {
@@ -146,17 +168,29 @@ export function registerProjectTools(reg: ToolBridge, deps: ProjectToolDeps): vo
     if (args.assignee_agent_id !== undefined && args.assignee_agent_id !== '' && !agents.get(args.assignee_agent_id)) {
       throw new Error(`指派的智能体不存在: ${args.assignee_agent_id}`)
     }
-    const row = tasks.update(args.id, {
-      ...(args.title !== undefined ? { title: args.title } : {}),
-      ...(args.description !== undefined ? { description: args.description } : {}),
-      ...(args.status !== undefined ? { status: args.status } : {}),
-      ...(args.priority !== undefined ? { priority: args.priority } : {}),
+    const patch = onlyProvided({
+      title: nonBlank(args.title),
+      description: nonBlank(args.description),
+      status: nonBlank(args.status),
+      priority: nonBlank(args.priority),
+      // 例外：指派明确支持「传空串 = 取消指派」（工具说明里写明了）
       ...(args.assignee_agent_id !== undefined
         ? { assignee_type: args.assignee_agent_id ? 'agent' : 'none', assignee_id: args.assignee_agent_id }
         : {}),
     })
+    if (Object.keys(patch).length === 0) throw new Error('没有要修改的字段（title / description / status / priority / assignee_agent_id 至少要传一个有值的）')
+    // 非法枚举值必须在调用 repo 前拦住：repo 对非法值返回 undefined，直接读 row.id 会抛
+    // 「Cannot read properties of undefined」这种内部错误，模型看不懂也不知道该怎么改
+    if (patch.status && !(TASK_STATUSES as readonly string[]).includes(String(patch.status))) {
+      throw new Error(`status 非法：${String(patch.status)}（可用：${TASK_STATUSES.join('/')}）`)
+    }
+    if (patch.priority && !(TASK_PRIORITIES as readonly string[]).includes(String(patch.priority))) {
+      throw new Error(`priority 非法：${String(patch.priority)}（可用：${TASK_PRIORITIES.join('/')}）`)
+    }
+    const row = tasks.update(args.id, patch)
+    if (!row) throw new Error(`任务更新失败（不存在或状态/优先级非法）: ${args.id}`)
     deps.onTaskChanged(cur.project_id, args.id)
-    return { id: row!.id, key: `JEF-${row!.number}`, status: row!.status }
+    return { id: row!.id, key: `JEF-${row!.number}`, status: row!.status, changed: Object.keys(patch) }
   })
 
   reg.register('jeff_task_list', async (args: { project_id?: string; status?: string }) => {

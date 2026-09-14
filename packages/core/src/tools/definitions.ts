@@ -22,11 +22,12 @@ export function allToolDefs(): ToolDef[] {
         model_provider: { type: 'string', description: '默认模型 provider id，可留空' },
         model_id: { type: 'string', description: '默认模型 id，可留空' },
         thinking: { type: 'string', description: "默认思考档位：空串=跟随模型；none/low/high/max", enum: ['', 'none', 'low', 'high', 'max'] },
+        category: { type: 'string', description: '分组分类（通讯录/聊天列表里折叠归类的组名，如「医疗场景」）。省略或空串 = 未分组' },
       },
     },
     {
       name: ADMIN_TOOL_NAMES[1], // jeff_agent_update
-      description: '修改智能体信息（名字/头像/简介/指令/默认模型/思考程度/归档）。内置管家小杰不可修改。',
+      description: '修改智能体信息（名字/头像/简介/指令/默认模型/思考程度/分组分类/归档）。内置管家小杰不可修改。没传或传空串的字段保持不变。',
       args: {
         id: { type: 'string', description: '智能体 id' },
         name: { type: 'string', description: '新名字（可选）' },
@@ -36,6 +37,7 @@ export function allToolDefs(): ToolDef[] {
         model_provider: { type: 'string', description: '模型 provider（可选）' },
         model_id: { type: 'string', description: '模型 id（可选）' },
         thinking: { type: 'string', description: "思考档位：空串=跟随模型；none/low/high/max", enum: ['', 'none', 'low', 'high', 'max'] },
+        category: { type: 'string', description: '分组分类（通讯录里折叠的组名，如「医疗场景」）' },
         archived: { type: 'boolean', description: '归档/取消归档（可选）' },
       },
     },
@@ -74,7 +76,7 @@ export function allToolDefs(): ToolDef[] {
     },
     {
       name: 'jeff_project_update',
-      description: '修改项目群（名称/简介/图标/状态/群主/工作空间目录）。',
+      description: '修改项目群（名称/简介/图标/状态/群主/工作空间目录）。没传或传空串的字段保持不变（工作空间目录例外：明确传空串 = 清除为默认工作区）。',
       args: {
         id: { type: 'string', description: '项目 id' },
         title: { type: 'string', description: '新群名（可选）' },
@@ -122,7 +124,7 @@ export function allToolDefs(): ToolDef[] {
     },
     {
       name: 'jeff_task_update',
-      description: '修改任务（标题/描述/状态/优先级/指派/排序）。',
+      description: '修改任务（标题/描述/状态/优先级/指派/排序）。没传或传空串的字段保持不变（指派例外：明确传空串 = 取消指派）。',
       args: {
         id: { type: 'string', description: '任务 id' },
         title: { type: 'string', description: '新标题（可选）' },
@@ -332,12 +334,35 @@ export function allToolDefs(): ToolDef[] {
     },
     {
       name: 'jeff_browser_type',
-      description: '在内置浏览器里向输入框键入文字（会先聚焦并用原生输入事件，兼容 React 等受控组件）。',
+      description:
+        '在内置浏览器里填写表单控件：输入框/文本域用原生 setter + input 事件写入（兼容 React 等受控组件）；' +
+        '<select> 下拉框按选项文字或 value 选中。',
       args: {
-        selector: { type: 'string', description: '输入框 CSS 选择器' },
-        text: { type: 'string', description: '要输入的文字' },
-        clear: { type: 'boolean', description: '是否先清空原有内容（默认 true）' },
+        selector: { type: 'string', description: '控件 CSS 选择器' },
+        text: { type: 'string', description: '要输入的文字（下拉框里写要选的选项文字或 value）' },
+        clear: { type: 'boolean', description: '是否先清空原有内容（默认 true；下拉框不适用）' },
         submit: { type: 'boolean', description: '输入后是否回车提交（默认 false）' },
+      },
+    },
+    {
+      name: 'jeff_browser_upload',
+      description:
+        '在内置浏览器里把本机文件放进页面的 <input type="file"> 输入框（等于用户点「选择文件」选了这个文件），' +
+        '之后点提交按钮就能真的把文件传给网站。注意：本工具只完成「选中文件」这一步。',
+      args: {
+        selector: { type: 'string', description: '文件输入框的 CSS 选择器，如 #up-file 或 input[type=file]' },
+        path: { type: 'string', description: '要上传的本机文件绝对路径（≤8MB）' },
+        name: { type: 'string', description: '页面上显示的文件名（可选，默认用原文件名）' },
+      },
+    },
+    {
+      name: 'jeff_browser_get_console',
+      description:
+        '读取内置浏览器当前页面的错误现场：控制台 error、未捕获异常、页面加载失败。' +
+        '页面「看着在但点不动 / 报错 / 白屏」而正文里看不出原因时，先调它拿报错原文。',
+      args: {
+        level: { type: 'string', description: '读取范围：error（默认，含未捕获异常与加载失败）/ warning / info / all' },
+        limit: { type: 'number', description: '最多返回多少条，默认 50' },
       },
     },
     {

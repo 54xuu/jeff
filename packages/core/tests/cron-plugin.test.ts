@@ -10,6 +10,7 @@ import { CronScheduler } from '../src/cron/scheduler.js'
 import { PluginManager } from '../src/plugins/manager.js'
 import { ToolBridge } from '../src/tools/bridge.js'
 import { PLUGIN_TOOL_NAMES, registerPluginTools } from '../src/tools/pluginTools.js'
+import { registerCronTools } from '../src/tools/cronTools.js'
 import { XIAOJIE_DISABLED_TOOLS, XIAOJIE_ONLY_TOOLS, renderAgentMd } from '../src/agents/registry.js'
 import type { CronTaskRow } from '../src/db/repos.js'
 
@@ -383,6 +384,68 @@ describe('PluginManager', () => {
     expect(after.enabled).toBe(true)
     expect(after.hasSecret).toBe(true)
     expect(after.name).toBe('改了名字')
+  })
+})
+
+describe('cron tools（小杰代操定时任务）', () => {
+  const tools = () => {
+    const bridge = new ToolBridge()
+    let changed = 0
+    registerCronTools(bridge, { db, onChanged: () => (changed += 1) })
+    const call = async (name: string, args: unknown) => {
+      const h = (bridge as unknown as { handlers: Map<string, (a: unknown) => Promise<unknown>> }).handlers.get(name)
+      if (!h) throw new Error(`未注册的工具：${name}`)
+      return h(args)
+    }
+    return { call, changed: () => changed }
+  }
+
+  it('create：合法参数落库，非法表达式/空 prompt 被拒', async () => {
+    const { call, changed } = tools()
+    const a = agentRepo(db).create({ name: '资讯助手' })
+    const created = (await call('jeff_cron_create', {
+      name: '科技早报',
+      target_type: 'agent',
+      target_id: a.id,
+      cron_expr: '30 9 * * *',
+      prompt: '请汇报一条科技动态',
+      miss_policy: 'skip',
+    })) as { id: string; schedule: string; next_run_at: number }
+    expect(created.schedule).toContain('09:30')
+    expect(created.next_run_at).toBeGreaterThan(Date.now())
+    const row = cronTaskRepo(db).get(created.id)!
+    expect(row).toMatchObject({ miss_policy: 'skip', enabled: 1, target_id: a.id })
+    await expect(call('jeff_cron_create', { name: 'x', target_type: 'agent', target_id: a.id, cron_expr: '99 9 * * *', prompt: 'p' })).rejects.toThrow(/cron 表达式非法/)
+    await expect(call('jeff_cron_create', { name: 'x', target_type: 'agent', target_id: a.id, cron_expr: '0 9 * * *', prompt: '  ' })).rejects.toThrow(/prompt 不能为空/)
+    await expect(call('jeff_cron_create', { name: 'x', target_type: 'agent', target_id: '不存在', cron_expr: '0 9 * * *', prompt: 'p' })).rejects.toThrow(/智能体不存在/)
+    expect(changed()).toBe(1)
+  })
+
+  it('update：空串/空值一律当作没传，不能停用任务、不能改错过策略、不能抹掉名字与提示词', async () => {
+    const id = seedAgentTask('0 8 * * *', { miss_policy: 'skip' })
+    const { call } = tools()
+    // 真模型「只改时间」时的典型形状：其余字段补空
+    await call('jeff_cron_update', { id, cron_expr: '0 10 * * *', name: '', prompt: '', miss_policy: '', enabled: '' })
+    const row = cronTaskRepo(db).get(id)!
+    expect(row.cron_expr).toBe('0 10 * * *')
+    expect(row.name).toBe('AI 资讯早报') // 没被空串抹掉
+    expect(row.prompt).toBe('请报最新 AI 资讯')
+    expect(row.miss_policy).toBe('skip') // 没被空串改回 catchup
+    expect(row.enabled).toBe(1) // 没被空串静默停用
+  })
+
+  it('update：enabled 接受布尔与常见字符串写法；全空参数直接报错而不是静默什么都没做', async () => {
+    const id = seedAgentTask()
+    const { call } = tools()
+    const off = (await call('jeff_cron_update', { id, enabled: 'false' })) as { enabled: boolean; changed: string[] }
+    expect(off.enabled).toBe(false)
+    expect(off.changed).toEqual(['enabled'])
+    expect(cronTaskRepo(db).get(id)!.enabled).toBe(0)
+    const on = (await call('jeff_cron_update', { id, enabled: true })) as { enabled: boolean }
+    expect(on.enabled).toBe(true)
+    await expect(call('jeff_cron_update', { id, name: '', prompt: '' })).rejects.toThrow(/没有要修改的字段/)
+    // 不存在的 id 不能悄悄造出新任务
+    await expect(call('jeff_cron_update', { id: 'cron_nope', name: 'x' })).rejects.toThrow(/定时任务不存在/)
   })
 })
 

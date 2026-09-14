@@ -18,6 +18,23 @@ export type AdminDeps = {
   onChanged: () => void
 }
 
+/**
+ * 「没打算改的字段」的识别：模型改一处时会把自己没打算改的字段补成空串（v1.8.2 在插件、v1.8.3 在定时任务
+ * 上都实测过），而空串 !== undefined，于是 `name:''` 会把智能体名字清空。统一按「空串 = 未提供」处理。
+ */
+function nonBlank(v: unknown): string | undefined {
+  if (v == null) return undefined
+  const s = String(v).trim()
+  return s === '' ? undefined : s
+}
+
+/** 取「明确传了值」的字段（空串视为没传）；patch 里只放真的要改的键 */
+function onlyProvided(patch: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  for (const [k, v] of Object.entries(patch)) if (v !== undefined) out[k] = v
+  return out
+}
+
 /** 在工具桥上注册 admin 工具实现（bridge 名 = opencode 工具名） */
 export function registerAdminTools(reg: ToolBridge, deps: AdminDeps): void {
   const agents = agentRepo(deps.db)
@@ -44,20 +61,22 @@ export function registerAdminTools(reg: ToolBridge, deps: AdminDeps): void {
   reg.register(T_UPDATE, async (args: { id?: string; name?: string; description?: string; instructions?: string; avatar?: string; model_provider?: string; model_id?: string; thinking?: string; category?: string; archived?: boolean }) => {
     if (!args.id) throw new Error('id 不能为空')
     if (args.id === XIAOJIE_ID) throw new Error('小杰是内置管家，不可编辑')
-    const row = agents.update(args.id, {
-      ...(args.name !== undefined ? { name: args.name } : {}),
-      ...(args.description !== undefined ? { description: args.description } : {}),
-      ...(args.instructions !== undefined ? { instructions: args.instructions } : {}),
-      ...(args.avatar !== undefined ? { avatar: args.avatar } : {}),
-      ...(args.model_provider !== undefined ? { model_provider: args.model_provider } : {}),
-      ...(args.model_id !== undefined ? { model_id: args.model_id } : {}),
-      ...(args.thinking !== undefined ? { thinking: normalizeThinking(args.thinking) } : {}),
-      ...(args.category !== undefined ? { category: args.category } : {}),
+    const patch = onlyProvided({
+      name: nonBlank(args.name),
+      description: nonBlank(args.description),
+      instructions: nonBlank(args.instructions),
+      avatar: nonBlank(args.avatar),
+      model_provider: nonBlank(args.model_provider),
+      model_id: nonBlank(args.model_id),
+      category: nonBlank(args.category),
+      ...(nonBlank(args.thinking) !== undefined ? { thinking: normalizeThinking(args.thinking) } : {}),
       ...(args.archived !== undefined ? { archived: args.archived ? 1 : 0 } : {}),
     })
+    if (Object.keys(patch).length === 0) throw new Error('没有要修改的字段（name / avatar / description / instructions / model_* / thinking / category / archived 至少要传一个有值的）')
+    const row = agents.update(args.id, patch)
     if (!row) throw new Error(`智能体不存在: ${args.id}`)
     deps.onChanged()
-    return { id: row.id, name: row.name }
+    return { id: row.id, name: row.name, changed: Object.keys(patch) }
   })
 
   reg.register(T_DELETE, async (args: { id?: string }) => {
