@@ -24,14 +24,33 @@
 
 | 工具 | 作用 |
 |------|------|
-| `jeff_browser_navigate` | 打开网址并等待加载完成 |
+| `jeff_browser_navigate` | 打开网址并等待加载完成，返回真实地址与标题（**加载失败会报错**，不会假报成功） |
 | `jeff_browser_get_content` | 读取页面标题/地址/可见文本/**可交互元素清单**（找按钮、输入框时先调它） |
 | `jeff_browser_click` | 点击元素：优先 CSS 选择器，也可按可见文字匹配 |
-| `jeff_browser_type` | 向输入框键入文字（用原生 setter + input/change 事件，兼容 React 等受控组件），可选回车提交 |
+| `jeff_browser_type` | 向输入框键入文字（用原生 setter + input/change 事件，兼容 React 等受控组件），可选回车提交；`<select>` 下拉框按 value 或可见文字选项 |
+| `jeff_browser_upload` | 把**本机文件**放进页面的 `<input type=file>`（内容由主进程读盘后以 base64 下发；只负责「选中」，提交还要再点提交按钮） |
+| `jeff_browser_get_console` | 读当前页面采集到的错误：控制台 `console.error/warn`、未捕获异常、主文档加载失败、**子资源加载失败**（图片/脚本/接口 404、域名解析失败）；可按级别过滤 |
 | `jeff_browser_screenshot` | 截图并把 PNG 存到 `~/.jeff/workspace/browser-shots/`，返回文件路径 |
 
 关于截图：结果是一个**文件路径**而不是内联图片。支持视觉的模型可以直接读取该文件看图；
 不支持看图的模型请改用 `jeff_browser_get_content` 读页面文本（工具说明里也会这样提示）。
+
+关于错误采集：面板工具栏的红色角标与 `jeff_browser_get_console` 读的是**同一份缓冲**（上限 200 条），
+导航开始时会清空（上一页的错误不记到新页面头上）。控制台条目分四级：`error`（含未捕获异常）、
+`warning`、`info`、`load`（加载类失败）。两条采集来源：
+
+- 渲染层 webview 的 `console-message` 事件（Console API 调用与未捕获异常）；
+- **主进程**在该面板专属分区（`persist:jeff-browser`）上挂的 `webRequest`：子资源 404 / 网络失败
+  不会走 `console-message`，只能在主进程看到。应用自身的网络请求不在这个分区里，不受影响。
+
+## 表单类任务的标准打法（实测有效）
+
+1. `jeff_browser_get_content` 看有哪些元素（拿到选择器/文案）
+2. `jeff_browser_type` 填文本与下拉框，`jeff_browser_upload` 选文件
+3. `jeff_browser_click` 点「提交/下一步」
+4. `jeff_browser_get_console` 确认没有报错；必要时再 `get_content` 读提交结果
+
+三步向导这类多步表单**不需要**一次调完：每点一次「下一步」都重新 `get_content` 看新出现的元素即可。
 
 ## 几个实现取舍（排查问题前先读）
 
