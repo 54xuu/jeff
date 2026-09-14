@@ -824,6 +824,22 @@ export class JeffCore extends EventEmitter {
       .map((r) => ({ id: r.id, task_id: r.task_id, started_at: r.started_at, finished_at: r.finished_at, status: r.status, is_catchup: !!r.is_catchup, error: r.error }))
   }
 
+  /** 把定时任务定义备份到 WebDAV（设置 → 同步 的显式入口；平时也随实体同步自动进行） */
+  async backupCronTasksNow(): Promise<{ ok: boolean; count: number; error?: string }> {
+    return this.sync.backupCronTasks()
+  }
+
+  /** 从备份恢复定时任务定义（LWW，不删本机多出的任务；恢复后重算下次触发时间） */
+  async restoreCronTasks(): Promise<{ ok: boolean; applied: number; removed: number; error?: string }> {
+    const r = await this.sync.restoreCronTasks()
+    if (r.ok) this.bus.emit('cron-updated')
+    return r
+  }
+
+  lastCronBackup(): { ok: boolean; at: number; count: number; error?: string } | null {
+    return this.sync.lastCronBackup()
+  }
+
   /**
    * 真正执行一次定时任务（调度器回调）。
    *
@@ -889,9 +905,13 @@ export class JeffCore extends EventEmitter {
     return this.plugins.list()
   }
 
-  /** 把插件目录镜像到 WebDAV（通常随同步自动进行，此处供手动触发） */
+  /** 把插件目录镜像到 WebDAV（通常随同步自动进行，此处供「设置 → 同步」手动触发） */
   async backupPluginsNow(): Promise<SkillsBackupReport> {
     return this.sync.backupPlugins()
+  }
+
+  lastPluginsBackup(): (SkillsBackupReport & { fileCount?: number }) | null {
+    return this.sync.lastPluginsBackup()
   }
 
   /** 从 WebDAV 恢复插件目录（恢复前自动快照本地，恢复后重建 MCP 注入） */

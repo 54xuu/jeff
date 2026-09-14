@@ -109,6 +109,15 @@ test('v1.8.0：分组 / 定时任务 / 插件 / 斜杠指令 / 内置浏览器',
     await page.getByTestId('agent-group-toggle-医疗场景').click()
     await page.screenshot({ path: path.join(EVIDENCE, '01-agents-grouped.png'), fullPage: true })
 
+    // ---------- 1b. 聊天列表同样按分类显示（不只是通讯录） ----------
+    await page.getByTestId('nav-chats').click()
+    await expect(page.getByTestId('chat-agent-group-医疗场景')).toBeVisible({ timeout: 15_000 })
+    await page.getByTestId('chat-agent-group-医疗场景').click()
+    await expect(page.getByTestId('chat-agent-E2E探路者')).toBeHidden()
+    await page.getByTestId('chat-agent-group-医疗场景').click()
+    await expect(page.getByTestId('chat-agent-E2E探路者')).toBeVisible()
+    await page.screenshot({ path: path.join(EVIDENCE, '01b-chatlist-grouped.png'), fullPage: true })
+
     // ---------- 2. 定时任务：新建 → 落库 → 立即执行 ----------
     await page.getByTestId('nav-schedules').click()
     await expect(page.getByTestId('schedules-page')).toBeVisible()
@@ -172,6 +181,21 @@ test('v1.8.0：分组 / 定时任务 / 插件 / 斜杠指令 / 内置浏览器',
     const injected = JSON.parse(dbQuery<{ value: string }>("SELECT value FROM kv WHERE key = 'settings:mcp'")[0].value) as Record<string, { url?: string }>
     expect(injected['plugin-e2e-plugin'].url).toBe('http://127.0.0.1:9/mcp')
     await page.screenshot({ path: path.join(EVIDENCE, '04-plugins.png'), fullPage: true })
+
+    // ---------- 3b. 备份/恢复入口统一在「设置 → 同步」（功能页只放跳转） ----------
+    await page.getByTestId('plugin-goto-backup').click()
+    await expect(page.getByTestId('settings-nav-sync')).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByTestId('plugin-backup')).toBeVisible()
+    await expect(page.getByTestId('plugin-restore')).toBeVisible()
+    await expect(page.getByTestId('cron-backup')).toBeVisible()
+    await expect(page.getByTestId('cron-restore')).toBeVisible()
+    await expect(page.getByText('插件目录备份')).toBeVisible()
+    await expect(page.getByText('定时任务备份')).toBeVisible()
+    await page.screenshot({ path: path.join(EVIDENCE, '04b-settings-backups.png'), fullPage: true })
+    // 回插件页确认那边已经没有备份按钮了
+    await page.getByTestId('nav-plugins').click()
+    await expect(page.getByTestId('plugin-card-e2e-plugin')).toBeVisible()
+    await expect(page.getByTestId('plugins-page').getByTestId('plugin-backup')).toHaveCount(0)
 
     // ---------- 4. 斜杠指令：启用插件的 commands 进入 `/` 菜单并插入提示词 ----------
     await page.getByTestId('nav-chats').click()

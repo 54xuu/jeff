@@ -732,31 +732,7 @@ export class SyncEngine {
         if (id.startsWith('cron_')) {
           const d = rec.data as CronTaskRow | null
           if (!d) continue
-          const exists = cronTaskRepo(this.db).get(id)
-          if (!exists) {
-            this.db
-              .prepare(
-                `INSERT INTO cron_task (id, name, target_type, target_id, cron_expr, prompt, miss_policy, enabled, last_run_at, next_run_at, created_at, updated_at, deleted_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-              )
-              .run(id, d.name, d.target_type, d.target_id, d.cron_expr, d.prompt, d.miss_policy || 'catchup', d.enabled, null, null, d.created_at, rec.updatedAt, rec.deletedAt)
-            // next_run_at 不在设备间搬运：由本机调度器按 cron_expr 重新推算
-            try {
-              cronTaskRepo(this.db).setNextRun(id, nextRunAt(d.cron_expr, Date.now()))
-            } catch {
-              /* 表达式非法时留空，调度器启动时会再算并记日志 */
-            }
-          } else {
-            this.db
-              .prepare(
-                `UPDATE cron_task SET name=?, target_type=?, target_id=?, cron_expr=?, prompt=?, miss_policy=?, enabled=?, updated_at=?, deleted_at=? WHERE id=?`,
-              )
-              .run(d.name, d.target_type, d.target_id, d.cron_expr, d.prompt, d.miss_policy || 'catchup', d.enabled, rec.updatedAt, rec.deletedAt, id)
-            try {
-              cronTaskRepo(this.db).setNextRun(id, nextRunAt(d.cron_expr, Date.now()))
-            } catch {
-              /* 同上 */
-            }
-          }
+          this.applyCronTaskRow(id, d, rec.updatedAt, rec.deletedAt)
           n += 1
           continue
         }
@@ -843,6 +819,90 @@ export class SyncEngine {
     await client.putFileContents(`${base}/tombstones.json`, JSON.stringify(tomb, null, 2), { overwrite: true })
     await client.putFileContents(`${base}/manifest.json`, JSON.stringify({ updatedAt: Date.now() }), { overwrite: true })
     return uploaded
+  }
+
+
+  /**
+   * 写入/更新一条定时任务（同步合并与「从备份恢复定时任务」共用）。
+   * next_run_at 一律按本机当前时间重算：它跟机器时钟绑定，跨设备搬运只会带来错误排期。
+   */
+  private applyCronTaskRow(id: string, d: CronTaskRow, updatedAt: number, deletedAt: number | null): void {
+    const exists = cronTaskRepo(this.db).get(id)
+    if (!exists) {
+      this.db
+        .prepare(
+          `INSERT INTO cron_task (id, name, target_type, target_id, cron_expr, prompt, miss_policy, enabled, last_run_at, next_run_at, created_at, updated_at, deleted_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        )
+        .run(id, d.name, d.target_type, d.target_id, d.cron_expr, d.prompt, d.miss_policy || 'catchup', d.enabled, null, null, d.created_at, updatedAt, deletedAt)
+    } else {
+      this.db
+        .prepare(`UPDATE cron_task SET name=?, target_type=?, target_id=?, cron_expr=?, prompt=?, miss_policy=?, enabled=?, updated_at=?, deleted_at=? WHERE id=?`)
+        .run(d.name, d.target_type, d.target_id, d.cron_expr, d.prompt, d.miss_policy || 'catchup', d.enabled, updatedAt, deletedAt, id)
+    }
+    try {
+      cronTaskRepo(this.db).setNextRun(id, nextRunAt(d.cron_expr, Date.now()))
+    } catch {
+      /* 表达式非法时留空：调度器启动/下次 tick 时会再算并记日志 */
+    }
+  }
+
+  // ---------- 定时任务备份 / 恢复（设置 → 同步 里的显式入口） ----------
+
+  /** 把本机全部定时任务定义推到 <base>/cron_tasks.json（与实体同步同一份文件格式） */
+  async backupCronTasks(): Promise<{ ok: boolean; count: number; error?: string }> {
+    try {
+      const rows = cronTaskRepo(this.db)
+        .list(true)
+        .map((t) => ({ id: t.id, updatedAt: t.updated_at, deletedAt: t.deleted_at, data: t }))
+      await this.client().putFileContents(`${this.base()}/cron_tasks.json`, JSON.stringify(rows, null, 2), {
+        overwrite: true,
+        signal: AbortSignal.timeout(this.requestTimeoutMs()),
+      })
+      this.kvSetJSON('sync:cron:lastbackup', { ok: true, at: Date.now(), count: rows.length })
+      return { ok: true, count: rows.length }
+    } catch (err) {
+      const error = formatWebdavError(err)
+      this.kvSetJSON('sync:cron:lastbackup', { ok: false, at: Date.now(), count: 0, error })
+      return { ok: false, count: 0, error }
+    }
+  }
+
+  lastCronBackup(): { ok: boolean; at: number; count: number; error?: string } | null {
+    return this.kvGetJSON<{ ok: boolean; at: number; count: number; error?: string } | null>('sync:cron:lastbackup', null)
+  }
+
+  /**
+   * 从 <base>/cron_tasks.json 恢复定时任务（按 updatedAt 做 LWW，不删本机多出的任务）。
+   * 与整库同步的区别：只动定时任务，用户想单独回滚排期时不必碰其它实体。
+   */
+  async restoreCronTasks(): Promise<{ ok: boolean; applied: number; removed: number; error?: string }> {
+    try {
+      const rows = await this.getJsonArray('cron_tasks')
+      if (rows.length === 0) return { ok: false, applied: 0, removed: 0, error: '备份里没有定时任务（远端 cron_tasks.json 为空或不存在）' }
+      let applied = 0
+      let removed = 0
+      this.db.exec('BEGIN')
+      try {
+        for (const raw of rows) {
+          const d = raw.data as CronTaskRow | null
+          if (!d) continue
+          const local = cronTaskRepo(this.db).get(raw.id)
+          // 本地更新则不动（避免用备份覆盖掉刚改的排期）
+          if (local && local.updated_at > raw.updatedAt) continue
+          if (raw.deletedAt != null && !local) continue
+          this.applyCronTaskRow(raw.id, d, raw.updatedAt, raw.deletedAt)
+          if (raw.deletedAt != null) removed += 1
+          else applied += 1
+        }
+        this.db.exec('COMMIT')
+      } catch (err) {
+        this.db.exec('ROLLBACK')
+        throw err
+      }
+      return { ok: true, applied, removed }
+    } catch (err) {
+      return { ok: false, applied: 0, removed: 0, error: formatWebdavError(err) }
+    }
   }
 
   // ---------- 远端原语 ----------

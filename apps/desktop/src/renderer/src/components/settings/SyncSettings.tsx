@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api } from '../../api'
-import { IPC, type SkillsBackupReport, type SkillsRestoreStage, type SkillsRestoreApply } from '@jeff/core'
+import { IPC, type CronTaskInfo, type PluginInfo, type SkillsBackupReport, type SkillsRestoreStage, type SkillsRestoreApply } from '@jeff/core'
+import { Toast } from '../ui/Toast'
 
 interface WebdavCfg {
   url: string
@@ -139,7 +140,160 @@ export default function SyncSettings(): React.JSX.Element {
       )}
 
       <SkillsBackup />
+      <PluginsBackup />
+      <CronBackup />
     </div>
+  )
+}
+
+/**
+ * 插件目录备份（~/.jeff/plugins → WebDAV）。
+ * 入口统一放设置页：功能页只做功能本身，备份/恢复一律在「设置 → 同步」（见 AGENTS.md）。
+ */
+function PluginsBackup(): React.JSX.Element {
+  const [last, setLast] = useState<(SkillsBackupReport & { fileCount?: number }) | null>(null)
+  const [count, setCount] = useState<number | null>(null)
+  const [busy, setBusy] = useState('')
+  const [toast, setToast] = useState<{ kind: 'success' | 'error'; text: string } | null>(null)
+
+  useEffect(() => {
+    void api.invoke<SkillsBackupReport | null>(IPC.pluginBackupLast).then((r) => setLast(r ?? null)).catch(() => {})
+    void api.invoke<PluginInfo[]>(IPC.pluginsList).then((list) => setCount(list.length)).catch(() => {})
+  }, [])
+
+  const backupNow = async () => {
+    setBusy('backup')
+    try {
+      const r = await api.invoke<SkillsBackupReport>(IPC.pluginBackupNow)
+      setLast({ ...r })
+      setToast(
+        r.ok
+          ? { kind: 'success', text: `插件备份完成：共 ${r.fileCount ?? '?'} 个文件 · 上传 ${r.uploaded} · 远端删除 ${r.deleted} · 未变化 ${r.skipped}${r.elapsedMs != null ? ` · 耗时 ${(r.elapsedMs / 1000).toFixed(1)}s` : ''}` }
+          : { kind: 'error', text: `插件备份失败：${r.error ?? '未知错误'}` },
+      )
+    } finally {
+      setBusy('')
+    }
+  }
+
+  const restore = async () => {
+    if (
+      !confirm(
+        '恢复会把本地 ~/.jeff/plugins 整个目录替换为备份内容（插件定义与其中的静态文件；启用状态与密钥留在本机不动）。\n恢复前 Jeff 会先把本地插件目录快照到数据目录 backups/plugins-<时间戳>，可手工回退。\n\n确认恢复？',
+      )
+    )
+      return
+    setBusy('restore')
+    try {
+      const r = await api.invoke<SkillsRestoreApply>(IPC.pluginRestore)
+      if (r.ok) {
+        setToast({ kind: 'success', text: `已恢复 ${r.restored} 个插件文件，移除本地多出 ${r.removed} 个${r.snapshotDir ? `；恢复前快照：${r.snapshotDir}` : ''}` })
+        void api.invoke<PluginInfo[]>(IPC.pluginsList).then((list) => setCount(list.length)).catch(() => {})
+      } else {
+        setToast({ kind: 'error', text: `还原失败：${r.error}` })
+      }
+    } finally {
+      setBusy('')
+    }
+  }
+
+  return (
+    <>
+      <h2 className="settings-title" style={{ marginTop: 24 }}>
+        插件目录备份
+      </h2>
+      <p className="settings-tip">
+        把 <code>~/.jeff/plugins</code>（所有插件定义与静态文件）整目录镜像到 WebDAV 的 <code>plugins/</code> 目录，本地删除会同步删除（带熔断）。当前本机装了 <b>{count ?? '?'}</b> 个插件。
+        插件的<b>启用状态与密钥不进备份</b>（跟机器走、避免敏感值跨设备），恢复后需在本机重新启用与填密钥。
+      </p>
+      <div className="settings-actions" style={{ justifyContent: 'flex-start' }}>
+        <button className="btn primary" disabled={!!busy} data-testid="plugin-backup" onClick={() => void backupNow()}>
+          {busy === 'backup' ? '备份中…' : '立即备份插件'}
+        </button>
+        <button className="btn" disabled={!!busy} data-testid="plugin-restore" onClick={() => void restore()}>
+          {busy === 'restore' ? '恢复中…' : '从备份恢复…'}
+        </button>
+      </div>
+      {last && (
+        <div className="sync-report" style={{ marginTop: 6 }}>
+          <p className="settings-tip" style={{ marginBottom: 4 }}>
+            上次备份：{last.ok ? '✅' : '❌'} {new Date(last.at).toLocaleString()} · 共 {last.fileCount ?? '?'} 个文件 · 上传 {last.uploaded} · 远端删除 {last.deleted} · 未变化 {last.skipped}
+            {last.elapsedMs != null && ` · 耗时 ${(last.elapsedMs / 1000).toFixed(1)}s`}
+          </p>
+          {last.error && <pre className="settings-error sync-error-text">{last.error}</pre>}
+        </div>
+      )}
+      {toast && <Toast kind={toast.kind} message={toast.text} onClose={() => setToast(null)} />}
+    </>
+  )
+}
+
+/** 定时任务定义备份（cron_tasks.json）：只动定时任务，想单独回滚排期时不必碰其它实体 */
+function CronBackup(): React.JSX.Element {
+  const [last, setLast] = useState<{ ok: boolean; at: number; count: number; error?: string } | null>(null)
+  const [count, setCount] = useState<number | null>(null)
+  const [busy, setBusy] = useState('')
+  const [toast, setToast] = useState<{ kind: 'success' | 'error'; text: string } | null>(null)
+
+  useEffect(() => {
+    void api.invoke<{ ok: boolean; at: number; count: number; error?: string } | null>(IPC.cronLastBackup).then((r) => setLast(r ?? null)).catch(() => {})
+    void api.invoke<CronTaskInfo[]>(IPC.cronList).then((list) => setCount(list.length)).catch(() => {})
+  }, [])
+
+  const backupNow = async () => {
+    setBusy('backup')
+    try {
+      const r = await api.invoke<{ ok: boolean; count: number; error?: string }>(IPC.cronBackupNow)
+      setLast({ ok: r.ok, at: Date.now(), count: r.count, ...(r.error ? { error: r.error } : {}) })
+      setToast(r.ok ? { kind: 'success', text: `已备份 ${r.count} 条定时任务定义` } : { kind: 'error', text: `备份失败：${r.error ?? '未知错误'}` })
+    } finally {
+      setBusy('')
+    }
+  }
+
+  const restore = async () => {
+    if (!confirm('从备份恢复定时任务定义？\n按更新时间取新（本机更新过的排期不会被旧备份覆盖），本机多出的任务不会被删除；恢复后下次触发时间按本机重新推算。\n\n确认恢复？')) return
+    setBusy('restore')
+    try {
+      const r = await api.invoke<{ ok: boolean; applied: number; removed: number; error?: string }>(IPC.cronRestore)
+      if (r.ok) {
+        setToast({ kind: 'success', text: `已恢复 ${r.applied} 条定时任务${r.removed ? `，移除 ${r.removed} 条` : ''}` })
+        void api.invoke<CronTaskInfo[]>(IPC.cronList).then((list) => setCount(list.length)).catch(() => {})
+      } else {
+        setToast({ kind: 'error', text: `恢复失败：${r.error}` })
+      }
+    } finally {
+      setBusy('')
+    }
+  }
+
+  return (
+    <>
+      <h2 className="settings-title" style={{ marginTop: 24 }}>
+        定时任务备份
+      </h2>
+      <p className="settings-tip">
+        定时任务的<b>定义</b>（名称、目标、cron、提示词、错过策略）既能随上面的实体同步自动双向合并，也可在这里单独备份/恢复；当前本机有 <b>{count ?? '?'}</b> 条。
+        运行历史（<code>cron_run</code>）属本机日志，不参与备份。
+      </p>
+      <div className="settings-actions" style={{ justifyContent: 'flex-start' }}>
+        <button className="btn primary" disabled={!!busy} data-testid="cron-backup" onClick={() => void backupNow()}>
+          {busy === 'backup' ? '备份中…' : '立即备份定时任务'}
+        </button>
+        <button className="btn" disabled={!!busy} data-testid="cron-restore" onClick={() => void restore()}>
+          {busy === 'restore' ? '恢复中…' : '从备份恢复…'}
+        </button>
+      </div>
+      {last && (
+        <div className="sync-report" style={{ marginTop: 6 }}>
+          <p className="settings-tip" style={{ marginBottom: 4 }}>
+            上次备份：{last.ok ? '✅' : '❌'} {new Date(last.at).toLocaleString()} · {last.count} 条任务
+          </p>
+          {last.error && <pre className="settings-error sync-error-text">{last.error}</pre>}
+        </div>
+      )}
+      {toast && <Toast kind={toast.kind} message={toast.text} onClose={() => setToast(null)} />}
+    </>
   )
 }
 

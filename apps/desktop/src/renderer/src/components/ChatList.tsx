@@ -1,14 +1,30 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useStore } from '../store'
+import type { AgentInfo } from '@jeff/core'
 import Avatar from './Avatar'
 import CreateGroupModal from './CreateGroupModal'
+
+const DEFAULT_GROUP = '默认'
 
 export default function ChatList(): React.JSX.Element {
   const { agents, projects, active, setActive } = useStore()
   const [creating, setCreating] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
   const xiaojie = agents.find((a) => a.builtin)
   const others = agents.filter((a) => !a.builtin)
+
+  /** 智能体按分类分组（与「智能体」页同一套规则：默认分组永远排最后） */
+  const groups = useMemo(() => {
+    const map = new Map<string, AgentInfo[]>()
+    for (const a of others) {
+      const key = (a.category || '').trim() || DEFAULT_GROUP
+      const arr = map.get(key)
+      if (arr) arr.push(a)
+      else map.set(key, [a])
+    }
+    return Array.from(map.entries()).sort(([x], [y]) => (x === DEFAULT_GROUP ? 1 : y === DEFAULT_GROUP ? -1 : x.localeCompare(y, 'zh-CN')))
+  }, [others])
 
   // 应用菜单「发起群聊…」→ 打开建群弹窗
   useEffect(() => {
@@ -87,16 +103,35 @@ export default function ChatList(): React.JSX.Element {
       ))}
       <div className="list-section">智能体</div>
       {others.length === 0 && <div className="list-empty">还没有其他智能体，去「智能体」页或找小杰创建</div>}
-      {others.map((a) => (
-        <ChatItem
-          key={a.id}
-          avatar={a.avatar}
-          name={a.name}
-          desc={a.description || '（无简介）'}
-          selected={active?.kind === 'agent' && active.id === a.id}
-          onClick={() => setActive({ kind: 'agent', id: a.id })}
-        />
-      ))}
+      {groups.map(([name, list]) => {
+        const isCollapsed = !!collapsed[name]
+        return (
+          <div className="chat-group-block" key={name}>
+            <button
+              className="chat-group-head"
+              data-testid={`chat-agent-group-${name}`}
+              onClick={() => setCollapsed((c) => ({ ...c, [name]: !c[name] }))}
+            >
+              <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" className={isCollapsed ? 'rot' : ''}>
+                <path d="M6 9l6 6 6-6" />
+              </svg>
+              <span>{name}</span>
+              <span className="chat-group-count">{list.length}</span>
+            </button>
+            {!isCollapsed &&
+              list.map((a) => (
+                <ChatItem
+                  key={a.id}
+                  avatar={a.avatar}
+                  name={a.name}
+                  desc={a.description || '（无简介）'}
+                  selected={active?.kind === 'agent' && active.id === a.id}
+                  onClick={() => setActive({ kind: 'agent', id: a.id })}
+                />
+              ))}
+          </div>
+        )
+      })}
       {creating && <CreateGroupModal onClose={() => setCreating(false)} />}
     </div>
   )

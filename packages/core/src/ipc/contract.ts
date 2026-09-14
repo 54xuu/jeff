@@ -97,6 +97,9 @@ export const IPC = {
   cronDelete: 'cron:delete',
   cronRun: 'cron:run',
   cronRuns: 'cron:runs',
+  cronBackupNow: 'cron:backupNow',
+  cronRestore: 'cron:restore',
+  cronLastBackup: 'cron:lastBackup',
   // 插件
   pluginsList: 'plugins:list',
   pluginSetEnabled: 'plugin:setEnabled',
@@ -106,6 +109,7 @@ export const IPC = {
   pluginRefresh: 'plugin:refresh',
   pluginBackupNow: 'plugin:backupNow',
   pluginRestore: 'plugin:restore',
+  pluginBackupLast: 'plugin:backupLast',
   // 内置浏览器：主进程 → 渲染层下发动作后，渲染层回传结果
   browserResult: 'browser:result',
   // 渲染层上报面板状态（是否可见 + 当前页），供 agent 工具判断可用性与上下文
@@ -582,6 +586,9 @@ export type InvokeMap = {
   [IPC.cronDelete]: { id: string }
   [IPC.cronRun]: { id: string }
   [IPC.cronRuns]: { id: string }
+  [IPC.cronBackupNow]: void
+  [IPC.cronRestore]: void
+  [IPC.cronLastBackup]: void
   // 插件
   [IPC.pluginsList]: void
   [IPC.pluginSetEnabled]: { id: string; enabled: boolean }
@@ -591,6 +598,7 @@ export type InvokeMap = {
   [IPC.pluginRefresh]: void
   [IPC.pluginBackupNow]: void
   [IPC.pluginRestore]: void
+  [IPC.pluginBackupLast]: void
   // 内置浏览器（渲染层回报主进程下发的动作结果）
   [IPC.browserResult]: BrowserResult
   [IPC.browserState]: BrowserState

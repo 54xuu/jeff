@@ -3610,11 +3610,46 @@ body.composer-resizing * {
 
 /* ===== 智能体分组 ===== */
 .agents-search {
-  padding: 0 12px 8px;
+  padding: 0 12px 10px;
 }
 
-.agents-search input {
-  width: 100%;
+/* 搜索框：胶囊形 + 内嵌放大镜，高度与列表卡片呼吸感一致（原先太矮太方，像未换肤的原生输入框） */
+.agents-search {
+  position: relative;
+}
+
+.agents-search .search-field {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-list);
+  color: var(--text-2);
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.agents-search .search-field:focus-within {
+  border-color: var(--green);
+  background: var(--bg-panel);
+}
+
+.agents-search .search-field input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  border: none;
+  background: transparent;
+  padding: 0;
+  font-size: 13px;
+  color: var(--text);
+  outline: none;
+}
+
+.agents-search .search-field input::placeholder {
+  color: var(--text-2);
 }
 
 .agent-group {
@@ -3629,9 +3664,10 @@ body.composer-resizing * {
   border: none;
   background: transparent;
   color: var(--text-2);
-  padding: 8px 14px 4px;
+  padding: 9px 14px 4px;
   cursor: pointer;
-  font-size: 11px;
+  /* 与智能体简介（.contact-desc）同号，分类才看得清 */
+  font-size: 12px;
   text-align: left;
 }
 
@@ -3753,4 +3789,45 @@ body.browser-resizing {
   color: var(--green);
   border-color: color-mix(in srgb, var(--green) 45%, var(--border));
   background: color-mix(in srgb, var(--green) 10%, transparent);
+}
+
+/* ===== 聊天列表里的智能体分类（与通讯录同一套分组语义） ===== */
+.chat-group-block {
+  display: flex;
+  flex-direction: column;
+}
+
+.chat-group-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: var(--text-2);
+  padding: 8px 14px 3px;
+  cursor: pointer;
+  /* 与聊天列表里的简介文字（.chat-item-desc）同号 */
+  font-size: 12px;
+  text-align: left;
+}
+
+.chat-group-head:hover {
+  color: var(--text);
+}
+
+.chat-group-head svg {
+  transition: transform 0.15s;
+}
+
+.chat-group-head svg.rot {
+  transform: rotate(-90deg);
+}
+
+.chat-group-count {
+  margin-left: auto;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0 6px;
+  font-size: 10px;
 }

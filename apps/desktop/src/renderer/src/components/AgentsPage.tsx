@@ -79,7 +79,13 @@ export default function AgentsPage(): React.JSX.Element {
           </button>
         </div>
         <div className="agents-search">
-          <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="搜索名字 / 简介 / 分类" data-testid="agent-search" spellCheck={false} />
+          <div className="search-field">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden>
+              <circle cx="11" cy="11" r="7" />
+              <path d="M20 20l-3.6-3.6" />
+            </svg>
+            <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="搜索名字 / 简介 / 分类" data-testid="agent-search" spellCheck={false} />
+          </div>
         </div>
         {groups.map(([name, list]) => {
           const isCollapsed = !!collapsed[name]

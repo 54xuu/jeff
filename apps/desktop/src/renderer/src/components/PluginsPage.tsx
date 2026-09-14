@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useStore } from '../store'
 import { api } from '../api'
-import { IPC, type PluginInfo, type SkillsBackupReport, type SkillsRestoreApply } from '@jeff/core'
+import { IPC, type PluginInfo } from '@jeff/core'
 import { openInBrowser } from '../browserHost'
 import { Button } from './ui/Button'
 import { Toast } from './ui/Toast'
@@ -47,13 +47,6 @@ export default function PluginsPage(): React.JSX.Element {
     setDetail(null)
   }
 
-  const backupNow = () => call(() => api.invoke<SkillsBackupReport>(IPC.pluginBackupNow), '已备份插件目录')
-  const restore = async () => {
-    if (!confirm('从 WebDAV 备份恢复插件目录？恢复前会自动把本地插件目录快照到 backups/，可手工回退。')) return
-    const r = await call(() => api.invoke<SkillsRestoreApply>(IPC.pluginRestore))
-    if (r?.ok) setToast({ kind: 'success', message: `已恢复 ${r.restored} 个文件（本地原目录已快照）` })
-  }
-
   const openHome = (p: PluginInfo) => {
     if (!p.homepage) return
     // 走 browserHost：面板未打开会自动打开并等就绪，人看到的页面与 agent 操作的是同一个
@@ -68,18 +61,21 @@ export default function PluginsPage(): React.JSX.Element {
         <div>
           <h2>插件</h2>
           <p className="settings-tip">
-            把专门能力（如「智慧病房」）打包成插件：启用后自动接入其 MCP 工具，免去手工配置 MCP；提供首页的插件可用内置浏览器打开。
+            把专门能力（如「智慧病房」）打包成插件：启用后自动接入其 MCP 工具，免去手工配置 MCP；提供首页的插件可用内置浏览器打开。插件的备份与恢复在「设置 → 同步」里（插件目录备份）。
           </p>
         </div>
         <div className="page-head-actions">
           <Button onClick={() => void importPlugin()} data-testid="plugin-import">
             导入插件
           </Button>
-          <Button onClick={() => void backupNow()} data-testid="plugin-backup">
-            备份到 WebDAV
-          </Button>
-          <Button onClick={() => void restore()} data-testid="plugin-restore">
-            从备份恢复
+          <Button
+            data-testid="plugin-goto-backup"
+            onClick={() => {
+              useStore.getState().setTab('settings')
+              useStore.getState().setSettingsSection('sync')
+            }}
+          >
+            备份与恢复
           </Button>
         </div>
       </div>
