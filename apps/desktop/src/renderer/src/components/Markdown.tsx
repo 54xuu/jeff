@@ -1,4 +1,4 @@
-import { memo } from 'react'
+import { memo, useMemo, useRef } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeHighlight from 'rehype-highlight'
@@ -18,6 +18,37 @@ const REHYPE: RehypePlugins = [[rehypeHighlight, { detect: true, ignoreMissing: 
  */
 function MarkdownInner(props: { text: string; workspaceDir?: string; live?: boolean }): React.JSX.Element {
   const text = props.workspaceDir ? linkifyWorkspaceMarkdown(props.text) : props.text
+  // components 映射必须是稳定引用：ReactMarkdown 把这里的函数当「组件类型」用，每次渲染新建内联函数
+  // 会让元素类型变化 → pre 子树（含 MermaidBlock）整棵重挂载——组件内状态（灯箱开着、源码/图形切换）
+  // 随之丢失，还会白跑一次 mermaid.render。用 ref 读最新值，映射本身只建一次。
+  const liveRef = useRef<boolean | undefined>(props.live)
+  liveRef.current = props.live
+  const wsRef = useRef<string | undefined>(props.workspaceDir)
+  wsRef.current = props.workspaceDir
+  const components = useMemo<React.ComponentProps<typeof ReactMarkdown>['components']>(
+    () => ({
+      pre: (preProps) => {
+        const block = extractCode(preProps)
+        // 流式中 mermaid 源码往往还不完整，渲染它既报错又极耗 CPU（每次增量都要重跑一遍），
+        // 先按普通代码块展示，等输出完成转历史消息渲染时再出图。
+        if (block.lang === 'mermaid' && !liveRef.current) return <MermaidBlock code={block.raw} />
+        return <CodeBlock lang={block.lang} raw={block.raw} preProps={preProps as Record<string, unknown>} />
+      },
+      a: (aProps) => {
+        const href = String(aProps.href || '')
+        if (href.startsWith(FILE_HREF_PREFIX)) {
+          const rel = decodeURIComponent(href.slice(FILE_HREF_PREFIX.length))
+          return (
+            <FileLink rel={rel} workspaceDir={wsRef.current}>
+              {aProps.children}
+            </FileLink>
+          )
+        }
+        return <a {...aProps} target="_blank" rel="noreferrer" />
+      },
+    }),
+    [],
+  )
   return (
     <div className="md-body">
       <ReactMarkdown
@@ -25,27 +56,7 @@ function MarkdownInner(props: { text: string; workspaceDir?: string; live?: bool
         // 流式输出中跳过 rehype-highlight：每来一个 token 就把全文重新做一遍语法高亮是卡顿主因；
         // 输出完成后转由历史消息渲染，届时全量高亮一次到位。
         rehypePlugins={props.live ? undefined : REHYPE}
-        components={{
-          pre: (preProps) => {
-            const block = extractCode(preProps)
-            // 流式中 mermaid 源码往往还不完整，渲染它既报错又极耗 CPU（每次增量都要重跑一遍），
-            // 先按普通代码块展示，等输出完成转历史消息渲染时再出图。
-            if (block.lang === 'mermaid' && !props.live) return <MermaidBlock code={block.raw} />
-            return <CodeBlock lang={block.lang} raw={block.raw} preProps={preProps as Record<string, unknown>} />
-          },
-          a: (aProps) => {
-            const href = String(aProps.href || '')
-            if (href.startsWith(FILE_HREF_PREFIX)) {
-              const rel = decodeURIComponent(href.slice(FILE_HREF_PREFIX.length))
-              return (
-                <FileLink rel={rel} workspaceDir={props.workspaceDir}>
-                  {aProps.children}
-                </FileLink>
-              )
-            }
-            return <a {...aProps} target="_blank" rel="noreferrer" />
-          },
-        }}
+        components={components}
       >
         {text}
       </ReactMarkdown>

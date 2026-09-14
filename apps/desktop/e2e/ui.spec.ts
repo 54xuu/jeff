@@ -1,8 +1,42 @@
 import { test, expect } from '@playwright/test'
 import path from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 import { closeJeff, launchJeff, loadE2eEnv, REPO_ROOT } from './helpers/launch.js'
 
 test.describe.configure({ mode: 'serial' })
+
+/** 测试进程直连 e2e home 的 jeff.db（读多写少：mermaid 段往群里直插一条预置消息） */
+const UI_HOME = path.join(REPO_ROOT, '.tmp/jeff-e2e-ui-home')
+
+function dbQuery(sql: string, ...params: unknown[]): Array<Record<string, unknown>> {
+  const db = new DatabaseSync(path.join(UI_HOME, 'jeff.db'), { readOnly: true })
+  try {
+    return db.prepare(sql).all(...(params as never[])) as Array<Record<string, unknown>>
+  } finally {
+    db.close()
+  }
+}
+
+function dbExec(sql: string, ...params: unknown[]): void {
+  // 应用进程可能正持锁（写入瞬时），简单重试避免偶发 database is locked
+  let lastErr: unknown
+  for (let i = 0; i < 5; i++) {
+    const db = new DatabaseSync(path.join(UI_HOME, 'jeff.db'))
+    try {
+      db.prepare(sql).run(...(params as never[]))
+      return
+    } catch (err) {
+      lastErr = err
+      const until = Date.now() + 500
+      while (Date.now() < until) {
+        /* 忙等一小会儿再重试 */
+      }
+    } finally {
+      db.close()
+    }
+  }
+  throw lastErr
+}
 
 test.describe('Jeff UI 封闭清单', () => {
   test('导航轨 / 主题 / 通讯录模型保存 / 设置 / 私聊 / 建群 / mermaid', async () => {
@@ -251,17 +285,36 @@ test.describe('Jeff UI 封闭清单', () => {
       await page.getByTestId('chat-send').click()
       await expect(page.getByTestId('chat-draft')).toHaveValue('', { timeout: 10000 })
 
-      // ---- mermaid：模型输出图表 → 图标工具栏 / 放大灯箱不小于原图（回归「放大反而变小」）/ 滚轮缩放 ----
+      // ---- mermaid：往「E2E改名群」直插一条带 mermaid 的群消息（确定性，不赌模型按格式输出）----
+      // 群消息来自 chat_message 表，测试进程直连 jeff.db 写入后重开群即可渲染
+      await page.getByTestId('nav-chats').click()
+      await page.waitForTimeout(1500) // 等上一轮群发送把 active thread 落进 kv
+      const projRow = dbQuery(`SELECT id FROM project WHERE title=? AND deleted_at IS NULL`, 'E2E改名群')[0] as
+        | { id?: string }
+        | undefined
+      const prjId = String(projRow?.id || '')
+      expect(prjId, 'mermaid 段应能查到群 id').toBeTruthy()
+      const thrRow = dbQuery(`SELECT value FROM kv WHERE key=?`, `group:activeThread:${prjId}`)[0] as
+        | { value?: string }
+        | undefined
+      const thrId = String(thrRow?.value || '')
+      expect(thrId, 'mermaid 段应能查到群当前会话').toBeTruthy()
+      const mmId = `msg-e2e-mmd-${Date.now()}`
+      dbExec(
+        `INSERT INTO chat_message (id, scope, sender_type, sender_id, content, meta, created_at) VALUES (?,?,?,?,?,?,?)`,
+        mmId,
+        `group:${prjId}:${thrId}`,
+        'agent',
+        'agt_xiaojie',
+        'E2E 预置图表，用于灯箱回归：\n\n```mermaid\ngraph TD\n  A[开始] --> B{判断}\n  B -->|是| C[结束]\n  B -->|否| A\n```\n',
+        '{}',
+        Date.now(),
+      )
+      // 切走再切回：重开群触发 group:history 重载
       await page.getByTestId('chat-agent-小杰').click()
       await expect(page.getByTestId('chat-window')).toBeVisible()
-      await page.getByTestId('chat-stop').waitFor({ state: 'visible', timeout: 30_000 }).catch(() => {})
-      await expect(page.getByTestId('chat-stop')).toHaveCount(0, { timeout: 300_000 })
-      await chatDraft.fill(
-        '请原样只输出下面这段代码，不要任何解释或修改：\n```mermaid\ngraph TD\n  A[开始] --> B{判断}\n  B -->|是| C[结束]\n  B -->|否| A\n```',
-      )
-      await page.getByTestId('chat-send').click()
-      await page.getByTestId('chat-stop').waitFor({ state: 'visible', timeout: 60_000 })
-      await expect(page.getByTestId('chat-stop')).toHaveCount(0, { timeout: 300_000 })
+      await page.getByTestId(`chat-group-${'E2E改名群'}`).click()
+      await expect(page.getByTestId('group-info-btn')).toBeVisible({ timeout: 20_000 })
       const mmBlock = page.getByTestId('md-mermaid').first()
       await expect(mmBlock.locator('.md-mermaid-fig svg')).toBeVisible({ timeout: 60_000 })
       // 工具栏改为图标（无文字按钮），图标按钮在位
@@ -296,6 +349,28 @@ test.describe('Jeff UI 封闭清单', () => {
       const wZoomIn = await lbSvg.evaluate((el) => el.getBoundingClientRect().width)
       await page.mouse.wheel(0, 480)
       await expect.poll(async () => lbSvg.evaluate((el) => el.getBoundingClientRect().width), { timeout: 10_000 }).toBeLessThan(wZoomIn)
+
+      // 拖拽平移：放大到溢出后左键拖动应能看全溢出部分（内容跟手走），且拖完不关闭灯箱
+      for (let i = 0; i < 3; i++) await page.mouse.wheel(0, -240)
+      const room = await lightbox.evaluate((el) => {
+        el.scrollTop = 0
+        el.scrollLeft = 0
+        return { x: el.scrollWidth - el.clientWidth, y: el.scrollHeight - el.clientHeight, cursor: getComputedStyle(el).cursor }
+      })
+      expect(Math.max(room.x, room.y), `放大后应出现可平移的溢出（x=${room.x}, y=${room.y}）`).toBeGreaterThan(10)
+      expect(room.cursor, '可拖拽时灯箱光标应为抓手').toBe('grab')
+      const dragBox = await lightbox.locator('.mermaid-lightbox-fig').boundingBox()
+      const dx = room.x > 10 ? -80 : 0
+      const dy = room.y > 10 ? -120 : 0
+      await page.mouse.move(dragBox!.x + dragBox!.width / 2, dragBox!.y + dragBox!.height / 2)
+      await page.mouse.down()
+      expect(await lightbox.evaluate((el) => getComputedStyle(el).cursor), '拖拽中光标应为抓住').toBe('grabbing')
+      await page.mouse.move(dragBox!.x + dragBox!.width / 2 + dx, dragBox!.y + dragBox!.height / 2 + dy, { steps: 8 })
+      const panned = await lightbox.evaluate((el) => ({ x: el.scrollLeft, y: el.scrollTop }))
+      expect(panned.x + panned.y, `拖拽应平移内容到溢出区域（x=${panned.x}, y=${panned.y}）`).toBeGreaterThan(0)
+      await page.mouse.up()
+      await expect(lightbox, '拖拽结束不应关闭灯箱').toBeVisible()
+
       // 双击复位 → 点击空白处关闭
       await lightbox.locator('.mermaid-lightbox-fig').dblclick()
       await expect.poll(async () => lbSvg.evaluate((el) => el.getBoundingClientRect().width), { timeout: 10_000 }).toBeCloseTo(lb0.w, -1)

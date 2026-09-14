@@ -3037,10 +3037,17 @@ body.composer-resizing * {
   background: rgba(0, 0, 0, 0.72);
   display: flex;
   flex-direction: column;
-  cursor: zoom-out;
-  /* 放大超出视口后可滚动查看；margin:auto 让小图保持居中 */
+  /* 抓手：可按住左键拖拽平移；拖拽中换成「抓住」态 */
+  cursor: grab;
+  /* 放大超出视口后可滚动/拖拽查看；margin:auto 让小图保持居中 */
   overflow: auto;
   padding: 3vh 2vw;
+  /* 拖拽平移时不要选中图里的文字 */
+  user-select: none;
+}
+
+.mermaid-lightbox.is-dragging {
+  cursor: grabbing;
 }
 
 .mermaid-lightbox-fig {
@@ -3050,7 +3057,7 @@ body.composer-resizing * {
   background: var(--bg-panel);
   border-radius: var(--radius-md);
   padding: 18px;
-  cursor: default;
+  cursor: inherit;
 }
 
 .mermaid-lightbox-fig svg {

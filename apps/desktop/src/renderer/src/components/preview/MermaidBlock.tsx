@@ -23,8 +23,13 @@ export default function MermaidBlock(props: { code: string }): React.JSX.Element
   const [zoom, setZoom] = useState(false)
   const [fitW, setFitW] = useState(0)
   const [scale, setScale] = useState(1)
+  const [dragging, setDragging] = useState(false)
   const idRef = useRef(`mmd-${Math.random().toString(36).slice(2)}`)
   const boxRef = useRef<HTMLDivElement | null>(null)
+  /** 拖拽平移的起点（含按下时的滚动位置）；moved 用来区分「拖拽」与「点击手势」 */
+  const dragRef = useRef<{ x: number; y: number; sl: number; st: number; moved: boolean } | null>(null)
+  /** 上一次「点击手势」的时间与位置，用于自己判定双击复位 */
+  const tapRef = useRef<{ t: number; x: number; y: number } | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -96,6 +101,65 @@ export default function MermaidBlock(props: { code: string }): React.JSX.Element
     setZoom(true)
   }
 
+  /**
+   * 左键按住拖拽平移：内容跟手走（改容器的 scrollLeft/scrollTop）；指针捕获只在「真的开始拖」之后设。
+   * 点击语义不依赖浏览器合成的 click/dblclick —— 实测在这个灯箱上 mousedown/mouseup 都会派发，
+   * 但 Chromium 不合成后续 click（事件轨迹里一个 click 都没有），所以「点空白关闭 / 双击复位」
+   * 一律在 pointerup 上自己判定。
+   */
+  const onPointerDown = (e: React.PointerEvent<HTMLDivElement>): void => {
+    const el = boxRef.current
+    if (!el || e.button !== 0) return
+    dragRef.current = { x: e.clientX, y: e.clientY, sl: el.scrollLeft, st: el.scrollTop, moved: false }
+    setDragging(true) // 按下即给「抓住」反馈（与是否拖动无关）
+  }
+
+  const onPointerMove = (e: React.PointerEvent<HTMLDivElement>): void => {
+    const el = boxRef.current
+    const d = dragRef.current
+    if (!el || !d) return
+    const dx = e.clientX - d.x
+    const dy = e.clientY - d.y
+    if (!d.moved) {
+      if (Math.abs(dx) + Math.abs(dy) < 4) return // 抖动阈值：小于 4px 仍算点击手势
+      d.moved = true
+      try {
+        e.currentTarget.setPointerCapture(e.pointerId) // 开始拖了才捕获，拖出面板也不丢
+      } catch {
+        /* 捕获失败不影响基本拖拽 */
+      }
+    }
+    el.scrollLeft = d.sl - dx
+    el.scrollTop = d.st - dy
+  }
+
+  const endDrag = (e: React.PointerEvent<HTMLDivElement>): void => {
+    const moved = !!dragRef.current?.moved
+    dragRef.current = null
+    setDragging(false)
+    if (e.currentTarget.hasPointerCapture?.(e.pointerId)) {
+      try {
+        e.currentTarget.releasePointerCapture(e.pointerId)
+      } catch {
+        /* 已释放 */
+      }
+    }
+    if (moved) {
+      tapRef.current = null
+      return
+    }
+    // 未拖动 = 一次点击手势：同位置 320ms 内再来一次算双击（复位），否则单击空白处关闭
+    const now = Date.now()
+    const last = tapRef.current
+    if (last && now - last.t < 320 && Math.abs(e.clientX - last.x) < 6 && Math.abs(e.clientY - last.y) < 6) {
+      tapRef.current = null
+      setScale(1)
+      return
+    }
+    tapRef.current = { t: now, x: e.clientX, y: e.clientY }
+    if (e.target === e.currentTarget) setZoom(false) // 只有点遮罩本身才关（点图不关）
+  }
+
   return (
     <div className="md-mermaid" data-testid="md-mermaid">
       {showSource ? (
@@ -125,14 +189,21 @@ export default function MermaidBlock(props: { code: string }): React.JSX.Element
         <CopyButton className="md-copy-btn" text={code} label="复制源码" testId="md-copy-mermaid" />
       </div>
       {zoom && svg && (
-        <div ref={boxRef} className="mermaid-lightbox" data-testid="mermaid-lightbox" onClick={() => setZoom(false)} onDoubleClick={() => setScale(1)}>
+        <div
+          ref={boxRef}
+          className={`mermaid-lightbox${dragging ? ' is-dragging' : ''}`}
+          data-testid="mermaid-lightbox"
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={endDrag}
+          onPointerCancel={endDrag}
+        >
           <div
             className="mermaid-lightbox-fig"
             style={{ width: fitW ? Math.round(fitW * scale) + LIGHTBOX_PAD * 2 : 'min(88vw, 900px)' }}
-            onClick={(e) => e.stopPropagation()}
             dangerouslySetInnerHTML={{ __html: svg }}
           />
-          <p className="mermaid-lightbox-tip">滚轮缩放 · 双击复位 · 点击空白处关闭 · 矢量图无损</p>
+          <p className="mermaid-lightbox-tip">滚轮缩放 · 按住拖动平移 · 双击复位 · 点击空白处关闭</p>
         </div>
       )}
     </div>

@@ -1,8 +1,8 @@
-# mermaid 放大修复 + 工具栏图标化 + live11 二十轮全功能实测（v1.7.31）
+# mermaid 放大修复 + 工具栏图标化 + live11 二十轮全功能实测（v1.7.31 → v1.7.32）
 
-- 日期：2026-09-13（会话跨零点至 09-14 凌晨收官）
-- 版本：1.7.30 → **1.7.31**（PATCH：两个 UI 修复 + 测试基建，未新增独立功能）
-- 产物：`apps/desktop/release/jeff-desktop_1.7.31_amd64.deb`（已装本机，md5 与 linux-unpacked 一致）、`Jeff-1.7.31.AppImage`、`jeff-Setup-1.7.31.exe`（PE32 Nullsoft，asar 含本次特征串，oc-bin 在位）
+- 日期：2026-09-13（会话跨零点至 09-14 上午收官）
+- 版本：1.7.30 → **1.7.31**（两个 UI 修复 + 测试基建）→ **1.7.32**（第六节：拖拽平移 + 两个渲染层真 bug）
+- 产物：`apps/desktop/release/jeff-desktop_<版本>_amd64.deb`（已装本机，md5 与 linux-unpacked 一致）、`Jeff-<版本>.AppImage`、`jeff-Setup-<版本>.exe`（PE32 Nullsoft，asar 含本次特征串，oc-bin 在位）
 
 ## 一、Bug 1：mermaid「点放大反而更小」——根因与修复
 
@@ -50,3 +50,33 @@
 - 第二层：live11 二十轮全绿（分 4 批跑完：R1-R4 / R5-R12 / R13-R17 / R18-R20，`--grep "\bR(N)\b"` 词边界续跑）。
 - 第三层：deb 装机 1.7.31（`/opt/Jeff` 与 linux-unpacked 的 app.asar md5 一致）；exe `file` 为 PE32 Nullsoft、`grep -a mermaid-lightbox` 命中 7 处、windows-x64 opencode.exe 在位。
 - 改动清单：`MermaidBlock.tsx`（灯箱重写+图标）、`Icons.tsx`（+3 图标）、`styles.css`（灯箱 CSS）、`apps/desktop/e2e/ui.spec.ts`（mermaid 断言段 + env 兜底）、五处版本号 1.7.31。测试台 `.tmp/live11/`（gitignore，不入库）。
+
+
+## 六、追加：滚轮缩放后溢出看不到 → 拖拽平移（用户反馈，v1.7.32）
+
+用户反馈「虽然能滚轮缩放，但放大后溢出的部分看不到，要实现左键拖拽移动（鼠标变手）」。实现过程中挖出两个更深的问题，都修了：
+
+### 6.1 拖拽平移（本次需求）
+
+- 左键按住拖动：内容跟手走（改灯箱容器的 `scrollLeft/scrollTop`），光标 `grab` → 按住时 `grabbing`；拖动位移 < 4px 仍按点击处理。
+- 指针捕获只在**真正开始拖**（超过阈值）时才 `setPointerCapture`，拖出面板也不丢事件。
+- `user-select: none` 防止拖拽时选中图内文字；提示行改为「滚轮缩放 · 按住拖动平移 · 双击复位 · 点击空白处关闭」。
+
+### 6.2 灯箱会「自己关掉」——根因是 Markdown 子树被整棵重挂载（真 bug，非本次引入）
+
+- 现象：打开灯箱后 0.5~1 秒内它自己消失（零交互、零报错），表现为「双击复位/点击关闭全都不好使」。
+- 定位手法：探针里轮询灯箱 DOM 状态，发现 svg 的 id 从 `mmd-g3sd2cce2rj` 变成了 `mmd-sr8imw2znd` —— id 来自 `useRef(Math.random())`，**id 变了就意味着组件被重新挂载**，state（zoom）随之清零。
+- 根因：`Markdown.tsx` 里 `components={{ pre: 内联函数, a: 内联函数 }}` 每次渲染都新建函数，ReactMarkdown 把这些函数当「组件类型」用 → 元素类型身份变化 → `pre` 子树（含 MermaidBlock）整棵重挂载。只要 MarkdownInner 因任何原因重渲染（例如 workspaceDir 从空串变为真实路径这类一次性数据落位），灯箱就被掀掉。
+- 修法：`components` 用 `useMemo(() => ..., [])` 固定引用，`live`/`workspaceDir` 用 ref 读取最新值 → 元素类型永远稳定，不再重挂载。**副作用是正向的**：以前每次重渲染都会重跑 `mermaid.render`（mermaid 全量解析排版，正是 v1.7.18 查卡顿时的大头），现在不会了。
+
+### 6.3 「双击复位」不生效——Chromium 在这个灯箱上不合成 click/dblclick（真 bug）
+
+- 修完 6.2 后双击复位仍不生效。探针在 document 捕获层记录完整事件序列，结论很反直觉：**`pointerdown/pointerup/mousedown/mouseup` 都有，但一个 `click`/`dblclick` 都没有**。按下时 `setPointerCapture` 与不捕获两种情况都试过，click 始终不合成（Playwright 的 `mouse.dblclick` 与单点遮罩关闭都受影响）。
+- 修法：点击语义不再依赖浏览器合成的 click —— 在 `pointerup` 上自己判定：位移 < 4px 记一次「点击手势」，320ms 内同位置再来一次算双击（复位）；`e.target === currentTarget`（点的是遮罩本身，不是图）才算点空白关闭。
+- 附带修正：`as` 的 `mousedown` 目标与 `pointerdown` 目标不一致（一个是 SVG 图形、一个是 fig 容器），所以别指望用 mousedown/mouseup 目标做判定。
+
+### 6.4 本轮验证
+
+- mock UI E2E 全绿（mermaid 段改为**确定性**：测试进程直连 jeff.db 往群里插一条带 mermaid 的 `chat_message` 再重开群，不再赌模型按格式输出——上一版就因为模型这轮没吐 ```mermaid 围栏而失败）；断言含：放大后溢出可平移（scrollLeft/Top 真的动了）、光标 grab/grabbing、拖拽不关闭灯箱、双击复位回基准宽。
+- 真实模型 E2E 回归 R5-R10（提醒语义 / mermaid 预置图 / 真实模型输出 mermaid / 私聊多轮 / MDT 全会诊 / 群协作写文件）6/6 全绿，截图 `.tmp/live11/evidence/R6-拖拽平移后.png` 目检确认平移生效。
+- bump **1.7.32**（五处一致）；npm test 189 passed；双平台打包与产物校验同第五节口径。
