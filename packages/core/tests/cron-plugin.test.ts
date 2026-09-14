@@ -8,6 +8,9 @@ import { buildPaths } from '../src/paths.js'
 import type { DB } from '../src/db/db.js'
 import { CronScheduler } from '../src/cron/scheduler.js'
 import { PluginManager } from '../src/plugins/manager.js'
+import { ToolBridge } from '../src/tools/bridge.js'
+import { PLUGIN_TOOL_NAMES, registerPluginTools } from '../src/tools/pluginTools.js'
+import { XIAOJIE_DISABLED_TOOLS, XIAOJIE_ONLY_TOOLS, renderAgentMd } from '../src/agents/registry.js'
 import type { CronTaskRow } from '../src/db/repos.js'
 
 let tmp: string
@@ -226,20 +229,22 @@ describe('CronScheduler', () => {
   })
 })
 
-describe('PluginManager', () => {
-  const writePlugin = (id: string, manifest: unknown, extraFiles: Record<string, string> = {}) => {
-    const dir = path.join(tmp, 'plugins', id)
-    fs.mkdirSync(dir, { recursive: true })
-    fs.writeFileSync(path.join(dir, 'plugin.json'), typeof manifest === 'string' ? manifest : JSON.stringify(manifest, null, 2))
-    for (const [rel, content] of Object.entries(extraFiles)) {
-      const f = path.join(dir, rel)
-      fs.mkdirSync(path.dirname(f), { recursive: true })
-      fs.writeFileSync(f, content)
-    }
-    return dir
+/** 手工往插件目录丢一个清单（模拟用户放置插件） */
+function writePlugin(id: string, manifest: unknown, extraFiles: Record<string, string> = {}): string {
+  const dir = path.join(tmp, 'plugins', id)
+  fs.mkdirSync(dir, { recursive: true })
+  fs.writeFileSync(path.join(dir, 'plugin.json'), typeof manifest === 'string' ? manifest : JSON.stringify(manifest, null, 2))
+  for (const [rel, content] of Object.entries(extraFiles)) {
+    const f = path.join(dir, rel)
+    fs.mkdirSync(path.dirname(f), { recursive: true })
+    fs.writeFileSync(f, content)
   }
-  const mgr = () => new PluginManager(db, path.join(tmp, 'plugins'))
+  return dir
+}
 
+const mgr = (): PluginManager => new PluginManager(db, path.join(tmp, 'plugins'))
+
+describe('PluginManager', () => {
   it('读取清单：合法插件被列出且默认未启用', () => {
     writePlugin('zhbf-night', {
       id: 'zhbf-night',
@@ -320,6 +325,247 @@ describe('PluginManager', () => {
     expect(() => m.import(empty)).toThrow(/没有 plugin.json/)
   })
 
+  it('write()：小杰对话式落盘插件（含附带文件），默认不启用', () => {
+    const m = mgr()
+    const info = m.write({
+      id: 'news-daily',
+      name: 'AI 资讯',
+      description: '每天抓 AI 资讯',
+      homepage: 'http://localhost:3000',
+      commands: [{ name: '/news', prompt: '今天的 AI 资讯' }],
+      mcp: { url: 'http://127.0.0.1:9000/mcp' },
+      files: { 'README.md': '# AI 资讯\n用法…', 'docs/usage.md': '细则' },
+    })
+    expect(info.id).toBe('news-daily')
+    expect(info.enabled).toBe(false)
+    expect(fs.readFileSync(path.join(tmp, 'plugins', 'news-daily', 'README.md'), 'utf8')).toContain('AI 资讯')
+    expect(fs.readFileSync(path.join(tmp, 'plugins', 'news-daily', 'docs', 'usage.md'), 'utf8')).toBe('细则')
+    const raw = JSON.parse(fs.readFileSync(path.join(tmp, 'plugins', 'news-daily', 'plugin.json'), 'utf8'))
+    expect(raw.mcp.url).toBe('http://127.0.0.1:9000/mcp')
+  })
+
+  it('write()：校验失败不留残骸，已有插件原清单被还原', () => {
+    const m = mgr()
+    m.write({ id: 'keep', name: '原先生效的', description: '原始简介', mcp: { url: 'http://ok/mcp' } })
+    const before = fs.readFileSync(path.join(tmp, 'plugins', 'keep', 'plugin.json'), 'utf8')
+    // homepage 非法 → 整次写入回滚
+    expect(() => m.write({ id: 'keep', name: '改坏的', homepage: 'file:///etc/passwd' })).toThrow(/homepage/)
+    expect(fs.readFileSync(path.join(tmp, 'plugins', 'keep', 'plugin.json'), 'utf8')).toBe(before)
+    expect(m.get('keep')!.description).toBe('原始简介')
+    // 全新插件校验失败 → 目录被清掉（不留下半个坏插件）
+    expect(() => m.write({ id: 'brand-new', name: 'x', homepage: 'file:///tmp' })).toThrow()
+    expect(fs.existsSync(path.join(tmp, 'plugins', 'brand-new'))).toBe(false)
+    expect(m.list().length).toBe(1)
+  })
+
+  it('write()：files 的路径不能逃出插件目录', () => {
+    const m = mgr()
+    expect(() => m.write({ id: 'esc', name: '逃逸', files: { '../evil.txt': 'x' } })).toThrow(/必须位于插件目录内/)
+    expect(fs.existsSync(path.join(tmp, 'plugins', 'evil.txt'))).toBe(false)
+  })
+
+  it('read()：返回原始清单文本与文件清单', () => {
+    const m = mgr()
+    m.write({ id: 'r1', name: '读我', files: { 'a.md': 'A', 'sub/b.md': 'B' } })
+    const r = m.read('r1')
+    expect(JSON.parse(r.manifest).name).toBe('读我')
+    expect(r.files).toEqual(['a.md', 'plugin.json', 'sub/b.md'])
+    expect(() => m.read('nope')).toThrow(/不存在/)
+    expect(() => m.read('../etc')).toThrow(/id 非法/)
+  })
+
+  it('write() 保留已启用状态与密钥（改清单不掉开关）', () => {
+    const m = mgr()
+    m.write({ id: 'on', name: '已启用', mcp: { url: 'http://ok/mcp' } })
+    m.saveSecret('on', 'tok')
+    m.setEnabled('on', true)
+    const after = m.write({ id: 'on', name: '改了名字', description: '新简介' })
+    expect(after.enabled).toBe(true)
+    expect(after.hasSecret).toBe(true)
+    expect(after.name).toBe('改了名字')
+  })
+})
+
+describe('plugin tools（小杰对话式开发插件）', () => {
+  const tools = () => {
+    const bridge = new ToolBridge()
+    const plugins = new PluginManager(db, path.join(tmp, 'plugins'))
+    let changed = 0
+    registerPluginTools(bridge, { db, plugins, onChanged: () => (changed += 1) })
+    const call = async (name: string, args: unknown) => {
+      // ToolBridge 的 handler 存在私有 map 里，用 HTTP 太重；这里直接走 register 的同一个入口
+      const h = (bridge as unknown as { handlers: Map<string, (a: unknown) => Promise<unknown>> }).handlers.get(name)
+      if (!h) throw new Error(`未注册的工具：${name}`)
+      return h(args)
+    }
+    return { call, plugins, changed: () => changed }
+  }
+
+  it('create 写出插件但不启用，并给出下一步提示；update 保留未传字段', async () => {
+    const { call } = tools()
+    const created = (await call('jeff_plugin_create', {
+      id: 'zhbf',
+      name: '智慧病房',
+      description: '病区动态',
+      homepage: 'http://localhost:5173',
+      commands: [{ name: '/zhbf', prompt: '查病区概况' }],
+      mcp_url: 'http://127.0.0.1:8080/mcp',
+      mcp_headers: '{"X-Agent-Token":"${SECRET}"}',
+    })) as { enabled: boolean; next: string; mcp: { kind: string; target: string } }
+    expect(created.enabled).toBe(false)
+    expect(created.mcp).toEqual({ kind: 'remote', target: 'http://127.0.0.1:8080/mcp' })
+    expect(created.next).toContain('jeff_plugin_enable')
+
+    const updated = (await call('jeff_plugin_update', { id: 'zhbf', description: '新简介' })) as { name: string }
+    expect(updated.name).toBe('智慧病房')
+    const raw = JSON.parse(fs.readFileSync(path.join(tmp, 'plugins', 'zhbf', 'plugin.json'), 'utf8'))
+    expect(raw.description).toBe('新简介')
+    expect(raw.commands).toEqual([{ name: '/zhbf', prompt: '查病区概况' }])
+    expect(raw.mcp.headers).toEqual({ 'X-Agent-Token': '${SECRET}' })
+  })
+
+  it('create：mcp_url / mcp_command 平铺参数与 files 数组（真模型实测的形状）', async () => {
+    const { call } = tools()
+    const remote = (await call('jeff_plugin_create', {
+      id: 'flat-remote',
+      name: '平铺远程',
+      mcp_url: 'http://127.0.0.1:9000/mcp',
+      mcp_tools: ['ward_overview'],
+      files: [{ path: 'README.md', content: '# 说明' }],
+    })) as { mcp: { kind: string }; files: string[] }
+    expect(remote.mcp.kind).toBe('remote')
+    expect(remote.files).toEqual(['README.md', 'plugin.json'])
+    const raw = JSON.parse(fs.readFileSync(path.join(tmp, 'plugins', 'flat-remote', 'plugin.json'), 'utf8'))
+    expect(raw.mcp.tools).toEqual(['ward_overview'])
+
+    const local = (await call('jeff_plugin_create', {
+      id: 'flat-local',
+      name: '平铺本地',
+      mcp_command: 'npx -y @xxx/mcp-server',
+      mcp_env: '{"API_KEY":"k"}',
+    })) as { mcp: { kind: string; target: string }; next: string }
+    expect(local.mcp).toEqual({ kind: 'local', target: 'npx -y @xxx/mcp-server' })
+    expect(local.next).toContain('「插件」页')
+  })
+
+  it('空串 / 空数组一律当作「没传」，不能抹掉已有配置（真模型会补默认空值）', async () => {
+    const { call } = tools()
+    await call('jeff_plugin_create', {
+      id: 'keep2',
+      name: '原名',
+      icon: '🏥',
+      description: '原简介',
+      homepage: 'http://localhost:5173',
+      commands: [{ name: '/k', prompt: 'p' }],
+      mcp_url: 'http://ok/mcp',
+    })
+    // 模型典型的「全字段补空」调用
+    await call('jeff_plugin_update', {
+      id: 'keep2',
+      name: '',
+      version: '',
+      icon: '',
+      description: '',
+      homepage: '',
+      commands: [],
+      mcp_url: '',
+      mcp_command: '',
+      mcp: '',
+      files: '',
+    })
+    const raw = JSON.parse(fs.readFileSync(path.join(tmp, 'plugins', 'keep2', 'plugin.json'), 'utf8'))
+    expect(raw).toMatchObject({ name: '原名', icon: '🏥', description: '原简介', homepage: 'http://localhost:5173' })
+    expect(raw.commands).toEqual([{ name: '/k', prompt: 'p' }])
+    expect(raw.mcp.url).toBe('http://ok/mcp')
+  })
+
+  it('兼容老形状：mcp 整体传对象或 JSON 文本；指令名缺 / 自动补前缀', async () => {
+    const { call } = tools()
+    await call('jeff_plugin_create', { id: 'compat', name: '兼容', mcp: { url: 'http://ok/mcp' }, commands: [{ name: 'x', prompt: 'p' }] })
+    let raw = JSON.parse(fs.readFileSync(path.join(tmp, 'plugins', 'compat', 'plugin.json'), 'utf8'))
+    expect(raw.mcp.url).toBe('http://ok/mcp')
+    expect(raw.commands).toEqual([{ name: '/x', prompt: 'p' }])
+
+    await call('jeff_plugin_update', { id: 'compat', mcp: '{"url":"http://other/mcp"}' })
+    raw = JSON.parse(fs.readFileSync(path.join(tmp, 'plugins', 'compat', 'plugin.json'), 'utf8'))
+    expect(raw.mcp.url).toBe('http://other/mcp')
+  })
+
+  it('update 一个不存在的插件直接失败（防手滑造新插件）', async () => {
+    const { call } = tools()
+    await expect(call('jeff_plugin_update', { id: 'ghost', name: 'x' })).rejects.toThrow(/不存在/)
+    // create 缺 name 也拒绝
+    await expect(call('jeff_plugin_create', { id: 'noname' })).rejects.toThrow(/name 不能为空/)
+  })
+
+  it('enable 拒绝带本地命令的插件（必须由人点开关）', async () => {
+    const { call } = tools()
+    await call('jeff_plugin_create', {
+      id: 'local-mcp',
+      name: '本地命令插件',
+      mcp_command: 'npx -y some-mcp',
+      mcp_env: '{"K":"v"}',
+    })
+    await expect(call('jeff_plugin_enable', { id: 'local-mcp' })).rejects.toThrow(/不能由我开启/)
+    // remote 插件可以启用/停用
+    await call('jeff_plugin_create', { id: 'remote-mcp', name: '远程插件', mcp_url: 'http://ok/mcp' })
+    const on = (await call('jeff_plugin_enable', { id: 'remote-mcp' })) as { enabled: boolean }
+    expect(on.enabled).toBe(true)
+    const off = (await call('jeff_plugin_enable', { id: 'remote-mcp', enabled: false })) as { enabled: boolean }
+    expect(off.enabled).toBe(false)
+  })
+
+  it('read 返回清单与文件；delete 清目录；变更都会通知 UI', async () => {
+    const { call, plugins, changed } = tools()
+    await call('jeff_plugin_create', { id: 'p1', name: 'P1', files: [{ path: 'note.md', content: 'hi' }] })
+    const read = (await call('jeff_plugin_read', { id: 'p1' })) as { manifest: string; files: string[]; enabled: boolean }
+    expect(JSON.parse(read.manifest).name).toBe('P1')
+    expect(read.files).toContain('note.md')
+    await call('jeff_plugin_delete', { id: 'p1' })
+    expect(plugins.list().length).toBe(0)
+    await expect(call('jeff_plugin_delete', { id: 'p1' })).rejects.toThrow(/不存在/)
+    // create + read(不通知) + delete → 至少 create 与 delete 各通知一次
+    expect(changed()).toBeGreaterThanOrEqual(2)
+  })
+
+  it('without_mcp 明确表达「纯指令插件」', async () => {
+    const { call } = tools()
+    const r = (await call('jeff_plugin_create', {
+      id: 'cmd-only',
+      name: '纯指令',
+      commands: [{ name: '/hello', prompt: '你好' }],
+      without_mcp: true,
+    })) as { mcp: unknown; next: string }
+    expect(r.mcp).toBeNull()
+    expect(r.next).toContain('jeff_plugin_enable')
+  })
+
+  it('files 的路径不能逃出插件目录（tools 层同样拦）', async () => {
+    const { call } = tools()
+    await expect(call('jeff_plugin_create', { id: 'esc2', name: '逃逸', files: [{ path: '../evil.txt', content: 'x' }] })).rejects.toThrow(/必须位于插件目录内/)
+    expect(fs.existsSync(path.join(tmp, 'plugins', 'evil.txt'))).toBe(false)
+  })
+})
+
+describe('XIAOJIE 工具隔离', () => {
+  it('非内置 agent 的 md 里禁用全部小杰专属工具；内置小杰不受限但禁掉文件/命令工具', () => {
+    const a = agentRepo(db).create({ name: '项目开发' })
+    const md = renderAgentMd(agentRepo(db).get(a.id)!)
+    for (const t of XIAOJIE_ONLY_TOOLS) expect(md).toContain(`${t}: false`)
+    expect(md).toContain('jeff_plugin_create: false')
+    expect(md).toContain('jeff_cron_create: false')
+
+    const x = agentRepo(db).create({ name: '小杰', builtin: 1 })
+    const xmd = renderAgentMd(agentRepo(db).get(x.id)!)
+    expect(xmd).not.toContain('jeff_plugin_create: false')
+    expect(xmd).toContain('jeff_plugin_create')
+    // 小杰自己不能用文件/命令工具（指令里也这么说）
+    for (const t of XIAOJIE_DISABLED_TOOLS) expect(xmd).toContain(`${t}: false`)
+    expect(xmd).toContain('edit: false')
+  })
+})
+
+describe('PluginManager 校验', () => {
   it('校验：homepage 与 mcp.url 必须是 http(s)，指令名必须以 / 开头', () => {
     writePlugin('h', { id: 'h', name: 'h', homepage: 'file:///etc/passwd' })
     writePlugin('c', { id: 'c', name: 'c', commands: [{ name: 'no-slash', prompt: 'p' }] })

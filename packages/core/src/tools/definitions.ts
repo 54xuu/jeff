@@ -198,7 +198,7 @@ export function allToolDefs(): ToolDef[] {
       args: {
         name: { type: 'string', description: '任务名，如「晨间病区动态」' },
         target_type: { type: 'string', description: '目标类型：agent=私聊某智能体 / project=项目群', enum: ['agent', 'project'] },
-        target_id: { type: 'string', description: '目标 id：智能体 id 或项目 id' },
+        target_id: { type: 'string', description: '目标 id（不是你看到的名字）：先用 jeff_agent_list 或 jeff_project_list 查到对应 id 再传' },
         cron_expr: { type: 'string', description: '5 段式 cron：分 时 日 月 周（如 0 8 * * *）' },
         prompt: { type: 'string', description: '到点要发出的提示词（如「请汇报今天的病区动态」）' },
         miss_policy: { type: 'string', description: '错过处理：catchup=开机后补跑一次（重要）/ skip=顺延跳过（不重要）', enum: ['catchup', 'skip'] },
@@ -233,6 +233,78 @@ export function allToolDefs(): ToolDef[] {
         '列出已安装的插件（如「智慧病房」）：包含插件名、简介、首页地址、提供的快捷指令与 MCP 工具。' +
         '插件是「打包好的能力」，启用后它的工具会以 MCP 形式可用。用户问「装了什么插件 / 智慧病房怎么用」时用本工具。',
       args: {},
+    },
+    {
+      name: 'jeff_plugin_create',
+      description:
+        '（仅小杰）把一项能力做成插件（对话式开发插件）。插件 = 目录 + plugin.json：可声明 MCP 接入、聊天框 / 快捷指令、内置浏览器打开的首页，还可附写说明文档等文件。' +
+        '新建的插件**默认不启用**（不会接入引擎）；确认无误后再用 jeff_plugin_enable 启用。带本地命令（mcp_command）的插件你无法启用，必须请用户去「插件」页手动点开关。' +
+        'MCP 支持两种：远程服务填 mcp_url（http(s) 的 /mcp 端点）；本地命令填 mcp_command。',
+      args: {
+        id: { type: 'string', description: '插件唯一 id（字母数字 . _ -，如 zhbf-night）' },
+        name: { type: 'string', description: '显示名（如「智慧病房」）' },
+        version: { type: 'string', description: '版本号（可选）' },
+        icon: { type: 'string', description: '图标 emoji（可选，默认 🧩）' },
+        description: { type: 'string', description: '一句话简介（可选）' },
+        homepage: { type: 'string', description: '首页地址 http(s)（可选，用内置浏览器打开）' },
+        commands: {
+          type: 'array',
+          description: '聊天框 / 快捷指令数组，每项 {name:"/xxx", description, prompt}（prompt 是选中后插入的提示词）',
+          items: { type: 'object' },
+        },
+        mcp_url: { type: 'string', description: '远程 MCP 服务地址，形如 http://127.0.0.1:8080/mcp（与 mcp_command 二选一）' },
+        mcp_headers: { type: 'string', description: '远程 MCP 的附加请求头，JSON 文本，如 {"X-Agent-Token":"${SECRET}"}（可选）' },
+        mcp_tools: { type: 'array', description: '该 MCP 关心的工具名，仅作展示（可选）', items: { type: 'string' } },
+        mcp_command: { type: 'string', description: '本地 MCP 的启动命令，如 "npx -y @xxx/mcp-server"（与 mcp_url 二选一）' },
+        mcp_env: { type: 'string', description: '本地 MCP 的环境变量，JSON 文本，如 {"API_KEY":"xxx"}（可选）' },
+        without_mcp: { type: 'boolean', description: 'true = 明确不带 MCP（纯指令/纯首页插件）' },
+        files: {
+          type: 'array',
+          description: '附带的额外文件，每项 {path:"README.md", content:"# 说明"}；path 只能写在插件目录内',
+          items: { type: 'object' },
+        },
+      },
+    },
+    {
+      name: 'jeff_plugin_update',
+      description:
+        '（仅小杰）修改已有插件的清单（名称/简介/首页/指令/MCP/附带文件）。只传要改的字段，没传的保持原样；改 MCP 后若插件已启用会自动重注入。',
+      args: {
+        id: { type: 'string', description: '插件 id（必填）' },
+        name: { type: 'string', description: '新显示名（可选）' },
+        version: { type: 'string', description: '新版本号（可选）' },
+        icon: { type: 'string', description: '新图标 emoji（可选）' },
+        description: { type: 'string', description: '新简介（可选）' },
+        homepage: { type: 'string', description: '新首页地址（可选）' },
+        commands: { type: 'array', description: '整体替换指令数组（可选）', items: { type: 'object' } },
+        mcp_url: { type: 'string', description: '改为该远程 MCP 地址（可选）' },
+        mcp_headers: { type: 'string', description: '远程 MCP 请求头 JSON 文本（可选）' },
+        mcp_tools: { type: 'array', description: '该 MCP 关心的工具名（可选）', items: { type: 'string' } },
+        mcp_command: { type: 'string', description: '改为该本地 MCP 启动命令（可选）' },
+        mcp_env: { type: 'string', description: '本地 MCP 环境变量 JSON 文本（可选）' },
+        without_mcp: { type: 'boolean', description: 'true = 去掉 MCP 接入' },
+        files: { type: 'array', description: '覆盖写入的附带文件，每项 {path, content}（可选）', items: { type: 'object' } },
+      },
+    },
+    {
+      name: 'jeff_plugin_read',
+      description: '（仅小杰）读取某个插件的原始 plugin.json 文本与目录文件清单，便于在修改前确认现状。',
+      args: { id: { type: 'string', description: '插件 id' } },
+    },
+    {
+      name: 'jeff_plugin_enable',
+      description:
+        '（仅小杰）启用/停用插件。启用后其 MCP 会注入引擎（引擎重启后可用）、指令进入 / 菜单。' +
+        '带本地命令的插件会被拒绝——那类插件必须由用户在「插件」页手动启用。启用前先和用户确认。',
+      args: {
+        id: { type: 'string', description: '插件 id' },
+        enabled: { type: 'boolean', description: 'true=启用（默认），false=停用' },
+      },
+    },
+    {
+      name: 'jeff_plugin_delete',
+      description: '（仅小杰）卸载插件：删除插件目录、启用状态与密钥。删除前必须先跟用户确认（可从「设置 → 同步」的插件备份恢复）。',
+      args: { id: { type: 'string', description: '插件 id' } },
     },
     // M4 追加：内置浏览器（任意 agent 可用，模拟人操作网页）
     {

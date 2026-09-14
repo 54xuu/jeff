@@ -14,6 +14,7 @@ import { registerAdminTools } from './tools/adminTools.js'
 import { registerProjectTools, taskCardMessage } from './tools/projectTools.js'
 import { registerMemoryTools, DELEGATE_TOOL, sesMetaKey, type SessionScopeCtx } from './tools/memoryTools.js'
 import { registerCronTools, CRON_TOOL_NAMES } from './tools/cronTools.js'
+import { registerPluginTools, PLUGIN_TOOL_NAMES } from './tools/pluginTools.js'
 import { allToolDefs } from './tools/definitions.js'
 import { PluginManager } from './plugins/manager.js'
 import { CronScheduler } from './cron/scheduler.js'
@@ -218,6 +219,15 @@ export class JeffCore extends EventEmitter {
       runNow: (taskId) => this.cron.runNow(taskId),
     })
     this.registerBrowserTools()
+    registerPluginTools(this.bridge, {
+      db: this.db,
+      plugins: this.plugins,
+      // 与插件页开关走同一条路径：MCP 变了就重写 opencode.json，标 dirty 让引擎在下次会话前重启
+      onChanged: () => {
+        this.markRegistryDirty()
+        this.bus.emit('data-changed', 'plugins')
+      },
+    })
     this.bridge.register('jeff_plugin_list', async () =>
       this.plugins.list().map((p) => ({
         id: p.id,

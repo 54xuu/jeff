@@ -4,12 +4,11 @@ import type { DB } from '../db/db.js'
 import { kvRepo } from '../db/repos.js'
 import type { McpServerCfg } from '../mcp/parse.js'
 import type { PluginCommand, PluginInfo, PluginMcp } from '../ipc/contract.js'
+import { PLUGIN_MCP_PREFIX } from './const.js'
 
 /** 插件启用状态与密钥在本地 kv（不进 WebDAV：密钥敏感、启用状态跟机器走） */
 const ENABLED_KEY = 'settings:plugins'
 const SECRET_PREFIX = 'plugin-secret:'
-/** 注入 MCP 的 key 前缀：避免覆盖用户手配的同名 server */
-export const PLUGIN_MCP_PREFIX = 'plugin-'
 
 export type PluginEnabledMap = Record<string, { enabled: boolean }>
 
@@ -121,6 +120,85 @@ export class PluginManager {
     const info = this.get(id)
     if (!info) throw new Error('导入失败：插件清单无法读取')
     return info
+  }
+
+  /**
+   * 写入/更新一个插件（管家小杰"对话式开发插件"的落盘入口）。
+   * 先写临时清单做校验（复用 parseManifest，保证「能通过校验」与「UI 看到的状态」永远一致），
+   * 校验通过再整目录落盘；已存在的插件保留其启用状态与密钥。
+   */
+  write(input: {
+    id: string
+    name: string
+    version?: string
+    icon?: string
+    description?: string
+    homepage?: string
+    commands?: PluginCommand[]
+    mcp?: PluginMcp | null
+    /** 附带写的额外文件（相对路径 → 文本内容），如说明文档、小脚本 */
+    files?: Record<string, string>
+  }): PluginInfo {
+    const id = String(input.id || '').trim()
+    if (!/^[a-zA-Z0-9._-]+$/.test(id)) throw new Error(`插件 id 非法（只允许字母数字 . _ -）：${id || '(空)'}`)
+    const manifest = {
+      id,
+      name: input.name,
+      version: input.version ?? '',
+      icon: input.icon ?? '🧩',
+      description: input.description ?? '',
+      homepage: input.homepage ?? '',
+      commands: input.commands ?? [],
+      ...(input.mcp ? { mcp: input.mcp } : {}),
+    }
+    // 先临时落到目标目录再校验；失败则清掉本次写入，避免留下半个坏插件
+    const dir = path.join(this.root(), id)
+    const existed = fs.existsSync(dir)
+    fs.mkdirSync(dir, { recursive: true })
+    const file = path.join(dir, 'plugin.json')
+    const prev = existed && fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : null
+    fs.writeFileSync(file, JSON.stringify(manifest, null, 2), 'utf8')
+    const parsed = this.parseManifest(file, id)
+    if (!parsed.info || parsed.error) {
+      if (prev != null) fs.writeFileSync(file, prev, 'utf8')
+      else fs.rmSync(dir, { recursive: true, force: true })
+      throw new Error(parsed.error || 'plugin.json 校验失败')
+    }
+    for (const [rel, content] of Object.entries(input.files || {})) {
+      const target = path.join(dir, rel)
+      // 只允许写到插件目录内部：rel 里的 ../ 会把文件写到目录外
+      if (!target.startsWith(dir + path.sep)) throw new Error(`files 里的路径必须位于插件目录内：${rel}`)
+      fs.mkdirSync(path.dirname(target), { recursive: true })
+      fs.writeFileSync(target, String(content), 'utf8')
+    }
+    // 清单有变 → 重新按新清单注入（已启用且改了 mcp 时立刻生效）
+    this.applyMcpInjection()
+    this.hooks.log?.('plugin-write', { id, existed })
+    this.hooks.onChanged?.()
+    return this.get(id)!
+  }
+
+  /** 读取插件的原始清单文本与文件清单（小杰要改已有插件时先看现状） */
+  read(id: string): { id: string; manifest: string; files: string[]; dir: string } {
+    if (!/^[a-zA-Z0-9._-]+$/.test(id)) throw new Error('插件 id 非法')
+    const dir = path.join(this.root(), id)
+    const file = path.join(dir, 'plugin.json')
+    if (!fs.existsSync(file)) throw new Error(`插件不存在或缺少 plugin.json：${id}`)
+    return { id, manifest: fs.readFileSync(file, 'utf8'), files: this.listSkillLikeFiles(dir), dir }
+  }
+
+  /** 目录内相对路径清单（posix 风格，供小杰了解插件里有哪些文件） */
+  private listSkillLikeFiles(root: string): string[] {
+    const out: string[] = []
+    const walk = (dir: string): void => {
+      for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, ent.name)
+        if (ent.isDirectory()) walk(full)
+        else out.push(path.relative(root, full).split(path.sep).join('/'))
+      }
+    }
+    if (fs.existsSync(root)) walk(root)
+    return out.sort()
   }
 
   /** 卸载：删目录 + 清启用状态与密钥 + 摘掉 MCP 注入 */
@@ -280,3 +358,5 @@ export class PluginManager {
     }
   }
 }
+
+export { PLUGIN_MCP_PREFIX } from './const.js'
