@@ -54,6 +54,36 @@ local（stdio）型 MCP 服务改用 `command` 与 `environment`：
 
 `mcp` 与 `commands` 都可以省略（纯指令插件、纯展示插件都合法）。
 
+## 跟小杰说句话就能做插件（v1.8.2+）
+
+不用手写 `plugin.json`：私聊**小杰**，把需求说清楚，它会用 `jeff_plugin_*` 工具把插件落盘。
+
+例：「帮我做个插件，id 用 `ward-board`，名字叫『病区看板』，MCP 用 http://127.0.0.1:8080/mcp，
+加一个 `/ward` 指令查病区概况，首页 http://localhost:5173。」
+
+小杰的这套能力有几条刻意的边界：
+
+- 工具**只给小杰**（`jeff_plugin_*` 在其它智能体的 agent 定义里被禁用）。插件的 `mcp.command`
+  会被引擎当子进程拉起、`mcp.url` 会把内网地址接进模型工具面——这等于「写一份能执行命令的配置」，
+  与 `jeff_agent_*` 同级，不下放给项目群里可能接触不可信内容的 worker 智能体。
+- **新建的插件默认停用**。小杰建完会停下来说清设计要点，你确认后它再调 `jeff_plugin_enable`。
+- **带本地命令（`mcp.command`）的插件小杰无法启用**：调 enable 会被拒绝，并让你去插件页点开关。
+  这是刻意的安全闸——本地命令会拉起子进程。
+- 小杰**没有文件与命令工具**（`bash` / `edit` / `write` / `patch` 在它的 agent 定义里被禁用），
+  插件只能通过 `jeff_plugin_*` 结构化落盘，不能由它直接改磁盘文件。
+- 参数是**平铺标量**（`mcp_url` / `mcp_command` / `mcp_headers` / `mcp_env`，附带文件用 `files` 数组）。
+  这是实测调出来的形状：早期把 MCP 声明写成嵌套对象时，模型侧会把整个对象丢成空串，
+  插件就落成「没有 MCP、没有附带文件」的半成品。空串/空数组一律按「没传」处理，
+  避免模型补默认值把已配好的字段抹掉（否则一次「全字段补空」的 update 就能清空插件）。
+
+| 工具 | 用途 |
+|------|------|
+| `jeff_plugin_create` | 新建插件（默认不启用） |
+| `jeff_plugin_update` | 改清单（只传要改的字段，其余保持原样） |
+| `jeff_plugin_read` | 读原始 `plugin.json` 与目录文件清单（改之前先看现状） |
+| `jeff_plugin_enable` | 启用/停用（本地命令型会被拒绝） |
+| `jeff_plugin_delete` | 卸载（先与用户确认） |
+
 ## 密钥管理
 
 - 清单里需要认证的地方写 `${SECRET}` 占位符。
@@ -70,7 +100,8 @@ local（stdio）型 MCP 服务改用 `command` 与 `environment`：
 ## 备份与恢复
 
 - 插件目录会随 WebDAV 同步一起镜像到 `<basePath>/plugins/`（带文件清单 `plugins-manifest.json`）。
-- 手动入口：插件页 →「备份到 WebDAV」/「从备份恢复」。恢复前会先把本地插件目录快照到 `~/.jeff/backups/plugins-<时间戳>/`，可手工回退。
+- 手动入口在 **设置 → 同步 → 插件**（v1.8.1 起所有备份/恢复入口统一收在设置页）：
+  「立即备份」/「从备份恢复」。恢复前会先把本地插件目录快照到 `~/.jeff/backups/plugins-<时间戳>/`，可手工回退。
 - 恢复后 Jeff 会重建 MCP 注入；密钥需在本机重新填写（刻意不跨设备同步敏感值）。
 
 ## 校验与常见错误
@@ -86,9 +117,9 @@ local（stdio）型 MCP 服务改用 `command` 与 `environment`：
 | `指令名必须以 / 开头` | `commands[].name` 少了斜杠 |
 | `mcp 需要 url（remote）或 command（local）` | MCP 声明不完整 |
 
-## 给智能体用的能力
+## 给所有智能体用的能力
 
-插件启用后，智能体侧可用的相关工具：
+插件启用后，**任意**智能体可用的相关工具（`jeff_plugin_*` 那组只有小杰有）：
 
 | 工具 | 用途 |
 |------|------|

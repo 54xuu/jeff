@@ -118,6 +118,9 @@ mock 只覆盖 happy path；流式一致性、权限挂起、MCP 拉起这类跨
 4. **每轮截图**（`page.screenshot` fullPage 到 `evidence/`）+ 数据 JSON 留档，**人工目检截图**（布局、时间戳、暗/亮主题、链接可读性）。
 5. 运行：`cd apps/desktop && JEFF_OPENCODE_BIN=<资源目录 opencode> npx playwright test -c ../../.tmp/liveN/playwright.config.ts <spec 绝对路径>`。
 6. 常见坑：`pkill -f` 会匹配自身命令行把 shell 杀掉（别在同一条命令里用）；真实模型单轮可达数分钟，超时放够；权限类问题必须读「项目工作树之外、不在 /tmp」的路径才复现得出来。
+7. **工具参数形状要拿真模型验**（v1.8.2 血泪）：把某个工具参数声明成裸 `type:'object'` 时，模型侧会把整个对象丢成空串——插件就落成「没有 MCP、没有附带文件」的半成品，而模型还会在回复里言之凿凿地说配置好了。给模型的参数**只用标量 / 标量数组**（或数组里包对象，那个是好的），**嵌套对象一律拆成平铺字段**（如 `mcp_url` / `mcp_command` / `mcp_headers`），并在实现里对空串做「视为未传」的兜底，否则模型一次「全字段补空」的 update 就能把已配好的字段抹掉。
+8. **agent 用哪条路完成任务，只有真模型能告诉你**：同一次 R7 里，模型先调 `jeff_plugin_*`，参数没进去之后**自己改用 `bash`/`edit`/`write` 直接改磁盘上的 `plugin.json`**——虽然结果碰巧对了，但这既绕过了工具语义，也说明「管家不该有文件工具」这条指令当时是句空话。发现这类「绕路」要当成产品 bug 修（改工具形状 + 真禁掉不该有的工具），而不是把断言改松。
+9. **日志是最好的证据**：`<home>/logs/debug-<date>.log` 里 `tool-pending` / `tool-start` / `tool-done` 三行带完整 `args` 与 `output`，能直接看出「模型到底传了什么」。断言失败时先看它，别猜。
 
 ### 第三层：打包后产物验证
 
@@ -127,9 +130,9 @@ deb：`dpkg -l jeff-desktop` 版本正确 + `/opt/Jeff` 与 `linux-unpacked` 的
 
 - **智能体** = 聊天好友（通讯录与聊天列表都按「分组分类」折叠归类；私聊顶栏「资料」可改）
 - **项目群** = 微信群（群资料抽屉可改群名/工作空间/群主/成员；任务看板同抽屉）
-- **小杰** = 内置管家，可用 `jeff_agent_*` / `jeff_project_*` / `jeff_cron_*` / `jeff_plugin_list` 等工具代操配置
-- **定时任务** = 到点自动向某个私聊/项目群发消息（如护士长 8 点在群里问病区动态、订阅 AI 资讯早报）。见 `docs/schedules.md`
-- **插件** = 「必须用但不通用」的能力打包（智慧病房等）：启用即自动接入其 MCP（免手工配 MCP）+ 提供 `/` 快捷指令 + 首页用内置浏览器打开。见 `docs/plugins.md`，样例在 `examples/plugins/`
+- **小杰** = 内置管家，可用 `jeff_agent_*` / `jeff_project_*` / `jeff_cron_*` / `jeff_plugin_*`（含插件开发）等工具代操配置；它**没有**文件与命令工具（`bash`/`edit`/`write`/`patch` 在它的 agent 定义里被禁用），插件只能经 `jeff_plugin_*` 结构化落盘
+- **定时任务** = 到点自动向某个私聊/项目群发消息（如护士长 8 点在群里问病区动态、订阅 AI 资讯早报），**小杰对话即可创建**。见 `docs/schedules.md`
+- **插件** = 「必须用但不通用」的能力打包（智慧病房等）：启用即自动接入其 MCP（免手工配 MCP）+ 提供 `/` 快捷指令 + 首页用内置浏览器打开，**小杰对话即可开发**（建好默认停用，你确认后再启用；带本地命令的插件只能人工在插件页启用）。见 `docs/plugins.md`，样例在 `examples/plugins/`
 - **内置浏览器** = 界面右侧独立面板（webview），人与 agent 操作同一个页面；agent 用 `jeff_browser_*` 工具。见 `docs/built-in-browser.md`
 
 ## 备份与恢复入口（硬性约定）
