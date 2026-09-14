@@ -14,11 +14,42 @@ export interface AgentRow {
   model_id: string
   /** 默认思考档位：'' /none/low/high/max（''=跟随模型配置） */
   thinking: string
+  /** 分组分类（如：项目管理/医疗场景/项目开发；空=默认分组） */
+  category: string
   builtin: number
   archived: number
   created_at: number
   updated_at: number
   deleted_at: number | null
+}
+
+export interface CronTaskRow {
+  id: string
+  name: string
+  /** agent=私聊某智能体 / project=项目群 */
+  target_type: 'agent' | 'project'
+  target_id: string
+  /** 5 段式 cron（本机时区）：分 时 日 月 周 */
+  cron_expr: string
+  prompt: string
+  /** 错过处理：catchup=启动时补跑一次 / skip=顺延跳过 */
+  miss_policy: 'catchup' | 'skip'
+  enabled: number
+  last_run_at: number | null
+  next_run_at: number | null
+  created_at: number
+  updated_at: number
+  deleted_at: number | null
+}
+
+export interface CronRunRow {
+  id: string
+  task_id: string
+  started_at: number
+  finished_at: number | null
+  status: 'running' | 'ok' | 'failed' | 'missed' | 'skipped'
+  is_catchup: number
+  error: string
 }
 
 export interface ProjectRow {
@@ -116,7 +147,7 @@ export const agentRepo = (db: DB) => ({
   get(id: string): AgentRow | undefined {
     return db.prepare('SELECT * FROM agent WHERE id = ?').get(id) as unknown as AgentRow | undefined
   },
-  create(data: { name: string; avatar?: string; description?: string; instructions?: string; model_provider?: string; model_id?: string; thinking?: string; builtin?: number; id?: string }): AgentRow {
+  create(data: { name: string; avatar?: string; description?: string; instructions?: string; model_provider?: string; model_id?: string; thinking?: string; category?: string; builtin?: number; id?: string }): AgentRow {
     const id = data.id ?? genId('agt')
     const row: AgentRow = {
       id,
@@ -127,6 +158,7 @@ export const agentRepo = (db: DB) => ({
       model_provider: data.model_provider || '',
       model_id: data.model_id || '',
       thinking: data.thinking || '',
+      category: data.category || '',
       builtin: data.builtin || 0,
       archived: 0,
       created_at: now(),
@@ -134,18 +166,18 @@ export const agentRepo = (db: DB) => ({
       deleted_at: null,
     }
     db.prepare(
-      `INSERT INTO agent (id, name, avatar, description, instructions, model_provider, model_id, thinking, builtin, archived, created_at, updated_at, deleted_at)
-       VALUES (@id, @name, @avatar, @description, @instructions, @model_provider, @model_id, @thinking, @builtin, @archived, @created_at, @updated_at, @deleted_at)`,
+      `INSERT INTO agent (id, name, avatar, description, instructions, model_provider, model_id, thinking, category, builtin, archived, created_at, updated_at, deleted_at)
+       VALUES (@id, @name, @avatar, @description, @instructions, @model_provider, @model_id, @thinking, @category, @builtin, @archived, @created_at, @updated_at, @deleted_at)`,
     ).run(row as unknown as Record<string, never>)
     return row
   },
-  update(id: string, patch: Partial<Pick<AgentRow, 'name' | 'avatar' | 'description' | 'instructions' | 'model_provider' | 'model_id' | 'thinking' | 'archived'>>): AgentRow | undefined {
+  update(id: string, patch: Partial<Pick<AgentRow, 'name' | 'avatar' | 'description' | 'instructions' | 'model_provider' | 'model_id' | 'thinking' | 'category' | 'archived'>>): AgentRow | undefined {
     const cur = this.get(id)
     if (!cur) return undefined
     const next = { ...cur, ...patch, updated_at: now() }
     db.prepare(
       `UPDATE agent SET name=@name, avatar=@avatar, description=@description, instructions=@instructions,
-       model_provider=@model_provider, model_id=@model_id, thinking=@thinking, archived=@archived, updated_at=@updated_at WHERE id=@id`,
+       model_provider=@model_provider, model_id=@model_id, thinking=@thinking, category=@category, archived=@archived, updated_at=@updated_at WHERE id=@id`,
     ).run({
       name: next.name,
       avatar: next.avatar,
@@ -154,11 +186,19 @@ export const agentRepo = (db: DB) => ({
       model_provider: next.model_provider,
       model_id: next.model_id,
       thinking: next.thinking,
+      category: next.category || '',
       archived: next.archived,
       updated_at: next.updated_at,
       id: next.id,
     })
     return this.get(id)
+  },
+  /** 分类清单（去空去重，按出现频次降序 → 常用分类靠前） */
+  categories(): string[] {
+    const rows = db
+      .prepare(`SELECT category, COUNT(*) AS n FROM agent WHERE deleted_at IS NULL AND trim(category) != '' GROUP BY category ORDER BY n DESC, category ASC`)
+      .all() as unknown as Array<{ category: string; n: number }>
+    return rows.map((r) => r.category)
   },
   softDelete(id: string): boolean {
     const cur = this.get(id)
@@ -384,3 +424,145 @@ export const chatMessageRepo = (db: DB) => ({
     return Number(r.changes || 0)
   },
 })
+
+// ---------- cron_task（定时任务）----------
+export const MISS_POLICIES = ['catchup', 'skip'] as const
+
+export const cronTaskRepo = (db: DB) => ({
+  list(includeDeleted = false): CronTaskRow[] {
+    const where = includeDeleted ? '' : 'WHERE deleted_at IS NULL'
+    return db.prepare(`SELECT * FROM cron_task ${where} ORDER BY enabled DESC, next_run_at ASC, created_at DESC`).all() as unknown as CronTaskRow[]
+  },
+  /** 调度器用：启用且未删除的任务 */
+  listEnabled(): CronTaskRow[] {
+    return db.prepare('SELECT * FROM cron_task WHERE deleted_at IS NULL AND enabled = 1').all() as unknown as CronTaskRow[]
+  },
+  get(id: string): CronTaskRow | undefined {
+    return db.prepare('SELECT * FROM cron_task WHERE id = ?').get(id) as unknown as CronTaskRow | undefined
+  },
+  create(data: {
+    name: string
+    target_type: 'agent' | 'project'
+    target_id: string
+    cron_expr: string
+    prompt?: string
+    miss_policy?: string
+    enabled?: number
+    next_run_at?: number | null
+  }): CronTaskRow {
+    const row: CronTaskRow = {
+      id: genId('cron'),
+      name: data.name,
+      target_type: data.target_type,
+      target_id: data.target_id,
+      cron_expr: data.cron_expr,
+      prompt: data.prompt || '',
+      miss_policy: data.miss_policy === 'skip' ? 'skip' : 'catchup',
+      enabled: data.enabled === 0 ? 0 : 1,
+      last_run_at: null,
+      next_run_at: data.next_run_at ?? null,
+      created_at: now(),
+      updated_at: now(),
+      deleted_at: null,
+    }
+    db.prepare(
+      `INSERT INTO cron_task (id, name, target_type, target_id, cron_expr, prompt, miss_policy, enabled, last_run_at, next_run_at, created_at, updated_at, deleted_at)
+       VALUES (@id, @name, @target_type, @target_id, @cron_expr, @prompt, @miss_policy, @enabled, @last_run_at, @next_run_at, @created_at, @updated_at, @deleted_at)`,
+    ).run(row as unknown as Record<string, never>)
+    return row
+  },
+  update(
+    id: string,
+    patch: Partial<Pick<CronTaskRow, 'name' | 'target_type' | 'target_id' | 'cron_expr' | 'prompt' | 'miss_policy' | 'enabled' | 'next_run_at'>>,
+  ): CronTaskRow | undefined {
+    const cur = this.get(id)
+    if (!cur) return undefined
+    const next = { ...cur, ...patch, updated_at: now() }
+    db.prepare(
+      `UPDATE cron_task SET name=@name, target_type=@target_type, target_id=@target_id, cron_expr=@cron_expr,
+       prompt=@prompt, miss_policy=@miss_policy, enabled=@enabled, next_run_at=@next_run_at, updated_at=@updated_at WHERE id=@id`,
+    ).run({
+      name: next.name,
+      target_type: next.target_type,
+      target_id: next.target_id,
+      cron_expr: next.cron_expr,
+      prompt: next.prompt,
+      miss_policy: next.miss_policy,
+      enabled: next.enabled,
+      next_run_at: next.next_run_at,
+      updated_at: next.updated_at,
+      id: next.id,
+    })
+    return this.get(id)
+  },
+  /** 标记一次执行结果（调度器内部使用） */
+  markRun(id: string, at: number, nextRunAt: number | null): void {
+    db.prepare('UPDATE cron_task SET last_run_at = ?, next_run_at = ?, updated_at = ? WHERE id = ?').run(at, nextRunAt, at, id)
+  },
+  /** 只更新下次触发时间（tick 推进用，不动 last_run_at） */
+  setNextRun(id: string, nextRunAt: number | null): void {
+    db.prepare('UPDATE cron_task SET next_run_at = ?, updated_at = ? WHERE id = ?').run(nextRunAt, now(), id)
+  },
+  /** 只更新上次实际执行时间（一轮跑完后回填） */
+  setLastRun(id: string, at: number): void {
+    db.prepare('UPDATE cron_task SET last_run_at = ? WHERE id = ?').run(at, id)
+  },
+  softDelete(id: string): boolean {
+    const cur = this.get(id)
+    if (!cur) return false
+    db.prepare('UPDATE cron_task SET deleted_at = ?, updated_at = ? WHERE id = ?').run(now(), now(), id)
+    return true
+  },
+})
+
+// ---------- cron_run（定时任务运行历史，本机日志不进同步）----------
+export const cronRunRepo = (db: DB) => ({
+  start(taskId: string, isCatchup = false): CronRunRow {
+    const row: CronRunRow = { id: genId('run'), task_id: taskId, started_at: now(), finished_at: null, status: 'running', is_catchup: isCatchup ? 1 : 0, error: '' }
+    db.prepare('INSERT INTO cron_run (id, task_id, started_at, finished_at, status, is_catchup, error) VALUES (@id, @task_id, @started_at, @finished_at, @status, @is_catchup, @error)').run(
+      row as unknown as Record<string, never>,
+    )
+    return row
+  },
+  finish(id: string, status: 'ok' | 'failed', error = ''): void {
+    db.prepare('UPDATE cron_run SET finished_at = ?, status = ?, error = ? WHERE id = ?').run(now(), status, String(error).slice(0, 2000), id)
+  },
+  /** 不进执行的终态记录（missed/skipped） */
+  log(taskId: string, status: 'missed' | 'skipped', error = ''): void {
+    const t = now()
+    db.prepare('INSERT INTO cron_run (id, task_id, started_at, finished_at, status, is_catchup, error) VALUES (?, ?, ?, ?, ?, 0, ?)').run(genId('run'), taskId, t, t, status, error)
+  },
+  listByTask(taskId: string, limit = 20): CronRunRow[] {
+    return db.prepare('SELECT * FROM cron_run WHERE task_id = ? ORDER BY started_at DESC LIMIT ?').all(taskId, limit) as unknown as CronRunRow[]
+  },
+  /** 各任务最后一次运行的失败态（定时视图红点提示用） */
+  lastStatusMap(): Record<string, CronRunRow> {
+    const rows = db.prepare('SELECT * FROM cron_run ORDER BY started_at ASC').all() as unknown as CronRunRow[]
+    const out: Record<string, CronRunRow> = {}
+    for (const r of rows) out[r.task_id] = r
+    return out
+  },
+  /** 清理旧记录（保留每任务最近 N 条） */
+  prune(keepPerTask = 50): number {
+    const r = db
+      .prepare(
+        `DELETE FROM cron_run WHERE id NOT IN (
+           SELECT id FROM (
+             SELECT id, ROW_NUMBER() OVER (PARTITION BY task_id ORDER BY started_at DESC) AS rn FROM cron_run
+           ) WHERE rn <= ?
+         )`,
+      )
+      .run(keepPerTask)
+    return Number(r.changes || 0)
+  },
+  /**
+   * 把残留的 running 记录收尾为 failed。
+   * 应用被关闭（含强杀/崩溃）会打断正在执行的回合，这些行永远等不到 finish——
+   * 不清掉的话界面会一直显示「执行中」，看起来像卡住了。
+   */
+  failStale(reason = '应用退出导致本次执行中断'): number {
+    const r = db.prepare("UPDATE cron_run SET status = 'failed', finished_at = ?, error = ? WHERE status = 'running'").run(now(), reason)
+    return Number(r.changes || 0)
+  },
+})
+

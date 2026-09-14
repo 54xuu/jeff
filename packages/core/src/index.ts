@@ -3,7 +3,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { buildPaths, ensureDirs, jeffRoot, type JeffPaths } from './paths.js'
 import { openDb, type DB } from './db/db.js'
-import { agentRepo, kvRepo, chatMessageRepo, projectRepo, projectAgentRepo, type AgentRow } from './db/repos.js'
+import { agentRepo, kvRepo, chatMessageRepo, projectRepo, projectAgentRepo, cronTaskRepo, cronRunRepo, type AgentRow, type CronTaskRow } from './db/repos.js'
 import { SidecarManager } from './sidecar/manager.js'
 import { OcClient } from './oc/client.js'
 import { writeSidecarConfig, migrateProviders, firstEnabledModel, configuredModelOptions, type ProviderSetting } from './oc/configWriter.js'
@@ -13,7 +13,12 @@ import { ToolBridge, renderBridgePlugin } from './tools/bridge.js'
 import { registerAdminTools } from './tools/adminTools.js'
 import { registerProjectTools, taskCardMessage } from './tools/projectTools.js'
 import { registerMemoryTools, DELEGATE_TOOL, sesMetaKey, type SessionScopeCtx } from './tools/memoryTools.js'
+import { registerCronTools, CRON_TOOL_NAMES } from './tools/cronTools.js'
 import { allToolDefs } from './tools/definitions.js'
+import { PluginManager } from './plugins/manager.js'
+import { CronScheduler } from './cron/scheduler.js'
+import { describeCron, nextRunAt } from './cron/expr.js'
+import { UnavailableBrowser, type BrowserControl } from './browser/control.js'
 import { PrivateChat, autoTitleKey } from './chat/private.js'
 import { GroupChat } from './orchestrator/group.js'
 import { Delegator } from './orchestrator/delegate.js'
@@ -121,6 +126,12 @@ export class JeffCore extends EventEmitter {
   memory!: MemoryStore
   indexer!: SessionIndex
   sync!: SyncEngine
+  /** 插件管理器（目录即注册表：~/.jeff/plugins/<id>/plugin.json） */
+  plugins!: PluginManager
+  /** 定时任务调度器（core 进程内常驻，窗口关到托盘仍运行） */
+  cron!: CronScheduler
+  /** 内置浏览器控制（桌面主进程注入到渲染层 webview；headless 场景为 UnavailableBrowser） */
+  browser: BrowserControl = new UnavailableBrowser()
   /** 调试日志（设置 → 引擎服务 开启；写 ~/.jeff/logs/debug-YYYYMMDD.log） */
   debugLog!: DebugLogger
   bus = new EventEmitter()
@@ -145,6 +156,13 @@ export class JeffCore extends EventEmitter {
     this.registry = new AgentRegistry(this.db, this.paths)
     this.memory = new MemoryStore(this.paths)
     this.indexer = new SessionIndex(this.db)
+    // 插件：先于 sidecar 配置生成，让已启用插件的 MCP 打进首份 opencode.json（免手工配 MCP）
+    this.plugins = new PluginManager(this.db, this.paths.pluginsDir, {
+      onConfigChanged: () => this.writeSidecarConfig(),
+      onChanged: () => this.bus.emit('data-changed', 'plugins'),
+      log: (tag, detail) => this.debugLog?.log(tag, detail),
+    })
+    this.plugins.applyMcpInjection()
     this.groupChat = new GroupChat(this.db, () => this.oc, this.chatHooks())
     this.privateChat = new PrivateChat(this.db, () => this.oc, this.chatHooks())
     this.delegator = new Delegator(this.db, () => this.oc, this.groupChat, (payload) => {
@@ -191,6 +209,29 @@ export class JeffCore extends EventEmitter {
       resolveSession: (sessionId) => this.resolveSession(sessionId),
       onChanged: () => this.bus.emit('data-changed', 'memory'),
     })
+    registerCronTools(this.bridge, {
+      db: this.db,
+      onChanged: () => {
+        this.bus.emit('data-changed', 'cron')
+        this.bus.emit('cron-updated')
+      },
+      runNow: (taskId) => this.cron.runNow(taskId),
+    })
+    this.registerBrowserTools()
+    this.bridge.register('jeff_plugin_list', async () =>
+      this.plugins.list().map((p) => ({
+        id: p.id,
+        name: p.name,
+        version: p.version,
+        description: p.description,
+        icon: p.icon,
+        homepage: p.homepage,
+        enabled: p.enabled,
+        error: p.error,
+        mcp_tools: p.mcp?.tools ?? [],
+        commands: p.commands.map((c) => ({ name: c.name, description: c.description })),
+      })),
+    )
     this.bridge.register(DELEGATE_TOOL, async (raw: Record<string, unknown>) => {
       const { __ctx, member_agent_id, instruction } = raw as {
         __ctx?: { sessionID?: string; agent?: string; messageID?: string }
@@ -246,6 +287,14 @@ export class JeffCore extends EventEmitter {
 
     this.writeUsageSkill()
     this.backfillIndex()
+    // 定时任务：sidecar 就绪后再启动（触发要真的能跟引擎对话），进程内常驻
+    this.cron = new CronScheduler({
+      db: this.db,
+      runTask: (task, isCatchup) => this.runCronTask(task, isCatchup),
+      onChanged: () => this.bus.emit('cron-updated'),
+      log: (tag, detail) => this.debugLog?.log(tag, detail),
+    })
+    this.cron.start()
     this.started = true
     if (this.kv().getJSON<WebdavConfig | null>('settings:webdav', null)?.autoSync) {
       setTimeout(() => void this.syncNow().catch(() => {}), 5000)
@@ -660,6 +709,242 @@ export class JeffCore extends EventEmitter {
     return this.sync.restoreSkillsApply()
   }
 
+  // ---------- 定时任务 ----------
+  /** 左侧「定时」视图数据：任务 + 目标名 + 人性化时间 + 上次运行状态 */
+  listCronTasks(): Array<import('./ipc/contract.js').CronTaskInfo> {
+    const agents = agentRepo(this.db)
+    const projects = projectRepo(this.db)
+    const runs = cronRunRepo(this.db).lastStatusMap()
+    return cronTaskRepo(this.db)
+      .list()
+      .map((t) => {
+        const agent = t.target_type === 'agent' ? agents.get(t.target_id) : undefined
+        const project = t.target_type === 'project' ? projects.get(t.target_id) : undefined
+        const targetExists = !!(agent ?? project) && (agent ?? project)!.deleted_at == null
+        const label = agent ? `${agent.avatar} ${agent.name}` : project ? `${project.icon} ${project.title}` : t.target_type === 'agent' ? '（智能体已删除）' : '（群已解散）'
+        const last = runs[t.id]
+        return {
+          id: t.id,
+          name: t.name,
+          target_type: t.target_type,
+          target_id: t.target_id,
+          target_label: label,
+          target_exists: targetExists,
+          cron_expr: t.cron_expr,
+          cron_human: describeCron(t.cron_expr),
+          prompt: t.prompt,
+          miss_policy: t.miss_policy,
+          enabled: !!t.enabled,
+          last_run_at: t.last_run_at,
+          next_run_at: t.next_run_at,
+          last_status: last?.status ?? null,
+          last_error: last?.error || null,
+        }
+      })
+  }
+
+  /** 新建/编辑定时任务。改 cron 或重新启用时重算下次触发时间。 */
+  saveCronTask(input: {
+    id?: string
+    name: string
+    target_type: 'agent' | 'project'
+    target_id: string
+    cron_expr: string
+    prompt?: string
+    miss_policy?: 'catchup' | 'skip'
+    enabled?: boolean
+  }): import('./ipc/contract.js').CronTaskInfo {
+    const name = (input.name || '').trim()
+    if (!name) throw new Error('任务名不能为空')
+    if (input.target_type !== 'agent' && input.target_type !== 'project') throw new Error('目标类型非法')
+    const prompt = (input.prompt || '').trim()
+    if (!prompt) throw new Error('触发提示词不能为空')
+    const expr = (input.cron_expr || '').trim()
+    let next: number
+    try {
+      next = nextRunAt(expr, Date.now())
+    } catch (err) {
+      throw new Error(String((err as Error)?.message || err))
+    }
+    if (input.target_type === 'agent') {
+      const a = agentRepo(this.db).get(input.target_id)
+      if (!a || a.deleted_at != null) throw new Error('目标智能体不存在')
+    } else {
+      const p = projectRepo(this.db).get(input.target_id)
+      if (!p || p.deleted_at != null) throw new Error('目标项目群不存在')
+      if (!p.leader_agent_id) throw new Error('该项目群未设置群主，无法触发（请先指派群主）')
+    }
+    const repo = cronTaskRepo(this.db)
+    if (input.id) {
+      const row = repo.update(input.id, {
+        name,
+        target_type: input.target_type,
+        target_id: input.target_id,
+        cron_expr: expr,
+        prompt,
+        miss_policy: input.miss_policy === 'skip' ? 'skip' : 'catchup',
+        enabled: input.enabled === false ? 0 : 1,
+        next_run_at: next,
+      })
+      if (!row) throw new Error('定时任务不存在')
+    } else {
+      repo.create({
+        name,
+        target_type: input.target_type,
+        target_id: input.target_id,
+        cron_expr: expr,
+        prompt,
+        miss_policy: input.miss_policy === 'skip' ? 'skip' : 'catchup',
+        enabled: input.enabled === false ? 0 : 1,
+        next_run_at: next,
+      })
+    }
+    this.bus.emit('cron-updated')
+    const list = this.listCronTasks()
+    return list.find((t) => (input.id ? t.id === input.id : t.name === name && t.cron_expr === expr)) ?? list[0]
+  }
+
+  deleteCronTask(id: string): { ok: boolean } {
+    const ok = cronTaskRepo(this.db).softDelete(id)
+    if (ok) this.bus.emit('cron-updated')
+    return { ok }
+  }
+
+  /** 立即执行一次（不等调度窗口，用户在界面上手动触发用） */
+  runCronTaskNow(id: string): { runId: string } {
+    if (!this.cron) throw new Error('调度器尚未就绪，请稍候重试')
+    const r = this.cron.runNow(id)
+    this.bus.emit('cron-updated')
+    return r
+  }
+
+  listCronRuns(id: string): import('./ipc/contract.js').CronRunInfo[] {
+    return cronRunRepo(this.db)
+      .listByTask(id, 20)
+      .map((r) => ({ id: r.id, task_id: r.task_id, started_at: r.started_at, finished_at: r.finished_at, status: r.status, is_catchup: !!r.is_catchup, error: r.error }))
+  }
+
+  /**
+   * 真正执行一次定时任务（调度器回调）。
+   *
+   * 私聊与群聊走各自既有链路，因此上下文、记忆、AGENTS.md 注入等行为与用户手打完全一致；
+   * 私聊与用户手动聊天共用同一 session（早报类场景需要跨天记忆连续性）。
+   */
+  private async runCronTask(task: CronTaskRow, isCatchup: boolean): Promise<void> {
+    if (isCatchup) this.debugLog?.log('cron-catchup-run', { id: task.id, name: task.name })
+    if (task.target_type === 'agent') {
+      const agent = agentRepo(this.db).get(task.target_id)
+      if (!agent) throw new Error('目标智能体已被删除')
+      await this.privateChat.send(agent.id, agent.name, task.prompt)
+      return
+    }
+    const project = projectRepo(this.db).get(task.target_id)
+    if (!project) throw new Error('目标项目群已被解散')
+    if (!project.leader_agent_id) throw new Error('目标项目群未设置群主')
+    await this.groupChat.send({ projectId: project.id, text: task.prompt, cronTaskId: task.id })
+  }
+
+  // ---------- 插件 ----------
+  listPlugins(): import('./ipc/contract.js').PluginInfo[] {
+    return this.plugins.list()
+  }
+
+  /** 已启用插件的 `/` 快捷指令（私聊与群聊输入框共用） */
+  pluginCommands(): Array<{ name: string; description?: string; prompt: string; pluginId: string; pluginName: string; icon: string }> {
+    return this.plugins.commands()
+  }
+
+  setPluginEnabled(id: string, enabled: boolean): import('./ipc/contract.js').PluginInfo {
+    const info = this.plugins.setEnabled(id, enabled)
+    // MCP 注入变了 → 配置已重写，需重启引擎才生效（下次会话前由 registry dirty 机制落闸）
+    this.markRegistryDirty()
+    this.bus.emit('data-changed', 'plugins')
+    return info
+  }
+
+  savePluginSecret(id: string, secret: string): import('./ipc/contract.js').PluginInfo {
+    const info = this.plugins.saveSecret(id, secret)
+    this.markRegistryDirty()
+    this.bus.emit('data-changed', 'plugins')
+    return info
+  }
+
+  deletePlugin(id: string): { ok: boolean } {
+    const r = this.plugins.delete(id)
+    this.markRegistryDirty()
+    this.bus.emit('data-changed', 'plugins')
+    return r
+  }
+
+  importPlugin(dir: string): import('./ipc/contract.js').PluginInfo {
+    const info = this.plugins.import(dir)
+    this.bus.emit('data-changed', 'plugins')
+    return info
+  }
+
+  /** 重新扫描插件目录（用户手工丢目录进来后点刷新） */
+  refreshPlugins(): import('./ipc/contract.js').PluginInfo[] {
+    this.plugins.applyMcpInjection()
+    this.bus.emit('data-changed', 'plugins')
+    return this.plugins.list()
+  }
+
+  /** 把插件目录镜像到 WebDAV（通常随同步自动进行，此处供手动触发） */
+  async backupPluginsNow(): Promise<SkillsBackupReport> {
+    return this.sync.backupPlugins()
+  }
+
+  /** 从 WebDAV 恢复插件目录（恢复前自动快照本地，恢复后重建 MCP 注入） */
+  async restorePlugins(): Promise<SkillsRestoreApply> {
+    const r = await this.sync.restorePlugins()
+    if (r.ok) this.plugins.applyMcpInjection()
+    this.bus.emit('data-changed', 'plugins')
+    return r
+  }
+
+  // ---------- 内置浏览器工具 ----------
+  /** 把 jeff_browser_* 工具注册到工具桥（实现委托给 this.browser，桌面主进程注入） */
+  private registerBrowserTools(): void {
+    const need = (action: import('./ipc/contract.js').BrowserAction) => async (args: Record<string, unknown> = {}) => {
+      if (!this.browser.available()) {
+        // 面板没打开时给出可操作指引，而不是让 agent 干等
+        throw new Error('内置浏览器面板未打开：请先在 Jeff 顶部菜单「工具 → 浏览器」打开面板，再让我操作网页。')
+      }
+      return this.browser.request(action, args || {})
+    }
+    this.bridge.register('jeff_browser_navigate', async (args: { url?: string }) => {
+      const url = String(args?.url || '').trim()
+      if (!/^https?:\/\//i.test(url)) throw new Error('url 必须是以 http:// 或 https:// 开头的地址')
+      return need('navigate')({ url })
+    })
+    this.bridge.register('jeff_browser_get_content', need('get_content'))
+    this.bridge.register('jeff_browser_click', async (args: { selector?: string; text?: string }) => {
+      if (!args?.selector && !args?.text) throw new Error('selector 与 text 至少提供一个')
+      return need('click')(args as Record<string, unknown>)
+    })
+    this.bridge.register('jeff_browser_type', async (args: { selector?: string; text?: string; clear?: boolean; submit?: boolean }) => {
+      if (!args?.selector) throw new Error('selector 不能为空')
+      if (args.text === undefined) throw new Error('text 不能为空')
+      return need('type')(args as Record<string, unknown>)
+    })
+    this.bridge.register('jeff_browser_screenshot', async () => {
+      const data = (await need('screenshot')({})) as { dataUrl?: string; title?: string; url?: string }
+      if (!data?.dataUrl) throw new Error('截图失败：未取到画面')
+      // 存成工作空间里的 PNG：视觉模型可以直接读图，比在文本里塞 base64 有用得多
+      const b64 = data.dataUrl.replace(/^data:image\/\w+;base64,/, '')
+      const dir = path.join(this.paths.workspaceDir, 'browser-shots')
+      fs.mkdirSync(dir, { recursive: true })
+      const file = path.join(dir, `shot-${Date.now()}.png`)
+      fs.writeFileSync(file, Buffer.from(b64, 'base64'))
+      return {
+        file,
+        title: data.title || '',
+        url: data.url || '',
+        note: '截图已保存为 PNG 文件；若你的模型不支持看图，请改用 jeff_browser_get_content 读取页面文本。',
+      }
+    })
+  }
+
   /** 回复完成：索引本轮内容 + 计数 nudge */
   private onReplyDone(scope: { kind: 'private'; agentId: string } | { kind: 'group'; projectId: string; agentId: string }): void {
     try {
@@ -1053,6 +1338,7 @@ export class JeffCore extends EventEmitter {
 
   async dispose(): Promise<void> {
     if (!this.started) return
+    this.cron?.stop()
     this.oc?.stopEventStream()
     await this.sidecar?.stop().catch(() => {})
     await this.bridge?.stop().catch(() => {})
@@ -1317,3 +1603,9 @@ export { MEMORY_TOOL, SEARCH_TOOL, DELEGATE_TOOL, type SessionScopeCtx, type Too
 export { formatModelKey, parseModelKey, modelDisplayLabel, agentPromptOpts } from './util/modelKey.js'
 export { normalizeProjectRole, projectRoleLabel, PROJECT_ROLES, type ProjectRole } from './util/projectRole.js'
 export { extractThinkTags, mergeReasoning, type ThinkExtractResult } from './util/thinkTag.js'
+export { CronScheduler, type CronSchedulerDeps } from './cron/scheduler.js'
+export { PluginManager, PLUGIN_MCP_PREFIX, type PluginEnabledMap } from './plugins/manager.js'
+export { UnavailableBrowser, BridgeBrowserControl, type BrowserControl } from './browser/control.js'
+export { CRON_TOOL_NAMES } from './tools/cronTools.js'
+// cron 表达式工具（渲染层在开发态按本文件解析类型，生产打包走 browser.ts，两处都要导出）
+export { isValidCron, describeCron, nextRunAt, parseCron, CRON_PRESETS, type CronFields } from './cron/expr.js'

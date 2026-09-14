@@ -23,7 +23,7 @@ export function registerAdminTools(reg: ToolBridge, deps: AdminDeps): void {
   const agents = agentRepo(deps.db)
   const [T_CREATE, T_UPDATE, T_DELETE, T_LIST, T_GET] = ADMIN_TOOL_NAMES
 
-  reg.register(T_CREATE, async (args: { name?: string; description?: string; instructions?: string; avatar?: string; model_provider?: string; model_id?: string; thinking?: string }) => {
+  reg.register(T_CREATE, async (args: { name?: string; description?: string; instructions?: string; avatar?: string; model_provider?: string; model_id?: string; thinking?: string; category?: string }) => {
     const name = (args.name || '').trim()
     if (!name) throw new Error('name 不能为空')
     const thinking = normalizeThinking(args.thinking)
@@ -35,12 +35,13 @@ export function registerAdminTools(reg: ToolBridge, deps: AdminDeps): void {
       model_provider: args.model_provider || '',
       model_id: args.model_id || '',
       thinking,
+      category: args.category || '',
     })
     deps.onChanged()
-    return { id: row.id, name: row.name }
+    return { id: row.id, name: row.name, category: row.category }
   })
 
-  reg.register(T_UPDATE, async (args: { id?: string; name?: string; description?: string; instructions?: string; avatar?: string; model_provider?: string; model_id?: string; thinking?: string; archived?: boolean }) => {
+  reg.register(T_UPDATE, async (args: { id?: string; name?: string; description?: string; instructions?: string; avatar?: string; model_provider?: string; model_id?: string; thinking?: string; category?: string; archived?: boolean }) => {
     if (!args.id) throw new Error('id 不能为空')
     if (args.id === XIAOJIE_ID) throw new Error('小杰是内置管家，不可编辑')
     const row = agents.update(args.id, {
@@ -51,6 +52,7 @@ export function registerAdminTools(reg: ToolBridge, deps: AdminDeps): void {
       ...(args.model_provider !== undefined ? { model_provider: args.model_provider } : {}),
       ...(args.model_id !== undefined ? { model_id: args.model_id } : {}),
       ...(args.thinking !== undefined ? { thinking: normalizeThinking(args.thinking) } : {}),
+      ...(args.category !== undefined ? { category: args.category } : {}),
       ...(args.archived !== undefined ? { archived: args.archived ? 1 : 0 } : {}),
     })
     if (!row) throw new Error(`智能体不存在: ${args.id}`)

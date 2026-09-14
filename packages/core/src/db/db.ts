@@ -88,13 +88,42 @@ CREATE TABLE IF NOT EXISTS kv (
   updated_at INTEGER NOT NULL                     -- 更新时间（ms）
 );
 
+CREATE TABLE IF NOT EXISTS cron_task (
+  id           TEXT PRIMARY KEY,                 -- 定时任务唯一 id（cron_*）
+  name         TEXT NOT NULL,                    -- 任务名（如「晨间病区动态」）
+  target_type  TEXT NOT NULL,                    -- 目标类型：agent（私聊某个智能体）/ project（项目群）
+  target_id    TEXT NOT NULL,                    -- 目标 id：agent id 或 project id
+  cron_expr    TEXT NOT NULL,                    -- 5 段式 cron（本机时区）：分 时 日 月 周
+  prompt       TEXT NOT NULL DEFAULT '',         -- 触发时向目标发出的提示词
+  miss_policy  TEXT NOT NULL DEFAULT 'catchup',  -- 错过处理：catchup=启动时补跑一次 / skip=顺延跳过
+  enabled      INTEGER NOT NULL DEFAULT 1,       -- 1=启用 0=停用
+  last_run_at  INTEGER,                          -- 上次触发时间（ms，null=从未执行）
+  next_run_at  INTEGER,                          -- 下次触发时间（ms，null=待计算）
+  created_at   INTEGER NOT NULL,                 -- 创建时间（ms）
+  updated_at   INTEGER NOT NULL,                 -- 更新时间（ms）
+  deleted_at   INTEGER                           -- 软删除时间（ms，null=未删）
+);
+
+CREATE TABLE IF NOT EXISTS cron_run (
+  id          TEXT PRIMARY KEY,                  -- 单次运行记录 id
+  task_id     TEXT NOT NULL,                     -- 所属定时任务 id（任务删除后记录保留，便于排障）
+  started_at  INTEGER NOT NULL,                  -- 开始时间（ms）
+  finished_at INTEGER,                           -- 结束时间（ms，null=进行中）
+  status      TEXT NOT NULL DEFAULT 'running',   -- running/ok/failed/missed/skipped
+  is_catchup  INTEGER NOT NULL DEFAULT 0,        -- 1=本次为错过后补跑
+  error       TEXT NOT NULL DEFAULT ''           -- 失败原因（status=failed 时）
+);
+
 CREATE INDEX IF NOT EXISTS idx_agent_name ON agent(name);
 CREATE INDEX IF NOT EXISTS idx_task_project ON task(project_id, status);
 CREATE INDEX IF NOT EXISTS idx_msg_scope ON chat_message(scope, created_at);
+CREATE INDEX IF NOT EXISTS idx_cron_next ON cron_task(enabled, next_run_at);
+CREATE INDEX IF NOT EXISTS idx_cron_run_task ON cron_run(task_id, started_at);
 `)
 
   // 增量列迁移（CREATE TABLE IF NOT EXISTS 不会给旧库加列）
   addColumn(db, 'agent', 'thinking', "TEXT NOT NULL DEFAULT ''", "默认思考档位：'' /none/low/high/max（''=跟随模型配置）")
+  addColumn(db, 'agent', 'category', "TEXT NOT NULL DEFAULT ''", "分组分类（如：项目管理/医疗场景/项目开发；空=默认分组）")
   addColumn(db, 'project', 'workspace_dir', "TEXT NOT NULL DEFAULT ''", '工作空间目录（空=全局 workspace，输出文件默认落这里）')
 
   // 角色归一：历史 member / 开发 / ui / 测试 / 产品 … → worker；再按 project.leader_agent_id 校正群主

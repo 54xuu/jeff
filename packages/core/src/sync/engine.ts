@@ -4,10 +4,11 @@ import os from 'node:os'
 import path from 'node:path'
 import { createClient, WebDAVClient } from 'webdav'
 import type { DB } from '../db/db.js'
-import { agentRepo, projectAgentRepo, projectRepo, taskRepo, type AgentRow, type ProjectAgentRow, type ProjectRow, type TaskRow } from '../db/repos.js'
+import { agentRepo, cronTaskRepo, projectAgentRepo, projectRepo, taskRepo, type AgentRow, type CronTaskRow, type ProjectAgentRow, type ProjectRow, type TaskRow } from '../db/repos.js'
 import type { JeffPaths } from '../paths.js'
 import type { MemoryStore, MemoryScope } from '../memory/store.js'
 import type { SkillsBackupReport, SkillsRestoreApply, SkillsRestoreStage } from '../ipc/contract.js'
+import { nextRunAt } from '../cron/expr.js'
 
 export interface WebdavConfig {
   url: string
@@ -91,6 +92,8 @@ export class SyncEngine {
   private idleWaiters: Array<() => void> = []
   /** skills 备份独立跑，不占用 sync 锁 */
   private skillsBusy = false
+  /** 插件目录镜像独立跑，不占用 sync 锁 */
+  private pluginsBusy = false
   /** 卡住超过此时长则强制释放锁（毫秒） */
   private static readonly STUCK_MS = 120_000
   /** 手动同步等待上一轮结束的最长时间 */
@@ -197,7 +200,10 @@ export class SyncEngine {
       this.notifyIdle()
     }
     // skills 在锁外后台跑：避免数百文件 PUT/GET 拖死「立即同步」
-    if (report.ok) this.scheduleSkillsBackup()
+    if (report.ok) {
+      this.scheduleSkillsBackup()
+      this.schedulePluginsBackup()
+    }
     return report
   }
 
@@ -211,6 +217,203 @@ export class SyncEngine {
       .finally(() => {
         this.skillsBusy = false
       })
+  }
+
+  // ---------- 插件目录镜像（<base>/plugins/**） ----------
+
+  private pluginsDir(): string {
+    return this.paths.pluginsDir
+  }
+
+  private schedulePluginsBackup(): void {
+    if (this.pluginsBusy) return
+    this.pluginsBusy = true
+    void this.backupPlugins()
+      .catch(() => {
+        /* backupPlugins 内部已写 kv */
+      })
+      .finally(() => {
+        this.pluginsBusy = false
+      })
+  }
+
+  /**
+   * 插件目录镜像备份 ~/.jeff/plugins → <base>/plugins/**（含 plugins-manifest.json）。
+   *
+   * 与 skills 镜像同一套安全模型，但策略更简（插件可从源码重新导入，故不保留远端历史版本归档）：
+   *  - 全量对齐：远端 plugins/ 与本地目录一致；本地删除会在远端同步删除（带熔断）
+   *  - 安全阀：本地目录不存在 / 本地为空而远端非空 → 报错跳过，不清远端
+   *  - 自愈：哈希相同但远端列表里已无该文件 → 补传
+   *  - 清单：写 plugins-manifest.json，规避部分服务器列目录 405 的问题
+   */
+  async backupPlugins(): Promise<SkillsBackupReport> {
+    const startedAt = Date.now()
+    const report: SkillsBackupReport = { ok: false, at: startedAt, uploaded: 0, archived: 0, skipped: 0, deleted: 0 }
+    try {
+      const client = this.client()
+      const base = this.base()
+      const root = this.pluginsDir()
+      const timeoutMs = this.requestTimeoutMs()
+      const reqOpts = () => ({ signal: AbortSignal.timeout(timeoutMs) })
+      const remoteDir = `${base}/plugins`
+
+      if (!fs.existsSync(root)) {
+        report.error = `本地插件目录不存在（${root}），已跳过备份；为防误清空，未改动远端`
+        this.pluginsKvSet('last', report)
+        return report
+      }
+      const files = this.listSkillFiles(root)
+      const remoteFiles = await this.listRemoteFiles(remoteDir, timeoutMs)
+      if (files.length === 0 && remoteFiles.length > 0) {
+        report.error = `本地插件目录为空，但远端备份有 ${remoteFiles.length} 个文件。为防误清空远端，本次未做任何改动。`
+        this.pluginsKvSet('last', report)
+        return report
+      }
+
+      await this.ensureCollection(remoteDir)
+      const lastHashes = this.pluginsKv<Record<string, string>>('hashes', {})
+      const remoteSet = new Set(remoteFiles)
+      const hashes: Record<string, string> = {}
+      const ensuredDirs = new Set<string>([remoteDir])
+      const ensureDir = async (dir: string): Promise<void> => {
+        if (ensuredDirs.has(dir)) return
+        await this.ensureCollection(dir)
+        ensuredDirs.add(dir)
+      }
+
+      const toUpload = files.filter((rel) => {
+        const hash = contentHash(fs.readFileSync(path.join(root, rel)))
+        hashes[rel] = hash
+        if (lastHashes[rel] === hash && remoteSet.has(rel)) {
+          report.skipped += 1
+          return false
+        }
+        return true
+      })
+      await pMap(toUpload, 6, async (rel) => {
+        const content = fs.readFileSync(path.join(root, rel))
+        const remotePath = `${remoteDir}/${rel}`
+        await ensureDir(remotePath.slice(0, remotePath.lastIndexOf('/')))
+        await client.putFileContents(remotePath, content, { overwrite: true, ...reqOpts() })
+        report.uploaded += 1
+      })
+      this.pluginsKvSet('hashes', hashes)
+
+      // 镜像删除（本地删掉的插件/文件 → 远端同步删掉），带熔断
+      const localSet = new Set(files)
+      const toDelete = remoteFiles.filter((rel) => !localSet.has(rel))
+      const exceeds = toDelete.length > 10 && toDelete.length * 100 > remoteFiles.length * 30
+      const pendingSig = this.pluginsKv<string | null>('pendingDelete', null)
+      if (toDelete.length > 0 && exceeds) {
+        const sig = [...toDelete].sort().join('\n')
+        if (sig !== pendingSig) {
+          this.pluginsKvSet('pendingDelete', sig)
+          report.error = `本次要删除远端 ${toDelete.length} 个插件文件（超过 30% 熔断阈值），已暂缓。如确认要删除，请再点一次「备份插件」。`
+          this.pluginsKvSet('last', report)
+          return report
+        }
+      }
+      this.pluginsKvSet('pendingDelete', null)
+      await pMap(toDelete, 6, async (rel) => {
+        await client.deleteFile(`${remoteDir}/${rel}`, reqOpts()).catch(() => {})
+        report.deleted += 1
+      })
+
+      await client.putFileContents(`${base}/plugins-manifest.json`, JSON.stringify({ at: Date.now(), files }, null, 2), { overwrite: true, ...reqOpts() })
+      report.ok = true
+      report.fileCount = files.length
+      report.elapsedMs = Date.now() - startedAt
+    } catch (err) {
+      report.error = formatWebdavError(err)
+    }
+    this.pluginsKvSet('last', report)
+    this.onReport({ ok: report.ok, at: report.at, uploaded: 0, downloaded: 0, conflicts: [], ...(report.error ? { error: report.error } : {}) })
+    return report
+  }
+
+  lastPluginsBackup(): (SkillsBackupReport & { fileCount?: number }) | null {
+    return this.pluginsKv<(SkillsBackupReport & { fileCount?: number }) | null>('last', null)
+  }
+
+  /**
+   * 从备份恢复插件目录（一次性）：
+   * 先按清单/远端列表把文件下到暂存区，再快照本地 plugins/ 到 backups/plugins-<时间戳>，最后整目录替换。
+   * 本地快照是恢复失败时唯一的手工退路，必须成功之后才动本地目录。
+   */
+  async restorePlugins(): Promise<SkillsRestoreApply> {
+    const out: SkillsRestoreApply = { ok: false, restored: 0, removed: 0, snapshotDir: '' }
+    let client: WebDAVClient
+    let base: string
+    const timeoutMs = this.requestTimeoutMs()
+    try {
+      client = this.client()
+      base = this.base()
+    } catch (err) {
+      out.error = formatWebdavError(err)
+      return out
+    }
+    const remoteDir = `${base}/plugins`
+    try {
+      const remoteFiles = await this.listRemoteFiles(remoteDir, timeoutMs)
+      const manifest = await this.readListManifest(`${base}/plugins-manifest.json`)
+      const all = Array.from(new Set([...remoteFiles, ...manifest])).sort()
+      if (all.length === 0) {
+        out.error = '备份里没有插件文件（远端 plugins/ 为空）'
+        return out
+      }
+      // 1) 下载到暂存区（全部成功才继续，避免半套插件覆盖本地）
+      const staging = path.join(this.paths.restoreStagingDir, 'plugins')
+      fs.rmSync(staging, { recursive: true, force: true })
+      fs.mkdirSync(staging, { recursive: true })
+      for (const rel of all) {
+        const buf = await davGetWithRetry(client, `${remoteDir}/${rel}`, timeoutMs)
+        const dest = path.join(staging, ...rel.split('/'))
+        fs.mkdirSync(path.dirname(dest), { recursive: true })
+        fs.writeFileSync(dest, buf)
+        out.restored += 1
+      }
+      // 2) 快照本地（失败即中止，绝不带着「没有退路」的状态去覆盖）
+      const local = this.pluginsDir()
+      if (fs.existsSync(local)) {
+        const snapshotDir = path.join(this.paths.backupsDir, `plugins-${stamp()}`)
+        fs.mkdirSync(path.dirname(snapshotDir), { recursive: true })
+        fs.cpSync(local, snapshotDir, { recursive: true })
+        out.snapshotDir = snapshotDir
+        const keep = new Set(this.listSkillFiles(local))
+        for (const rel of this.listSkillFiles(staging)) keep.delete(rel)
+        out.removed = keep.size
+      }
+      // 3) 整目录替换
+      fs.rmSync(local, { recursive: true, force: true })
+      fs.mkdirSync(path.dirname(local), { recursive: true })
+      fs.cpSync(staging, local, { recursive: true })
+      fs.rmSync(staging, { recursive: true, force: true })
+      this.pluginsKvSet('hashes', {})
+      out.ok = true
+    } catch (err) {
+      out.error = formatWebdavError(err)
+    }
+    return out
+  }
+
+  /** 读文件清单（manifest）：读不到返回空数组，不影响按远端列表恢复 */
+  private async readListManifest(file: string): Promise<string[]> {
+    try {
+      const buf = await this.client().getFileContents(file)
+      const text = typeof buf === 'string' ? buf : (buf as Buffer).toString('utf8')
+      const parsed = JSON.parse(text) as { files?: unknown }
+      return Array.isArray(parsed?.files) ? parsed.files.map(String) : []
+    } catch {
+      return []
+    }
+  }
+
+  private pluginsKv<T>(key: string, fallback: T): T {
+    return this.kvGetJSON<T>(`sync:plugins:${key}`, fallback)
+  }
+
+  private pluginsKvSet(key: string, value: unknown): void {
+    this.kvSetJSON(`sync:plugins:${key}`, value)
   }
 
   /**
@@ -278,7 +481,7 @@ export class SyncEngine {
 
       // 1. 拉远端 → 归一化（墓碑时间并入 updatedAt）
       const remote = new Map<string, RemoteRec>()
-      for (const name of ['agents', 'projects', 'tasks', 'settings'] as const) {
+      for (const name of ['agents', 'projects', 'tasks', 'settings', 'cron_tasks'] as const) {
         for (const raw of await this.getJsonArray(name)) {
           remote.set(raw.id, { id: raw.id, updatedAt: raw.updatedAt, deletedAt: raw.deletedAt, data: raw.data, memoryFile: null })
         }
@@ -367,6 +570,10 @@ export class SyncEngine {
     for (const { id } of allTasks) {
       const t = taskRepo(this.db).get(id)
       if (t) out.set(t.id, { id: t.id, updatedAt: t.updated_at, deletedAt: t.deleted_at, data: t, memoryFile: null })
+    }
+    // 定时任务定义（运行历史 cron_run 属本机日志，不同步）
+    for (const c of cronTaskRepo(this.db).list(true)) {
+      out.set(c.id, { id: c.id, updatedAt: c.updated_at, deletedAt: c.deleted_at, data: c, memoryFile: null })
     }
     const settings = {
       providers: this.kvGet('settings:providers'),
@@ -496,13 +703,59 @@ export class SyncEngine {
           if (!exists) {
             this.db
               .prepare(
-                `INSERT INTO agent (id, name, avatar, description, instructions, model_provider, model_id, thinking, builtin, archived, created_at, updated_at, deleted_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+                `INSERT INTO agent (id, name, avatar, description, instructions, model_provider, model_id, thinking, category, builtin, archived, created_at, updated_at, deleted_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
               )
-              .run(id, d.name, d.avatar, d.description, d.instructions, d.model_provider, d.model_id, (d as { thinking?: string }).thinking || '', d.builtin, d.archived, d.created_at, rec.updatedAt, rec.deletedAt)
+              .run(id, d.name, d.avatar, d.description, d.instructions, d.model_provider, d.model_id, (d as { thinking?: string }).thinking || '', (d as { category?: string }).category || '', d.builtin, d.archived, d.created_at, rec.updatedAt, rec.deletedAt)
           } else {
             this.db
-              .prepare(`UPDATE agent SET name=?, avatar=?, description=?, instructions=?, model_provider=?, model_id=?, thinking=?, builtin=?, archived=?, updated_at=?, deleted_at=? WHERE id=?`)
-              .run(d.name, d.avatar, d.description, d.instructions, d.model_provider, d.model_id, (d as { thinking?: string }).thinking || exists.thinking || '', d.builtin, d.archived, rec.updatedAt, rec.deletedAt, id)
+              .prepare(`UPDATE agent SET name=?, avatar=?, description=?, instructions=?, model_provider=?, model_id=?, thinking=?, category=?, builtin=?, archived=?, updated_at=?, deleted_at=? WHERE id=?`)
+              .run(
+                d.name,
+                d.avatar,
+                d.description,
+                d.instructions,
+                d.model_provider,
+                d.model_id,
+                (d as { thinking?: string }).thinking || exists.thinking || '',
+                // 老备份没有 category 字段：保留本机已有分类，不要被清空
+                (d as { category?: string }).category ?? exists.category ?? '',
+                d.builtin,
+                d.archived,
+                rec.updatedAt,
+                rec.deletedAt,
+                id,
+              )
+          }
+          n += 1
+          continue
+        }
+        if (id.startsWith('cron_')) {
+          const d = rec.data as CronTaskRow | null
+          if (!d) continue
+          const exists = cronTaskRepo(this.db).get(id)
+          if (!exists) {
+            this.db
+              .prepare(
+                `INSERT INTO cron_task (id, name, target_type, target_id, cron_expr, prompt, miss_policy, enabled, last_run_at, next_run_at, created_at, updated_at, deleted_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+              )
+              .run(id, d.name, d.target_type, d.target_id, d.cron_expr, d.prompt, d.miss_policy || 'catchup', d.enabled, null, null, d.created_at, rec.updatedAt, rec.deletedAt)
+            // next_run_at 不在设备间搬运：由本机调度器按 cron_expr 重新推算
+            try {
+              cronTaskRepo(this.db).setNextRun(id, nextRunAt(d.cron_expr, Date.now()))
+            } catch {
+              /* 表达式非法时留空，调度器启动时会再算并记日志 */
+            }
+          } else {
+            this.db
+              .prepare(
+                `UPDATE cron_task SET name=?, target_type=?, target_id=?, cron_expr=?, prompt=?, miss_policy=?, enabled=?, updated_at=?, deleted_at=? WHERE id=?`,
+              )
+              .run(d.name, d.target_type, d.target_id, d.cron_expr, d.prompt, d.miss_policy || 'catchup', d.enabled, rec.updatedAt, rec.deletedAt, id)
+            try {
+              cronTaskRepo(this.db).setNextRun(id, nextRunAt(d.cron_expr, Date.now()))
+            } catch {
+              /* 同上 */
+            }
           }
           n += 1
           continue
@@ -566,7 +819,7 @@ export class SyncEngine {
     const client = this.client()
     const base = this.base()
     let uploaded = 0
-    const byName: Record<string, Array<{ id: string; updatedAt: number; deletedAt: number | null; data: unknown }>> = { agents: [], projects: [], tasks: [], settings: [] }
+    const byName: Record<string, Array<{ id: string; updatedAt: number; deletedAt: number | null; data: unknown }>> = { agents: [], projects: [], tasks: [], settings: [], cron_tasks: [] }
     const tomb: Record<string, number> = {}
     for (const rec of merged.values()) {
       if (rec.id.startsWith('mem:') || rec.id.startsWith('amd:')) {
@@ -580,9 +833,10 @@ export class SyncEngine {
       else if (rec.id.startsWith('agt_')) byName.agents.push({ id: rec.id, updatedAt: rec.updatedAt, deletedAt: rec.deletedAt, data: rec.data })
       else if (rec.id.startsWith('prj_')) byName.projects.push({ id: rec.id, updatedAt: rec.updatedAt, deletedAt: rec.deletedAt, data: rec.data })
       else if (rec.id.startsWith('task_')) byName.tasks.push({ id: rec.id, updatedAt: rec.updatedAt, deletedAt: rec.deletedAt, data: rec.data })
+      else if (rec.id.startsWith('cron_')) byName.cron_tasks.push({ id: rec.id, updatedAt: rec.updatedAt, deletedAt: rec.deletedAt, data: rec.data })
       if (rec.deletedAt != null) tomb[rec.id] = rec.deletedAt
     }
-    for (const name of ['agents', 'projects', 'tasks', 'settings'] as const) {
+    for (const name of ['agents', 'projects', 'tasks', 'settings', 'cron_tasks'] as const) {
       await client.putFileContents(`${base}/${name}.json`, JSON.stringify(byName[name], null, 2), { overwrite: true })
       uploaded += 1
     }
@@ -1112,8 +1366,14 @@ function amdLocalFile(paths: JeffPaths, id: string): string | null {
   return null
 }
 
-function contentHash(buf: Buffer): string {
-  // FNV-1a 32 位足够做「内容是否变化」对比，避免引入 crypto 依赖
+/** 时间戳文件名片段（本地时区可读，用于备份快照目录） */
+function stamp(): string {
+  const d = new Date()
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`
+}
+
+function contentHash(buf: Buffer): string {  // FNV-1a 32 位足够做「内容是否变化」对比，避免引入 crypto 依赖
   let h = 0x811c9dc5
   for (let i = 0; i < buf.length; i++) {
     h ^= buf[i]

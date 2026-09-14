@@ -34,6 +34,8 @@ export interface JeffPaths {
   restoreStagingDir: string
   /** 本地备份根目录（skills 恢复前快照等） */
   backupsDir: string
+  /** 插件根目录（每个插件一个子目录，含 plugin.json） */
+  pluginsDir: string
 }
 
 export function buildPaths(root: string): JeffPaths {
@@ -56,6 +58,7 @@ export function buildPaths(root: string): JeffPaths {
     agentsMdDir: path.join(root, 'agents-md'),
     restoreStagingDir: path.join(root, 'restore-staging'),
     backupsDir: path.join(root, 'backups'),
+    pluginsDir: path.join(root, 'plugins'),
   }
 }
 
@@ -71,6 +74,7 @@ export function ensureDirs(p: JeffPaths): void {
     p.ocAgentsDir,
     p.ocPluginsDir,
     p.ocSkillsDir,
+    p.pluginsDir,
     path.join(p.ocDataHome),
   ]) {
     fs.mkdirSync(dir, { recursive: true })

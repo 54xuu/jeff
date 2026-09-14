@@ -91,6 +91,25 @@ export const IPC = {
   syncConfigure: 'sync:configure',
   contextPreview: 'context:preview',
   contextCompress: 'context:compress',
+  // 定时任务
+  cronList: 'cron:list',
+  cronSave: 'cron:save',
+  cronDelete: 'cron:delete',
+  cronRun: 'cron:run',
+  cronRuns: 'cron:runs',
+  // 插件
+  pluginsList: 'plugins:list',
+  pluginSetEnabled: 'plugin:setEnabled',
+  pluginSaveSecret: 'plugin:saveSecret',
+  pluginImport: 'plugin:import',
+  pluginDelete: 'plugin:delete',
+  pluginRefresh: 'plugin:refresh',
+  pluginBackupNow: 'plugin:backupNow',
+  pluginRestore: 'plugin:restore',
+  // 内置浏览器：主进程 → 渲染层下发动作后，渲染层回传结果
+  browserResult: 'browser:result',
+  // 渲染层上报面板状态（是否可见 + 当前页），供 agent 工具判断可用性与上下文
+  browserState: 'browser:state',
   // 工作空间文件浏览（资料抽屉「工作区文件」Tab + Markdown 预览器）
   fsListFiles: 'fs:listFiles',
   fsReadFile: 'fs:readFile',
@@ -119,6 +138,8 @@ export interface AgentInfo {
   model_id: string
   /** 默认思考档位（'' = 跟随模型配置） */
   thinking: string
+  /** 分组分类（空 = 默认分组） */
+  category: string
   builtin: boolean
   archived: boolean
 }
@@ -352,6 +373,111 @@ export interface FileNode {
   truncated?: boolean
 }
 
+// ---------- 定时任务 ----------
+
+/** 定时任务展示信息（左侧「定时」视图） */
+export interface CronTaskInfo {
+  id: string
+  name: string
+  target_type: 'agent' | 'project'
+  target_id: string
+  /** 目标显示名（智能体名 / 群名；目标已删时标注） */
+  target_label: string
+  /** 目标是否仍然存在（false = 已失效，任务会被自动停用） */
+  target_exists: boolean
+  cron_expr: string
+  /** cron 的人性化描述（每天 08:00 等） */
+  cron_human: string
+  prompt: string
+  miss_policy: 'catchup' | 'skip'
+  enabled: boolean
+  last_run_at: number | null
+  next_run_at: number | null
+  /** 最近一次运行状态（running/ok/failed/missed/skipped） */
+  last_status: string | null
+  last_error: string | null
+}
+
+/** 一次运行记录 */
+export interface CronRunInfo {
+  id: string
+  task_id: string
+  started_at: number
+  finished_at: number | null
+  status: string
+  is_catchup: boolean
+  error: string
+}
+
+// ---------- 插件 ----------
+
+/** 插件快捷指令（聊天框 `/` 可呼出） */
+export interface PluginCommand {
+  name: string
+  description?: string
+  /** 选中后插入聊天框的提示词 */
+  prompt: string
+}
+
+/** 插件声明的 MCP 接入（启用插件时自动注入 Jeff 的 MCP 配置，免手工配置） */
+export interface PluginMcp {
+  type?: 'local' | 'remote'
+  /** remote：MCP 服务地址（如 http://127.0.0.1:8080/mcp） */
+  url?: string
+  /** local：启动命令 */
+  command?: string[]
+  environment?: Record<string, string>
+  /** 认证等自定义请求头（敏感值可用 ${SECRET} 占位，取本机保存的密钥） */
+  headers?: Record<string, string>
+  /** 该插件关心的工具名（仅作展示，实际以服务端 tools/list 为准） */
+  tools?: string[]
+}
+
+export interface PluginInfo {
+  id: string
+  name: string
+  version: string
+  /** 图标 emoji */
+  icon: string
+  description: string
+  /** 插件首页（用内置浏览器打开；空 = 无首页） */
+  homepage: string
+  commands: PluginCommand[]
+  mcp: PluginMcp | null
+  /** 是否已在 Jeff 内启用（启用后其 MCP 注入引擎、指令进入 `/` 菜单） */
+  enabled: boolean
+  /** 插件目录绝对路径 */
+  dir: string
+  /** plugin.json 解析/校验失败原因 */
+  error?: string
+  /** 是否已保存密钥（敏感值存本机 kv，不进 WebDAV） */
+  hasSecret?: boolean
+}
+
+/** 内置浏览器：主进程下发给渲染层的动作 */
+export type BrowserAction = 'navigate' | 'click' | 'type' | 'screenshot' | 'get_content' | 'back' | 'forward' | 'reload' | 'state'
+
+export interface BrowserRequest {
+  id: string
+  action: BrowserAction
+  args: Record<string, unknown>
+}
+
+export interface BrowserResult {
+  id: string
+  ok: boolean
+  data?: unknown
+  error?: string
+}
+
+/** 浏览器面板状态（渲染层同步给主进程/工具层共享） */
+export interface BrowserState {
+  visible: boolean
+  url: string
+  title: string
+  loading: boolean
+}
+
 export type InvokeMap = {
   [IPC.appInfo]: void
   [IPC.agentsList]: void
@@ -365,6 +491,8 @@ export type InvokeMap = {
     model_provider?: string
     model_id?: string
     thinking?: string
+    /** 分组分类（空串 = 归入默认分组） */
+    category?: string
   }
   [IPC.agentsDelete]: { id: string }
   [IPC.chatHistory]: { agentId: string }
@@ -439,6 +567,33 @@ export type InvokeMap = {
   [IPC.fsListFiles]: { dir: string }
   [IPC.fsReadFile]: { file: string }
   [IPC.fsOpenPath]: { target: string; reveal?: boolean }
+  // 定时任务
+  [IPC.cronList]: void
+  [IPC.cronSave]: {
+    id?: string
+    name: string
+    target_type: 'agent' | 'project'
+    target_id: string
+    cron_expr: string
+    prompt?: string
+    miss_policy?: 'catchup' | 'skip'
+    enabled?: boolean
+  }
+  [IPC.cronDelete]: { id: string }
+  [IPC.cronRun]: { id: string }
+  [IPC.cronRuns]: { id: string }
+  // 插件
+  [IPC.pluginsList]: void
+  [IPC.pluginSetEnabled]: { id: string; enabled: boolean }
+  [IPC.pluginSaveSecret]: { id: string; secret: string }
+  [IPC.pluginImport]: { dir?: string }
+  [IPC.pluginDelete]: { id: string }
+  [IPC.pluginRefresh]: void
+  [IPC.pluginBackupNow]: void
+  [IPC.pluginRestore]: void
+  // 内置浏览器（渲染层回报主进程下发的动作结果）
+  [IPC.browserResult]: BrowserResult
+  [IPC.browserState]: BrowserState
   [IPC.smokeShot]: { name: string }
   [IPC.smokeDone]: void
 }
@@ -447,7 +602,7 @@ export type EventPayloads = {
   [IPC.evStatus]: { status: string; error?: string }
   [IPC.evSidecarLog]: { line: string }
   [IPC.evChatUpdated]: { agentId: string; sessionId: string }
-  [IPC.evDataChanged]: { what: 'agents' | 'projects' | 'tasks' | 'settings' }
+  [IPC.evDataChanged]: { what: 'agents' | 'projects' | 'tasks' | 'settings' | 'memory' | 'agentsmd' | 'plugins' | 'cron' }
   [IPC.evGroupUpdated]: { projectId: string; threadId?: string }
   [IPC.evSync]: { state: string; detail?: string }
   [IPC.evChatStream]: { kind: 'private' | 'group'; agentId: string; projectId?: string; threadId?: string; messageId: string; text: string; reasoning?: string; currentTool?: string; tools?: Array<{ tool: string; status?: string }>; done: boolean }

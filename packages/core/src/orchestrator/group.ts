@@ -255,7 +255,15 @@ export class GroupChat {
    * 并发控制：同一 projectId 的完整流程按队列串行（防同一 leader/worker session 交叉请求）；
    * 不同项目并行。leader 回合内的 jeff_delegate 天然在本流程锁内执行，不再取锁。
    */
-  async send(input: { projectId: string; text: string; model?: { providerID: string; modelID: string }; variant?: string; images?: Array<{ mime: string; dataUrl: string }> }): Promise<GroupSendResult> {
+  async send(input: {
+    projectId: string
+    text: string
+    model?: { providerID: string; modelID: string }
+    variant?: string
+    images?: Array<{ mime: string; dataUrl: string }>
+    /** 定时任务触发时带上任务 id：消息会带「定时」标记，便于事后区分「人到点问的」与「自己打的」 */
+    cronTaskId?: string
+  }): Promise<GroupSendResult> {
     return this.withProjectLock(input.projectId, () => this.doSend(input))
   }
 
@@ -294,7 +302,14 @@ export class GroupChat {
   }
 
   private async doSendPipeline(
-    input: { projectId: string; text: string; model?: { providerID: string; modelID: string }; variant?: string; images?: Array<{ mime: string; dataUrl: string }> },
+    input: {
+      projectId: string
+      text: string
+      model?: { providerID: string; modelID: string }
+      variant?: string
+      images?: Array<{ mime: string; dataUrl: string }>
+      cronTaskId?: string
+    },
     project: ProjectRow,
     threadId: string,
     runState: { threadId: string; cancelled: boolean; sessionId: string | null },
@@ -310,7 +325,9 @@ export class GroupChat {
       scope,
       sender_type: 'user',
       content: text,
-      ...(input.images && input.images.length ? { meta: { images: input.images } } : {}),
+      ...(input.images?.length || input.cronTaskId
+        ? { meta: { ...(input.images?.length ? { images: input.images } : {}), ...(input.cronTaskId ? { cron_task_id: input.cronTaskId } : {}) } }
+        : {}),
     })
     this.threads.touch(projectId, threadId)
     // 自动命名的会话在这里补上任务名（须在 runTurn 之前：agent 会话标题取自 thread 标题）

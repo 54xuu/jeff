@@ -189,5 +189,89 @@ export function allToolDefs(): ToolDef[] {
         instruction: { type: 'string', description: '具体任务指令' },
       },
     },
+    // M4 追加：定时任务（小杰代操「每天早上 8 点…」）
+    {
+      name: 'jeff_cron_create',
+      description:
+        '创建定时任务：到点自动向某个智能体（私聊）或项目群发一条消息并让它执行/回复，用于「每天早上 8 点在群里问今天的病区动态」「每天 8 点让 AI 资讯助手报最新资讯」这类场景。' +
+        'cron_expr 是 5 段式（分 时 日 月 周，本机时区）：0 8 * * * = 每天 08:00；30 8 * * 1-5 = 工作日 08:30。创建前先和用户确认时间与提示词。',
+      args: {
+        name: { type: 'string', description: '任务名，如「晨间病区动态」' },
+        target_type: { type: 'string', description: '目标类型：agent=私聊某智能体 / project=项目群', enum: ['agent', 'project'] },
+        target_id: { type: 'string', description: '目标 id：智能体 id 或项目 id' },
+        cron_expr: { type: 'string', description: '5 段式 cron：分 时 日 月 周（如 0 8 * * *）' },
+        prompt: { type: 'string', description: '到点要发出的提示词（如「请汇报今天的病区动态」）' },
+        miss_policy: { type: 'string', description: '错过处理：catchup=开机后补跑一次（重要）/ skip=顺延跳过（不重要）', enum: ['catchup', 'skip'] },
+      },
+    },
+    {
+      name: 'jeff_cron_list',
+      description: '列出所有定时任务（含目标、时间描述、启用状态、上次运行结果）。',
+      args: {},
+    },
+    {
+      name: 'jeff_cron_update',
+      description: '修改定时任务（改名/改时间/改提示词/改错过策略/启用停用）。',
+      args: {
+        id: { type: 'string', description: '任务 id' },
+        name: { type: 'string', description: '新任务名（可选）' },
+        cron_expr: { type: 'string', description: '新 cron 表达式（可选）' },
+        prompt: { type: 'string', description: '新提示词（可选）' },
+        miss_policy: { type: 'string', description: '错过处理（可选）', enum: ['catchup', 'skip'] },
+        enabled: { type: 'boolean', description: '启用/停用（可选）' },
+      },
+    },
+    {
+      name: 'jeff_cron_delete',
+      description: '删除定时任务（软删除）。删除前先跟用户确认。',
+      args: { id: { type: 'string', description: '任务 id' } },
+    },
+    // M4 追加：插件
+    {
+      name: 'jeff_plugin_list',
+      description:
+        '列出已安装的插件（如「智慧病房」）：包含插件名、简介、首页地址、提供的快捷指令与 MCP 工具。' +
+        '插件是「打包好的能力」，启用后它的工具会以 MCP 形式可用。用户问「装了什么插件 / 智慧病房怎么用」时用本工具。',
+      args: {},
+    },
+    // M4 追加：内置浏览器（任意 agent 可用，模拟人操作网页）
+    {
+      name: 'jeff_browser_navigate',
+      description:
+        '在内置浏览器面板里打开一个网址并等待加载完成（若是本地服务首页，如插件 homepage，直接用即可）。' +
+        '面板未打开时会自动打开；面板是用户可见的，用户可以同时看到你在做什么。',
+      args: { url: { type: 'string', description: '要打开的 http/https 地址' } },
+    },
+    {
+      name: 'jeff_browser_get_content',
+      description: '读取内置浏览器当前页面的可见文本与结构信息（标题、URL、主要文本、可交互元素清单）。分析页面、找按钮/输入框时先调它。',
+      args: {
+        max_chars: { type: 'number', description: '返回文本上限，默认 8000' },
+        selector: { type: 'string', description: '只取某个 CSS 选择器内的内容（可选）' },
+      },
+    },
+    {
+      name: 'jeff_browser_click',
+      description: '在内置浏览器里点击元素（模拟真人点击）：优先用 CSS 选择器；也可用文字匹配（点击包含该文字的可点击元素）。',
+      args: {
+        selector: { type: 'string', description: 'CSS 选择器（可选，优先）' },
+        text: { type: 'string', description: '要点击的元素文字（选择器为空时按文字查找按钮/链接）' },
+      },
+    },
+    {
+      name: 'jeff_browser_type',
+      description: '在内置浏览器里向输入框键入文字（会先聚焦并用原生输入事件，兼容 React 等受控组件）。',
+      args: {
+        selector: { type: 'string', description: '输入框 CSS 选择器' },
+        text: { type: 'string', description: '要输入的文字' },
+        clear: { type: 'boolean', description: '是否先清空原有内容（默认 true）' },
+        submit: { type: 'boolean', description: '输入后是否回车提交（默认 false）' },
+      },
+    },
+    {
+      name: 'jeff_browser_screenshot',
+      description: '截取内置浏览器当前画面（返回图片给支持视觉的模型）。模型不支持看图时会自动降级为页面文本。',
+      args: {},
+    },
   ]
 }
