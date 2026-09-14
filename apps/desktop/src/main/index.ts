@@ -1,4 +1,4 @@
-import { app, BrowserWindow, shell, Tray, Menu, dialog, nativeImage, Notification } from 'electron'
+import { app, BrowserWindow, session, shell, Tray, Menu, dialog, nativeImage, Notification } from 'electron'
 import type { MenuItemConstructorOptions } from 'electron'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -31,6 +31,52 @@ export function setBrowserResult(r: BrowserResult): void {
 /** 渲染层上报的面板状态（可见性 + 当前页面）：供 agent 判断当前上下文 */
 export function setBrowserState(s: BrowserState): void {
   browserControl.updateState(s)
+}
+
+/** 内置浏览器 webview 用的分区（与 BrowserPanel 里 webview 的 partition 属性必须一致） */
+const BROWSER_PARTITION = 'persist:jeff-browser'
+
+const RESOURCE_LABEL: Record<string, string> = {
+  xhr: '请求',
+  fetch: '请求',
+  image: '图片',
+  script: '脚本',
+  stylesheet: '样式',
+  font: '字体',
+  media: '媒体',
+  webSocket: 'WebSocket',
+  other: '资源',
+}
+
+/**
+ * 采集内置浏览器里的「资源加载失败」（图片/脚本/样式/接口 404、域名解析失败等）。
+ *
+ * 为什么只能在主进程做：webview 的 console-message 只承载 Console API 调用（console.error 等）
+ * 与未捕获异常——子资源加载失败不会走那条通道（真机实测：页面里 <img src="/missing.json"> 404
+ * 时控制台采集为空）。主进程能通过 session.webRequest 看到，于是从这里补一条 level='load' 记录。
+ *
+ * 只挂内置浏览器自己的分区，应用自身的网络请求不受影响。
+ */
+function watchBrowserResourceErrors(): void {
+  const ses = session.fromPartition(BROWSER_PARTITION)
+  const last = { key: '' }
+  const report = (message: string, source: string): void => {
+    // 同一处失败可能被重试多次（页面轮询），去重避免把 200 条缓冲刷满
+    const key = `${message}|${source}`
+    if (key === last.key) return
+    last.key = key
+    broadcast('browser-console', { level: 'load', message, source, at: Date.now() })
+  }
+  ses.webRequest.onCompleted({ urls: ['*://*/*'] }, (d) => {
+    if (d.resourceType === 'mainFrame') return // 主文档失败由渲染层的 did-fail-load 上报，别重复
+    if (!d.statusCode || d.statusCode < 400) return
+    report(`${RESOURCE_LABEL[d.resourceType] || '资源'}加载失败：HTTP ${d.statusCode} ${d.method}`, d.url)
+  })
+  ses.webRequest.onErrorOccurred({ urls: ['*://*/*'] }, (d) => {
+    if (d.resourceType === 'mainFrame') return
+    if (d.error === 'net::ERR_ABORTED') return // 页面自己取消的请求（导航打断）不算故障
+    report(`${RESOURCE_LABEL[d.resourceType] || '资源'}加载失败：${d.error} ${d.method}`, d.url)
+  })
 }
 
 // 主进程兜底：漏网的 Promise 拒绝/异常只记日志，不再弹「Uncaught Exception」崩溃框
@@ -89,6 +135,8 @@ if (!gotLock) {
     // 内置浏览器：把主进程实现注入 core（工具调用 → 渲染层 webview）
     core.browser = browserControl
     registerIpc(core)
+    // 内置浏览器的资源加载失败（图片/脚本/接口 404 等）只有主进程看得到，补进控制台采集
+    watchBrowserResourceErrors()
 
     createWindow()
     setupAppMenu()

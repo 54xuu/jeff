@@ -1,4 +1,4 @@
-import type { BrowserAction } from '@jeff/core'
+import type { BrowserAction, BrowserConsoleEntry } from '@jeff/core'
 
 /**
  * 浏览器动作路由：主进程下发的动作 → 当前挂载的 BrowserPanel 执行。
@@ -10,6 +10,8 @@ type Exec = (action: BrowserAction, args: Record<string, unknown>) => Promise<un
 
 let host: Exec | null = null
 let opener: (() => void) | null = null
+/** 主进程补采到的错误（资源 404 等）落进面板同一份缓冲；面板未挂载时丢弃（没有页面就没有现场） */
+let consoleSink: ((entry: Omit<BrowserConsoleEntry, 'at'>) => void) | null = null
 /** 面板打开后返回一个「就绪」信号，供等待方 await */
 let waiters: Array<() => void> = []
 
@@ -22,6 +24,33 @@ export function registerBrowserHost(fn: Exec): void {
 
 export function unregisterBrowserHost(fn: Exec): void {
   if (host === fn) host = null
+}
+
+/** 面板注册控制台采集缓冲（BrowserPanel 挂载时注册，卸载时注销） */
+export function registerConsoleSink(fn: ((entry: Omit<BrowserConsoleEntry, 'at'>) => void) | null): void {
+  consoleSink = fn
+}
+
+/** 主进程侧采集到的控制台记录（资源加载失败）投递给面板 */
+export function emitConsoleEntry(entry: Omit<BrowserConsoleEntry, 'at'>): void {
+  consoleSink?.(entry)
+}
+
+/**
+ * 「因为 agent 要导航所以唤起面板」时的目标地址。
+ *
+ * 面板挂载时默认会恢复上次访问的地址（人性化），但 agent 调 navigate 唤起面板时这个恢复是**有害**的：
+ * 上次那个地址很可能已经不可用（本地 dev 服务关了、测试站端口换了），它的加载失败会和 agent 真正要导航的
+ * 页面抢时序（实测 live13 R13：agent 导航到可用地址，却拿到上一次恢复地址的 ERR_CONNECTION_REFUSED）。
+ * 有它在就用它当起始地址，并且不去恢复上次地址。
+ */
+let pendingStartUrl: string | null = null
+
+/** 面板挂载时取一次（取走即清空） */
+export function takePendingStartUrl(): string | null {
+  const u = pendingStartUrl
+  pendingStartUrl = null
+  return u
 }
 
 /** 面板打开入口（App 注册；agent 调用时自动唤起面板） */
@@ -38,7 +67,11 @@ export function browserHostAvailable(): boolean {
  * 等待而非直接报错——用户看到的是「自动打开浏览器并执行」，而不是一句冷冰冰的工具失败。
  */
 export async function runBrowserAction(action: BrowserAction, args: Record<string, unknown>, waitMs = 8000): Promise<unknown> {
-  if (!host) opener?.()
+  if (!host) {
+    // 面板还没挂载：告诉它「是 agent 要打开这个地址」，别去恢复上次访问的旧地址（见 takePendingStartUrl）
+    if (action === 'navigate' && typeof args?.url === 'string') pendingStartUrl = args.url
+    opener?.()
+  }
   if (!host) {
     await new Promise<void>((resolve) => {
       waiters.push(resolve)

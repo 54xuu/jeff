@@ -26,6 +26,8 @@ export interface BrowserUiState {
   loading: boolean
   /** 输入框里的地址（可能与已加载 url 不同，等用户回车） */
   address: string
+  /** 当前页面采集到的错误数（console error / 未捕获异常 / 加载失败）：工具栏红点用，与 agent 读到的是同一份采集结果 */
+  errorCount: number
 }
 
 /** 进行中的流式回复（key: agent:<id> / group:<id>） */
@@ -229,7 +231,7 @@ export const useStore = create<JeffState>((set, get) => ({
   catalog: [],
   cronTasks: [],
   plugins: [],
-  browser: { visible: false, url: '', title: '', loading: false, address: '' },
+  browser: { visible: false, url: '', title: '', loading: false, address: '', errorCount: 0 },
 
   setTab: (tab) => set({ tab }),
   setActive: (active) => set({ active }),

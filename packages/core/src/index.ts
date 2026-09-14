@@ -70,6 +70,30 @@ function truncateJson(v: unknown, max = 400): string | undefined {
   return truncateText(v, max)
 }
 
+/** 上传文件时按扩展名给个 MIME（页面/服务端多半用它判类型；判不出就用二进制流） */
+function mimeOf(name: string): string {
+  const ext = path.extname(name).toLowerCase()
+  const table: Record<string, string> = {
+    '.txt': 'text/plain',
+    '.md': 'text/markdown',
+    '.csv': 'text/csv',
+    '.json': 'application/json',
+    '.html': 'text/html',
+    '.pdf': 'application/pdf',
+    '.png': 'image/png',
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.gif': 'image/gif',
+    '.webp': 'image/webp',
+    '.zip': 'application/zip',
+    '.doc': 'application/msword',
+    '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    '.xls': 'application/vnd.ms-excel',
+    '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  }
+  return table[ext] || 'application/octet-stream'
+}
+
 /**
  * 联网搜索指引（每轮注入）：opencode 内置 websearch 工具依赖搜索服务密钥（Exa 等），
  * Jeff 未配置该密钥，直接调用会报错；本机已装 byted-web-search 技能（火山引擎豆包搜索，
@@ -956,6 +980,35 @@ export class JeffCore extends EventEmitter {
       if (!args?.selector) throw new Error('selector 不能为空')
       if (args.text === undefined) throw new Error('text 不能为空')
       return need('type')(args as Record<string, unknown>)
+    })
+    /**
+     * 上传文件：文件由**主进程读盘**再以 base64 下发给渲染层（webview 没有「设置选中文件」的接口，
+     * 只能由页面用 DataTransfer 组装 input.files；见 BrowserPanel 的 upload 动作）。
+     */
+    this.bridge.register('jeff_browser_upload', async (args: { selector?: string; path?: string; name?: string }) => {
+      const selector = String(args?.selector || '').trim()
+      if (!selector) throw new Error('selector 不能为空（要放进哪个 <input type=file>）')
+      const filePath = String(args?.path || '').trim()
+      if (!filePath) throw new Error('path 不能为空（要上传的本机文件绝对路径）')
+      if (!path.isAbsolute(filePath)) throw new Error(`path 必须是绝对路径：${filePath}`)
+      let buf: Buffer
+      try {
+        buf = fs.readFileSync(filePath)
+      } catch (err) {
+        throw new Error(`读不到文件：${filePath}（${String((err as Error)?.message || err).slice(0, 120)}）`)
+      }
+      if (buf.length === 0) throw new Error(`文件是空的，不像是要上传的内容：${filePath}`)
+      const maxBytes = 8 * 1024 * 1024
+      if (buf.length > maxBytes) throw new Error(`文件太大（${(buf.length / 1048576).toFixed(1)}MB），上限 ${maxBytes / 1048576}MB：${filePath}`)
+      const name = String(args?.name || '').trim() || path.basename(filePath)
+      return need('upload')({ selector, name, mime: mimeOf(name), base64: buf.toString('base64') })
+    })
+    /** 页面错误现场（控制台 error / 未捕获异常 / 加载失败）：与面板红点读同一份采集结果 */
+    this.bridge.register('jeff_browser_get_console', async (args: { level?: string; limit?: number }) => {
+      const raw = String(args?.level || 'error').trim().toLowerCase()
+      const level = ['warning', 'warn', 'info', 'all'].includes(raw) ? (raw === 'warn' ? 'warning' : raw) : 'error'
+      const limit = Number(args?.limit) > 0 ? Math.min(Number(args.limit), 200) : 50
+      return need('console')({ level, limit })
     })
     this.bridge.register('jeff_browser_screenshot', async () => {
       const data = (await need('screenshot')({})) as { dataUrl?: string; title?: string; url?: string }

@@ -459,7 +459,29 @@ export interface PluginInfo {
 }
 
 /** 内置浏览器：主进程下发给渲染层的动作 */
-export type BrowserAction = 'navigate' | 'click' | 'type' | 'screenshot' | 'get_content' | 'back' | 'forward' | 'reload' | 'state'
+export type BrowserAction =
+  | 'navigate'
+  | 'click'
+  | 'type'
+  | 'upload'
+  | 'screenshot'
+  | 'get_content'
+  | 'console'
+  | 'back'
+  | 'forward'
+  | 'reload'
+  | 'state'
+
+/** 页面控制台/加载错误的一条记录（agent「分析错误」的原材料，也是面板上红点的数据） */
+export interface BrowserConsoleEntry {
+  /** error=控制台 error / 未捕获异常；warning；info；load=主帧加载失败 */
+  level: 'error' | 'warning' | 'info' | 'load'
+  message: string
+  /** 来源文件（控制台消息通常带） */
+  source?: string
+  line?: number
+  at: number
+}
 
 export interface BrowserRequest {
   id: string

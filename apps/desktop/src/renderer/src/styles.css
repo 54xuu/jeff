@@ -3762,6 +3762,60 @@ body.browser-resizing {
   padding: 4px 10px;
 }
 
+/* 页面有错误时的红点计数（人看到的 = agent 通过 jeff_browser_get_console 读到的） */
+.browser-error-btn {
+  position: relative;
+  color: var(--red, #d33) !important;
+}
+
+.browser-error-count {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  min-width: 13px;
+  height: 13px;
+  padding: 0 3px;
+  border-radius: 999px;
+  background: var(--red, #d33);
+  color: #fff;
+  font-size: 9px;
+  line-height: 13px;
+  text-align: center;
+}
+
+.browser-console-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 46vh;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.browser-console-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 12px;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--text) 4%, transparent);
+}
+
+.browser-console-item.error,
+.browser-console-item.load {
+  background: color-mix(in srgb, var(--red, #d33) 10%, transparent);
+}
+
+.browser-console-msg {
+  flex: 1;
+  min-width: 0;
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+
 .browser-view {
   flex: 1;
   min-height: 0;

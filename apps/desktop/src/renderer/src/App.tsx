@@ -1,7 +1,7 @@
 import { useEffect } from 'react'
 import { useStore, applyTheme } from './store'
 import { api } from './api'
-import { IPC, type BrowserRequest } from '@jeff/core'
+import { IPC, type BrowserConsoleEntry, type BrowserRequest } from '@jeff/core'
 import NavRail from './components/NavRail'
 import ChatList from './components/ChatList'
 import ChatWindow from './components/ChatWindow'
@@ -10,7 +10,7 @@ import AgentsPage from './components/AgentsPage'
 import SchedulesPage from './components/SchedulesPage'
 import PluginsPage from './components/PluginsPage'
 import BrowserPanel from './components/BrowserPanel'
-import { registerBrowserOpener, runBrowserAction } from './browserHost'
+import { emitConsoleEntry, registerBrowserOpener, runBrowserAction } from './browserHost'
 import SettingsNav from './components/settings/SettingsNav'
 import SettingsContent from './components/settings/SettingsContent'
 import MarkdownPreviewModal, { PreviewNotice } from './components/preview/MarkdownPreviewModal'
@@ -106,6 +106,11 @@ export default function App(): React.JSX.Element {
   useEffect(() => {
     registerBrowserOpener(() => useStore.getState().setBrowser({ visible: true }))
     const off = api.onPush((e) => {
+      // 主进程补采的记录（图片/脚本/接口 404 等，webview 的 console-message 看不到）
+      if (e.what === 'browser-console') {
+        emitConsoleEntry((e.payload || {}) as Omit<BrowserConsoleEntry, 'at'>)
+        return
+      }
       if (e.what !== 'browser-request') return
       const req = (e.payload || {}) as BrowserRequest
       const reply = (r: { ok: boolean; data?: unknown; error?: string }) => {
