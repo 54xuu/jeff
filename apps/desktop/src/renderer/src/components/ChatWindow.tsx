@@ -10,6 +10,7 @@ import { useImages, ImagePreviews, MsgImages, AssistantExtras, StreamingBubble, 
 import ContextDrawer, { ContextUsageBar, fetchContextPreview } from './ContextDrawer'
 import AgentProfileDrawer from './AgentProfileDrawer'
 import { IconCompress, IconNewSession, IconProfile } from './ui/Icons'
+import { useSlashMenu } from './useSlash'
 
 export default function ChatWindow(props: { agentId: string }): React.JSX.Element {
   const { agents, messages, sending, streaming, loadHistory, sendAgent, newAgentSession, stopAgent, catalog, settings, appInfo } = useStore()
@@ -31,6 +32,8 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
   const bodyRef = useRef<HTMLDivElement>(null)
   const composerRef = useRef<HTMLDivElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
+  const draftRef = useRef<HTMLTextAreaElement>(null)
+  const slash = useSlashMenu({ setDraft, inputRef: draftRef })
   const composerResize = useComposerResize(composerRef)
 
   useEffect(() => {
@@ -195,6 +198,24 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
             void attachments.addFiles(e.dataTransfer.files)
           }}
         >
+          {slash.open && (
+            <div className="mention-pop slash-pop" data-testid="slash-pop">
+              <div className="slash-head">插件指令</div>
+              {slash.candidates.map((c, i) => (
+                <button
+                  key={`${c.pluginId}${c.name}`}
+                  type="button"
+                  data-testid={`slash-item-${i}`}
+                  className={`mention-item ${i === slash.index ? 'active' : ''}`}
+                  onMouseEnter={() => slash.setIndex(i)}
+                  onClick={() => slash.pick(c)}
+                >
+                  {c.icon} <b>{c.name}</b>
+                  <span className="mention-desc">{c.description || c.pluginName}</span>
+                </button>
+              ))}
+            </div>
+          )}
           <input
             ref={fileRef}
             type="file"
@@ -214,11 +235,15 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
             </svg>
           </button>
           <textarea
+            ref={draftRef}
             value={draft}
             style={{ height: composerResize.height }}
             data-testid="chat-draft"
-            placeholder={agent.builtin ? '跟小杰说点什么…（例如：帮我创建一个「架构师阿伟」）' : `发消息给 ${agent.name}…（支持粘贴/拖拽图片）`}
-            onChange={(e) => setDraft(e.target.value)}
+            placeholder={agent.builtin ? '跟小杰说点什么…（例如：帮我创建一个「架构师阿伟」；输入 / 调用插件指令）' : `发消息给 ${agent.name}…（支持粘贴/拖拽图片；输入 / 调用插件指令）`}
+            onChange={(e) => {
+              setDraft(e.target.value)
+              slash.detect(e.target.value)
+            }}
             onPaste={(e) => {
               const files = Array.from(e.clipboardData.files || [])
               if (files.length > 0) {
@@ -227,7 +252,9 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
               }
             }}
             onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+              if (e.nativeEvent.isComposing) return
+              if (slash.handleKey(e)) return
+              if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault()
                 void doSend()
               }

@@ -16,7 +16,7 @@ import type {
 import { IPC, XIAOJIE_ID, agentRepo, projectRepo, projectAgentRepo, taskRepo, taskCardMessage, APP_VERSION, PrivateChatStoppedError, type ThinkingTier } from '@jeff/core'
 import type { MemoryScopeInfo } from '@jeff/core'
 import type { JeffCore, TaskRow } from '@jeff/core'
-import { getMainWindow, getSidecarLogs, showDesktopNotification } from './index.js'
+import { getMainWindow, getSidecarLogs, showDesktopNotification, setBrowserResult, setBrowserState } from './index.js'
 
 type Handler = (payload: unknown) => Promise<unknown>
 
@@ -46,7 +46,7 @@ export function registerIpc(core: JeffCore): void {
       return toAgentInfo(row)
     },
     [IPC.agentsUpsert]: async (p): Promise<AgentInfo> => {
-      const d = p as { id?: string; name: string; avatar?: string; description?: string; instructions?: string; model_provider?: string; model_id?: string; thinking?: string }
+      const d = p as { id?: string; name: string; avatar?: string; description?: string; instructions?: string; model_provider?: string; model_id?: string; thinking?: string; category?: string }
       const patch = {
         name: d.name,
         avatar: d.avatar,
@@ -55,11 +55,18 @@ export function registerIpc(core: JeffCore): void {
         model_provider: d.model_provider ?? '',
         model_id: d.model_id ?? '',
         thinking: (d.thinking ?? '') as ThinkingTier | '',
+        category: (d.category ?? '').trim(),
       }
       let row
       if (d.id === XIAOJIE_ID) {
-        // 小杰可配模型/思考/指令外的一切（名称头像锁定），指令保持内置
-        row = core.agents.update(XIAOJIE_ID, { model_provider: patch.model_provider, model_id: patch.model_id, thinking: patch.thinking, description: patch.description })
+        // 小杰可配模型/思考/指令/分类外的一切（名称头像锁定），指令保持内置
+        row = core.agents.update(XIAOJIE_ID, {
+          model_provider: patch.model_provider,
+          model_id: patch.model_id,
+          thinking: patch.thinking,
+          description: patch.description,
+          category: patch.category,
+        })
       } else if (d.id) {
         row = core.agents.update(d.id, patch)
       } else {
@@ -542,6 +549,62 @@ export function registerIpc(core: JeffCore): void {
       await core.abortGroup(projectId)
       return { ok: true }
     },
+
+    // ---------- 定时任务 ----------
+    [IPC.cronList]: async () => core.listCronTasks(),
+    [IPC.cronSave]: async (p) => {
+      const r = core.saveCronTask(p as Parameters<JeffCore['saveCronTask']>[0])
+      core.bus.emit('data-changed', 'cron')
+      return r
+    },
+    [IPC.cronDelete]: async (p) => {
+      const r = core.deleteCronTask((p as { id: string }).id)
+      core.bus.emit('data-changed', 'cron')
+      return r
+    },
+    [IPC.cronRun]: async (p) => core.runCronTaskNow((p as { id: string }).id),
+    [IPC.cronRuns]: async (p) => core.listCronRuns((p as { id: string }).id),
+
+    // ---------- 插件 ----------
+    [IPC.pluginsList]: async () => core.listPlugins(),
+    [IPC.pluginSetEnabled]: async (p) => {
+      const d = p as { id: string; enabled: boolean }
+      return core.setPluginEnabled(d.id, d.enabled)
+    },
+    [IPC.pluginSaveSecret]: async (p) => {
+      const d = p as { id: string; secret: string }
+      return core.savePluginSecret(d.id, d.secret)
+    },
+    [IPC.pluginDelete]: async (p) => core.deletePlugin((p as { id: string }).id),
+    [IPC.pluginRefresh]: async () => core.refreshPlugins(),
+    [IPC.pluginBackupNow]: async () => core.backupPluginsNow(),
+    [IPC.pluginRestore]: async () => {
+      const r = await core.restorePlugins()
+      core.bus.emit('data-changed', 'plugins')
+      return r
+    },
+    [IPC.pluginImport]: async (p): Promise<import('@jeff/core').PluginInfo> => {
+      const d = p as { dir?: string }
+      let dir = d.dir
+      if (!dir) {
+        const win = getMainWindow()
+        if (!win) throw new Error('窗口不可用，无法选择目录')
+        const r = await dialog.showOpenDialog(win, { title: '选择插件目录（含 plugin.json）', properties: ['openDirectory'] })
+        if (r.canceled || r.filePaths.length === 0) throw new Error('已取消')
+        dir = r.filePaths[0]
+      }
+      return core.importPlugin(dir)
+    },
+
+    // ---------- 内置浏览器（渲染层回报主进程下发的动作结果） ----------
+    [IPC.browserResult]: async (p) => {
+      setBrowserResult(p as import('@jeff/core').BrowserResult)
+      return { ok: true }
+    },
+    [IPC.browserState]: async (p) => {
+      setBrowserState(p as import('@jeff/core').BrowserState)
+      return { ok: true }
+    },
   }
 
   for (const [channel, handler] of Object.entries(handlers)) {
@@ -586,6 +649,7 @@ export function toAgentInfo(row: import('@jeff/core').AgentRow): AgentInfo {
     model_provider: row.model_provider,
     model_id: row.model_id,
     thinking: row.thinking || '',
+    category: row.category || '',
     builtin: !!row.builtin,
     archived: !!row.archived,
   }

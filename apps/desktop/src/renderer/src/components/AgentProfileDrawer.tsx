@@ -16,6 +16,7 @@ type ProfileTab = 'basic' | 'model' | 'history' | 'files'
  */
 export default function AgentProfileDrawer(props: { agent: AgentInfo; onClose: () => void }): React.JSX.Element {
   const { catalog, refreshAgents, appInfo, loadHistory } = useStore()
+  const agents = useStore((s) => s.agents)
   const busy = useStore((s) => !!s.sending[`agent:${props.agent.id}`])
   const models: ModelOption[] = catalog.flatMap((c) => c.models)
   const [tab, setTab] = useState<ProfileTab>('basic')
@@ -73,6 +74,7 @@ export default function AgentProfileDrawer(props: { agent: AgentInfo; onClose: (
             key={props.agent.id}
             initial={props.agent}
             models={models}
+            categories={Array.from(new Set(agents.map((x) => (x.category || '').trim()).filter(Boolean))).sort((x, y) => x.localeCompare(y, 'zh-CN'))}
             compact
             section={tab === 'model' ? 'model' : 'basic'}
             onDirtyChange={setEditorDirty}

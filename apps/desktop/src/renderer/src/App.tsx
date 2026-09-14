@@ -1,18 +1,23 @@
 import { useEffect } from 'react'
 import { useStore, applyTheme } from './store'
 import { api } from './api'
+import { IPC, type BrowserRequest } from '@jeff/core'
 import NavRail from './components/NavRail'
 import ChatList from './components/ChatList'
 import ChatWindow from './components/ChatWindow'
 import GroupWindow from './components/GroupWindow'
 import AgentsPage from './components/AgentsPage'
+import SchedulesPage from './components/SchedulesPage'
+import PluginsPage from './components/PluginsPage'
+import BrowserPanel from './components/BrowserPanel'
+import { registerBrowserOpener, runBrowserAction } from './browserHost'
 import SettingsNav from './components/settings/SettingsNav'
 import SettingsContent from './components/settings/SettingsContent'
 import MarkdownPreviewModal, { PreviewNotice } from './components/preview/MarkdownPreviewModal'
 import type { SettingsSection } from './store'
 
 export default function App(): React.JSX.Element {
-  const { tab, active, agents, projects, refreshAgents, refreshProjects, refreshAppInfo, refreshSettings, refreshCatalog, handlePush } = useStore()
+  const { tab, active, agents, projects, refreshAgents, refreshProjects, refreshAppInfo, refreshSettings, refreshCatalog, refreshCron, refreshPlugins, handlePush } = useStore()
 
   useEffect(() => {
     void refreshAgents()
@@ -20,6 +25,8 @@ export default function App(): React.JSX.Element {
     void refreshAppInfo()
     void refreshSettings()
     void refreshCatalog()
+    void refreshCron()
+    void refreshPlugins()
     const off = api.onPush((e) => handlePush(e.what, e.payload))
     // 冒烟钩子（多视图）：JEFF_SMOKE_VIEWS=chat,group,settings:memory,… 逐视图截图
     const smokeViews = (window as { jeff?: { env?: { smokeViews?: string; smokeTheme?: string; smokeViewDelay?: string } } }).jeff?.env?.smokeViews
@@ -39,6 +46,15 @@ export default function App(): React.JSX.Element {
               useStore.getState().setSettingsSection(view.slice(9) as SettingsSection)
             } else if (view === 'contacts') {
               useStore.getState().setTab('contacts')
+            } else if (view === 'schedules') {
+              useStore.getState().setTab('schedules')
+              await useStore.getState().refreshCron()
+            } else if (view === 'plugins') {
+              useStore.getState().setTab('plugins')
+              await useStore.getState().refreshPlugins()
+            } else if (view === 'browser') {
+              useStore.getState().setTab('chats')
+              useStore.getState().setBrowser({ visible: true, address: process.env.JEFF_SMOKE_URL || '' })
             } else if (view === 'group') {
               useStore.getState().setTab('chats')
               const ps = useStore.getState().projects
@@ -83,11 +99,31 @@ export default function App(): React.JSX.Element {
     }
   }, [])
 
+  /**
+   * 主进程下发的浏览器动作（agent 调 jeff_browser_* 工具）→ 交给 BrowserPanel 执行后回传。
+   * 必须挂在 App 层而不是面板内：面板未打开时也要先被唤起（runBrowserAction 负责自动打开并等就绪）。
+   */
+  useEffect(() => {
+    registerBrowserOpener(() => useStore.getState().setBrowser({ visible: true }))
+    const off = api.onPush((e) => {
+      if (e.what !== 'browser-request') return
+      const req = (e.payload || {}) as BrowserRequest
+      const reply = (r: { ok: boolean; data?: unknown; error?: string }) => {
+        void api.invoke(IPC.browserResult, { id: req.id, ...r }).catch(() => {})
+      }
+      void runBrowserAction(req.action, req.args || {})
+        .then((data) => reply({ ok: true, data }))
+        .catch((err) => reply({ ok: false, error: String((err as Error)?.message || err).slice(0, 500) }))
+    })
+    return off
+  }, [])
+
   return (
     <div className="app">
       <NavRail />
       <div className="list-pane">
         {tab === 'chats' && <ChatList />}
+        {tab === 'schedules' && <SchedulesListPane />}
         {tab === 'settings' && <SettingsNav />}
       </div>
       <div className="main-pane">
@@ -95,11 +131,42 @@ export default function App(): React.JSX.Element {
         {tab === 'chats' && active?.kind === 'group' && <GroupWindow key={active.id} projectId={active.id} />}
         {tab === 'chats' && !active && <EmptyHint hasAgents={agents.length > 0} hasProjects={projects.length > 0} />}
         {tab === 'contacts' && <AgentsPage />}
+        {tab === 'schedules' && <SchedulesPage />}
+        {tab === 'plugins' && <PluginsPage />}
         {tab === 'settings' && <SettingsContent />}
       </div>
+      {/* 内置浏览器（右侧独立面板，可拖拽宽度；关闭即销毁 webview） */}
+      <BrowserPanel />
       {/* 全局公共 Markdown 预览器（任意处调用）+ 轻提示 */}
       <MarkdownPreviewModal />
       <PreviewNotice />
+    </div>
+  )
+}
+
+/** 定时任务视图的左侧栏：任务列表（点主区域管理） */
+function SchedulesListPane(): React.JSX.Element {
+  const { cronTasks } = useStore()
+  return (
+    <div className="side-list" data-testid="schedules-list">
+      <div className="list-header">
+        <span>定时任务</span>
+        <span className="side-count" data-testid="schedules-count">
+          {cronTasks.filter((t) => t.enabled).length}/{cronTasks.length}
+        </span>
+      </div>
+      {cronTasks.length === 0 && <p className="side-empty">还没有定时任务</p>}
+      {cronTasks.map((t) => (
+        <div key={t.id} className={`side-item ${t.enabled ? '' : 'muted'}`}>
+          <span className={`side-dot ${t.last_status === 'failed' ? 'bad' : t.enabled ? 'ok' : ''}`} />
+          <div className="side-item-body">
+            <div className="side-item-name">{t.name}</div>
+            <div className="side-item-sub">
+              {t.cron_human} · {t.target_label}
+            </div>
+          </div>
+        </div>
+      ))}
     </div>
   )
 }

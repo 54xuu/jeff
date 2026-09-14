@@ -14,6 +14,7 @@ export default defineConfig({
   globalTimeout: 600_000,
   projects: [
     { name: 'ui', testMatch: /ui\.spec\.ts/ },
+    { name: 'v18', testMatch: /v18\.spec\.ts/ },
     { name: 'live', testMatch: /live\.spec\.ts/ },
   ],
 })

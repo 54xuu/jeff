@@ -20,6 +20,8 @@ export type AgentEditorSave = {
   model_provider: string
   model_id: string
   thinking: string
+  /** 分组分类（空串 = 默认分组） */
+  category: string
 }
 
 const TIER_LABELS: Record<ThinkingTier, string> = {
@@ -33,6 +35,8 @@ const TIER_LABELS: Record<ThinkingTier, string> = {
 export default function AgentEditor(props: {
   initial: Partial<AgentInfo> & { isNew?: boolean }
   models: ModelOption[]
+  /** 已有分类清单（用于输入联想；可直接输入新分类） */
+  categories?: string[]
   onCancel: () => void
   onSave: (d: AgentEditorSave) => Promise<void>
   onDelete?: () => void
@@ -55,6 +59,7 @@ export default function AgentEditor(props: {
   const [avatar, setAvatar] = useState(a.avatar || '🤖')
   const [description, setDescription] = useState(a.description || '')
   const [instructions, setInstructions] = useState(a.instructions || '')
+  const [category, setCategory] = useState(a.category || '')
   const [modelKey, setModelKey] = useState(initialModelKey)
   const [thinking, setThinking] = useState<ThinkingTierOpt>(initialThinking)
   const [saving, setSaving] = useState(false)
@@ -81,10 +86,11 @@ export default function AgentEditor(props: {
       (name || '') !== (a.name || '') ||
       (avatar || '') !== (a.avatar || '🤖') ||
       (description || '') !== (a.description || '') ||
-      (instructions || '') !== (a.instructions || '')
+      (instructions || '') !== (a.instructions || '') ||
+      (category || '') !== (a.category || '')
     )
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [locked, modelKey, thinking, name, avatar, description, instructions])
+  }, [locked, modelKey, thinking, name, avatar, description, instructions, category])
 
   useEffect(() => {
     props.onDirtyChange?.(dirty)
@@ -107,6 +113,7 @@ export default function AgentEditor(props: {
         model_provider: parsed?.providerID || '',
         model_id: parsed?.modelID || '',
         thinking,
+        category: locked ? a.category || '' : category.trim(),
       })
       setSavedAt(Date.now())
     } catch (e) {
@@ -160,6 +167,23 @@ export default function AgentEditor(props: {
         {showBasic && !locked && (
           <Field label="简介" span>
             <input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="一句话说明它是干嘛的" />
+          </Field>
+        )}
+        {showBasic && (
+          <Field label="分组分类（用于通讯录归类，可输入新分类）" span>
+            <input
+              value={category}
+              onChange={(e) => setCategory(e.target.value)}
+              placeholder="如：项目管理 / 医疗场景 / 项目开发（留空 = 默认分组）"
+              list="jeff-agent-categories"
+              data-testid="agent-category"
+              disabled={locked}
+            />
+            <datalist id="jeff-agent-categories">
+              {(props.categories || []).map((c) => (
+                <option key={c} value={c} />
+              ))}
+            </datalist>
           </Field>
         )}
         {showModel && (

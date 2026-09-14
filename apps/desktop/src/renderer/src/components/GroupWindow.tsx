@@ -10,6 +10,7 @@ import { CopyButton } from './ui/CopyButton'
 import { useImages, ImagePreviews, MsgImages, AssistantExtras, StreamingBubble, useAutoScroll, useComposerResize } from './ChatShared'
 import { IconCompress, IconNewSession, IconGroupProfile } from './ui/Icons'
 import ContextDrawer, { ContextUsageBar, fetchContextPreview } from './ContextDrawer'
+import { useSlashMenu } from './useSlash'
 
 /** 项目群聊天窗口（= 微信群） */
 export default function GroupWindow(props: { projectId: string }): React.JSX.Element {
@@ -39,6 +40,7 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
   const composerRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
+  const slash = useSlashMenu({ setDraft, inputRef })
   const composerResize = useComposerResize(composerRef)
 
   useEffect(() => {
@@ -115,6 +117,7 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
 
   const onDraftChange = (value: string) => {
     setDraft(value)
+    slash.detect(value)
     const el = inputRef.current
     if (!el) return
     const upto = value.slice(0, el.selectionStart ?? value.length)
@@ -288,6 +291,24 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
               ))}
             </div>
           )}
+          {slash.open && (
+            <div className="mention-pop slash-pop" data-testid="slash-pop">
+              <div className="slash-head">插件指令</div>
+              {slash.candidates.map((c, i) => (
+                <button
+                  key={`${c.pluginId}${c.name}`}
+                  type="button"
+                  data-testid={`slash-item-${i}`}
+                  className={`mention-item ${i === slash.index ? 'active' : ''}`}
+                  onMouseEnter={() => slash.setIndex(i)}
+                  onClick={() => slash.pick(c)}
+                >
+                  {c.icon} <b>{c.name}</b>
+                  <span className="mention-desc">{c.description || c.pluginName}</span>
+                </button>
+              ))}
+            </div>
+          )}
           <input
             ref={fileRef}
             type="file"
@@ -323,6 +344,7 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
             onKeyDown={(e) => {
               // 输入法组字期间方向键/回车归 IME 选词，不能抢
               if (e.nativeEvent.isComposing) return
+              if (slash.handleKey(e)) return
               if (mention && mentionCandidates.length > 0) {
                 if (e.key === 'ArrowDown') {
                   e.preventDefault()
@@ -410,7 +432,12 @@ function GroupBubble(props: { msg: GroupMessage; workspaceDir?: string }): React
             <span className="msg-time">{fmtFullTime(msg.time)}</span>
           </div>
         )}
-        {mine && <div className="msg-meta-user"><span className="msg-time">{fmtFullTime(msg.time)}</span></div>}
+        {mine && (
+          <div className="msg-meta-user">
+            {msg.meta?.cron_task_id ? <span className="tag tag-cron" title="由定时任务自动发出">⏱ 定时</span> : null}
+            <span className="msg-time">{fmtFullTime(msg.time)}</span>
+          </div>
+        )}
         <div className="msg-bubble-wrap">
           <div className={`bubble ${mine ? 'user' : 'assistant'}`}>
             {isAssistant && <AssistantExtras reasoning={reasoning} tools={msg.tools} workspaceDir={workspaceDir} />}

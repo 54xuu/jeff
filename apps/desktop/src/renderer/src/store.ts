@@ -1,12 +1,32 @@
 import { create } from 'zustand'
 import { api } from './api'
 import { playNotifySound, showDesktopNotify, summarize, windowFocused } from './notify'
-import type { AgentInfo, ChatMsg, AppInfo, AppSettings, ProviderCatalogItem, ProjectInfo, ProjectMember, TaskInfo, GroupMessage, ChatImage } from '@jeff/core'
+import type { AgentInfo, ChatMsg, AppInfo, AppSettings, ProviderCatalogItem, ProjectInfo, ProjectMember, TaskInfo, GroupMessage, ChatImage, CronTaskInfo, CronRunInfo, PluginInfo } from '@jeff/core'
 import { IPC } from '@jeff/core'
 
-export type Tab = 'chats' | 'contacts' | 'settings'
+export type Tab = 'chats' | 'contacts' | 'schedules' | 'plugins' | 'settings'
 export type ActiveChat = { kind: 'agent'; id: string } | { kind: 'group'; id: string } | null
 export type SettingsSection = 'providers' | 'mcp' | 'memory' | 'engine' | 'sync' | 'notification' | 'appearance' | 'about'
+
+/** 插件快捷指令（`/` 菜单条目） */
+export interface SlashCommand {
+  name: string
+  description?: string
+  prompt: string
+  pluginId: string
+  pluginName: string
+  icon: string
+}
+
+/** 内置浏览器面板状态（渲染层持有；动作请求由主进程下发） */
+export interface BrowserUiState {
+  visible: boolean
+  url: string
+  title: string
+  loading: boolean
+  /** 输入框里的地址（可能与已加载 url 不同，等用户回车） */
+  address: string
+}
 
 /** 进行中的流式回复（key: agent:<id> / group:<id>） */
 export interface StreamState {
@@ -40,11 +60,21 @@ interface JeffState {
   appInfo: AppInfo | null
   settings: AppSettings | null
   catalog: ProviderCatalogItem[]
+  /** 定时任务列表 */
+  cronTasks: CronTaskInfo[]
+  /** 插件列表 */
+  plugins: PluginInfo[]
+  /** 内置浏览器面板状态 */
+  browser: BrowserUiState
   setTab: (t: Tab) => void
   setActive: (a: ActiveChat) => void
   setSettingsSection: (s: SettingsSection) => void
+  setBrowser: (patch: Partial<BrowserUiState>) => void
   refreshAgents: () => Promise<void>
   refreshProjects: () => Promise<void>
+  refreshCron: () => Promise<void>
+  refreshPlugins: () => Promise<void>
+  loadCronRuns: (id: string) => Promise<CronRunInfo[]>
   loadHistory: (key: string, opts?: { resetLocal?: boolean }) => Promise<void>
   loadGroupHistory: (projectId: string) => Promise<void>
   loadTasks: (projectId: string) => Promise<void>
@@ -197,10 +227,14 @@ export const useStore = create<JeffState>((set, get) => ({
   appInfo: null,
   settings: null,
   catalog: [],
+  cronTasks: [],
+  plugins: [],
+  browser: { visible: false, url: '', title: '', loading: false, address: '' },
 
   setTab: (tab) => set({ tab }),
   setActive: (active) => set({ active }),
   setSettingsSection: (settingsSection) => set({ settingsSection }),
+  setBrowser: (patch) => set((s) => ({ browser: { ...s.browser, ...patch } })),
 
   refreshAgents: async () => {
     const agents = await api.invoke<AgentInfo[]>(IPC.agentsList)
@@ -211,6 +245,18 @@ export const useStore = create<JeffState>((set, get) => ({
     const projects = await api.invoke<ProjectInfo[]>(IPC.projectsList)
     set({ projects })
   },
+
+  refreshCron: async () => {
+    const cronTasks = await api.invoke<CronTaskInfo[]>(IPC.cronList)
+    set({ cronTasks })
+  },
+
+  refreshPlugins: async () => {
+    const plugins = await api.invoke<PluginInfo[]>(IPC.pluginsList)
+    set({ plugins })
+  },
+
+  loadCronRuns: async (id) => api.invoke<CronRunInfo[]>(IPC.cronRuns, { id }),
 
   loadHistory: async (key, opts) => {
     if (!key.startsWith('agent:')) return
@@ -393,6 +439,15 @@ export const useStore = create<JeffState>((set, get) => ({
         if (xiaojie) {
           set({ tab: 'chats', active: { kind: 'agent', id: xiaojie.id } })
         }
+      } else if (action === 'browser') {
+        const b = get().browser
+        set({ browser: { ...b, visible: !b.visible } })
+      } else if (action === 'schedules') {
+        set({ tab: 'schedules' })
+        void get().refreshCron()
+      } else if (action === 'plugins') {
+        set({ tab: 'plugins' })
+        void get().refreshPlugins()
       }
     } else if (what === 'navigate-chat') {
       // 点击系统通知 → 主进程唤起窗口并指路，这里切到对应会话（ChatWindow 挂载时会自己拉历史）
@@ -429,6 +484,15 @@ export const useStore = create<JeffState>((set, get) => ({
       void get().refreshProjects()
     } else if (what === 'agents') {
       void get().refreshAgents()
+    } else if (what === 'plugins') {
+      void get().refreshPlugins()
+    } else if (what === 'cron' || what === 'cron-updated') {
+      void get().refreshCron()
+      // 定时触发会在会话里落下新消息：刷新会话列表与当前打开的会话
+      const { active } = get()
+      if (active?.kind === 'agent') void get().loadHistory(`agent:${active.id}`)
+      if (active?.kind === 'group') void get().loadGroupHistory(active.id)
+      void get().refreshProjects()
     } else if (what === 'projects' || what === 'tasks') {
       void get().refreshProjects()
       if (active?.kind === 'group') void get().loadTasks(active.id)
@@ -457,6 +521,19 @@ export function applyTheme(theme: 'system' | 'light' | 'dark' | undefined): void
 /** 主题包（皮肤）：当前仅 weui */
 export function applyThemePack(pack: 'weui' | undefined): void {
   document.documentElement.dataset.themePack = pack || 'weui'
+}
+
+/**
+ * 由插件清单派生 `/` 指令列表：只有已启用且清单合法的插件才提供指令。
+ * 派生而非单独存 state —— 指令永远是插件状态的函数，存两份必然出现漂移。
+ */
+export function slashCommandsOf(plugins: PluginInfo[]): SlashCommand[] {
+  const out: SlashCommand[] = []
+  for (const p of plugins) {
+    if (!p.enabled || p.error) continue
+    for (const c of p.commands) out.push({ name: c.name, ...(c.description ? { description: c.description } : {}), prompt: c.prompt, pluginId: p.id, pluginName: p.name, icon: p.icon })
+  }
+  return out
 }
 
 /** 把 system 主题解析为实际生效的亮/深夜 */

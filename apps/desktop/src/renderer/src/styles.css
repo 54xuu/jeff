@@ -582,6 +582,9 @@ body {
   border-top: 1px solid var(--border);
   padding: 0 16px 12px;
   flex-shrink: 0;
+  /* @ 提及与 / 指令浮层用 absolute + bottom:100% 锚在输入区上方；
+     缺这行会锚到 .main-pane，浮层被推到窗口外（DOM 里有、屏幕上看不见）。 */
+  position: relative;
 }
 
 .composer-resize-handle {
@@ -1095,6 +1098,8 @@ body.composer-resizing * {
   left: 12px;
   margin-bottom: 6px;
   width: 300px;
+  max-height: 260px;
+  overflow-y: auto;
   background: var(--bg-panel);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
@@ -3173,4 +3178,579 @@ body.composer-resizing * {
 .preview-toast.error {
   color: var(--danger);
   border-color: color-mix(in srgb, var(--danger) 40%, transparent);
+}
+
+/* ===== 通用页面（定时任务 / 插件）===== */
+.page-pane {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 20px 24px 32px;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.page-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.page-head h2 {
+  margin: 0 0 4px;
+  font-size: 18px;
+}
+
+.page-head-actions {
+  display: flex;
+  gap: 8px;
+  flex: none;
+}
+
+.side-list {
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+
+.side-count {
+  font-size: 12px;
+  color: var(--text-2);
+  font-weight: 400;
+}
+
+.side-empty {
+  padding: 12px 16px;
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+.side-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 14px;
+}
+
+.side-item.muted {
+  opacity: 0.55;
+}
+
+.side-item-body {
+  min-width: 0;
+  flex: 1;
+}
+
+.side-item-name {
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.side-item-sub {
+  font-size: 11px;
+  color: var(--text-2);
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.side-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: none;
+  background: color-mix(in srgb, var(--text) 25%, transparent);
+}
+
+.side-dot.ok {
+  background: var(--green);
+}
+
+.side-dot.bad {
+  background: #d9534f;
+}
+
+/* ===== 定时任务卡片 ===== */
+.cron-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: 12px;
+}
+
+.cron-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-panel);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cron-card.disabled {
+  opacity: 0.62;
+}
+
+.cron-card-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.cron-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.cron-name {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.cron-card-actions {
+  display: flex;
+  gap: 2px;
+  flex: none;
+}
+
+.cron-card-actions .icon-btn,
+.plugin-actions .icon-btn {
+  padding: 4px;
+  border-radius: var(--radius-xs);
+}
+
+.cron-card-actions .icon-btn:hover,
+.plugin-actions .icon-btn:hover {
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+}
+
+.cron-meta,
+.plugin-meta {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.cron-badge {
+  font-size: 11px;
+  color: var(--text-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  padding: 1px 6px;
+  white-space: nowrap;
+}
+
+.cron-target {
+  font-size: 12px;
+}
+
+.cron-dim {
+  font-size: 11px;
+  color: var(--text-2);
+}
+
+.cron-prompt {
+  font-size: 12px;
+  color: var(--text-2);
+  background: color-mix(in srgb, var(--text) 4%, transparent);
+  border-radius: var(--radius-xs);
+  padding: 6px 8px;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.cron-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--text-2);
+  gap: 8px;
+}
+
+.link-btn {
+  border: none;
+  background: transparent;
+  color: var(--green);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 0;
+}
+
+.cron-runs {
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.cron-run-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  flex-wrap: wrap;
+}
+
+.cron-run-status {
+  border-radius: var(--radius-xs);
+  padding: 0 5px;
+  border: 1px solid currentColor;
+}
+
+.cron-run-status.ok {
+  color: var(--green);
+}
+
+.cron-run-status.failed {
+  color: #d9534f;
+}
+
+.cron-run-status.running {
+  color: #2f7fd1;
+}
+
+.cron-run-status.missed,
+.cron-run-status.skipped {
+  color: var(--text-2);
+}
+
+.cron-run-error {
+  color: #d9534f;
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.cron-expr-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cron-presets {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.chip {
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-2);
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.chip:hover {
+  border-color: var(--green);
+  color: var(--text);
+}
+
+.chip.active {
+  background: color-mix(in srgb, var(--green) 14%, transparent);
+  border-color: var(--green);
+  color: var(--text);
+}
+
+/* ===== 插件 ===== */
+.plugins-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.plugin-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
+  gap: 12px;
+}
+
+.plugin-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-panel);
+  padding: 12px 14px;
+}
+
+.plugin-card.on {
+  border-color: color-mix(in srgb, var(--green) 45%, var(--border));
+}
+
+.plugin-icon {
+  width: 38px;
+  height: 38px;
+  flex: none;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+}
+
+.plugin-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.plugin-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  flex-wrap: wrap;
+}
+
+.plugin-version {
+  font-size: 11px;
+  color: var(--text-2);
+  font-weight: 400;
+}
+
+.plugin-desc {
+  font-size: 12px;
+  color: var(--text-2);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.plugin-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+}
+
+.plugin-detail h4 {
+  margin: 12px 0 4px;
+  font-size: 13px;
+}
+
+.plugin-cmd-list {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.plugin-cmd-list code {
+  color: var(--green);
+}
+
+/* 开关 */
+.switch {
+  width: 36px;
+  height: 20px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--text) 10%, transparent);
+  padding: 0;
+  cursor: pointer;
+  position: relative;
+  flex: none;
+  transition: background 0.15s;
+}
+
+.switch span {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 0.15s;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+}
+
+.switch.on {
+  background: var(--green);
+  border-color: var(--green);
+}
+
+.switch.on span {
+  transform: translateX(16px);
+}
+
+.switch:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ===== 智能体分组 ===== */
+.agents-search {
+  padding: 0 12px 8px;
+}
+
+.agents-search input {
+  width: 100%;
+}
+
+.agent-group {
+  display: flex;
+  flex-direction: column;
+}
+
+.agent-group-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: none;
+  background: transparent;
+  color: var(--text-2);
+  padding: 8px 14px 4px;
+  cursor: pointer;
+  font-size: 11px;
+  text-align: left;
+}
+
+.agent-group-head svg {
+  transition: transform 0.15s;
+}
+
+.agent-group-head svg.rot {
+  transform: rotate(-90deg);
+}
+
+.agent-group-name {
+  font-weight: 600;
+}
+
+.agent-group-count {
+  margin-left: auto;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0 6px;
+  font-size: 10px;
+}
+
+/* ===== 斜杠指令菜单 ===== */
+.slash-pop {
+  width: 320px;
+}
+
+.slash-head {
+  font-size: 10px;
+  color: var(--text-2);
+  padding: 6px 12px 2px;
+  letter-spacing: 0.04em;
+}
+
+/* ===== 内置浏览器面板 ===== */
+.browser-panel {
+  flex: none;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-panel);
+  border-left: 1px solid var(--border);
+  position: relative;
+  min-width: 320px;
+}
+
+.browser-resizer {
+  position: absolute;
+  left: -3px;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: col-resize;
+  z-index: 2;
+}
+
+.browser-resizer:hover {
+  background: color-mix(in srgb, var(--green) 35%, transparent);
+}
+
+body.browser-resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+
+.browser-bar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 8px 8px;
+  border-bottom: 1px solid var(--border);
+  flex: none;
+}
+
+.browser-bar .icon-btn {
+  padding: 4px;
+  border-radius: var(--radius-xs);
+  color: var(--text-2);
+}
+
+.browser-bar .icon-btn:hover {
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  color: var(--text);
+}
+
+.browser-address {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  border-radius: 999px;
+  padding: 4px 10px;
+}
+
+.browser-view {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  background: #fff;
+}
+
+.browser-loading {
+  position: absolute;
+  top: 41px;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--green), transparent);
+  animation: browser-loading 1.2s linear infinite;
+}
+
+@keyframes browser-loading {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
+/* 定时任务触发的消息标记（群聊里「我」侧的时间旁边） */
+.tag-cron {
+  color: var(--green);
+  border-color: color-mix(in srgb, var(--green) 45%, var(--border));
+  background: color-mix(in srgb, var(--green) 10%, transparent);
 }

@@ -2,7 +2,8 @@ import { app, BrowserWindow, shell, Tray, Menu, dialog, nativeImage, Notificatio
 import type { MenuItemConstructorOptions } from 'electron'
 import fs from 'node:fs'
 import path from 'node:path'
-import { JeffCore } from '@jeff/core'
+import { JeffCore, BridgeBrowserControl } from '@jeff/core'
+import type { BrowserResult, BrowserState } from '@jeff/core'
 import { registerIpc } from './ipc.js'
 
 // Windows 下 Toast 通知必须带 AppUserModelID，否则静默丢弃；取值需与 electron-builder 的 appId、
@@ -12,6 +13,25 @@ if (process.platform === 'win32') app.setAppUserModelId('com.jeffxuu.jeff')
 let win: BrowserWindow | null = null
 let core: JeffCore | null = null
 let tray: Tray | null = null
+
+/**
+ * 内置浏览器控制：core 侧工具调用 → 下发渲染层 webview 执行 → 回传结果。
+ * 渲染层未就绪（窗口关了/还在加载）时下发即失败，让 agent 得到明确错误而不是等到超时。
+ */
+const browserControl = new BridgeBrowserControl((req) => {
+  if (!win || win.isDestroyed()) throw new Error('窗口不可用（Jeff 主窗口已关闭）')
+  win.webContents.send('jeff:push', { what: 'browser-request', payload: req })
+})
+
+/** 渲染层回传的浏览器动作结果（IPC.browserResult） */
+export function setBrowserResult(r: BrowserResult): void {
+  browserControl.settle(r)
+}
+
+/** 渲染层上报的面板状态（可见性 + 当前页面）：供 agent 判断当前上下文 */
+export function setBrowserState(s: BrowserState): void {
+  browserControl.updateState(s)
+}
 
 // 主进程兜底：漏网的 Promise 拒绝/异常只记日志，不再弹「Uncaught Exception」崩溃框
 // （webdav 库在休眠唤醒/断网等场景会泄漏 AbortError 拒绝，杀不掉主进程才是正确行为）
@@ -63,8 +83,11 @@ if (!gotLock) {
     core.bus.on('chat-updated', (p: unknown) => broadcast('chat-updated', p))
     core.bus.on('chat-stream', (p: unknown) => broadcast('chat-stream', p))
     core.bus.on('group-updated', (p: unknown) => broadcast('group-updated', p))
+    core.bus.on('cron-updated', () => broadcast('cron-updated'))
     core.on('sidecar-status', (p: unknown) => broadcast('sidecar-status', p))
     core.on('sidecar-log', (line: string) => pushSidecarLog(line))
+    // 内置浏览器：把主进程实现注入 core（工具调用 → 渲染层 webview）
+    core.browser = browserControl
     registerIpc(core)
 
     createWindow()
@@ -184,6 +207,25 @@ function setupAppMenu(): void {
       ],
     },
     {
+      label: '工具',
+      submenu: [
+        {
+          label: '内置浏览器',
+          accelerator: 'CmdOrCtrl+Shift+B',
+          click: () => menuAction('browser'),
+        },
+        {
+          label: '定时任务',
+          accelerator: 'CmdOrCtrl+Shift+T',
+          click: () => menuAction('schedules'),
+        },
+        {
+          label: '插件',
+          click: () => menuAction('plugins'),
+        },
+      ],
+    },
+    {
       label: '帮助',
       submenu: [
         {
@@ -294,6 +336,8 @@ function createWindow(): void {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
+      // 内置浏览器面板用 <webview> 承载第三方页面（不改变原有界面，右侧多开一个面板）
+      webviewTag: true,
     },
   })
   win.webContents.setWindowOpenHandler(({ url }) => {

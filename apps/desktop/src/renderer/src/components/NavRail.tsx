@@ -24,6 +24,28 @@ const ITEMS: Array<{ id: Tab; label: string; icon: React.JSX.Element }> = [
     ),
   },
   {
+    id: 'schedules',
+    label: '定时',
+    icon: (
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        <circle cx="12" cy="12" r="9" />
+        <path d="M12 7v5l3 2" />
+      </svg>
+    ),
+  },
+  {
+    id: 'plugins',
+    label: '插件',
+    icon: (
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        <rect x="3" y="3" width="7.5" height="7.5" rx="1.6" />
+        <rect x="14" y="3" width="7.5" height="7.5" rx="1.6" />
+        <rect x="3" y="14" width="7.5" height="7.5" rx="1.6" />
+        <path d="M17.75 14.5v7M14.25 18h7" />
+      </svg>
+    ),
+  },
+  {
     id: 'settings',
     label: '设置',
     icon: (
@@ -36,7 +58,7 @@ const ITEMS: Array<{ id: Tab; label: string; icon: React.JSX.Element }> = [
 ]
 
 export default function NavRail(): React.JSX.Element {
-  const { tab, setTab, settings } = useStore()
+  const { tab, setTab, settings, browser, setBrowser } = useStore()
   const current = settings?.theme ?? 'system'
   const eff = effectiveTheme(current)
   const toggleTheme = () => {
@@ -60,6 +82,19 @@ export default function NavRail(): React.JSX.Element {
         </button>
       ))}
       <div className="nav-spacer" />
+      {/* 内置浏览器开关（与顶部菜单「工具 → 浏览器」等价；图标常驻便于随手开合） */}
+      <button
+        className={`nav-item ${browser.visible ? 'active' : ''}`}
+        data-testid="nav-browser"
+        title={browser.visible ? '关闭内置浏览器' : '打开内置浏览器'}
+        onClick={() => setBrowser({ visible: !browser.visible })}
+      >
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="12" cy="12" r="9" />
+          <path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18" />
+        </svg>
+        <span>浏览器</span>
+      </button>
       <button
         className="nav-item theme-toggle"
         data-testid="nav-theme-toggle"
