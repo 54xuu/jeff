@@ -2,6 +2,21 @@
 
 本文件给 Cursor / 人类协作者：改代码、发版、升级本机时的约定。
 
+## 规则文件分层
+
+- **全局通用规则**（开发规范、笔记管理、MySQL 规范、SWR 镜像、输出规则、ZCode 记忆文件管理）：见 `/home/xujian/.agents/AGENTS.md`（唯一权威源，所有工具共用）。ZCode 会话默认加载的 `~/.zcode/AGENTS.md` 仅是指向该文件的指针。
+- **本文件**：只保留 jeff 项目特有的规则（版本号、双平台打包、收尾测试、产品心智模型）。
+
+## ZCode 记忆文件
+
+ZCode 在本仓库的持久记忆存放在：
+
+```
+/home/xujian/.zcode/cli/memories/projects/jeff-1d2f0b1cdfcc2a44/memory/
+```
+
+`MEMORY.md` 是索引，其余每 `.md` 文件一条事实（frontmatter 含 `name` / `description` / `metadata.type`）。其他工具可直接读写实现跨工具共享；格式与写入规则详见 `/home/xujian/.agents/AGENTS.md` 第 6 节。
+
 ## 版本号（SemVer）
 
 仓库当前版本必须**五处一致**（`packages/core/tests/version.test.ts` 会在单测里强制校验，防漂移）：
