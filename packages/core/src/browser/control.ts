@@ -22,7 +22,7 @@ export interface BrowserControl {
 export class UnavailableBrowser implements BrowserControl {
   constructor(private reason = '内置浏览器未打开') {}
   async request(_action: BrowserAction, _args: Record<string, unknown>): Promise<unknown> {
-    throw new Error(`${this.reason}：请先在 Jeff 顶部菜单「工具 → 浏览器」打开浏览器面板，再让我操作网页。`)
+    throw new Error(`${this.reason}：请先在 Jeff 顶部菜单「显示 → 内置浏览器」打开浏览器面板，再让我操作网页。`)
   }
   available(): boolean {
     return false

@@ -104,6 +104,24 @@ export function IconDiagram(props: IconProps): React.JSX.Element {
   )
 }
 
+/** 向左收起（分栏分隔条上的开合箭头） */
+export function IconChevronLeft(props: IconProps): React.JSX.Element {
+  return (
+    <Svg {...props}>
+      <path d="m15 18-6-6 6-6" />
+    </Svg>
+  )
+}
+
+/** 向右展开（分栏分隔条上的开合箭头） */
+export function IconChevronRight(props: IconProps): React.JSX.Element {
+  return (
+    <Svg {...props}>
+      <path d="m9 18 6-6-6-6" />
+    </Svg>
+  )
+}
+
 /** 放大查看（放大镜加号） */
 export function IconZoomIn(props: IconProps): React.JSX.Element {
   return (

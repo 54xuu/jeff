@@ -232,6 +232,21 @@ function setupAppMenu(): void {
       label: '显示',
       submenu: [
         {
+          label: '会话列表',
+          accelerator: 'CmdOrCtrl+B',
+          click: () => menuAction('toggle-list'),
+        },
+        {
+          label: '内置浏览器',
+          accelerator: 'CmdOrCtrl+Shift+B',
+          click: () => menuAction('browser'),
+        },
+        {
+          label: '重置窗口布局',
+          click: () => menuAction('reset-layout'),
+        },
+        { type: 'separator' },
+        {
           label: '亮色主题',
           accelerator: 'CmdOrCtrl+Shift+L',
           click: () => menuAction('theme', 'light'),
@@ -257,11 +272,6 @@ function setupAppMenu(): void {
     {
       label: '工具',
       submenu: [
-        {
-          label: '内置浏览器',
-          accelerator: 'CmdOrCtrl+Shift+B',
-          click: () => menuAction('browser'),
-        },
         {
           label: '定时任务',
           accelerator: 'CmdOrCtrl+Shift+T',

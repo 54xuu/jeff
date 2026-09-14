@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { api } from './api'
 import { playNotifySound, showDesktopNotify, summarize, windowFocused } from './notify'
+import { readLayout, writeLayout, defaultBrowserWidth, LIST_DEFAULT_WIDTH, type PaneLayout } from './layout/panes'
 import type { AgentInfo, ChatMsg, AppInfo, AppSettings, ProviderCatalogItem, ProjectInfo, ProjectMember, TaskInfo, GroupMessage, ChatImage, CronTaskInfo, CronRunInfo, PluginInfo } from '@jeff/core'
 import { IPC } from '@jeff/core'
 
@@ -68,10 +69,16 @@ interface JeffState {
   plugins: PluginInfo[]
   /** 内置浏览器面板状态 */
   browser: BrowserUiState
+  /** 三栏布局（会话列表 / 内置浏览器）的显隐与宽度偏好 */
+  layout: PaneLayout
   setTab: (t: Tab) => void
   setActive: (a: ActiveChat) => void
   setSettingsSection: (s: SettingsSection) => void
   setBrowser: (patch: Partial<BrowserUiState>) => void
+  /** 改布局；persist:false 用于拖拽过程中的逐帧更新（松手再由 persistLayout 落盘） */
+  setLayout: (patch: Partial<PaneLayout>, opts?: { persist?: boolean }) => void
+  /** 把当前布局写进 localStorage */
+  persistLayout: () => void
   refreshAgents: () => Promise<void>
   refreshProjects: () => Promise<void>
   refreshCron: () => Promise<void>
@@ -232,11 +239,17 @@ export const useStore = create<JeffState>((set, get) => ({
   cronTasks: [],
   plugins: [],
   browser: { visible: false, url: '', title: '', loading: false, address: '', errorCount: 0 },
+  layout: readLayout(),
 
   setTab: (tab) => set({ tab }),
   setActive: (active) => set({ active }),
   setSettingsSection: (settingsSection) => set({ settingsSection }),
   setBrowser: (patch) => set((s) => ({ browser: { ...s.browser, ...patch } })),
+  setLayout: (patch, opts) => {
+    set((s) => ({ layout: { ...s.layout, ...patch } }))
+    if (opts?.persist !== false) writeLayout(get().layout)
+  },
+  persistLayout: () => writeLayout(get().layout),
 
   refreshAgents: async () => {
     const agents = await api.invoke<AgentInfo[]>(IPC.agentsList)
@@ -444,6 +457,15 @@ export const useStore = create<JeffState>((set, get) => ({
       } else if (action === 'browser') {
         const b = get().browser
         set({ browser: { ...b, visible: !b.visible } })
+      } else if (action === 'toggle-list') {
+        get().setLayout({ listVisible: !get().layout.listVisible })
+      } else if (action === 'reset-layout') {
+        // 「显示 → 重置窗口布局」：把三栏宽度与显隐恢复出厂（浏览器可见性不动，那是面板开关不是布局）
+        get().setLayout({
+          listVisible: true,
+          listWidth: LIST_DEFAULT_WIDTH,
+          browserWidth: defaultBrowserWidth(window.innerWidth),
+        })
       } else if (action === 'schedules') {
         set({ tab: 'schedules' })
         void get().refreshCron()

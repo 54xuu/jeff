@@ -962,7 +962,7 @@ export class JeffCore extends EventEmitter {
     const need = (action: import('./ipc/contract.js').BrowserAction) => async (args: Record<string, unknown> = {}) => {
       if (!this.browser.available()) {
         // 面板没打开时给出可操作指引，而不是让 agent 干等
-        throw new Error('内置浏览器面板未打开：请先在 Jeff 顶部菜单「工具 → 浏览器」打开面板，再让我操作网页。')
+        throw new Error('内置浏览器面板未打开：请先在 Jeff 顶部菜单「显示 → 内置浏览器」打开面板，再让我操作网页。')
       }
       return this.browser.request(action, args || {})
     }

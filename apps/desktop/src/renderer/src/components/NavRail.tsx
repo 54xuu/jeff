@@ -82,7 +82,7 @@ export default function NavRail(): React.JSX.Element {
         </button>
       ))}
       <div className="nav-spacer" />
-      {/* 内置浏览器开关（与顶部菜单「工具 → 浏览器」等价；图标常驻便于随手开合） */}
+      {/* 内置浏览器开关（与顶部菜单「显示 → 内置浏览器」等价；图标常驻便于随手开合） */}
       <button
         className={`nav-item ${browser.visible ? 'active' : ''}`}
         data-testid="nav-browser"

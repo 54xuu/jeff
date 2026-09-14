@@ -155,6 +155,11 @@ body {
   overflow: hidden;
 }
 
+/* 手动收起：用 display:none 而不是卸载组件，列表内部状态（分类折叠、滚动位置）得以保留 */
+.list-pane.is-hidden {
+  display: none;
+}
+
 .list-header {
   display: flex;
   align-items: center;
@@ -296,6 +301,8 @@ body {
 /* ===== 主面板 ===== */
 .main-pane {
   flex: 1;
+  /* flex 项默认 min-width:auto，会被内容撑住不放；两侧分栏拖宽时它必须能被压窄 */
+  min-width: 0;
   display: flex;
   flex-direction: column;
   background: var(--bg-panel);
@@ -3715,23 +3722,113 @@ body.composer-resizing * {
   min-width: 320px;
 }
 
-.browser-resizer {
+/* ===== 分栏分隔条（左：会话列表 / 中：对话区 / 右：内置浏览器）=====
+   分隔条本身零宽（不占布局），热区由 ::after 往两侧各探 3px，正好盖住分栏那条 1px 边框。
+   平时完全透明，hover / 拖拽时才显形，界面保持干净。 */
+.pane-resizer {
+  position: relative;
+  z-index: 2;
+  flex: none;
+  width: 0;
+}
+
+.pane-resizer::after {
+  content: '';
   position: absolute;
-  left: -3px;
   top: 0;
   bottom: 0;
+  left: -3px;
   width: 6px;
   cursor: col-resize;
-  z-index: 2;
 }
 
-.browser-resizer:hover {
-  background: color-mix(in srgb, var(--green) 35%, transparent);
+.pane-resizer::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 1px;
+  background: transparent;
 }
 
-body.browser-resizing {
+.pane-resizer:hover::before,
+.pane-resizer.is-dragging::before {
+  background: var(--green);
+}
+
+/* hover 才浮出的开合箭头：垂直居中，跨在分栏线上。
+   z-index 必须显式给：::after 热区是「最后一个子元素」，不压住它按钮点不到。 */
+.pane-toggle {
+  position: absolute;
+  z-index: 1;
+  top: 50%;
+  left: 0;
+  transform: translate(-50%, -50%);
+  width: 18px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-panel);
+  color: var(--text-2);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.pane-resizer:hover .pane-toggle,
+.pane-resizer .pane-toggle:focus-visible {
+  opacity: 1;
+}
+
+.pane-toggle:hover {
+  color: var(--green);
+  border-color: color-mix(in srgb, var(--green) 45%, var(--border));
+  background: color-mix(in srgb, var(--green) 8%, var(--bg-panel));
+}
+
+.pane-resizer.is-dragging .pane-toggle {
+  cursor: col-resize;
+}
+
+body.pane-resizing {
   cursor: col-resize;
   user-select: none;
+}
+
+/* 拖拽期间盖住整个窗口：鼠标经过 webview 时事件会被 guest 页面吃掉，没有它拖拽会中途断掉 */
+.pane-drag-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  cursor: col-resize;
+}
+
+/* 左栏收起后留在对话区左边缘的展开细条（点击把列表放回来） */
+.pane-expand-strip {
+  position: relative;
+  flex: none;
+  width: 16px;
+  align-self: stretch;
+}
+
+.pane-expand-strip .pane-toggle {
+  left: 8px;
+  /* 收起态是「回程入口」，淡显而不是藏起来——否则用户找不到怎么把列表放回来 */
+  opacity: 0.5;
+}
+
+.pane-expand-strip:hover .pane-toggle,
+.pane-expand-strip .pane-toggle:focus-visible {
+  opacity: 1;
+}
+
+.pane-expand-strip:hover {
+  background: color-mix(in srgb, var(--text) 5%, transparent);
 }
 
 .browser-bar {

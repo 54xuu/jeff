@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test'
+import { test, expect, type Page } from '@playwright/test'
 import http from 'node:http'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -465,6 +465,128 @@ test('v1.8.3：定时任务工具边界 / 插件校验 / 内置浏览器点击·
     await expect(page.getByTestId('plugin-card-e2e-flat')).toBeVisible({ timeout: 20_000 })
     await expect(page.getByTestId('plugin-card-e2e-flat')).toContainText(/已启用/)
     await page.screenshot({ path: path.join(EVIDENCE, '14-plugins-tool-created.png'), fullPage: true })
+  } finally {
+    await closeJeff(app)
+    await site.close()
+  }
+})
+
+/** 拖动分隔条：dx > 0 表示向右拖。刻意避开垂直居中的开合按钮（在那里按下算「点击」不算拖拽） */
+async function dragPane(page: Page, testId: string, dx: number): Promise<void> {
+  const box = await page.getByTestId(testId).boundingBox()
+  if (!box) throw new Error(`找不到分隔条 ${testId}`)
+  const y = box.y + box.height / 2 - 80
+  await page.mouse.move(box.x, y)
+  await page.mouse.down()
+  await page.mouse.move(box.x + dx, y, { steps: 10 })
+  await page.mouse.up()
+}
+
+/** 双击分隔条（恢复默认宽度） */
+async function dblclickPane(page: Page, testId: string): Promise<void> {
+  const box = await page.getByTestId(testId).boundingBox()
+  if (!box) throw new Error(`找不到分隔条 ${testId}`)
+  await page.mouse.dblclick(box.x, box.y + box.height / 2 - 80)
+}
+
+async function paneWidth(page: Page, testId: string): Promise<number> {
+  const box = await page.getByTestId(testId).boundingBox()
+  return box ? Math.round(box.width) : 0
+}
+
+/**
+ * v1.8.4 三栏布局封闭测试（不需要模型）：拖拽调宽 / 显隐开关 / 默认宽度与上下限。
+ *
+ * 判据落在「界面真的变了 + 本机真的记住了」：DOM 宽度、localStorage 落值、以及收起左栏后
+ * 经工具桥调 jeff_browser_* 的回归（布局怎么变，agent 操作网页的能力都不该受影响）。
+ */
+test('v1.8.4：三栏布局——拖拽调宽 / 显隐开关 / 默认宽度与上下限', async () => {
+  test.setTimeout(600_000)
+  fs.mkdirSync(EVIDENCE, { recursive: true })
+  const site = await startTestSite()
+  const env = loadE2eEnv()
+  const { app, page } = await launchJeff({
+    home: HOME,
+    seed: { apiKey: process.env.SILICONFLOW_API_KEY || env.SILICONFLOW_API_KEY || '', testAgent: true },
+  })
+  try {
+    await expect(page.getByTestId('nav-rail')).toBeVisible()
+    const winW = await page.evaluate(() => window.innerWidth)
+    const bridge: BridgeClient = readBridge(HOME)
+
+    // ---------- 1. 左栏默认 280，拖宽 80px 真的生效并落盘 ----------
+    expect(await paneWidth(page, 'list-pane')).toBe(280)
+    await dragPane(page, 'list-resizer', 80)
+    await expect.poll(() => paneWidth(page, 'list-pane')).toBe(360)
+    expect(await page.evaluate(() => localStorage.getItem('jeff-list-width'))).toBe('360')
+    await page.screenshot({ path: path.join(EVIDENCE, '15-layout-list-dragged.png') })
+
+    // ---------- 2. 拖过头被上限拦住（480 或「窗口 - 导航栏 - 对话区最小值」）----------
+    const listMax = Math.min(480, winW - 64 - 360)
+    await dragPane(page, 'list-resizer', 800)
+    await expect.poll(() => paneWidth(page, 'list-pane')).toBe(listMax)
+
+    // ---------- 3. 双击分隔条回到默认宽度 ----------
+    await dblclickPane(page, 'list-resizer')
+    await expect.poll(() => paneWidth(page, 'list-pane')).toBe(280)
+
+    // ---------- 4. 收起 / 展开：hover 浮出的箭头按钮 + 收起后的常驻细条 ----------
+    await page.getByTestId('list-resizer-toggle').click()
+    await expect(page.getByTestId('list-pane')).toBeHidden()
+    await expect(page.getByTestId('list-expand')).toBeVisible()
+    await page.screenshot({ path: path.join(EVIDENCE, '16-layout-list-collapsed.png') })
+    await page.getByTestId('list-expand-btn').click()
+    await expect(page.getByTestId('list-pane')).toBeVisible()
+
+    // 「显示 → 会话列表」菜单项走的是同一条链路（含快捷键注册）
+    const toggleByMenu = (): Promise<string> =>
+      app.evaluate(({ Menu }, label) => {
+        const items = Menu.getApplicationMenu()?.items.flatMap((m) => (m.submenu ? m.submenu.items : [m])) ?? []
+        const item = items.find((i) => i.label === label) as unknown as { accelerator?: string; click: () => void } | undefined
+        if (!item) return 'missing'
+        item.click()
+        return item.accelerator ?? ''
+      }, '会话列表')
+    expect(await toggleByMenu()).toBe('CmdOrCtrl+B')
+    await expect(page.getByTestId('list-pane')).toBeHidden()
+    await expect.poll(toggleByMenu).toBe('CmdOrCtrl+B')
+    await expect(page.getByTestId('list-pane')).toBeVisible()
+
+    // ---------- 5. 浏览器默认宽度：按窗口比例（>=520），不再是 460 的手机宽 ----------
+    const defaultBrowser = Math.max(520, Math.round(winW * 0.42))
+    expect(defaultBrowser).toBeGreaterThan(460)
+    await page.getByTestId('nav-browser').click()
+    await expect(page.getByTestId('browser-panel')).toBeVisible()
+    expect(await paneWidth(page, 'browser-panel')).toBe(defaultBrowser)
+
+    // ---------- 6. 浏览器上下限：最宽时给对话区留 360，最窄 320 ----------
+    const listW = await paneWidth(page, 'list-pane')
+    await dragPane(page, 'browser-resizer', -1200)
+    await expect.poll(() => paneWidth(page, 'browser-panel')).toBe(winW - 64 - listW - 360)
+    await page.screenshot({ path: path.join(EVIDENCE, '17-layout-browser-wide.png') })
+    await dragPane(page, 'browser-resizer', 1200)
+    await expect.poll(() => paneWidth(page, 'browser-panel')).toBe(320)
+    // 双击回到默认宽度
+    await dblclickPane(page, 'browser-resizer')
+    await expect.poll(() => paneWidth(page, 'browser-panel')).toBe(defaultBrowser)
+
+    // ---------- 7. 迁移：老版本存过的 460 视为「没设过」，升级到新默认 ----------
+    await page.evaluate(() => localStorage.setItem('jeff-browser-width', '460'))
+    await page.reload()
+    await expect(page.getByTestId('nav-rail')).toBeVisible()
+    await page.getByTestId('nav-browser').click()
+    await expect.poll(() => paneWidth(page, 'browser-panel')).toBe(defaultBrowser)
+
+    // ---------- 8. 回归：左栏收起 + 浏览器拖到最窄，agent 照样能操作页面 ----------
+    await callToolOk(bridge, 'jeff_browser_navigate', { url: site.url })
+    await page.getByTestId('list-resizer-toggle').click()
+    await expect(page.getByTestId('list-pane')).toBeHidden()
+    await dragPane(page, 'browser-resizer', 1200)
+    await expect.poll(() => paneWidth(page, 'browser-panel')).toBe(320)
+    const content = await callToolOk<{ title: string; text: string }>(bridge, 'jeff_browser_get_content', {})
+    expect(content.title).toBe('live13 测试站')
+    expect(content.text).toContain('站首页已就绪')
+    await page.screenshot({ path: path.join(EVIDENCE, '18-layout-browser-narrow.png') })
   } finally {
     await closeJeff(app)
     await site.close()

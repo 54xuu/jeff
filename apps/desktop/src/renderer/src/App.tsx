@@ -10,6 +10,9 @@ import AgentsPage from './components/AgentsPage'
 import SchedulesPage from './components/SchedulesPage'
 import PluginsPage from './components/PluginsPage'
 import BrowserPanel from './components/BrowserPanel'
+import PaneResizer, { PaneExpandStrip } from './components/layout/PaneResizer'
+import { clampListWidth, LIST_DEFAULT_WIDTH } from './layout/panes'
+import { useViewportWidth } from './layout/useViewportWidth'
 import { emitConsoleEntry, registerBrowserOpener, runBrowserAction } from './browserHost'
 import SettingsNav from './components/settings/SettingsNav'
 import SettingsContent from './components/settings/SettingsContent'
@@ -17,7 +20,12 @@ import MarkdownPreviewModal, { PreviewNotice } from './components/preview/Markdo
 import type { SettingsSection } from './store'
 
 export default function App(): React.JSX.Element {
-  const { tab, active, agents, projects, refreshAgents, refreshProjects, refreshAppInfo, refreshSettings, refreshCatalog, refreshCron, refreshPlugins, handlePush } = useStore()
+  const { tab, active, agents, projects, refreshAgents, refreshProjects, refreshAppInfo, refreshSettings, refreshCatalog, refreshCron, refreshPlugins, handlePush, layout, setLayout, persistLayout } = useStore()
+  const winWidth = useViewportWidth()
+  // 布局里存的是「偏好宽度」，渲染时按当前窗口夹一次：窗口临时变小只是把栏挤窄，偏好值不会被改掉
+  const listWidth = clampListWidth(layout.listWidth, winWidth)
+  /** 这几个页签的左栏有内容，才需要分隔条与开合按钮（智能体/插件页的左栏本来就是空的，靠 CSS 的 :empty 隐藏） */
+  const listHasContent = tab === 'chats' || tab === 'schedules' || tab === 'settings'
 
   useEffect(() => {
     void refreshAgents()
@@ -126,11 +134,28 @@ export default function App(): React.JSX.Element {
   return (
     <div className="app">
       <NavRail />
-      <div className="list-pane">
+      {listHasContent && layout.listVisible && (
+        <PaneResizer
+          side="left"
+          width={listWidth}
+          clamp={(w) => clampListWidth(w, winWidth)}
+          onResize={(w) => setLayout({ listWidth: w }, { persist: false })}
+          onCommit={persistLayout}
+          onReset={() => setLayout({ listWidth: LIST_DEFAULT_WIDTH })}
+          onCollapse={() => setLayout({ listVisible: false })}
+          collapseTitle="收起会话列表"
+          testId="list-resizer"
+        />
+      )}
+      {/* 收起时用 display:none 而不是不渲染：列表内部的展开状态（分类折叠、滚动位置）得以保留 */}
+      <div className={`list-pane ${layout.listVisible ? '' : 'is-hidden'}`} style={{ width: listWidth }} data-testid="list-pane">
         {tab === 'chats' && <ChatList />}
         {tab === 'schedules' && <SchedulesListPane />}
         {tab === 'settings' && <SettingsNav />}
       </div>
+      {listHasContent && !layout.listVisible && (
+        <PaneExpandStrip title="展开会话列表" testId="list-expand" onExpand={() => setLayout({ listVisible: true })} />
+      )}
       <div className="main-pane">
         {tab === 'chats' && active?.kind === 'agent' && <ChatWindow key={active.id} agentId={active.id} />}
         {tab === 'chats' && active?.kind === 'group' && <GroupWindow key={active.id} projectId={active.id} />}

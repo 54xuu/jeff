@@ -78,7 +78,7 @@ export async function runBrowserAction(action: BrowserAction, args: Record<strin
       setTimeout(resolve, waitMs)
     })
   }
-  if (!host) throw new Error('浏览器面板未就绪（无法自动打开），请在 Jeff 顶部菜单「工具 → 浏览器」手动打开后重试')
+  if (!host) throw new Error('浏览器面板未就绪（无法自动打开），请在 Jeff 顶部菜单「显示 → 内置浏览器」手动打开后重试')
   return host(action, args)
 }
 

@@ -3,6 +3,9 @@ import { useStore } from '../store'
 import { api } from '../api'
 import { IPC, type BrowserAction, type BrowserConsoleEntry, type BrowserResult } from '@jeff/core'
 import { registerBrowserHost, registerConsoleSink, takePendingStartUrl, unregisterBrowserHost } from '../browserHost'
+import PaneResizer from './layout/PaneResizer'
+import { clampBrowserWidth, clampListWidth, defaultBrowserWidth } from '../layout/panes'
+import { useViewportWidth } from '../layout/useViewportWidth'
 import { Dialog } from './ui/Dialog'
 
 /** 控制台采集上限：只留最近这些条（agent 分析错误只需要最近的现场，留太多反而不好读） */
@@ -34,6 +37,10 @@ function samePage(a: string, b: string): boolean {
 export default function BrowserPanel(): React.JSX.Element {
   const browser = useStore((s) => s.browser)
   const setBrowser = useStore((s) => s.setBrowser)
+  const layout = useStore((s) => s.layout)
+  const setLayout = useStore((s) => s.setLayout)
+  const persistLayout = useStore((s) => s.persistLayout)
+  const winWidth = useViewportWidth()
   const hostRef = useRef<HTMLDivElement | null>(null)
   const viewRef = useRef<HTMLElement | null>(null)
   const readyRef = useRef<Promise<void> | null>(null)
@@ -55,7 +62,9 @@ export default function BrowserPanel(): React.JSX.Element {
    */
   const loadErrorRef = useRef<{ url: string; message: string } | null>(null)
   const [showConsole, setShowConsole] = useState(false)
-  const [width, setWidth] = useState(() => Number(localStorage.getItem('jeff-browser-width') || 460))
+  // 宽度分两层：store 里是偏好值（落盘），这里按窗口与左栏实时夹出「当前生效宽度」
+  const listWidth = clampListWidth(layout.listWidth, winWidth)
+  const width = clampBrowserWidth(layout.browserWidth, winWidth, layout.listVisible, listWidth)
 
   /** 采集一条记录并同步错误数给工具栏（导航开始时清空：上一页的报错不该算到下一页头上） */
   const pushConsole = useCallback(
@@ -531,28 +540,6 @@ export default function BrowserPanel(): React.JSX.Element {
     if (browser.visible && browser.url) localStorage.setItem('jeff-browser-last-url', browser.url)
   }, [browser.visible, browser.url])
 
-  // 宽度拖拽
-  const dragging = useRef(false)
-  useEffect(() => {
-    const onMove = (e: MouseEvent) => {
-      if (!dragging.current) return
-      const next = Math.min(Math.max(window.innerWidth - e.clientX, 320), Math.round(window.innerWidth * 0.72))
-      setWidth(next)
-    }
-    const onUp = () => {
-      if (!dragging.current) return
-      dragging.current = false
-      document.body.classList.remove('browser-resizing')
-      localStorage.setItem('jeff-browser-width', String(width))
-    }
-    window.addEventListener('mousemove', onMove)
-    window.addEventListener('mouseup', onUp)
-    return () => {
-      window.removeEventListener('mousemove', onMove)
-      window.removeEventListener('mouseup', onUp)
-    }
-  }, [width])
-
   const act = (action: 'back' | 'forward' | 'reload') => {
     const wv = viewRef.current as unknown as { canGoBack: () => boolean; canGoForward: () => boolean; goBack: () => void; goForward: () => void; reload: () => void } | null
     if (!wv) return
@@ -575,97 +562,103 @@ export default function BrowserPanel(): React.JSX.Element {
   if (!browser.visible) return <></>
 
   return (
-    <div className="browser-panel" data-testid="browser-panel" style={{ width }}>
-      <div
-        className="browser-resizer"
-        onMouseDown={() => {
-          dragging.current = true
-          document.body.classList.add('browser-resizing')
-        }}
+    <>
+      <PaneResizer
+        side="right"
+        width={width}
+        clamp={(w) => clampBrowserWidth(w, winWidth, layout.listVisible, listWidth)}
+        onResize={(w) => setLayout({ browserWidth: w }, { persist: false })}
+        onCommit={persistLayout}
+        onReset={() => setLayout({ browserWidth: defaultBrowserWidth(winWidth) })}
+        onCollapse={() => setBrowser({ visible: false })}
+        collapseTitle="收起内置浏览器"
+        testId="browser-resizer"
       />
-      <div className="browser-bar">
-        <button className="icon-btn" title="后退" data-testid="browser-back" onClick={() => act('back')}>
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M15 18l-6-6 6-6" />
-          </svg>
-        </button>
-        <button className="icon-btn" title="前进" data-testid="browser-forward" onClick={() => act('forward')}>
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M9 18l6-6-6-6" />
-          </svg>
-        </button>
-        <button className="icon-btn" title="刷新" data-testid="browser-reload" onClick={() => act('reload')}>
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M21 12a9 9 0 1 1-2.6-6.4M21 3v6h-6" />
-          </svg>
-        </button>
-        <input
-          className="browser-address"
-          data-testid="browser-address"
-          value={browser.address}
-          spellCheck={false}
-          placeholder="输入网址后回车"
-          onChange={(e) => {
-            addressRef.current = e.target.value
-            setBrowser({ address: e.target.value })
-          }}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') go()
-          }}
-        />
-        <button className="icon-btn" title="在系统浏览器打开" onClick={openExternal}>
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
-            <path d="M15 3h6v6M10 14L21 3" />
-          </svg>
-        </button>
-        {browser.errorCount > 0 && (
-          <button
-            className="icon-btn browser-error-btn"
-            title={`当前页面有 ${browser.errorCount} 条错误（点开看详情；agent 也能用 jeff_browser_get_console 读到同一份）`}
-            data-testid="browser-errors"
-            onClick={() => setShowConsole(true)}
-          >
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" />
-              <path d="M12 9v4M12 17h.01" />
+      <div className="browser-panel" data-testid="browser-panel" style={{ width }}>
+        <div className="browser-bar">
+          <button className="icon-btn" title="后退" data-testid="browser-back" onClick={() => act('back')}>
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M15 18l-6-6 6-6" />
             </svg>
-            <span className="browser-error-count" data-testid="browser-error-count">
-              {browser.errorCount}
-            </span>
           </button>
+          <button className="icon-btn" title="前进" data-testid="browser-forward" onClick={() => act('forward')}>
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M9 18l6-6-6-6" />
+            </svg>
+          </button>
+          <button className="icon-btn" title="刷新" data-testid="browser-reload" onClick={() => act('reload')}>
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 12a9 9 0 1 1-2.6-6.4M21 3v6h-6" />
+            </svg>
+          </button>
+          <input
+            className="browser-address"
+            data-testid="browser-address"
+            value={browser.address}
+            spellCheck={false}
+            placeholder="输入网址后回车"
+            onChange={(e) => {
+              addressRef.current = e.target.value
+              setBrowser({ address: e.target.value })
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') go()
+            }}
+          />
+          <button className="icon-btn" title="在系统浏览器打开" onClick={openExternal}>
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+              <path d="M15 3h6v6M10 14L21 3" />
+            </svg>
+          </button>
+          {browser.errorCount > 0 && (
+            <button
+              className="icon-btn browser-error-btn"
+              title={`当前页面有 ${browser.errorCount} 条错误（点开看详情；agent 也能用 jeff_browser_get_console 读到同一份）`}
+              data-testid="browser-errors"
+              onClick={() => setShowConsole(true)}
+            >
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" />
+                <path d="M12 9v4M12 17h.01" />
+              </svg>
+              <span className="browser-error-count" data-testid="browser-error-count">
+                {browser.errorCount}
+              </span>
+            </button>
+          )}
+          <button className="icon-btn" title="关闭浏览器面板" data-testid="browser-close" onClick={() => setBrowser({ visible: false })}>
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <path d="M18 6L6 18M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+        <div className="browser-view" ref={hostRef} data-testid="browser-view" />
+        {browser.loading && <div className="browser-loading" />}
+        {showConsole && (
+          <Dialog title={`页面错误（${browser.errorCount}）`} onClose={() => setShowConsole(false)}>
+            <ul className="browser-console-list" data-testid="browser-console-list">
+              {consoleRef.current.length === 0 ? (
+                <li className="cron-dim">当前页面没有采集到错误。</li>
+              ) : (
+                consoleRef.current.map((e, i) => (
+                  <li key={`${e.at}-${i}`} className={`browser-console-item ${e.level}`}>
+                    <span className="cron-badge">{e.level === 'load' ? '加载' : e.level === 'error' ? '错误' : e.level === 'warning' ? '警告' : '信息'}</span>
+                    <span className="browser-console-msg">{e.message}</span>
+                    {(e.source || e.line) && (
+                      <span className="cron-dim">
+                        {e.source ? e.source.replace(/^https?:\/\//, '') : ''}
+                        {e.line ? `:${e.line}` : ''}
+                      </span>
+                    )}
+                  </li>
+                ))
+              )}
+            </ul>
+            <p className="settings-tip">这些错误同样可以通过 jeff_browser_get_console 让智能体读取，用来自查页面为什么不对。</p>
+          </Dialog>
         )}
-        <button className="icon-btn" title="关闭浏览器面板" data-testid="browser-close" onClick={() => setBrowser({ visible: false })}>
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-            <path d="M18 6L6 18M6 6l12 12" />
-          </svg>
-        </button>
       </div>
-      <div className="browser-view" ref={hostRef} data-testid="browser-view" />
-      {browser.loading && <div className="browser-loading" />}
-      {showConsole && (
-        <Dialog title={`页面错误（${browser.errorCount}）`} onClose={() => setShowConsole(false)}>
-          <ul className="browser-console-list" data-testid="browser-console-list">
-            {consoleRef.current.length === 0 ? (
-              <li className="cron-dim">当前页面没有采集到错误。</li>
-            ) : (
-              consoleRef.current.map((e, i) => (
-                <li key={`${e.at}-${i}`} className={`browser-console-item ${e.level}`}>
-                  <span className="cron-badge">{e.level === 'load' ? '加载' : e.level === 'error' ? '错误' : e.level === 'warning' ? '警告' : '信息'}</span>
-                  <span className="browser-console-msg">{e.message}</span>
-                  {(e.source || e.line) && (
-                    <span className="cron-dim">
-                      {e.source ? e.source.replace(/^https?:\/\//, '') : ''}
-                      {e.line ? `:${e.line}` : ''}
-                    </span>
-                  )}
-                </li>
-              ))
-            )}
-          </ul>
-          <p className="settings-tip">这些错误同样可以通过 jeff_browser_get_console 让智能体读取，用来自查页面为什么不对。</p>
-        </Dialog>
-      )}
-    </div>
+    </>
   )
 }
