@@ -134,7 +134,8 @@ deb：`dpkg -l jeff-desktop` 版本正确 + `/opt/Jeff` 与 `linux-unpacked` 的
 - **三栏布局** = 左「会话列表」/ 中「对话区」/ 右「内置浏览器」；左右两栏可拖拽改宽、可各自收起（hover 分栏线才浮出箭头按钮，双击分隔条恢复默认，`Ctrl/Cmd+B` 开关会话列表）。尺寸规则集中在 `apps/desktop/src/renderer/src/layout/panes.ts`：store 里存的是**用户偏好宽度**，渲染时按当前窗口夹成生效宽度——窗口临时变小只把栏挤窄，偏好值不被覆盖
 - **智能体** = 聊天好友（通讯录与聊天列表都按「分组分类」折叠归类；私聊顶栏「资料」可改）
 - **项目群** = 微信群（群资料抽屉可改群名/工作空间/群主/成员；任务看板同抽屉）
-- **小杰** = 内置管家，可用 `jeff_agent_*` / `jeff_project_*` / `jeff_cron_*` / `jeff_plugin_*`（含插件开发）等工具代操配置；它**没有**文件与命令工具（`bash`/`edit`/`write`/`patch` 在它的 agent 定义里被禁用），插件只能经 `jeff_plugin_*` 结构化落盘
+- **小杰** = 内置管家，可用 `jeff_agent_*` / `jeff_project_*` / `jeff_cron_*` / `jeff_plugin_*`（含插件开发）等工具代操配置；它**没有**文件与命令工具（`bash`/`edit`/`write`/`patch`，**以及 `task`** 在它的 agent 定义里被禁用——`task` 也禁是因为子代理带全套工具，不禁就等于把前四个全绕过去），插件只能经 `jeff_plugin_*` 结构化落盘
+- **技能（skill）** = 一份 `SKILL.md`（+ 自带脚本），模型看到的技能**只从 `~/.agents/skills` 读**（应用自带的 `jeff-usage` 也写在那儿）；`opencode.json` 的 `skills.paths` 负责挂载、sidecar 的 `OPENCODE_DISABLE_EXTERNAL_SKILLS=1` 负责挡掉 `~/.claude/skills` 等外部目录，两条缺一不可。见 `docs/skills.md`
 - **定时任务** = 到点自动向某个私聊/项目群发消息（如护士长 8 点在群里问病区动态、订阅 AI 资讯早报），**小杰对话即可创建**。见 `docs/schedules.md`
 - **插件** = 「必须用但不通用」的能力打包（智慧病房等）：启用即自动接入其 MCP（免手工配 MCP）+ 提供 `/` 快捷指令 + 首页用内置浏览器打开，**小杰对话即可开发**（建好默认停用，你确认后再启用；带本地命令的插件只能人工在插件页启用）。见 `docs/plugins.md`，样例在 `examples/plugins/`
 - **内置浏览器** = 界面右侧独立面板（webview），人与 agent 操作同一个页面；agent 用 `jeff_browser_*` 工具（查看 / **读错误现场** / 点击 / **填表（含下拉框）** / **上传本机文件** / 截图）。错误采集有两条来源：渲染层 `console-message`（Console API + 未捕获异常）与主进程该面板分区的 `webRequest`（子资源 404 / 网络失败——那类**不走** `console-message`）。见 `docs/built-in-browser.md`

@@ -49,6 +49,26 @@ afterAll(() => {
 })
 
 describe('SyncEngine skills 整目录镜像备份（远端=本地全量对齐）', () => {
+  it('新机器上本地只有应用内置的 jeff-usage 时，同样拦住镜像删除（远端整套技能不许被清）', async () => {
+    const engine = makeEngine('sk-builtin')
+    for (const n of ['a.md', 'b.md', 'c.md', 'd.md']) fs.writeFileSync(path.join(skillsDir, n), n)
+    expect((await engine.backupSkills()).ok).toBe(true)
+
+    // 模拟新机器：本地只剩应用启动时写的内置技能
+    fs.rmSync(skillsDir, { recursive: true, force: true })
+    fs.mkdirSync(path.join(skillsDir, 'jeff-usage'), { recursive: true })
+    fs.writeFileSync(path.join(skillsDir, 'jeff-usage', 'SKILL.md'), 'builtin')
+
+    const r = await engine.backupSkills()
+    expect(r.ok).toBe(false)
+    expect(r.error, '只剩内置技能时应报「本地为空」防误清空错误').toContain('为空')
+    expect(r.error).toContain('jeff-usage')
+    expect(r.deleted).toBe(0)
+    for (const n of ['a.md', 'b.md', 'c.md', 'd.md']) {
+      expect(fs.existsSync(path.join(davRoot, 'dav/sk-builtin/skills', n)), `${n} 不应被删`).toBe(true)
+    }
+  })
+
   it('备份 → 远端与本地完全一致；本地删除传播到远端（删前归档）；本地目录缺失不清空远端', async () => {
     const engine = makeEngine('sk1')
     fs.writeFileSync(path.join(skillsDir, 'SKILL.md'), '# hello')

@@ -636,6 +636,9 @@ describe('XIAOJIE 工具隔离', () => {
     // 小杰自己不能用文件/命令工具（指令里也这么说）
     for (const t of XIAOJIE_DISABLED_TOOLS) expect(xmd).toContain(`${t}: false`)
     expect(xmd).toContain('edit: false')
+    // task 也必须禁：子代理带全套工具，不禁就等于把 bash/edit/write 全绕过去（live14 R6 实测）
+    expect(XIAOJIE_DISABLED_TOOLS).toContain('task')
+    expect(xmd).toContain('task: false')
   })
 })
 

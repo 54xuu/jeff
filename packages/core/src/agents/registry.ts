@@ -23,8 +23,13 @@ export const XIAOJIE_ONLY_TOOLS: readonly string[] = [...ADMIN_TOOL_NAMES, ...CR
  * 插件开发走 jeff_plugin_*（结构化落盘），不需要管家直接改文件；管家能任意写盘/执行命令
  * 是过大的攻击面（实测 live12 R7：MCP 参数没传进去时它会自己去 edit plugin.json 打补丁）。
  * 只读的 read/glob/grep 保留，便于它查看现状。
+ *
+ * `task` 也必须禁：子代理带全套工具（bash/edit/write），不禁就等于把上面四个全绕过去
+ * （实测 live14 R6：让小杰用思源技能读文档，它自己调不了 bash，就 task 派个子代理去跑脚本，
+ * 然后把结果当成自己读到的——「管家没有命令工具」形同虚设）。子代理委派是项目群 leader 的活
+ * （jeff_delegate），不是管家的。
  */
-export const XIAOJIE_DISABLED_TOOLS: readonly string[] = ['bash', 'edit', 'write', 'patch']
+export const XIAOJIE_DISABLED_TOOLS: readonly string[] = ['bash', 'edit', 'write', 'patch', 'task']
 
 
 export const XIAOJIE_SLUG = 'jeff_xiaojie'

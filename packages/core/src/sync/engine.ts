@@ -1,11 +1,10 @@
 import fs from 'node:fs'
 import https from 'node:https'
-import os from 'node:os'
 import path from 'node:path'
 import { createClient, WebDAVClient } from 'webdav'
 import type { DB } from '../db/db.js'
 import { agentRepo, cronTaskRepo, projectAgentRepo, projectRepo, taskRepo, type AgentRow, type CronTaskRow, type ProjectAgentRow, type ProjectRow, type TaskRow } from '../db/repos.js'
-import type { JeffPaths } from '../paths.js'
+import { BUILTIN_SKILL_DIR, userSkillsDir, type JeffPaths } from '../paths.js'
 import type { MemoryStore, MemoryScope } from '../memory/store.js'
 import type { SkillsBackupReport, SkillsRestoreApply, SkillsRestoreStage } from '../ipc/contract.js'
 import { nextRunAt } from '../cron/expr.js'
@@ -895,8 +894,13 @@ export class SyncEngine {
 
   // ---------- skills 单向备份（安全第一：本地永不自动写回，远端永不删除） ----------
   private skillsDir(): string {
-    // 默认 ~/.agents/skills（agent skills 标准目录）；测试/便携模式可用 JEFF_SKILLS_DIR 覆盖
-    return process.env.JEFF_SKILLS_DIR || path.join(os.homedir(), '.agents', 'skills')
+    // 用户技能目录（~/.agents/skills，模型读技能的唯一来源）；测试/便携模式可用 JEFF_SKILLS_DIR 覆盖
+    return userSkillsDir()
+  }
+
+  /** 用户自己的技能文件（排除应用写入的内置 jeff-usage：它不算「本地有内容」） */
+  private listUserSkillFiles(root: string): string[] {
+    return this.listSkillFiles(root).filter((rel) => !rel.startsWith(`${BUILTIN_SKILL_DIR}/`))
   }
 
   private skillsKv<T>(key: string, fallback: T): T {
@@ -956,8 +960,10 @@ export class SyncEngine {
       }
       const files = this.listSkillFiles(root)
       const remoteFiles = await this.listRemoteFiles(remoteDir, timeoutMs)
-      if (files.length === 0 && remoteFiles.length > 0) {
-        report.error = `本地 skills 目录为空，但远端备份有 ${remoteFiles.length} 个文件。为防误清空远端，本次未做任何改动；如确要清空，请先在设置里从备份恢复或手工处理。`
+      // 「本地为空」判定只看用户自己的技能：新机器上本地只有应用刚写的 jeff-usage，
+      // 远端却有整套技能——那正是最该拦住镜向删除的场景（否则会把远端 99% 的文件当多余项删掉）
+      if (this.listUserSkillFiles(root).length === 0 && remoteFiles.length > 0) {
+        report.error = `本地 skills 目录为空（或只剩应用自带的 ${BUILTIN_SKILL_DIR}），但远端备份有 ${remoteFiles.length} 个文件。为防误清空远端，本次未做任何改动；如确要清空，请先在设置里从备份恢复或手工处理。`
         this.skillsKvSet('last', report)
         return report
       }

@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events'
 import fs from 'node:fs'
 import path from 'node:path'
-import { buildPaths, ensureDirs, jeffRoot, type JeffPaths } from './paths.js'
+import { BUILTIN_SKILL_DIR, buildPaths, ensureDirs, jeffRoot, userSkillsDir, type JeffPaths } from './paths.js'
 import { openDb, type DB } from './db/db.js'
 import { agentRepo, kvRepo, chatMessageRepo, projectRepo, projectAgentRepo, cronTaskRepo, cronRunRepo, type AgentRow, type CronTaskRow } from './db/repos.js'
 import { SidecarManager } from './sidecar/manager.js'
@@ -1518,10 +1518,16 @@ export class JeffCore extends EventEmitter {
     fs.writeFileSync(path.join(this.paths.ocPluginsDir, 'jeff-bridge.js'), plugin, 'utf8')
   }
 
-  /** 内置使用说明 skill（所有 agent 可调用 /jeff-usage 或被自动加载） */
+  /**
+   * 内置使用说明 skill（所有 agent 可调用 /jeff-usage 或被自动加载）。
+   * 落在**用户技能目录**（~/.agents/skills）——模型看到的技能只认这一个来源，
+   * 应用自己的技能也不例外；每次启动重写，所以随 WebDAV 同步/恢复来的旧副本会被自动纠正。
+   */
   writeUsageSkill(): void {
-    const dir = path.join(this.paths.ocSkillsDir, 'jeff-usage')
+    const dir = path.join(userSkillsDir(), BUILTIN_SKILL_DIR)
     fs.mkdirSync(dir, { recursive: true })
+    // 旧版落在 opencode 配置目录（也是被扫描的一处），留着会导致同名技能出现两个来源，清掉
+    fs.rmSync(path.join(this.paths.ocSkillsDir, BUILTIN_SKILL_DIR), { recursive: true, force: true })
     const content = `---
 name: jeff-usage
 description: Jeff 桌面应用的完整使用说明：智能体、项目群（leader 统筹）、任务看板、记忆、WebDAV 同步。当用户问「Jeff 怎么用 / 能做什么」时加载。

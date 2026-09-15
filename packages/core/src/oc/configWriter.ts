@@ -1,6 +1,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import type { JeffPaths } from '../paths.js'
+import { skillsMount, type JeffPaths } from '../paths.js'
 import type { ApiFormat, ThinkingTier } from '../ipc/contract.js'
 
 /** 用户 provider 配置（存 kv settings:providers）。v1.2 起只有自定义提供商，无内置。 */
@@ -181,11 +181,12 @@ export function writeSidecarConfig(
   }
   cfg['provider'] = providerCfg
   if (opts.mcp) cfg['mcp'] = opts.mcp
-  // skills：默认挂载 ~/.agents/skills；测试/便携可用 JEFF_SKILLS_DIR 覆盖
+  // skills：所有技能都从用户技能目录（~/.agents/skills）读——这是唯一入口，别删。
+  // sidecar 侧设了 OPENCODE_DISABLE_EXTERNAL_SKILLS=1，它挡的是 opencode 对 ~/.claude/skills 等
+  // 「外部目录」的隐式扫描，**不影响这里显式挂载的路径**；两件事合起来才等于「只认 ~/.agents/skills」。
   const skillsCfg = (cfg['skills'] as { paths?: string[] } | undefined) ?? {}
   const skillPaths = new Set(skillsCfg.paths ?? [])
-  const skillsMount = process.env.JEFF_SKILLS_DIR || '~/.agents/skills'
-  skillPaths.add(skillsMount)
+  skillPaths.add(skillsMount())
   cfg['skills'] = { ...skillsCfg, paths: [...skillPaths] }
   const small = opts.smallModel ?? firstEnabledModel(providers)
   if (small) {
