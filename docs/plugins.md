@@ -19,7 +19,8 @@
 - 启用状态与密钥存在 Jeff 本地（**不参与 WebDAV 同步**），配置随机器走。
 
 安装方式：把目录放进 `~/.jeff/plugins/`，或在 **插件页 → 导入插件** 选择一个含 `plugin.json` 的目录。
-仓库里 `examples/plugins/zhbf-night/` 是一个可直接导入的样例。
+仓库里 `examples/plugins/zhbf-night/` 是一个可直接导入的样例（MCP 指向 mac mini 演示环境
+`http://192.168.3.249:4000/mcp`，含护士站看板首页统计工具）。
 
 ## plugin.json
 

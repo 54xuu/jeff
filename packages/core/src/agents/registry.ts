@@ -86,6 +86,12 @@ export function renderAgentMd(agent: AgentRow, defaultModel?: { providerID: stri
     for (const t of XIAOJIE_DISABLED_TOOLS) lines.push(`  ${t}: false`)
   } else {
     for (const t of XIAOJIE_ONLY_TOOLS) lines.push(`  ${t}: false`)
+    // 智慧病房医护助手：必须走插件 MCP，禁止 bash/curl/读盘绕过（实测会抠 jeff.db 里的 token）
+    if (agent.category === '智慧病房' || agent.name === '医护助手') {
+      for (const t of ['bash', 'edit', 'write', 'patch', 'task', 'read'] as const) {
+        lines.push(`  ${t}: false`)
+      }
+    }
   }
   lines.push('---', '')
   const body = agent.builtin ? XIAOJIE_INSTRUCTIONS : agent.instructions

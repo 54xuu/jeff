@@ -1,15 +1,30 @@
 {
   "id": "zhbf-night",
   "name": "智慧病房",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "icon": "🏥",
-  "description": "病区动态、异常检验、交班与呼叫联动（zhbf-night 的 MCP 能力包装：免手工配 MCP）",
-  "homepage": "http://localhost:5173/dashboard",
+  "description": "护士站看板首页统计与病区只读查询（zhbf-night MCP：免手工配 MCP）",
+  "homepage": "http://192.168.3.249:4199/b/1186f99a68aa415582d1d319f0b2b2e9",
   "commands": [
     {
       "name": "/zhbf",
-      "description": "查看病区整体动态",
-      "prompt": "请通过智慧病房插件查询当前病区概况（在院患者、异常检验、待办医嘱），用要点汇总，并指出需要立即关注的患者。"
+      "description": "查看病区看板概况",
+      "prompt": "请通过智慧病房插件（board_home_overview，病区 WARD-1）查询护士站看板首页全部统计，用要点汇总病人总数、护理等级、入院/出院、病危病重与需要关注的名单。"
+    },
+    {
+      "name": "/入院",
+      "description": "今日入院（双口径）",
+      "prompt": "请通过智慧病房插件调用 board_today_admissions（wardCode=WARD-1），同时说明「当前班次」与「自然日」两种口径的人数与名单。"
+    },
+    {
+      "name": "/出院",
+      "description": "今日出院（双口径）",
+      "prompt": "请通过智慧病房插件调用 board_today_discharges（wardCode=WARD-1），同时说明「当前班次」与「自然日」两种口径的人数与名单。"
+    },
+    {
+      "name": "/危重",
+      "description": "病危病重名单",
+      "prompt": "请通过智慧病房插件调用 board_critical_patients（wardCode=WARD-1），列出病危与病重患者的床号和姓名。"
     },
     {
       "name": "/labs",
@@ -18,10 +33,17 @@
     }
   ],
   "mcp": {
-    "url": "http://127.0.0.1:8080/mcp",
+    "url": "http://192.168.3.249:4000/mcp",
     "headers": {
       "X-Agent-Token": "${SECRET}"
     },
-    "tools": ["ward_overview", "ward_labs"]
+    "tools": [
+      "board_home_overview",
+      "board_today_admissions",
+      "board_today_discharges",
+      "board_critical_patients",
+      "ward_overview",
+      "ward_labs"
+    ]
   }
 }
