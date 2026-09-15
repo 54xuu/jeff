@@ -3917,7 +3917,57 @@ body.pane-resizing {
   flex: 1;
   min-height: 0;
   display: flex;
+  /* 信箱模式：按比例 / 精确分辨率时视口比面板小，居中留白（留白处不是页面，用面板底色区分） */
+  justify-content: center;
+  align-items: center;
+  background: var(--bg);
+}
+
+/* 视口小于面板（4:3 或自定义分辨率）时给页面加边框阴影，让人看出「这是一块固定尺寸的窗口」 */
+.browser-view--boxed webview {
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
   background: #fff;
+}
+
+/* 工具栏里的分辨率入口：非自适应时点亮，一眼看出当前用的不是默认视口 */
+.browser-bar .icon-btn.on {
+  color: var(--green);
+  background: color-mix(in srgb, var(--green) 12%, transparent);
+}
+
+.browser-resolution-menu {
+  left: auto;
+  right: 0;
+  width: 224px;
+  max-height: none;
+}
+
+.browser-resolution-input {
+  width: calc(100% - 12px);
+  margin: 4px 6px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text);
+  font-size: var(--fs-sm);
+  outline: none;
+}
+
+.browser-resolution-input:focus {
+  border-color: var(--green);
+}
+
+.browser-resolution-hint,
+.browser-resolution-error {
+  padding: 2px 10px 6px;
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+}
+
+.browser-resolution-error {
+  color: var(--red, #d33);
 }
 
 .browser-loading {

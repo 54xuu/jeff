@@ -111,6 +111,8 @@ export const IPC = {
   browserResult: 'browser:result',
   // 渲染层上报面板状态（是否可见 + 当前页），供 agent 工具判断可用性与上下文
   browserState: 'browser:state',
+  // 页面截图：渲染层 → 主进程（capturePage 拿的是「可见帧」，尺寸不可控；改由主进程走 CDP 按矩形重新栅格化）
+  browserPageShot: 'browser:pageShot',
   // 工作空间文件浏览（资料抽屉「工作区文件」Tab + Markdown 预览器）
   fsListFiles: 'fs:listFiles',
   fsReadFile: 'fs:readFile',
@@ -464,6 +466,8 @@ export type BrowserAction =
   | 'screenshot'
   | 'get_content'
   | 'console'
+  /** 设置视口分辨率（比例自适应 / 精确像素），渲染层回报实际生效尺寸 */
+  | 'set_viewport'
   | 'back'
   | 'forward'
   | 'reload'
@@ -499,6 +503,17 @@ export interface BrowserState {
   url: string
   title: string
   loading: boolean
+}
+
+/**
+ * 页面截图结果。
+ * width/height 是**实际拿到的**像素尺寸（可能被 Chromium 的光栅化上限截短），
+ * 调用方必须按它对账，不要拿请求值当结果（曾经用「把图拉伸到请求尺寸」掩盖过一整张空白图）。
+ */
+export interface BrowserPageShot {
+  dataUrl: string
+  width: number
+  height: number
 }
 
 export type InvokeMap = {
@@ -618,6 +633,7 @@ export type InvokeMap = {
   // 内置浏览器（渲染层回报主进程下发的动作结果）
   [IPC.browserResult]: BrowserResult
   [IPC.browserState]: BrowserState
+  [IPC.browserPageShot]: { webContentsId: number; width: number; height: number; beyondViewport: boolean; y?: number }
   [IPC.smokeShot]: { name: string }
   [IPC.smokeDone]: void
 }

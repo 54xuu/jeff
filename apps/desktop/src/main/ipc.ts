@@ -1,4 +1,4 @@
-import { app, ipcMain, nativeTheme, dialog, shell } from 'electron'
+import { app, ipcMain, nativeTheme, dialog, shell, webContents, nativeImage } from 'electron'
 import fs from 'node:fs'
 import fsp from 'node:fs/promises'
 import path from 'node:path'
@@ -19,6 +19,12 @@ import type { JeffCore, TaskRow } from '@jeff/core'
 import { getMainWindow, getSidecarLogs, showDesktopNotification, setBrowserResult, setBrowserState } from './index.js'
 
 type Handler = (payload: unknown) => Promise<unknown>
+
+/** 从 PNG 字节里读实际像素尺寸（IHDR）——用来核对「截图拿到的尺寸就是请求的尺寸」 */
+function pngDimensions(buf: Buffer): { width: number; height: number } {
+  if (buf.length < 24 || buf.readUInt32BE(0) !== 0x89504e47) throw new Error('截图返回的不是 PNG 数据')
+  return { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20) }
+}
 
 /**
  * 注册全部 IPC handler：渲染进程 invoke('jeff:<channel>') → core 调用。
@@ -605,6 +611,64 @@ export function registerIpc(core: JeffCore): void {
     [IPC.browserState]: async (p) => {
       setBrowserState(p as import('@jeff/core').BrowserState)
       return { ok: true }
+    },
+    /**
+     * 页面截图：走 Chrome DevTools Protocol 的 Page.captureScreenshot，按「请求的矩形」重新栅格化。
+     *
+     * 为什么不用 webview 的 capturePage（两条弯路都实测过）：
+     * ① 它给的是渲染器**已呈现的那一帧**，尺寸不由你定（元素撑到 5659 高，拿回 1946）；
+     * ② 元素被面板裁切时尺寸更怪，拉回请求尺寸只会得到空白图或错位图。
+     *
+     * 注意（实测边界）：渲染表面大约只能覆盖到窗口尺寸出头一点，请求远大于窗口时 Chromium 会
+     * 平铺/裁剪——那一档由渲染层事先拦下（见 BrowserPanel 的窗口尺寸校验），这里不做猜测性兜底：
+     * 拿到的尺寸与请求不符就如实报错，绝不用拉伸把「没截到」伪装成「截到了」。
+     */
+    [IPC.browserPageShot]: async (p): Promise<import('@jeff/core').BrowserPageShot> => {
+      const { webContentsId, width, height, beyondViewport, y } = p as {
+        webContentsId: number
+        width: number
+        height: number
+        beyondViewport: boolean
+        y?: number
+      }
+      const target = webContents.fromId(webContentsId)
+      if (!target || target.isDestroyed()) throw new Error(`找不到要截图的页面（webContents ${webContentsId} 已关闭？）`)
+      if (!(width > 0) || !(height > 0)) throw new Error(`截图尺寸非法：${width}x${height}`)
+      const already = target.debugger.isAttached()
+      if (!already) {
+        try {
+          target.debugger.attach('1.3')
+        } catch (err) {
+          throw new Error(`截图需要调试通道，但附加失败（是不是开着 DevTools？）：${String((err as Error)?.message || err).slice(0, 160)}`)
+        }
+      }
+      try {
+        const shot = (await target.debugger.sendCommand('Page.captureScreenshot', {
+          format: 'png',
+          captureBeyondViewport: !!beyondViewport,
+          clip: { x: 0, y: Math.max(0, Math.round(y || 0)), width, height, scale: 1 },
+        })) as { data: string }
+        const buf = Buffer.from(shot.data, 'base64')
+        const size = pngDimensions(buf)
+        if (size.width === width && size.height === height) {
+          return { dataUrl: `data:image/png;base64,${shot.data}`, width, height }
+        }
+        /**
+         * 高 DPI 屏上 CDP 按**设备像素**出图（请求 541x406 拿回 1082x812）。这里的契约是
+         * 「图片尺寸 = 视口 CSS 像素」（跨 DPR 一致、可断言），所以按整数倍因子压回请求尺寸。
+         * 只接受整数倍的等比缩放：其它尺寸说明这一档渲染表面兜不住，如实报错（不硬拉伸）。
+         */
+        const k = size.width / width
+        if (Number.isInteger(k) && k > 1 && size.height === height * k) {
+          const img = nativeImage.createFromBuffer(buf).resize({ width, height })
+          return { dataUrl: `data:image/png;base64,${img.toPNG().toString('base64')}`, width, height }
+        }
+        throw new Error(
+          `截图只拿到 ${size.width}x${size.height}（请求 ${width}x${height}）：这块画面超出了当前窗口能渲染的范围，请把窗口放大或改用更小的分辨率`,
+        )
+      } finally {
+        if (!already) target.debugger.detach()
+      }
     },
   }
 

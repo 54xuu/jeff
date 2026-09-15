@@ -1,6 +1,7 @@
 import { test, expect, type Page } from '@playwright/test'
 import http from 'node:http'
 import fs from 'node:fs'
+import zlib from 'node:zlib'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { closeJeff, launchJeff, loadE2eEnv, REPO_ROOT } from './helpers/launch.js'
@@ -589,6 +590,323 @@ test('v1.8.4：三栏布局——拖拽调宽 / 显隐开关 / 默认宽度与�
     expect(content.title).toBe('live13 测试站')
     expect(content.text).toContain('站首页已就绪')
     await page.screenshot({ path: path.join(EVIDENCE, '18-layout-browser-narrow.png') })
+  } finally {
+    await closeJeff(app)
+    await site.close()
+  }
+})
+
+/** 读 PNG 的实际像素尺寸（直接解析 IHDR，不引入图像库） */
+function pngSize(file: string): { width: number; height: number } {
+  const buf = fs.readFileSync(file)
+  if (buf.length < 24 || buf.readUInt32BE(0) !== 0x89504e47) throw new Error(`不是 PNG：${file}`)
+  return { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20) }
+}
+
+/** 解出来的一行像素，够用来核对「首尾内容在不在图里」 */
+type DecodedPng = { width: number; height: number; at: (x: number, y: number) => [number, number, number, number] }
+
+/**
+ * 极简 PNG 解码（只支持 8 位 RGB/RGBA，即 Electron 截图的输出）。
+ *
+ * 为什么要它：断言只看尺寸会被「空白图」蒙混过关——实测就有一次：图确实是 541x5659，
+ * 里面却什么都没有（整页截图当时被拉伸掩盖成了一张空图）。用户要的「检查图片是否完整」
+ * 必须落到像素上：图的顶部有没有页首内容、底部有没有页尾内容。
+ */
+function decodePng(file: string): DecodedPng {
+  const buf = fs.readFileSync(file)
+  if (buf.readUInt32BE(0) !== 0x89504e47) throw new Error(`不是 PNG：${file}`)
+  let pos = 8
+  let width = 0
+  let height = 0
+  let bitDepth = 0
+  let colorType = 0
+  const idat: Buffer[] = []
+  while (pos + 12 <= buf.length) {
+    const len = buf.readUInt32BE(pos)
+    const type = buf.toString('ascii', pos + 4, pos + 8)
+    const data = buf.subarray(pos + 8, pos + 8 + len)
+    if (type === 'IHDR') {
+      width = data.readUInt32BE(0)
+      height = data.readUInt32BE(4)
+      bitDepth = data[8]
+      colorType = data[9]
+    } else if (type === 'IDAT') idat.push(data)
+    else if (type === 'IEND') break
+    pos += 12 + len
+  }
+  if (bitDepth !== 8 || (colorType !== 6 && colorType !== 2)) throw new Error(`不支持的 PNG：bitDepth=${bitDepth} colorType=${colorType}`)
+  const bpp = colorType === 6 ? 4 : 3
+  const stride = width * bpp
+  const raw = zlib.inflateSync(Buffer.concat(idat))
+  const out = Buffer.alloc(height * stride)
+  for (let y = 0; y < height; y++) {
+    const filter = raw[y * (stride + 1)]
+    const line = raw.subarray(y * (stride + 1) + 1, y * (stride + 1) + 1 + stride)
+    const prevOff = Math.max(y - 1, 0) * stride
+    const curOff = y * stride
+    for (let i = 0; i < stride; i++) {
+      const a = i >= bpp ? out[curOff + i - bpp] : 0
+      const b = out[prevOff + i]
+      const c = i >= bpp ? out[prevOff + i - bpp] : 0
+      const x = line[i]
+      let v: number
+      switch (filter) {
+        case 0: v = x; break
+        case 1: v = x + a; break
+        case 2: v = x + b; break
+        case 3: v = x + ((a + b) >> 1); break
+        case 4: {
+          const p = a + b - c
+          const pa = Math.abs(p - a)
+          const pb = Math.abs(p - b)
+          const pc = Math.abs(p - c)
+          v = x + (pa <= pb && pa <= pc ? a : pb <= pc ? b : c)
+          break
+        }
+        default: throw new Error(`未知的 PNG filter：${filter}`)
+      }
+      out[curOff + i] = v & 0xff
+    }
+  }
+  return {
+    width,
+    height,
+    at: (x, y) => {
+      const o = y * stride + x * bpp
+      return bpp === 4 ? [out[o], out[o + 1], out[o + 2], out[o + 3]] : [out[o], out[o + 1], out[o + 2], 255]
+    },
+  }
+}
+
+/** 某一行的颜色占比（抽样，够判断「这条色带在不在」）；只统计不透明像素 */
+function rowShare(img: DecodedPng, y: number, match: (px: [number, number, number, number]) => boolean): number {
+  let hit = 0
+  let total = 0
+  for (let x = 0; x < img.width; x += 2) {
+    const px = img.at(x, y)
+    if (px[3] < 10) continue
+    total += 1
+    if (match(px)) hit += 1
+  }
+  return total === 0 ? 0 : hit / total
+}
+
+/** 整页图完整性：页首红带与页尾蓝带都要真的出现在图里（顶部/底部各扫几行取最好的一行） */
+function checkBands(file: string): { top: number; bottom: number; size: { width: number; height: number } } {
+  const img = decodePng(file)
+  const red = (px: [number, number, number, number]): boolean => px[0] > 150 && px[1] < 90 && px[2] < 90
+  const blue = (px: [number, number, number, number]): boolean => px[2] > 150 && px[0] < 90 && px[1] < 110
+  let top = 0
+  for (let y = 0; y < Math.min(60, img.height); y++) top = Math.max(top, rowShare(img, y, red))
+  let bottom = 0
+  for (let y = Math.max(0, img.height - 60); y < img.height; y++) bottom = Math.max(bottom, rowShare(img, y, blue))
+  return { top, bottom, size: { width: img.width, height: img.height } }
+}
+
+/**
+ * v1.8.7 封闭测试（不需要模型）：内置浏览器分辨率控制 + 整页截图。
+ *
+ * 判据分三层，都落在「页面自己报的事实」与「落盘 PNG 的真实尺寸」上：
+ * - 页面侧：window.innerWidth/innerHeight（自报页 #vp-size）必须等于请求的分辨率——只改样式骗不过它；
+ * - 图片侧：视口截图的 PNG 尺寸必须**精确等于**视口（用户点名的契约），整页截图必须等于视口宽 × 文档完整高；
+ * - 界面侧：工具栏菜单改的分辨率要真的生效、要落 localStorage、面板重开后不许丢。
+ */
+test('v1.8.7：内置浏览器分辨率（4:3 / 自定义）+ 视口与整页截图尺寸契约', async () => {
+  test.setTimeout(600_000)
+  fs.mkdirSync(EVIDENCE, { recursive: true })
+  const site = await startTestSite()
+  const env = loadE2eEnv()
+  const { app, page } = await launchJeff({
+    home: HOME,
+    seed: { apiKey: process.env.SILICONFLOW_API_KEY || env.SILICONFLOW_API_KEY || '', testAgent: true },
+  })
+  try {
+    await expect(page.getByTestId('nav-rail')).toBeVisible()
+    const bridge: BridgeClient = readBridge(HOME)
+    const b = (name: string, args: Record<string, unknown> = {}): Promise<{ ok: boolean; data?: unknown; error?: string }> => bridge.call(name, args)
+    /** 页面自己报的视口尺寸（agent 通过工具读回，页面侧事实） */
+    const pageViewport = async (): Promise<string> => {
+      const r = await callToolOk<{ text: string }>(bridge, 'jeff_browser_get_content', { selector: '#vp-size' })
+      return r.text.trim()
+    }
+    /** 面板里那块页面区域的可用尺寸（auto 模式下视口就该等于它） */
+    const hostBox = (): Promise<{ w: number; h: number; scrollW: number; scrollH: number; boxed: boolean }> =>
+      page.getByTestId('browser-view').evaluate((el) => ({
+        w: el.clientWidth,
+        h: el.clientHeight,
+        scrollW: el.scrollWidth,
+        scrollH: el.scrollHeight,
+        boxed: el.classList.contains('browser-view--boxed'),
+      }))
+    const persisted = (): Promise<string> => page.evaluate(() => localStorage.getItem('jeff-browser-resolution') || '')
+
+    // ---------- 1. 4:3 比例自适应：页面视口真的变成 4:3，且等于工具返回值 ----------
+    await callToolOk(bridge, 'jeff_browser_navigate', { url: new URL('viewport', site.url).toString() })
+    const r43 = await callToolOk<{ mode: string; ratio: string; width: number; height: number; page_width: number; page_height: number }>(
+      bridge,
+      'jeff_browser_set_viewport',
+      { preset: '4:3' },
+    )
+    expect(r43.mode).toBe('ratio')
+    expect(Math.abs(r43.width / r43.height - 4 / 3), `4:3 视口比例不对：${r43.width}x${r43.height}`).toBeLessThan(0.01)
+    // 页面自己算出来的 innerWidth/innerHeight 必须就是这两个数（不是「样式上写着 4:3」）
+    await expect.poll(pageViewport, { timeout: 15_000 }).toBe(`${r43.width}x${r43.height}`)
+    expect(r43.page_width).toBe(r43.width)
+    expect(r43.page_height).toBe(r43.height)
+    // 比例模式下视口小于面板 → 信箱留白，且不出现滚动条（不然可用宽度会被滚动条吃掉、算出的视口来回抖）
+    const boxed43 = await hostBox()
+    expect(boxed43.boxed).toBe(true)
+    expect(boxed43.scrollW).toBeLessThanOrEqual(boxed43.w)
+    expect(boxed43.scrollH).toBeLessThanOrEqual(boxed43.h)
+    await page.screenshot({ path: path.join(EVIDENCE, '19-browser-viewport-43.png') })
+
+    // ---------- 2. 视口截图尺寸 = 视口尺寸（用户点名的契约） ----------
+    const shot43 = await callToolOk<{ file: string; width: number; height: number; full_page: boolean }>(bridge, 'jeff_browser_screenshot', {})
+    expect(shot43.full_page).toBe(false)
+    expect({ width: shot43.width, height: shot43.height }).toEqual({ width: r43.width, height: r43.height })
+    expect(pngSize(shot43.file), `视口截图的图片尺寸应等于视口 ${r43.width}x${r43.height}`).toEqual({ width: r43.width, height: r43.height })
+    // 尺寸对了还不够：图里必须真的有页面内容（页面顶部是一条红带）
+    const shot43px = checkBands(shot43.file)
+    expect(shot43px.top, '视口截图里应当能看到页面顶部的红带').toBeGreaterThan(0.8)
+    // 截图文件名带页面标题（人和 agent 事后能按标题找图）
+    expect(path.basename(shot43.file)).toContain('视口自报页')
+    // 留档：这张图是 webview 自己合成的（= 用户真正看到的画面），也可以核对页面里自报的尺寸文字
+    fs.copyFileSync(shot43.file, path.join(EVIDENCE, '19b-viewport-shot-43.png'))
+
+    // ---------- 3. 自定义精确分辨率：页面视口一字不差，面板放不下就面板内滚动 ----------
+    // 选 1280x720：Jeff 窗口是 1290x748，这一档在窗口范围内（截图要能拿到完整画面）
+    const rFixed = await callToolOk<{ mode: string; width: number; height: number; page_width: number; page_height: number }>(
+      bridge,
+      'jeff_browser_set_viewport',
+      { width: '1280', height: '720' },
+    )
+    expect(rFixed).toMatchObject({ mode: 'fixed', width: 1280, height: 720 })
+    await expect.poll(pageViewport, { timeout: 15_000 }).toBe('1280x720')
+    expect(rFixed.page_width).toBe(1280)
+    expect(rFixed.page_height).toBe(720)
+    const boxedFixed = await hostBox()
+    expect(boxedFixed.scrollW, '精确分辨率比面板宽时，面板内应可滚动查看').toBeGreaterThan(boxedFixed.w)
+    const shotFixed = await callToolOk<{ file: string; width: number; height: number }>(bridge, 'jeff_browser_screenshot', {})
+    expect(pngSize(shotFixed.file), '精确分辨率下的视口截图必须就是 1280x720').toEqual({ width: 1280, height: 720 })
+    expect(checkBands(shotFixed.file).top, '精确分辨率截图里应当能看到页首内容').toBeGreaterThan(0.8)
+    fs.copyFileSync(shotFixed.file, path.join(EVIDENCE, '20b-viewport-shot-fixed.png'))
+    await page.screenshot({ path: path.join(EVIDENCE, '20-browser-viewport-fixed.png') })
+
+    // 3b. 分辨率超出 Jeff 窗口：页面视口照样按精确像素渲染（布局是真的），但截图必须**如实拒绝**
+    // —— 实测这一档 Chromium 会把渲染表面裁掉/平铺，硬截只会得到错位或重复的假图。
+    const winSize = await page.evaluate(() => ({ w: window.innerWidth, h: window.innerHeight }))
+    const rTooBig = await callToolOk<{ page_width: number; page_height: number }>(bridge, 'jeff_browser_set_viewport', {
+      width: String(winSize.w + 100),
+      height: String(winSize.h + 100),
+    })
+    expect(rTooBig.page_width, '超出窗口的分辨率仍然精确生效（页面布局不受窗口限制）').toBe(winSize.w + 100)
+    const refused = await b('jeff_browser_screenshot', {})
+    expect(refused.ok, '超出窗口时截图必须失败，而不是给一张残缺/错位的图').toBe(false)
+    expect(String(refused.error)).toContain('超过 Jeff 窗口')
+    expect(String(refused.error)).toContain('分辨率改小')
+
+    // ---------- 4. 恢复自适应：视口回铺满面板，信箱与滚动残留都要清掉 ----------
+    const rAuto = await callToolOk<{ mode: string; width: number; height: number }>(bridge, 'jeff_browser_set_viewport', { preset: 'auto' })
+    expect(rAuto.mode).toBe('auto')
+    const autoBox = await page.getByTestId('browser-view').evaluate((el) => ({ w: el.clientWidth, h: el.clientHeight }))
+    await expect.poll(pageViewport, { timeout: 15_000 }).toBe(`${autoBox.w}x${autoBox.h}`)
+    expect(rAuto.width).toBe(autoBox.w)
+    const boxedAuto = await hostBox()
+    expect(boxedAuto.boxed, '自适应时不该再有信箱边框').toBe(false)
+    expect(boxedAuto.scrollW).toBeLessThanOrEqual(boxedAuto.w)
+
+    // ---------- 5. 整页截图：含滚动部分（高 5200 的页面，视口只有几百高） ----------
+    await callToolOk(bridge, 'jeff_browser_navigate', { url: new URL('viewport?h=5200&lazy=3', site.url).toString() })
+    const scrollInfo = await callToolOk<{ text: string }>(bridge, 'jeff_browser_get_content', { selector: '#vp-scroll' })
+    const docHeight = Number(scrollInfo.text.replace(/[^0-9]/g, ''))
+    expect(docHeight, '测试页应真的很高').toBeGreaterThan(5000)
+    const full = await callToolOk<{ file: string; width: number; height: number; full_page: boolean; page_height: number; truncated?: boolean }>(
+      bridge,
+      'jeff_browser_screenshot',
+      { full_page: 'true' },
+    )
+    expect(full.full_page).toBe(true)
+    expect(full.truncated).toBeUndefined()
+    // 宽度不动（改宽度会触发响应式重排，截出来的东西就不是当前页面了）；取的是内容宽
+    // （不含纵向滚动条那一列，否则每片右侧都会多一条滚动条），所以允许比视口窄一条滚动条
+    expect(full.width).toBeLessThanOrEqual(autoBox.w)
+    expect(autoBox.w - full.width, '整页图宽度应≈视口宽（差值只可能是滚动条）').toBeLessThanOrEqual(20)
+    expect(full.height, `整页截图应覆盖完整文档高 ${docHeight}，实际 ${full.height}`).toBeGreaterThanOrEqual(docHeight - 4)
+    expect(full.height).toBeGreaterThan(autoBox.h)
+    expect(pngSize(full.file), '整页截图的图片尺寸必须等于返回值').toEqual({ width: full.width, height: full.height })
+    // 像素级完整性：页首红带 + 页尾蓝带都要在图里（只有尺寸对、里面空白，正是曾经踩过的坑）
+    const fullPx = checkBands(full.file)
+    expect(fullPx.size).toEqual({ width: full.width, height: full.height })
+    expect(fullPx.top, '整页图顶部应能看到页首内容（红带）').toBeGreaterThan(0.8)
+    expect(fullPx.bottom, '整页图底部应能看到页尾内容（蓝带）——这一条就是「包含滚动部分」').toBeGreaterThan(0.8)
+    // 撑高之后懒加载图片才进视口：截图前必须等它们加载完，否则拍到的是一片空白
+    await expect.poll(async () => (await callToolOk<{ text: string }>(bridge, 'jeff_browser_get_content', { selector: '#lazy-status' })).text.trim()).toBe('lazy:3/3')
+    // 截完要把视口还原（不能把面板留在 5200px 高的状态）
+    await expect.poll(async () => (await callToolOk<{ page_height: number }>(bridge, 'jeff_browser_set_viewport', { preset: 'auto' })).page_height).toBeLessThanOrEqual(autoBox.h)
+    fs.copyFileSync(full.file, path.join(EVIDENCE, '21-browser-fullpage.png'))
+    await page.screenshot({ path: path.join(EVIDENCE, '22-browser-fullpage-ui.png') })
+
+    // ---------- 6. 超出单图上限：如实截断（truncated），不假装截全了 ----------
+    await callToolOk(bridge, 'jeff_browser_navigate', { url: new URL('viewport?h=20000', site.url).toString() })
+    const capped = await callToolOk<{ file: string; width: number; height: number; page_height: number; truncated?: boolean }>(bridge, 'jeff_browser_screenshot', { full_page: 'true' })
+    expect(capped.truncated).toBe(true)
+    expect(capped.height).toBe(16384)
+    expect(capped.page_height).toBeGreaterThan(16384)
+    expect(pngSize(capped.file)).toEqual({ width: capped.width, height: 16384 })
+    expect(checkBands(capped.file).top, '超长页面的截图仍应从页首开始').toBeGreaterThan(0.8)
+
+    // ---------- 7. 参数边界：只给一边 / 越界 / 不认识的 preset 都要明确报错 ----------
+    const half = await b('jeff_browser_set_viewport', { width: '1697' })
+    expect(half.ok).toBe(false)
+    expect(String(half.error)).toContain('一起传')
+    const tooSmall = await b('jeff_browser_set_viewport', { width: '100', height: '1063' })
+    expect(tooSmall.ok).toBe(false)
+    expect(String(tooSmall.error)).toContain('320-5120')
+    const badPreset = await b('jeff_browser_set_viewport', { preset: '16:9' })
+    expect(badPreset.ok).toBe(false)
+    expect(String(badPreset.error)).toContain('只支持')
+    // 空串是「未提供」而不是「清空」：模型一次全字段补空的调用必须报错，且不许改动已设好的分辨率
+    await callToolOk(bridge, 'jeff_browser_set_viewport', { width: '1697', height: '1063' })
+    const blankCall = await b('jeff_browser_set_viewport', { preset: '', width: '', height: '' })
+    expect(blankCall.ok, '全空串的调用必须失败，而不是静默改成自适应').toBe(false)
+    expect(String(blankCall.error)).toContain('没有要设置的分辨率')
+    await expect.poll(pageViewport, { timeout: 15_000 }).toBe('1697x1063')
+
+    // ---------- 8. 界面入口：人用工具栏菜单改的，与 agent 改的是同一份设置 ----------
+    await page.getByTestId('browser-resolution-btn').click()
+    await expect(page.getByTestId('browser-resolution-menu')).toBeVisible()
+    await page.getByTestId('browser-resolution-43').click()
+    await expect.poll(pageViewport, { timeout: 15_000 }).toBe(`${r43.width}x${r43.height}`)
+    await expect.poll(persisted).toContain('"mode":"ratio"')
+    await page.screenshot({ path: path.join(EVIDENCE, '23-browser-resolution-menu.png') })
+    // 自定义输入：非法值给提示且不生效
+    await page.getByTestId('browser-resolution-btn').click()
+    await page.getByTestId('browser-resolution-custom').fill('随便写点啥')
+    await page.getByTestId('browser-resolution-custom').press('Enter')
+    await expect(page.getByTestId('browser-resolution-error')).toBeVisible()
+    await expect.poll(pageViewport).toBe(`${r43.width}x${r43.height}`)
+    // 合法值：回车生效并落盘
+    await page.getByTestId('browser-resolution-custom').fill('1200x700')
+    await page.getByTestId('browser-resolution-custom').press('Enter')
+    await expect.poll(pageViewport, { timeout: 15_000 }).toBe('1200x700')
+    await expect.poll(persisted).toContain('"width":1200')
+    expect((await hostBox()).boxed).toBe(true)
+
+    // ---------- 9. 面板重开（webview 重建）后视口不丢：人设定的分辨率要能一直在 ----------
+    await page.getByTestId('nav-browser').click()
+    await expect(page.getByTestId('browser-panel')).toBeHidden()
+    await page.getByTestId('nav-browser').click()
+    await expect(page.getByTestId('browser-panel')).toBeVisible()
+    await expect.poll(pageViewport, { timeout: 20_000 }).toBe('1200x700')
+    // 切回自适应，界面按钮回到未激活态
+    await page.getByTestId('browser-resolution-btn').click()
+    await page.getByTestId('browser-resolution-auto').click()
+    await expect.poll(persisted).toContain('"mode":"auto"')
+    await expect(page.getByTestId('browser-resolution-btn')).not.toHaveClass(/\bon\b/)
+    const finalBox = await page.getByTestId('browser-view').evaluate((el) => ({ w: el.clientWidth, h: el.clientHeight }))
+    await expect.poll(pageViewport, { timeout: 15_000 }).toBe(`${finalBox.w}x${finalBox.h}`)
+    await page.screenshot({ path: path.join(EVIDENCE, '24-browser-resolution-auto.png') })
   } finally {
     await closeJeff(app)
     await site.close()

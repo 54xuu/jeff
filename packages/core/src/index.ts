@@ -16,6 +16,7 @@ import { registerMemoryTools, DELEGATE_TOOL, sesMetaKey, type SessionScopeCtx } 
 import { registerCronTools, CRON_TOOL_NAMES } from './tools/cronTools.js'
 import { registerPluginTools, PLUGIN_TOOL_NAMES } from './tools/pluginTools.js'
 import { allToolDefs } from './tools/definitions.js'
+import { normalizeViewportArgs, parseFullPageFlag, shotName } from './tools/browserArgs.js'
 import { PluginManager } from './plugins/manager.js'
 import { CronScheduler } from './cron/scheduler.js'
 import { describeCron, nextRunAt } from './cron/expr.js'
@@ -994,20 +995,50 @@ export class JeffCore extends EventEmitter {
       const limit = Number(args?.limit) > 0 ? Math.min(Number(args.limit), 200) : 50
       return need('console')({ level, limit })
     })
-    this.bridge.register('jeff_browser_screenshot', async () => {
-      const data = (await need('screenshot')({})) as { dataUrl?: string; title?: string; url?: string }
+    /**
+     * 设置视口分辨率。参数按「平铺标量 + 空串视为未传」规范化（见 browserArgs.ts，规则有单测钉住）：
+     * 模型一次「全字段补空」的调用不能把已经设好的分辨率打回默认。
+     */
+    this.bridge.register('jeff_browser_set_viewport', async (args: { preset?: string; width?: string | number; height?: string | number }) => {
+      const spec = normalizeViewportArgs(args || {})
+      return need('set_viewport')({ ...spec })
+    })
+    /**
+     * 截图存成工作空间里的 PNG：视觉模型可以直接读图，比在文本里塞 base64 有用得多。
+     * 文件名带上页面标题（清洗过），便于人和 agent 事后按标题找图；同名靠时间戳区分。
+     */
+    this.bridge.register('jeff_browser_screenshot', async (args: { full_page?: string | boolean } = {}) => {
+      const fullPage = parseFullPageFlag(args?.full_page)
+      const data = (await need('screenshot')({ full_page: fullPage })) as {
+        dataUrl?: string
+        title?: string
+        url?: string
+        width?: number
+        height?: number
+        fullHeight?: number
+        truncated?: boolean
+      }
       if (!data?.dataUrl) throw new Error('截图失败：未取到画面')
-      // 存成工作空间里的 PNG：视觉模型可以直接读图，比在文本里塞 base64 有用得多
       const b64 = data.dataUrl.replace(/^data:image\/\w+;base64,/, '')
       const dir = path.join(this.paths.workspaceDir, 'browser-shots')
       fs.mkdirSync(dir, { recursive: true })
-      const file = path.join(dir, `shot-${Date.now()}.png`)
+      const stamp = Date.now()
+      const file = path.join(dir, `${shotName(data.title || '')}-${stamp}.png`)
       fs.writeFileSync(file, Buffer.from(b64, 'base64'))
       return {
         file,
         title: data.title || '',
         url: data.url || '',
-        note: '截图已保存为 PNG 文件；若你的模型不支持看图，请改用 jeff_browser_get_content 读取页面文本。',
+        full_page: fullPage,
+        width: data.width ?? 0,
+        height: data.height ?? 0,
+        ...(fullPage ? { page_height: data.fullHeight ?? data.height ?? 0 } : {}),
+        ...(data.truncated ? { truncated: true } : {}),
+        note: fullPage
+          ? '已保存完整页面（含滚动部分）。' +
+            (data.truncated ? `页面实际高 ${data.fullHeight ?? 0}px，超过单图上限 16384px 已截断。` : '') +
+            '若你的模型不支持看图，请改用 jeff_browser_get_content 读取页面文本。'
+          : '已保存可视区截图（尺寸 = 当前视口分辨率）。要整页就带 full_page="true" 再截一次；若你的模型不支持看图，请改用 jeff_browser_get_content。',
       }
     })
   }

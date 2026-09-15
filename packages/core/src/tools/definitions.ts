@@ -320,7 +320,10 @@ export function allToolDefs(): ToolDef[] {
       name: 'jeff_browser_get_content',
       description: '读取内置浏览器当前页面的可见文本与结构信息（标题、URL、主要文本、可交互元素清单）。分析页面、找按钮/输入框时先调它。',
       args: {
-        max_chars: { type: 'number', description: '返回文本上限，默认 8000' },
+        max_chars: {
+          type: 'number',
+          description: '返回文本上限，默认 8000；长文（如公众号文章）要取全文就传大一些（如 60000，上限 200000）',
+        },
         selector: { type: 'string', description: '只取某个 CSS 选择器内的内容（可选）' },
       },
     },
@@ -366,9 +369,31 @@ export function allToolDefs(): ToolDef[] {
       },
     },
     {
+      name: 'jeff_browser_set_viewport',
+      description:
+        '设置内置浏览器的视口分辨率（用户在面板工具栏里改同一份设置，人与你看到的是同一个页面尺寸）。三种用法：' +
+        '① preset="4:3"：按 4:3 比例自适应面板大小（适合「按 4:3 看页面/截图」）；' +
+        '② preset="auto"：恢复铺满面板（默认）；' +
+        '③ 同时传 width 与 height：精确像素分辨率（如 width="1697", height="1063"）——页面视口严格等于这两个值，' +
+        '截图尺寸与页面里 window.innerWidth/innerHeight 都是它；面板放不下时面板内出现滚动条。' +
+        '返回实际生效的 {mode, width, height}，需要「按指定分辨率截图」时先调本工具再用 jeff_browser_screenshot。' +
+        '注意：截图范围不能超过 Jeff 窗口（超过那一档 Chromium 渲染不全），要按大分辨率截图请先让用户放大窗口。',
+      args: {
+        preset: { type: 'string', description: '"4:3"（按比例自适应）或 "auto"（恢复铺满；默认）' },
+        width: { type: 'string', description: '精确分辨率宽度（与 height 同时传；320-5120）' },
+        height: { type: 'string', description: '精确分辨率高度（与 width 同时传；240-5120）' },
+      },
+    },
+    {
       name: 'jeff_browser_screenshot',
-      description: '截取内置浏览器当前画面（返回图片给支持视觉的模型）。模型不支持看图时会自动降级为页面文本。',
-      args: {},
+      description:
+        '把内置浏览器当前画面截图存成 PNG 文件（返回文件路径；模型不支持看图时可改用 jeff_browser_get_content）。' +
+        '默认只截可视区域，图片尺寸**精确等于当前视口分辨率**（返回值 width/height 就是落盘图片的真实尺寸，可直接引用）；' +
+        'full_page="true" 截完整页面（含滚动部分）：宽 = 页面内容宽、高 = 文档完整高度（上限 16384px，超出会截断并返回 truncated=true）。' +
+        '需要固定尺寸时先用 jeff_browser_set_viewport 设好分辨率；截图范围超过 Jeff 窗口大小时会明确报错（不是给一张残缺的图）。',
+      args: {
+        full_page: { type: 'string', description: '"true" = 截完整页面（含滚动部分）；不传/空 = 只截可视区' },
+      },
     },
   ]
 }

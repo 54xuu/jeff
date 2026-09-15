@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { api } from './api'
 import { playNotifySound, showDesktopNotify, summarize, windowFocused } from './notify'
 import { readLayout, writeLayout, defaultBrowserWidth, LIST_DEFAULT_WIDTH, type PaneLayout } from './layout/panes'
+import { parseViewport, serializeViewport, VIEWPORT_STORE_KEY, type BrowserViewportRequest } from './browserViewport'
 import type { AgentInfo, ChatMsg, AppInfo, AppSettings, ProviderCatalogItem, ProjectInfo, ProjectMember, TaskInfo, GroupMessage, ChatImage, CronTaskInfo, CronRunInfo, PluginInfo } from '@jeff/core'
 import { IPC } from '@jeff/core'
 
@@ -29,6 +30,8 @@ export interface BrowserUiState {
   address: string
   /** 当前页面采集到的错误数（console error / 未捕获异常 / 加载失败）：工具栏红点用，与 agent 读到的是同一份采集结果 */
   errorCount: number
+  /** 视口分辨率偏好（人用工具栏菜单改、agent 用 jeff_browser_set_viewport 改，改的是同一份） */
+  viewport: BrowserViewportRequest
 }
 
 /** 进行中的流式回复（key: agent:<id> / group:<id>） */
@@ -75,6 +78,8 @@ interface JeffState {
   setActive: (a: ActiveChat) => void
   setSettingsSection: (s: SettingsSection) => void
   setBrowser: (patch: Partial<BrowserUiState>) => void
+  /** 改内置浏览器视口分辨率（人机共用入口：工具栏菜单与 jeff_browser_set_viewport 都走它） */
+  setBrowserViewport: (viewport: BrowserViewportRequest) => void
   /** 改布局；persist:false 用于拖拽过程中的逐帧更新（松手再由 persistLayout 落盘） */
   setLayout: (patch: Partial<PaneLayout>, opts?: { persist?: boolean }) => void
   /** 把当前布局写进 localStorage */
@@ -238,13 +243,21 @@ export const useStore = create<JeffState>((set, get) => ({
   catalog: [],
   cronTasks: [],
   plugins: [],
-  browser: { visible: false, url: '', title: '', loading: false, address: '', errorCount: 0 },
+  browser: { visible: false, url: '', title: '', loading: false, address: '', errorCount: 0, viewport: parseViewport(localStorage.getItem(VIEWPORT_STORE_KEY)) },
   layout: readLayout(),
 
   setTab: (tab) => set({ tab }),
   setActive: (active) => set({ active }),
   setSettingsSection: (settingsSection) => set({ settingsSection }),
   setBrowser: (patch) => set((s) => ({ browser: { ...s.browser, ...patch } })),
+  setBrowserViewport: (viewport) => {
+    set((s) => ({ browser: { ...s.browser, viewport } }))
+    try {
+      localStorage.setItem(VIEWPORT_STORE_KEY, serializeViewport(viewport))
+    } catch {
+      /* localStorage 不可写（隐私模式等）：本次会话内仍然生效 */
+    }
+  },
   setLayout: (patch, opts) => {
     set((s) => ({ layout: { ...s.layout, ...patch } }))
     if (opts?.persist !== false) writeLayout(get().layout)

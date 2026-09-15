@@ -43,7 +43,14 @@ export class BridgeBrowserControl implements BrowserControl {
   constructor(
     private send: (req: { id: string; action: BrowserAction; args: Record<string, unknown> }) => void,
     private timeoutMs = 30_000,
+    /** 慢动作的超时：整页截图要分片截取并等图片加载完（长文能到十几秒），30s 不够（会被判成「页面无响应」） */
+    private slowTimeoutMs = 120_000,
   ) {}
+
+  /** 按动作取超时：截图（分片 + 等图）与改视口（等页面重排）都给足时间 */
+  private limitFor(action: BrowserAction): number {
+    return action === 'screenshot' || action === 'set_viewport' ? this.slowTimeoutMs : this.timeoutMs
+  }
 
   available(): boolean {
     return true
@@ -60,11 +67,12 @@ export class BridgeBrowserControl implements BrowserControl {
 
   async request(action: BrowserAction, args: Record<string, unknown>): Promise<unknown> {
     const id = randomToken(12)
+    const limit = this.limitFor(action)
     return new Promise<unknown>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id)
-        reject(new Error(`浏览器操作超时（${Math.round(this.timeoutMs / 1000)}s，${action}）：面板可能已关闭或页面无响应`))
-      }, this.timeoutMs)
+        reject(new Error(`浏览器操作超时（${Math.round(limit / 1000)}s，${action}）：面板可能已关闭或页面无响应`))
+      }, limit)
       timer.unref?.()
       this.pending.set(id, { resolve, reject, timer })
       try {

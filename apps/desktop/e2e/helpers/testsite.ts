@@ -14,6 +14,9 @@ import http from 'node:http'
  *   /react     受控输入（value 被自定义存取器接管）：验证「原生 setter + input 事件」这条路
  *   /broken    故意坏掉：console.error + 未捕获异常 + 404 子资源（验证「分析错误」）
  *   /slow      3 秒后才渲染内容（验证 navigate 会等到页面可用）
+ *   /viewport  自报视口尺寸（window.innerWidth x innerHeight，随窗口变化实时更新）+ 可选高页面
+ *              （?h=5200 撑出 5200px 高 + 底部标记）与懒加载图片（?lazy=3，图片延迟 800ms 才回来）
+ *              —— 验证「设分辨率 / 视口截图尺寸 = 视口 / 全页截图含滚动部分」这三条契约
  * 取证接口：
  *   GET /__log → { submits, uploads, requests, notFound }
  */
@@ -85,6 +88,16 @@ export async function startTestSite(): Promise<TestSite> {
 
     if (url === '/__log') {
       json(200, { submits, uploads, requests, notFound })
+      return
+    }
+    if (url.startsWith('/pixel.png')) {
+      // 慢图片：默认 0ms，?d=800 时延迟 800ms 再回，用来验证全页截图会等图片加载完
+      const delay = Number(new URL(url, 'http://127.0.0.1').searchParams.get('d') || 0) || 0
+      const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8AAAwAB/AF/2wAAAABJRU5ErkJggg==', 'base64')
+      setTimeout(() => {
+        res.writeHead(200, { 'content-type': 'image/png', 'content-length': String(png.length) })
+        res.end(png)
+      }, delay)
       return
     }
     if (url === '/missing.json' || url === '/missing.css') {
@@ -262,6 +275,60 @@ export async function startTestSite(): Promise<TestSite> {
           ),
         )
         return
+      /**
+       * 自报视口的页面（分辨率/截图尺寸契约的靶子）。
+       * 关键：尺寸由**页面自己**读 window.innerWidth/innerHeight 报出来——这是「视口真的变了」的
+       * 页面侧证据，比只看 DOM 样式或工具返回值可信（工具返回值也可能是渲染层自己算的）。
+       */
+      case '/viewport': {
+        const q = new URL(url, 'http://127.0.0.1').searchParams
+        const tall = Math.max(0, Number(q.get('h') || 0) || 0)
+        const lazy = Math.max(0, Number(q.get('lazy') || 0) || 0)
+        const lazyImgs = Array.from({ length: lazy }, (_, i) => `<img id="lz-${i}" data-src="/pixel.png?d=800" style="width:120px;height:90px;display:block" alt="懒加载图 ${i}" />`).join('')
+        res.end(
+          PAGE(
+            '视口自报页',
+            `<style>html,body{margin:0;padding:0}</style>
+             <div id="vp-topband" style="height:40px;background:#c81e1e"></div>
+             <h1>视口自报页</h1>
+             <div id="vp-size">?</div>
+             <div id="vp-dpr">?</div>
+             <div id="vp-scroll">?</div>
+             <div id="lazy-status">lazy:0/${lazy}</div>
+             <div id="vp-tall" style="height:${tall}px"></div>
+             <div id="vp-bottom">BOTTOM_MARKER_VIEWPORT</div>
+             ${lazyImgs}
+             <div id="vp-botband" style="height:40px;background:#1e50c8"></div>
+             <script>
+               var total = ${lazy};
+               var done = 0;
+               function report() {
+                 document.getElementById('vp-size').textContent = window.innerWidth + 'x' + window.innerHeight;
+                 document.getElementById('vp-dpr').textContent = 'dpr:' + (window.devicePixelRatio || 1);
+                 document.getElementById('vp-scroll').textContent = 'scroll:' + document.documentElement.scrollHeight;
+               }
+               report();
+               window.addEventListener('resize', report);
+               // 懒加载：进视口才把 data-src 换到 src（公众号文章就是这套），图片本身还要 800ms 才回来
+               var io = new IntersectionObserver(function (entries) {
+                 entries.forEach(function (en) {
+                   if (!en.isIntersecting) return;
+                   var img = en.target;
+                   io.unobserve(img);
+                   img.onload = function () {
+                     done += 1;
+                     document.getElementById('lazy-status').textContent = 'lazy:' + done + '/' + total;
+                     report();
+                   };
+                   img.src = img.getAttribute('data-src');
+                 });
+               });
+               Array.prototype.forEach.call(document.querySelectorAll('img[data-src]'), function (img) { io.observe(img); });
+             </script>`,
+          ),
+        )
+        return
+      }
       default:
         res.writeHead(404, { 'content-type': 'text/html; charset=utf-8' })
         res.end(PAGE('404', '<h1>404 页面不存在</h1>'))
