@@ -44,6 +44,17 @@ describe('cronTaskRepo', () => {
     expect(repo.get(id)?.next_run_at).toBe(123)
     repo.setLastRun(id, 456)
     expect(repo.get(id)?.last_run_at).toBe(456)
+    // 调度/执行是本机状态，不是「定义被改」：updated_at 是同步的 LWW 版本号，这些写入一律不许推它，
+    // 否则「跑了一次任务」或「同步落地一次」就会顶掉另一台机器上真实的编辑
+    const version = repo.get(id)!.updated_at
+    repo.setNextRun(id, 789)
+    repo.markRun(id, 1000, 2000)
+    repo.setLastRun(id, 3000)
+    expect(repo.get(id)!.updated_at).toBe(version)
+    // 改定义才推进版本号（先把版本钉到一个确定的过去值，避免依赖毫秒级时间差）
+    db.prepare('UPDATE cron_task SET updated_at = 1 WHERE id = ?').run(id)
+    repo.update(id, { name: '改了定义' })
+    expect(repo.get(id)!.updated_at).toBeGreaterThan(1)
     expect(repo.listEnabled().length).toBe(1)
     repo.update(id, { enabled: 0 })
     expect(repo.listEnabled().length).toBe(0)

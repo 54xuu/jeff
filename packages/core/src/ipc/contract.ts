@@ -97,9 +97,6 @@ export const IPC = {
   cronDelete: 'cron:delete',
   cronRun: 'cron:run',
   cronRuns: 'cron:runs',
-  cronBackupNow: 'cron:backupNow',
-  cronRestore: 'cron:restore',
-  cronLastBackup: 'cron:lastBackup',
   // 插件
   pluginsList: 'plugins:list',
   pluginSetEnabled: 'plugin:setEnabled',
@@ -608,9 +605,6 @@ export type InvokeMap = {
   [IPC.cronDelete]: { id: string }
   [IPC.cronRun]: { id: string }
   [IPC.cronRuns]: { id: string }
-  [IPC.cronBackupNow]: void
-  [IPC.cronRestore]: void
-  [IPC.cronLastBackup]: void
   // 插件
   [IPC.pluginsList]: void
   [IPC.pluginSetEnabled]: { id: string; enabled: boolean }

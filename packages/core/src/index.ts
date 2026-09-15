@@ -858,22 +858,6 @@ export class JeffCore extends EventEmitter {
       .map((r) => ({ id: r.id, task_id: r.task_id, started_at: r.started_at, finished_at: r.finished_at, status: r.status, is_catchup: !!r.is_catchup, error: r.error }))
   }
 
-  /** 把定时任务定义备份到 WebDAV（设置 → 同步 的显式入口；平时也随实体同步自动进行） */
-  async backupCronTasksNow(): Promise<{ ok: boolean; count: number; error?: string }> {
-    return this.sync.backupCronTasks()
-  }
-
-  /** 从备份恢复定时任务定义（LWW，不删本机多出的任务；恢复后重算下次触发时间） */
-  async restoreCronTasks(): Promise<{ ok: boolean; applied: number; removed: number; error?: string }> {
-    const r = await this.sync.restoreCronTasks()
-    if (r.ok) this.bus.emit('cron-updated')
-    return r
-  }
-
-  lastCronBackup(): { ok: boolean; at: number; count: number; error?: string } | null {
-    return this.sync.lastCronBackup()
-  }
-
   /**
    * 真正执行一次定时任务（调度器回调）。
    *

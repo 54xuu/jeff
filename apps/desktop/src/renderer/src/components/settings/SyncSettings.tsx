@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api } from '../../api'
-import { IPC, type CronTaskInfo, type PluginInfo, type SkillsBackupReport, type SkillsRestoreStage, type SkillsRestoreApply } from '@jeff/core'
+import { IPC, type PluginInfo, type SkillsBackupReport, type SkillsRestoreStage, type SkillsRestoreApply } from '@jeff/core'
 import { Toast } from '../ui/Toast'
 
 interface WebdavCfg {
@@ -90,7 +90,7 @@ export default function SyncSettings(): React.JSX.Element {
     <div className="settings-content">
       <h2 className="settings-title">WebDAV 同步</h2>
       <p className="settings-tip">
-        同步智能体、项目群、任务、设置（含 MCP）、记忆与 AGENTS.md 到你的 WebDAV 服务器；不含会话聊天数据。同步成功后会刷新通讯录与项目群。实体级双向合并，多台机器交替使用不丢数据。Skills 目录仍需在下方手动备份/恢复。
+        同步智能体、项目群、任务、定时任务、设置（含 MCP）、记忆与 AGENTS.md 到你的 WebDAV 服务器；不含会话聊天数据。同步成功后会刷新通讯录与项目群。实体级双向合并，多台机器交替使用不丢数据。定时任务只同步定义（运行历史留本机）；Skills 目录与插件目录属于整目录文件，仍需在下方手动备份/恢复。
       </p>
       <div className="sync-grid">
         <label className="field">
@@ -141,7 +141,6 @@ export default function SyncSettings(): React.JSX.Element {
 
       <SkillsBackup />
       <PluginsBackup />
-      <CronBackup />
     </div>
   )
 }
@@ -219,75 +218,6 @@ function PluginsBackup(): React.JSX.Element {
           <p className="settings-tip" style={{ marginBottom: 4 }}>
             上次备份：{last.ok ? '✅' : '❌'} {new Date(last.at).toLocaleString()} · 共 {last.fileCount ?? '?'} 个文件 · 上传 {last.uploaded} · 远端删除 {last.deleted} · 未变化 {last.skipped}
             {last.elapsedMs != null && ` · 耗时 ${(last.elapsedMs / 1000).toFixed(1)}s`}
-          </p>
-          {last.error && <pre className="settings-error sync-error-text">{last.error}</pre>}
-        </div>
-      )}
-      {toast && <Toast kind={toast.kind} message={toast.text} onClose={() => setToast(null)} />}
-    </>
-  )
-}
-
-/** 定时任务定义备份（cron_tasks.json）：只动定时任务，想单独回滚排期时不必碰其它实体 */
-function CronBackup(): React.JSX.Element {
-  const [last, setLast] = useState<{ ok: boolean; at: number; count: number; error?: string } | null>(null)
-  const [count, setCount] = useState<number | null>(null)
-  const [busy, setBusy] = useState('')
-  const [toast, setToast] = useState<{ kind: 'success' | 'error'; text: string } | null>(null)
-
-  useEffect(() => {
-    void api.invoke<{ ok: boolean; at: number; count: number; error?: string } | null>(IPC.cronLastBackup).then((r) => setLast(r ?? null)).catch(() => {})
-    void api.invoke<CronTaskInfo[]>(IPC.cronList).then((list) => setCount(list.length)).catch(() => {})
-  }, [])
-
-  const backupNow = async () => {
-    setBusy('backup')
-    try {
-      const r = await api.invoke<{ ok: boolean; count: number; error?: string }>(IPC.cronBackupNow)
-      setLast({ ok: r.ok, at: Date.now(), count: r.count, ...(r.error ? { error: r.error } : {}) })
-      setToast(r.ok ? { kind: 'success', text: `已备份 ${r.count} 条定时任务定义` } : { kind: 'error', text: `备份失败：${r.error ?? '未知错误'}` })
-    } finally {
-      setBusy('')
-    }
-  }
-
-  const restore = async () => {
-    if (!confirm('从备份恢复定时任务定义？\n按更新时间取新（本机更新过的排期不会被旧备份覆盖），本机多出的任务不会被删除；恢复后下次触发时间按本机重新推算。\n\n确认恢复？')) return
-    setBusy('restore')
-    try {
-      const r = await api.invoke<{ ok: boolean; applied: number; removed: number; error?: string }>(IPC.cronRestore)
-      if (r.ok) {
-        setToast({ kind: 'success', text: `已恢复 ${r.applied} 条定时任务${r.removed ? `，移除 ${r.removed} 条` : ''}` })
-        void api.invoke<CronTaskInfo[]>(IPC.cronList).then((list) => setCount(list.length)).catch(() => {})
-      } else {
-        setToast({ kind: 'error', text: `恢复失败：${r.error}` })
-      }
-    } finally {
-      setBusy('')
-    }
-  }
-
-  return (
-    <>
-      <h2 className="settings-title" style={{ marginTop: 24 }}>
-        定时任务备份
-      </h2>
-      <p className="settings-tip">
-        定时任务的<b>定义</b>（名称、目标、cron、提示词、错过策略）既能随上面的实体同步自动双向合并，也可在这里单独备份/恢复；当前本机有 <b>{count ?? '?'}</b> 条。
-        运行历史（<code>cron_run</code>）属本机日志，不参与备份。
-      </p>
-      <div className="settings-actions" style={{ justifyContent: 'flex-start' }}>
-        <button className="btn primary" disabled={!!busy} data-testid="cron-backup" onClick={() => void backupNow()}>
-          {busy === 'backup' ? '备份中…' : '立即备份定时任务'}
-        </button>
-        <button className="btn" disabled={!!busy} data-testid="cron-restore" onClick={() => void restore()}>
-          {busy === 'restore' ? '恢复中…' : '从备份恢复…'}
-        </button>
-      </div>
-      {last && (
-        <div className="sync-report" style={{ marginTop: 6 }}>
-          <p className="settings-tip" style={{ marginBottom: 4 }}>
-            上次备份：{last.ok ? '✅' : '❌'} {new Date(last.at).toLocaleString()} · {last.count} 条任务
           </p>
           {last.error && <pre className="settings-error sync-error-text">{last.error}</pre>}
         </div>

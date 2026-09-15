@@ -495,13 +495,17 @@ export const cronTaskRepo = (db: DB) => ({
     })
     return this.get(id)
   },
-  /** 标记一次执行结果（调度器内部使用） */
+  /**
+   * 标记一次执行结果（调度器内部使用）。
+   * 不动 updated_at：它是同步用的版本号，只有「定义被改」才该推进——否则一台机器只是跑了任务，
+   * 同步时就会以更新的时间戳覆盖掉另一台机器上真实的编辑。
+   */
   markRun(id: string, at: number, nextRunAt: number | null): void {
-    db.prepare('UPDATE cron_task SET last_run_at = ?, next_run_at = ?, updated_at = ? WHERE id = ?').run(at, nextRunAt, at, id)
+    db.prepare('UPDATE cron_task SET last_run_at = ?, next_run_at = ? WHERE id = ?').run(at, nextRunAt, id)
   },
-  /** 只更新下次触发时间（tick 推进用，不动 last_run_at） */
+  /** 只更新下次触发时间（tick 推进 / 同步落地重算用，不动 last_run_at，也不动 updated_at——理由同 markRun） */
   setNextRun(id: string, nextRunAt: number | null): void {
-    db.prepare('UPDATE cron_task SET next_run_at = ?, updated_at = ? WHERE id = ?').run(nextRunAt, now(), id)
+    db.prepare('UPDATE cron_task SET next_run_at = ? WHERE id = ?').run(nextRunAt, id)
   },
   /** 只更新上次实际执行时间（一轮跑完后回填） */
   setLastRun(id: string, at: number): void {

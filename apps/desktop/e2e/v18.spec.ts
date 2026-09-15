@@ -189,10 +189,12 @@ test('v1.8.0：分组 / 定时任务 / 插件 / 斜杠指令 / 内置浏览器',
     await expect(page.getByTestId('settings-nav-sync')).toBeVisible({ timeout: 15_000 })
     await expect(page.getByTestId('plugin-backup')).toBeVisible()
     await expect(page.getByTestId('plugin-restore')).toBeVisible()
-    await expect(page.getByTestId('cron-backup')).toBeVisible()
-    await expect(page.getByTestId('cron-restore')).toBeVisible()
     await expect(page.getByText('插件目录备份')).toBeVisible()
-    await expect(page.getByText('定时任务备份')).toBeVisible()
+    await expect(page.getByText('Skills 目录备份')).toBeVisible()
+    // 定时任务是纯配置数据，只随「立即同步」走：这里不该再有独立的备份/恢复入口
+    await expect(page.getByTestId('cron-backup')).toHaveCount(0)
+    await expect(page.getByTestId('cron-restore')).toHaveCount(0)
+    await expect(page.getByText('定时任务备份')).toHaveCount(0)
     await page.screenshot({ path: path.join(EVIDENCE, '04b-settings-backups.png'), fullPage: true })
     // 回插件页确认那边已经没有备份按钮了
     await page.getByTestId('nav-plugins').click()

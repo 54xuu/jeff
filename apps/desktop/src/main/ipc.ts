@@ -564,13 +564,6 @@ export function registerIpc(core: JeffCore): void {
     },
     [IPC.cronRun]: async (p) => core.runCronTaskNow((p as { id: string }).id),
     [IPC.cronRuns]: async (p) => core.listCronRuns((p as { id: string }).id),
-    [IPC.cronBackupNow]: async () => core.backupCronTasksNow(),
-    [IPC.cronRestore]: async () => {
-      const r = await core.restoreCronTasks()
-      core.bus.emit('data-changed', 'cron')
-      return r
-    },
-    [IPC.cronLastBackup]: async () => core.lastCronBackup(),
 
     // ---------- 插件 ----------
     [IPC.pluginsList]: async () => core.listPlugins(),
