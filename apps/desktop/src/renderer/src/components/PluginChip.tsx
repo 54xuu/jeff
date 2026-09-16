@@ -1,7 +1,7 @@
 import { useStore } from '../store'
 import { PluginIcon } from './PluginIcon'
 
-/** 对话框 / 输入框里的插件筹码：图标紧跟亮蓝中文名 */
+/** 对话框 / 输入框里的插件筹码：图标紧跟中文名（气泡内走深绿胶囊样式） */
 export function PluginChip(props: {
   pluginId: string
   name: string
@@ -15,7 +15,7 @@ export function PluginChip(props: {
   const iconSvg = live?.iconSvg || props.iconSvg
   return (
     <span className="plugin-chip" data-testid={props.testId || 'plugin-chip'} contentEditable={false}>
-      <PluginIcon icon={icon} iconSvg={iconSvg} size={16} className="plugin-chip-icon" />
+      <PluginIcon icon={icon} iconSvg={iconSvg} size={14} className="plugin-chip-icon" />
       <span className="plugin-chip-name">{name}</span>
     </span>
   )

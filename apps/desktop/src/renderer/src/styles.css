@@ -23,8 +23,9 @@
   --border: #e5e5e5;
   --green: var(--weui-BRAND);
   --green-dark: #06ad56;
-  --bubble-user: #95ec69;
-  --bubble-user-text: #191919;
+  --bubble-user: #35d28d;
+  --bubble-user-text: #0b2618;
+  --bubble-plugin: #0b3d22;
   --bubble-ai: #ffffff;
   --danger: var(--weui-RED);
   /* 正文超链接（亮色） */
@@ -66,8 +67,9 @@
   --border: #2c2c2c;
   --green: var(--weui-BRAND);
   --green-dark: #06ad56;
-  --bubble-user: #2ba864;
-  --bubble-user-text: #0d1a10;
+  --bubble-user: #35d28d;
+  --bubble-user-text: #0b2618;
+  --bubble-plugin: #0b3d22;
   --bubble-ai: #2c2c2c;
   --danger: var(--weui-RED);
   /* 正文超链接（暗色）：亮蓝，保证在深色气泡上的对比度 */
@@ -726,9 +728,7 @@ body {
   flex: 1;
   min-width: 0;
   display: flex;
-  flex-wrap: wrap;
-  align-items: flex-start;
-  gap: 6px;
+  align-items: stretch;
   border: 1px solid var(--border);
   background: var(--bg-list);
   border-radius: var(--radius-md);
@@ -744,10 +744,12 @@ body {
 }
 
 .chip-draft textarea {
+  flex: 1;
+  width: 100%;
   border: none;
   background: transparent;
   box-shadow: none;
-  padding: 4px 0;
+  padding: 4px 2px;
   min-height: 0;
   max-height: none;
   border-radius: 0;
@@ -758,17 +760,53 @@ body {
   box-shadow: none;
 }
 
-.chip-draft-before {
-  flex: 0 1 auto;
-  min-width: 8px;
-  max-width: 46%;
-  width: auto;
-  field-sizing: content;
+/* 有筹码：前缀绝对定位叠在首行，textarea 用 text-indent 给首行留位；换行后从左边排 */
+.chip-draft.has-chip {
+  position: relative;
+  display: block;
+  padding: 0;
+  overflow: auto;
 }
 
-.chip-draft-after {
-  flex: 1 1 80px;
-  min-width: 80px;
+.chip-draft.has-chip textarea {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  padding: 10px 12px;
+  line-height: 1.55;
+  font-size: 14px;
+}
+
+.chip-draft-prefix {
+  position: absolute;
+  left: 12px;
+  top: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: calc(14px * 1.55);
+  max-width: calc(100% - 24px);
+  pointer-events: none;
+  z-index: 1;
+  overflow: hidden;
+}
+
+.chip-draft-lead {
+  white-space: pre;
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.55;
+  flex: none;
+}
+
+.chip-draft .plugin-chip {
+  background: color-mix(in srgb, var(--green) 16%, transparent);
+  border-radius: 4px;
+  padding: 1px 6px 1px 4px;
+}
+
+.chip-draft .plugin-chip-name {
+  color: var(--green);
 }
 
 .plugin-chip {
@@ -776,14 +814,14 @@ body {
   align-items: center;
   gap: 4px;
   flex: none;
-  vertical-align: middle;
-  line-height: 1;
+  vertical-align: -0.15em;
+  line-height: 1.2;
 }
 
 .plugin-chip-name {
-  color: var(--link);
   font-weight: 600;
-  font-size: 14px;
+  font-size: 13.5px;
+  line-height: 1.2;
 }
 
 .msg-user-with-chip {
@@ -793,7 +831,24 @@ body {
 }
 
 .msg-user-with-chip .plugin-chip {
-  margin: 0 4px 0 0;
+  margin: 0 0.35em 0 0;
+}
+
+/* 绿色气泡内：深墨绿胶囊，避免亮蓝字贴在绿色底上 */
+.bubble.user .plugin-chip,
+.history-msg.user .plugin-chip {
+  background: rgba(0, 0, 0, 0.08);
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  border-radius: 4px;
+  padding: 1px 6px 1px 4px;
+  vertical-align: -0.15em;
+}
+
+.bubble.user .plugin-chip-name,
+.history-msg.user .plugin-chip-name {
+  color: var(--bubble-plugin);
+  font-weight: 600;
+  font-size: 13.5px;
 }
 
 .plugin-dialog-title {
@@ -2561,8 +2616,8 @@ body.composer-resizing * {
 }
 .history-msg.user .history-msg-text {
   margin: 0;
-  background: var(--green);
-  color: #fff;
+  background: var(--bubble-user);
+  color: var(--bubble-user-text);
   border-radius: var(--radius-md);
   padding: 8px 10px;
   white-space: pre-wrap;

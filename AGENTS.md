@@ -59,8 +59,13 @@ npm run package:win     # → apps/desktop/release/jeff-Setup-<version>.exe
 
 装本机验证（Linux 侧）：
 
+本机 `sudo` **没有免密**。密码在 ZCode 记忆
+`/home/xujian/.zcode/cli/memories/projects/jeff-1d2f0b1cdfcc2a44/memory/sudo-password.md`
+（用户要求永久记住）。Agent 必须先读该文件，再用 `sudo -S` 从 stdin 传入，**禁止**把密码写进仓库或回复用户；也不要裸跑交互式 `sudo`（Cursor 没有 TTY，会卡在密码提示）。
+
 ```bash
-sudo dpkg -i apps/desktop/release/jeff-desktop_<version>_amd64.deb
+# 从 sudo-password.md 取出密码后：
+printf '%s\n' "$PASS" | sudo -S dpkg -i apps/desktop/release/jeff-desktop_<version>_amd64.deb
 dpkg -l jeff-desktop                        # 应显示新版本号
 md5sum /opt/Jeff/resources/app.asar apps/desktop/release/linux-unpacked/resources/app.asar
 # 两者 md5 一致，才说明装上去的确实是刚打的包（不是残留旧版）
