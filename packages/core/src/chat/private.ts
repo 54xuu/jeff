@@ -1,7 +1,7 @@
 import type { DB } from '../db/db.js'
 import { agentRepo, kvRepo } from '../db/repos.js'
 import { agentSlug } from '../agents/registry.js'
-import type { OcClient, AssistantInfo } from '../oc/client.js'
+import { DEFAULT_SEND_TIMEOUT_MS, type OcClient, type AssistantInfo } from '../oc/client.js'
 import { agentPromptOpts } from '../util/modelKey.js'
 import { composeAutoTitle, placeholderTitle } from '../util/title.js'
 import { decodePluginUserMessage, type ChatPluginInvoke } from '../plugins/invoke.js'
@@ -197,6 +197,7 @@ export class PrivateChat {
         ...(images && images.length ? { images } : {}),
         agent: agentSlug(agentId),
         system: this.hooks?.buildSystem?.(agentId),
+        timeoutMs: DEFAULT_SEND_TIMEOUT_MS,
         ...opts,
       })
       this.hooks?.afterReply?.({ kind: 'private', agentId })

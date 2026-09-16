@@ -5,8 +5,15 @@ import { sleep } from '../sidecar/manager.js'
 import type { DebugLogFn } from '../logger.js'
 
 /**
+ * 一轮 sendMessage 的默认总预算（POST + 轮询直到 assistant 完成）。
+ * 覆盖长阻塞工具（如一源多出 publish 内部轮询最长 30 分钟）+ 前后模型往返。
+ * 私聊 / 群回合 / 委派回合共用；调用方可显式传入更短值（如记忆自省 120s）。
+ */
+export const DEFAULT_SEND_TIMEOUT_MS = 90 * 60 * 1000
+
+/**
  * sidecar 本机长请求专用 dispatcher：关闭 Undici 运行时 headers/body 超时（默认 headersTimeout
- * 300s 会把允许 600s 的委派长任务提前截断成 HeadersTimeoutError），请求总预算统一由
+ * 300s 会把允许 90 分钟的长任务提前截断成 HeadersTimeoutError），请求总预算统一由
  * AbortSignal.timeout 控制。惰性创建，全进程共享一个连接池。
  */
 let sidecarAgent: Agent | null = null
@@ -187,9 +194,9 @@ export class OcClient extends EventEmitter {
       variant: input.variant,
       textLen: input.text.length,
       images: input.images?.length ?? 0,
-      timeoutMs: input.timeoutMs ?? 600000,
+      timeoutMs: input.timeoutMs ?? DEFAULT_SEND_TIMEOUT_MS,
     })
-    const waitMs = input.timeoutMs ?? 600000
+    const waitMs = input.timeoutMs ?? DEFAULT_SEND_TIMEOUT_MS
     // 总预算从进入时计：POST 与后续轮询共用剩余时间（旧逻辑 POST 结束后才起 deadline，总时长可能翻倍）
     const deadline = Date.now() + waitMs
     const remaining = () => Math.max(1000, deadline - Date.now())

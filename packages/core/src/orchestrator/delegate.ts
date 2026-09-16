@@ -22,7 +22,7 @@ export interface DelegateResult {
   error?: string
 }
 
-/** 委派回合与普通群回合共用同一 30 分钟总预算（群任务可能远超 10 分钟） */
+/** 委派回合与普通群回合共用同一 90 分钟总预算（渲染视频等长阻塞工具可能远超 10 分钟） */
 const DELEGATE_TIMEOUT_MS = GROUP_TURN_TIMEOUT_MS
 const MAX_DELEGATIONS_PER_MESSAGE = 5
 

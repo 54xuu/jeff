@@ -9,6 +9,7 @@ import { PrivateChat, PrivateChatStoppedError, autoTitleKey } from '../src/chat/
 import { XIAOJIE_ID } from '../src/ipc/contract.js'
 import type { DB } from '../src/db/db.js'
 import type { OcClient } from '../src/oc/client.js'
+import { DEFAULT_SEND_TIMEOUT_MS } from '../src/oc/client.js'
 
 let tmp: string
 let db: DB
@@ -44,6 +45,25 @@ describe('PrivateChat.send 模型归属', () => {
     await chat.send(a.id, a.name, 'hi', { providerID: 'hack', modelID: 'ignored' }, undefined, 'none')
     expect(sent[0].model).toEqual({ providerID: 'prov-a', modelID: 'model-a' })
     expect(sent[0].variant).toBe('high')
+  })
+
+  it('sendMessage 显式传入 DEFAULT_SEND_TIMEOUT_MS（覆盖渲染视频等长阻塞工具）', async () => {
+    const agents = agentRepo(db)
+    const a = agents.create({ name: '宣经理' })
+    const sent: Array<{ timeoutMs?: number }> = []
+    const oc = {
+      getSession: async () => ({ id: 'x' }),
+      createSession: async () => ({ id: 'ses_to' }),
+      sendMessage: async (input: { timeoutMs?: number }) => {
+        sent.push(input)
+        return { id: 'msg', parts: [{ type: 'text', text: 'ok' }] }
+      },
+    } as unknown as OcClient
+    const chat = new PrivateChat(db, () => oc)
+    await chat.send(a.id, a.name, '渲染视频')
+    expect(sent).toHaveLength(1)
+    expect(sent[0].timeoutMs).toBe(DEFAULT_SEND_TIMEOUT_MS)
+    expect(sent[0].timeoutMs).toBe(90 * 60 * 1000)
   })
 
   it('未绑定模型时用 defaultModel；空 thinking 不传 variant', async () => {

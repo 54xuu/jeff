@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from 'vitest'
 import http from 'node:http'
 import net from 'node:net'
 import { Agent } from 'undici'
-import { OcClient, friendlyAssistantError } from '../src/oc/client.js'
+import { OcClient, friendlyAssistantError, DEFAULT_SEND_TIMEOUT_MS } from '../src/oc/client.js'
 
 type LogEntry = [string, unknown]
 
@@ -119,6 +119,22 @@ describe('OcClient 网络诊断与超时', () => {
     const reply = await client.sendMessage({ sessionId: 'ses_ok', text: 'hi', timeoutMs: 5000 })
     expect(reply.id).toBe('msg_ok')
     expect(reply.parts?.length).toBe(1)
+  })
+
+  it('sendMessage：不传 timeoutMs 时走 DEFAULT_SEND_TIMEOUT_MS（90 分钟）', async () => {
+    const port = await startServer([
+      { match: (m, u) => m === 'POST' && u.includes('/message'), reply: (_req, res) => json(res, { info: { id: 'msg_def', role: 'assistant' } }) },
+      {
+        match: (m, u) => m === 'GET' && u.includes('/message'),
+        reply: (_req, res) => json(res, [{ info: { id: 'msg_def', role: 'assistant', time: { completed: 1 } }, parts: [{ type: 'text', text: 'done' }] }]),
+      },
+    ])
+    const logs: LogEntry[] = []
+    const client = makeClient(port, logs)
+    await client.sendMessage({ sessionId: 'ses_def', text: 'hi' })
+    const start = logs.find(([tag]) => tag === 'send-start')?.[1] as Record<string, unknown>
+    expect(start.timeoutMs).toBe(DEFAULT_SEND_TIMEOUT_MS)
+    expect(start.timeoutMs).toBe(90 * 60 * 1000)
   })
 
   it('sendMessage：合并同一轮更早 assistant 消息的 reasoning/tool part（工具调用不再一落库就丢）', async () => {
