@@ -12,9 +12,10 @@ const MAX_PIPELINE_HOPS = 5
 
 /**
  * 群内单个智能体回合的应用级总预算（leader 首回合 / @派发 worker 回合 / leader 总结）。
- * 长任务（读大文件、产出文档）可能超过旧默认 10 分钟；与 jeff_delegate 委派回合共用同一预算。
+ * 长任务（多页截图+写总结、产出文档）可能超过 30 分钟——2026-09-16 产品宣传群采集工作台/门诊叫号
+ * 全菜单就是这一档。与 jeff_delegate 委派回合共用同一预算。
  */
-export const GROUP_TURN_TIMEOUT_MS = 30 * 60 * 1000
+export const GROUP_TURN_TIMEOUT_MS = 90 * 60 * 1000
 
 /** 回调/汇报消息确保带 @我（发起任务的用户）：模型没按约定输出时由编排器补一次，不重复添加 */
 export function ensureCallbackMention(content: string): string {

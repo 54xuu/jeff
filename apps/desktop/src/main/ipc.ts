@@ -13,7 +13,7 @@ import type {
   AppInfo,
   FileNode,
 } from '@jeff/core'
-import { IPC, XIAOJIE_ID, agentRepo, projectRepo, projectAgentRepo, taskRepo, taskCardMessage, APP_VERSION, PrivateChatStoppedError, resolveSendText, type ThinkingTier, type ChatPluginInvoke } from '@jeff/core'
+import { IPC, XIAOJIE_ID, agentRepo, projectRepo, projectAgentRepo, taskRepo, taskCardMessage, APP_VERSION, PrivateChatStoppedError, resolveSendText, resolveScreenshotScale, type ThinkingTier, type ChatPluginInvoke } from '@jeff/core'
 import type { MemoryScopeInfo } from '@jeff/core'
 import type { JeffCore, TaskRow } from '@jeff/core'
 import { getMainWindow, getSidecarLogs, showDesktopNotification, setBrowserResult, setBrowserState } from './index.js'
@@ -658,12 +658,12 @@ export function registerIpc(core: JeffCore): void {
           return { dataUrl: `data:image/png;base64,${shot.data}`, width, height }
         }
         /**
-         * 高 DPI 屏上 CDP 按**设备像素**出图（请求 541x406 拿回 1082x812）。这里的契约是
-         * 「图片尺寸 = 视口 CSS 像素」（跨 DPR 一致、可断言），所以按整数倍因子压回请求尺寸。
-         * 只接受整数倍的等比缩放：其它尺寸说明这一档渲染表面兜不住，如实报错（不硬拉伸）。
+         * 高 DPI 屏上 CDP 按**设备像素**出图（请求 541x406 拿回 1082x812；Windows 137.5% 缩放
+         * 则是 937x703 → 1288x967）。契约是「图片尺寸 = 视口 CSS 像素」，所以按同一比例压回请求尺寸。
+         * 比例必须宽高等比且落在 1x–4x（含 1.25/1.375/1.5/1.75 这类非整数 DPR）；对不上才是渲染表面裁剪。
          */
-        const k = size.width / width
-        if (Number.isInteger(k) && k > 1 && size.height === height * k) {
+        const k = resolveScreenshotScale({ width, height }, size)
+        if (k) {
           const img = nativeImage.createFromBuffer(buf).resize({ width, height })
           return { dataUrl: `data:image/png;base64,${img.toPNG().toString('base64')}`, width, height }
         }

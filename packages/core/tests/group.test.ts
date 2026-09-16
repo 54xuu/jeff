@@ -248,7 +248,7 @@ describe('GroupChat', () => {
     expect(history.find((m) => m.sender_name === '开发')?.text.startsWith('@我')).toBe(true)
   })
 
-  it('send：群回合统一 30 分钟超时预算，worker 未按约定 @我 时编排器兜底补前缀', async () => {
+  it('send：群回合统一超时预算，worker 未按约定 @我 时编排器兜底补前缀', async () => {
     const p = projectRepo(db).list()[0]
     const agents = agentRepo(db)
     const leader = agents.list().find((a) => a.name === '架构师')!
@@ -272,7 +272,7 @@ describe('GroupChat', () => {
     group = new GroupChat(db, () => ocStub)
 
     await group.send({ projectId: p.id, text: '修登录页' })
-    // leader 派发 → worker → leader 总结，每个回合都是 30 分钟总预算
+    // leader 派发 → worker → leader 总结，每个回合都走同一份总预算
     expect(calls.length).toBe(3)
     for (const c of calls) expect(c.timeoutMs).toBe(GROUP_TURN_TIMEOUT_MS)
     const devMsg = group.history(p.id).find((m) => m.sender_name === '开发')

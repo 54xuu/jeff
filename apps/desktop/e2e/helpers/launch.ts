@@ -66,6 +66,8 @@ export async function launchJeff(opts: {
   home?: string
   seed?: SeedOpts
   envExtra?: Record<string, string>
+  /** 追加给 Electron 的启动参数（如 `--force-device-scale-factor=1.375` 复现 Windows 非整数 DPR） */
+  args?: string[]
 }): Promise<LaunchResult> {
   const home = opts.home || DEFAULT_E2E_HOME
   const fileEnv = loadE2eEnv()
@@ -106,7 +108,7 @@ export async function launchJeff(opts: {
 
   const app = await electron.launch({
     executablePath: electronBinary(),
-    args: [mainEntry(), `--user-data-dir=${path.join(home, 'electron-user-data')}`, '--no-sandbox'],
+    args: [mainEntry(), `--user-data-dir=${path.join(home, 'electron-user-data')}`, '--no-sandbox', ...(opts.args || [])],
     env,
     timeout: 60000,
   })

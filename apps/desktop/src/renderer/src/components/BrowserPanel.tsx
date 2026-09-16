@@ -386,7 +386,8 @@ export default function BrowserPanel(): React.JSX.Element {
        * 为什么不在渲染层用 webview.capturePage()（两条弯路都实测过，别再试）：
        * ① 它给的是渲染器**已呈现的那一帧**，尺寸不由你定（请求 5659 高、拿回 1946）；
        * ② 元素被面板裁切时尺寸更怪（请求 1697x1063 拿回 3356x1946），拉回请求尺寸只会得到空白图。
-       * CDP 用 scale:1，输出就是请求的 CSS 像素数——跨 DPR 一致，断言才立得住。
+       * CDP clip 以 CSS 像素计；高 DPI 屏上实际 PNG 可能按设备像素出图（含 1.25/1.375 这类非整数 DPR），
+       * 主进程会按等比压回请求尺寸。跨 DPR 的契约仍然是「落盘图 = 视口 CSS 像素」。
        */
       const pageShot = async (
         width: number,

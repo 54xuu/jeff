@@ -70,6 +70,41 @@ export function parseFullPageFlag(v: unknown): boolean {
 }
 
 /**
+ * CDP 截图在高 DPI 屏上按**设备像素**出图，契约却是「图片尺寸 = 视口 CSS 像素」。
+ * 旧实现只认整数倍（2x/3x），会把 Windows 常见的 125%/137.5%/150%/175% 全部判成「超出渲染范围」——
+ * 2026-09-16 真实案例：请求 937x703、拿到 1288x967（137.5%：round(937*1.375)=1288）。
+ *
+ * 判定：
+ * 1. 先对常见系统缩放档位做取整匹配（各轴误差 ≤1px），命中则返回该档位（1.375 而不是 1288/937≈1.3746）；
+ * 2. 否则要求宽高按同一比例缩放（各轴取整误差 ≤1px），且比例落在 [1, 4]；
+ * 3. 比例对不上 / 小于 1 / 超过上限 → null（那一档才是真的裁剪/平铺）。
+ */
+export const SCREENSHOT_SCALE_PRESETS = [1, 1.25, 1.375, 1.5, 1.75, 2, 2.25, 2.5, 2.75, 3, 3.5, 4] as const
+
+export function resolveScreenshotScale(
+  requested: { width: number; height: number },
+  actual: { width: number; height: number },
+): number | null {
+  if (!(requested.width > 0) || !(requested.height > 0) || !(actual.width > 0) || !(actual.height > 0)) return null
+  for (const s of SCREENSHOT_SCALE_PRESETS) {
+    if (
+      Math.abs(Math.round(requested.width * s) - actual.width) <= 1 &&
+      Math.abs(Math.round(requested.height * s) - actual.height) <= 1
+    ) {
+      return s
+    }
+  }
+  const kx = actual.width / requested.width
+  const ky = actual.height / requested.height
+  if (kx < 1 || ky < 1) return null
+  if (kx > 4 || ky > 4) return null
+  const expectedH = Math.round(requested.height * kx)
+  const expectedW = Math.round(requested.width * ky)
+  if (Math.abs(actual.height - expectedH) > 1 && Math.abs(actual.width - expectedW) > 1) return null
+  return kx
+}
+
+/**
  * 截图文件名里带页面标题（便于人和 agent 事后按标题找图）。
  * 标题来自网页、可能带路径分隔符等非法字符，也可能很长：清洗 + 截断，清洗后为空则退回 shot。
  */

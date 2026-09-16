@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { normalizeViewportArgs, parseFullPageFlag, shotName, VIEWPORT_LIMITS } from '../src/tools/browserArgs.js'
+import { normalizeViewportArgs, parseFullPageFlag, shotName, VIEWPORT_LIMITS, resolveScreenshotScale } from '../src/tools/browserArgs.js'
 import { allToolDefs } from '../src/tools/definitions.js'
 
 /**
@@ -55,6 +55,31 @@ describe('jeff_browser_screenshot 参数与文件名', () => {
     expect(parseFullPageFlag(true)).toBe(true)
     expect(parseFullPageFlag('true')).toBe(true)
     expect(parseFullPageFlag('TRUE')).toBe(true)
+  })
+
+  it('高 DPI 截图缩放：认非整数 DPR，拒真正的裁剪/平铺', () => {
+    // 1x 精确匹配
+    expect(resolveScreenshotScale({ width: 800, height: 600 }, { width: 800, height: 600 })).toBe(1)
+    // 整数倍（旧实现能过的路径，防回归）
+    expect(resolveScreenshotScale({ width: 541, height: 406 }, { width: 1082, height: 812 })).toBe(2)
+    expect(resolveScreenshotScale({ width: 400, height: 300 }, { width: 1200, height: 900 })).toBe(3)
+    // 2026-09-16 Windows 137.5% 真实案例：937x703 → 1288x967
+    expect(resolveScreenshotScale({ width: 937, height: 703 }, { width: 1288, height: 967 })).toBe(1.375)
+    expect(resolveScreenshotScale({ width: 800, height: 600 }, { width: 1100, height: 825 })).toBeCloseTo(1.375, 5)
+    expect(resolveScreenshotScale({ width: 640, height: 480 }, { width: 880, height: 660 })).toBeCloseTo(1.375, 5)
+    expect(resolveScreenshotScale({ width: 480, height: 360 }, { width: 660, height: 495 })).toBeCloseTo(1.375, 5)
+    // 常见 Windows 缩放
+    expect(resolveScreenshotScale({ width: 800, height: 600 }, { width: 1000, height: 750 })).toBeCloseTo(1.25, 5)
+    expect(resolveScreenshotScale({ width: 800, height: 600 }, { width: 1200, height: 900 })).toBe(1.5)
+    expect(resolveScreenshotScale({ width: 800, height: 600 }, { width: 1400, height: 1050 })).toBeCloseTo(1.75, 5)
+    expect(resolveScreenshotScale({ width: 400, height: 300 }, { width: 1000, height: 750 })).toBe(2.5)
+    // 取整误差 ≤1px 仍认（CDP 偶发 round）
+    expect(resolveScreenshotScale({ width: 400, height: 300 }, { width: 550, height: 413 })).toBeCloseTo(1.375, 3)
+    // 拒绝：缩小、宽高比例不一致、超过 4x
+    expect(resolveScreenshotScale({ width: 800, height: 600 }, { width: 400, height: 300 })).toBeNull()
+    expect(resolveScreenshotScale({ width: 800, height: 600 }, { width: 1600, height: 600 })).toBeNull()
+    expect(resolveScreenshotScale({ width: 400, height: 300 }, { width: 2000, height: 1500 })).toBeNull()
+    expect(resolveScreenshotScale({ width: 0, height: 600 }, { width: 800, height: 600 })).toBeNull()
   })
 
   it('文件名带标题：清掉路径分隔符等非法字符、截断、空标题退回 shot', () => {
