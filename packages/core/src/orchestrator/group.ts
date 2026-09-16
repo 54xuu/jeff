@@ -5,6 +5,7 @@ import type { OcClient, AssistantInfo } from '../oc/client.js'
 import type { GroupMessage } from '../ipc/contract.js'
 import { agentPromptOpts } from '../util/modelKey.js'
 import { GroupThreadStore, groupMsgScope } from './groupThreads.js'
+import { decodePluginUserMessage } from '../plugins/invoke.js'
 
 /** 单次用户消息触发的串行协作流水线最大步数（防死循环） */
 const MAX_PIPELINE_HOPS = 5
@@ -331,7 +332,7 @@ export class GroupChat {
     })
     this.threads.touch(projectId, threadId)
     // 自动命名的会话在这里补上任务名（须在 runTurn 之前：agent 会话标题取自 thread 标题）
-    this.threads.autoTitleFromFirstMessage(projectId, threadId, text)
+    this.threads.autoTitleFromFirstMessage(projectId, threadId, decodePluginUserMessage(text).displayText)
 
     const memberInfos = members.map((m) => ({ agent_id: m.agent_id, name: agents.get(m.agent_id)?.name || '' }))
     const mentioned = this.parseMention(text, memberInfos)
@@ -509,16 +510,18 @@ export class GroupChat {
             .filter((t) => t && typeof t.tool === 'string')
             .map((t) => ({ tool: t.tool as string, status: t.status, output: t.output, error: t.error }))
         : undefined
+      const decoded = r.sender_type === 'user' ? decodePluginUserMessage(r.content) : null
       return {
         id: r.id,
         role: r.sender_type === 'user' ? 'user' : r.sender_type === 'agent' ? 'assistant' : 'system',
         agentId: r.sender_id || undefined,
-        text: r.content,
+        text: decoded ? decoded.displayText : r.content,
         time: r.created_at,
         meta,
         ...(metaReasoning?.length ? { reasoning: metaReasoning } : {}),
         ...(metaTools?.length ? { tools: metaTools } : {}),
         ...(metaImages && metaImages.length ? { images: metaImages } : {}),
+        ...(decoded?.invoke ? { plugin: decoded.invoke } : {}),
         sender_name: r.sender_type === 'user' ? '我' : a?.name || '系统',
         sender_avatar: r.sender_type === 'user' ? '🧑' : a?.avatar || '⚙️',
       }

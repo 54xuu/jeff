@@ -7,7 +7,7 @@ import CreateGroupModal from './CreateGroupModal'
 const DEFAULT_GROUP = '默认'
 
 export default function ChatList(): React.JSX.Element {
-  const { agents, projects, active, setActive } = useStore()
+  const { agents, projects, active, setActive, sending, streaming } = useStore()
   const [creating, setCreating] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
@@ -84,6 +84,7 @@ export default function ChatList(): React.JSX.Element {
           name={xiaojie.name}
           desc="Jeff 内置管家 · 问我什么都能办"
           pinned
+          busy={!!sending[`agent:${xiaojie.id}`] || !!streaming[`agent:${xiaojie.id}`]}
           selected={active?.kind === 'agent' && active.id === xiaojie.id}
           onClick={() => setActive({ kind: 'agent', id: xiaojie.id })}
         />
@@ -97,6 +98,7 @@ export default function ChatList(): React.JSX.Element {
           name={p.title}
           desc={`${p.memberCount} 个成员 · 群主统筹`}
           isGroup
+          busy={!!sending[`group:${p.id}`] || !!streaming[`group:${p.id}`]}
           selected={active?.kind === 'group' && active.id === p.id}
           onClick={() => setActive({ kind: 'group', id: p.id })}
         />
@@ -125,6 +127,7 @@ export default function ChatList(): React.JSX.Element {
                   avatar={a.avatar}
                   name={a.name}
                   desc={a.description || '（无简介）'}
+                  busy={!!sending[`agent:${a.id}`] || !!streaming[`agent:${a.id}`]}
                   selected={active?.kind === 'agent' && active.id === a.id}
                   onClick={() => setActive({ kind: 'agent', id: a.id })}
                 />
@@ -143,12 +146,13 @@ function ChatItem(props: {
   desc: string
   pinned?: boolean
   isGroup?: boolean
+  busy?: boolean
   selected: boolean
   onClick: () => void
 }): React.JSX.Element {
   return (
     <div className={`chat-item ${props.selected ? 'selected' : ''}`} data-testid={props.isGroup ? `chat-group-${props.name}` : `chat-agent-${props.name}`} onClick={props.onClick}>
-      <Avatar emoji={props.avatar} />
+      <Avatar emoji={props.avatar} busy={props.busy} />
       <div className="chat-item-body">
         <div className="chat-item-top">
           <span className="chat-item-name">{props.name}</span>

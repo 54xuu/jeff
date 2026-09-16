@@ -159,7 +159,7 @@ export default function PluginsPage(): React.JSX.Element {
       </div>
 
       {detail && (
-        <Dialog title={`${detail.icon} ${detail.name}`} onClose={() => setDetail(null)}>
+        <Dialog title={<span className="plugin-dialog-title"><PluginIcon icon={detail.icon} iconSvg={detail.iconSvg} size={22} />{detail.name}</span>} onClose={() => setDetail(null)}>
           <div className="plugin-detail">
             <p className="settings-tip">{detail.description || '（无简介）'}</p>
             {detail.error && <p className="cron-run-error">配置问题：{detail.error}</p>}
@@ -174,9 +174,11 @@ export default function PluginsPage(): React.JSX.Element {
             ) : (
               <ul className="plugin-cmd-list">
                 {detail.commands.map((c) => (
-                  <li key={c.name}>
-                    <code>{c.name}</code> <span>{c.description || ''}</span>
-                    <div className="cron-dim">{c.prompt}</div>
+                  <li key={c.name} className="plugin-cmd-row">
+                    <code>{c.name}</code>
+                    <PluginIcon icon={detail.icon} iconSvg={detail.iconSvg} size={16} />
+                    <span>{detail.name}</span>
+                    {c.description ? <span className="cron-dim">{c.description}</span> : null}
                   </li>
                 ))}
               </ul>
@@ -236,7 +238,7 @@ function SettingsDialog(props: { plugin: PluginInfo; onClose: () => void; onSave
   const headerKeys = Object.keys(props.plugin.mcp?.headers || {}).filter((k) => String(props.plugin.mcp?.headers?.[k] || '').includes('${SECRET}'))
 
   return (
-    <Dialog title={`${props.plugin.name} · 设置`} onClose={props.onClose}>
+    <Dialog title={<span className="plugin-dialog-title"><PluginIcon icon={props.plugin.icon} iconSvg={props.plugin.iconSvg} size={20} />{props.plugin.name} · 设置</span>} onClose={props.onClose}>
       <div className="pv-grid" data-testid="plugin-settings">
         <Field
           label="官网首页"

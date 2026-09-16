@@ -35,9 +35,10 @@
   "homepage": "http://localhost:5173/dashboard", // 可选，http(s)；写在清单里可随目录同步；插件页「设置」可改
 
   // 可选且最多 1 条：聊天框 / 快捷指令。name 须英文或拼音（/[a-zA-Z][a-zA-Z0-9_-]*），
-  // 且跨插件全局唯一；prompt 写清功能分流。界面显示名用上面的中文 name。
+  // 且跨插件全局唯一。界面显示中文 name；选中后输入框出现「图标 + 亮蓝中文名」筹码，
+  // prompt 不再塞进输入框（发给模型的是系统生成的短约束 + 用户原话）。
   "commands": [
-    { "name": "/zhbf", "description": "智慧病房看板问答", "prompt": "请通过智慧病房插件查询…（按问题选 board_* / ward_* 工具）" }
+    { "name": "/zhbf", "description": "智慧病房看板问答", "prompt": "可选补充（默认不插入）" }
   ],
 
   // 可选：MCP 接入声明。启用插件时自动写入 Jeff 的 MCP 配置（key = plugin-<id>），停用即摘除
@@ -107,7 +108,7 @@ local（stdio）型 MCP 服务改用 `command` 与 `environment`：
 
 1. Jeff 把 `mcp` 写进 `settings:mcp`（key 为 `plugin-<id>`，**不会覆盖用户手配的同名 MCP**）。
 2. `opencode.json` 重写，引擎在下次会话前重启加载——插件的 MCP 工具即可被任意智能体调用。
-3. `commands` 出现在私聊/群聊输入框的 `/` 菜单里（tag 样式：SVG 图标 + 中文插件名 + `/指令`）。
+3. `commands` 出现在私聊/群聊输入框的 `/` 菜单里（按组显示，这一轮只有「插件」组；每一行：`/{指令} {图标} {中文名} {简介}`）。选中后输入框出现筹码（图标 + 亮蓝中文名），发给模型的是一句短约束 + 用户原话，**不会**把 `prompt` 整段塞进输入框。
 4. `homepage` 可用内置浏览器打开；智能体也能用 `jeff_browser_*` 工具在同一面板里操作这个页面。
 
 ## 备份与恢复

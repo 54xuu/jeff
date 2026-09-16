@@ -1730,6 +1730,13 @@ export { normalizeProjectRole, projectRoleLabel, PROJECT_ROLES, type ProjectRole
 export { extractThinkTags, mergeReasoning, type ThinkExtractResult } from './util/thinkTag.js'
 export { CronScheduler, type CronSchedulerDeps } from './cron/scheduler.js'
 export { PluginManager, PLUGIN_MCP_PREFIX, type PluginEnabledMap } from './plugins/manager.js'
+export {
+  encodePluginUserMessage,
+  decodePluginUserMessage,
+  resolveSendText,
+  pluginConstraint,
+  type ChatPluginInvoke,
+} from './plugins/invoke.js'
 export { UnavailableBrowser, BridgeBrowserControl, type BrowserControl } from './browser/control.js'
 export { CRON_TOOL_NAMES } from './tools/cronTools.js'
 // cron 表达式工具（渲染层在开发态按本文件解析类型，生产打包走 browser.ts，两处都要导出）

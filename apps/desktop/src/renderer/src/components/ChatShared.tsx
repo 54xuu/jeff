@@ -21,15 +21,17 @@ export function StreamingBubble(props: {
   workspaceDir?: string
   /** 本轮触发时间（用户发送时刻）：流式期间也显示时间，便于估算轮次耗时 */
   time?: number
+  /** 正在生成：头像右上角忙碌绿点 */
+  busy?: boolean
 }): React.JSX.Element {
-  const { avatar, name, stream, workspaceDir, time } = props
+  const { avatar, name, stream, workspaceDir, time, busy } = props
   // 有些模型把思考写在正文的 <think> 里而不是原生 reasoning 字段，这里统一剥出来给折叠区
   const parsed = useMemo(() => extractThinkTags(stream.text), [stream.text])
   const reasoning = useMemo(() => mergeReasoning(stream.reasoning, parsed.reasoning), [stream.reasoning, parsed.reasoning])
   const bodyStarted = parsed.text.trim().length > 0
   return (
     <div className="msg-row left">
-      <Avatar emoji={avatar} size={34} />
+      <Avatar emoji={avatar} size={34} busy={busy} />
       <div className="msg-stack">
         <div className="msg-sender">
           {name}

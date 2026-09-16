@@ -1,5 +1,6 @@
 import type { ChatMsg } from '../chat/private.js'
 import type { ProviderSetting } from '../oc/configWriter.js'
+import type { ChatPluginInvoke } from '../plugins/invoke.js'
 
 // 渲染进程把 @jeff/core 别名到本文件（避免 node 依赖进浏览器 bundle）；
 // parseMcpServersJson / parseMcpServerJson / McpServerCfg 是纯 TS，从这里再导出供渲染层使用。
@@ -537,7 +538,7 @@ export type InvokeMap = {
   }
   [IPC.agentsDelete]: { id: string }
   [IPC.chatHistory]: { agentId: string }
-  [IPC.chatSend]: { agentId: string; text: string; model?: { providerID: string; modelID: string }; variant?: string; images?: ChatImage[] }
+  [IPC.chatSend]: { agentId: string; text: string; model?: { providerID: string; modelID: string }; variant?: string; images?: ChatImage[]; plugin?: ChatPluginInvoke }
   [IPC.chatNew]: { agentId: string }
   [IPC.chatStop]: { agentId: string }
   [IPC.projectsList]: void
@@ -550,7 +551,7 @@ export type InvokeMap = {
   [IPC.taskSave]: { id?: string; project_id: string; title: string; description?: string; status?: string; priority?: string; assignee_id?: string }
   [IPC.taskDelete]: { id: string }
   [IPC.groupHistory]: { projectId: string }
-  [IPC.groupSend]: { projectId: string; text: string; model?: { providerID: string; modelID: string }; variant?: string; images?: ChatImage[] }
+  [IPC.groupSend]: { projectId: string; text: string; model?: { providerID: string; modelID: string }; variant?: string; images?: ChatImage[]; plugin?: ChatPluginInvoke }
   [IPC.groupStop]: { projectId: string }
   [IPC.providersList]: void
   [IPC.providersSave]: { providers: ProviderSetting[] }

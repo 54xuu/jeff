@@ -3,7 +3,7 @@ import { Button } from './Button'
 
 /** 简易对话框：点击遮罩或 Esc 关闭；确认/取消 */
 export function Dialog(props: {
-  title: string
+  title: React.ReactNode
   children: React.ReactNode
   onClose: () => void
   onConfirm?: () => void
@@ -29,7 +29,7 @@ export function Dialog(props: {
     >
       <div className="jeff-dialog" role="dialog" aria-modal="true" data-testid="dialog">
         <div className="jeff-dialog-head">
-          <h3>{props.title}</h3>
+          <h3 className="jeff-dialog-title">{props.title}</h3>
           <button type="button" className="icon-btn" aria-label="关闭" onClick={props.onClose}>
             ×
           </button>

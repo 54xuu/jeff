@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Markdown } from './Markdown'
+import { UserTextWithChip } from './PluginChip'
 
 export interface SessionHistoryItem {
   id: string
@@ -17,6 +18,7 @@ export interface SessionHistoryMsg {
   time: number
   /** 群聊里的发言人名；私聊不传，按角色显示「对方」 */
   sender_name?: string
+  plugin?: { id: string; name: string; command: string; at: number; icon?: string }
 }
 
 export interface SessionHistoryPanelProps {
@@ -211,7 +213,15 @@ export default function SessionHistoryPanel(props: SessionHistoryPanelProps): Re
                     <div className="history-msg-meta">
                       {m.role === 'user' ? '我' : m.role === 'system' ? '系统' : m.sender_name || '对方'} · {fmtTime(m.time)}
                     </div>
-                    {m.role === 'assistant' ? <Markdown text={m.text || '（无文本）'} workspaceDir={workspaceDir} /> : <pre className="history-msg-text">{m.text}</pre>}
+                    {m.role === 'assistant' ? (
+                      <Markdown text={m.text || '（无文本）'} workspaceDir={workspaceDir} />
+                    ) : m.role === 'user' ? (
+                      <div className="history-msg-text">
+                        <UserTextWithChip text={m.text} plugin={m.plugin} />
+                      </div>
+                    ) : (
+                      <pre className="history-msg-text">{m.text}</pre>
+                    )}
                   </div>
                 ))}
               </div>

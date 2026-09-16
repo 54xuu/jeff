@@ -13,7 +13,7 @@ import type {
   AppInfo,
   FileNode,
 } from '@jeff/core'
-import { IPC, XIAOJIE_ID, agentRepo, projectRepo, projectAgentRepo, taskRepo, taskCardMessage, APP_VERSION, PrivateChatStoppedError, type ThinkingTier } from '@jeff/core'
+import { IPC, XIAOJIE_ID, agentRepo, projectRepo, projectAgentRepo, taskRepo, taskCardMessage, APP_VERSION, PrivateChatStoppedError, resolveSendText, type ThinkingTier, type ChatPluginInvoke } from '@jeff/core'
 import type { MemoryScopeInfo } from '@jeff/core'
 import type { JeffCore, TaskRow } from '@jeff/core'
 import { getMainWindow, getSidecarLogs, showDesktopNotification, setBrowserResult, setBrowserState } from './index.js'
@@ -103,12 +103,12 @@ export function registerIpc(core: JeffCore): void {
       return core.privateChat.history(agentId)
     },
     [IPC.chatSend]: async (p): Promise<{ ok: boolean; stopped?: boolean; cancelled?: boolean }> => {
-      const { agentId, text, images } = p as { agentId: string; text: string; images?: Array<{ mime: string; dataUrl: string }> }
+      const { agentId, text, images, plugin } = p as { agentId: string; text: string; images?: Array<{ mime: string; dataUrl: string }>; plugin?: ChatPluginInvoke }
       const row = core.agents.get(agentId)
       if (!row) throw new Error('智能体不存在')
       // 模型/思考由智能体资料决定，忽略前端覆盖
       try {
-        await core.privateChat.send(agentId, row.name, text, undefined, images)
+        await core.privateChat.send(agentId, row.name, resolveSendText(text, plugin), undefined, images)
         return { ok: true }
       } catch (err) {
         // 用户主动停止是预期结果：返回 stopped，UI 不弹「发送失败」
@@ -546,9 +546,9 @@ export function registerIpc(core: JeffCore): void {
       return core.historyActive(projectId)
     },
     [IPC.groupSend]: async (p): Promise<{ routedTo: string; summaryFailed?: boolean; summaryError?: string }> => {
-      const { projectId, text, images } = p as { projectId: string; text: string; images?: Array<{ mime: string; dataUrl: string }> }
+      const { projectId, text, images, plugin } = p as { projectId: string; text: string; images?: Array<{ mime: string; dataUrl: string }>; plugin?: ChatPluginInvoke }
       // 模型/思考由路由目标智能体资料决定，忽略前端覆盖
-      return core.groupChat.send({ projectId, text, images })
+      return core.groupChat.send({ projectId, text: resolveSendText(text, plugin), images })
     },
     [IPC.groupStop]: async (p): Promise<{ ok: boolean }> => {
       const { projectId } = p as { projectId: string }

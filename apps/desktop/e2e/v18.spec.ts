@@ -222,7 +222,7 @@ test('v1.8.0：分组 / 定时任务 / 插件 / 斜杠指令 / 内置浏览器',
     await expect(page.getByTestId('plugin-card-e2e-plugin')).toBeVisible()
     await expect(page.getByTestId('plugins-page').getByTestId('plugin-backup')).toHaveCount(0)
 
-    // ---------- 4. 斜杠指令：启用插件的 commands 进入 `/` 菜单并插入提示词 ----------
+    // ---------- 4. 斜杠指令：启用插件的 commands 进入 `/` 菜单并插入筹码 ----------
     await page.getByTestId('nav-chats').click()
     // 先进入一个会话（全新 home 启动时默认停在空态）
     await page.getByTestId('chat-agent-E2E探路者').click()
@@ -231,12 +231,19 @@ test('v1.8.0：分组 / 定时任务 / 插件 / 斜杠指令 / 内置浏览器',
     await draft.click()
     await draft.fill('/')
     await expect(page.getByTestId('slash-pop')).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByTestId('slash-group-plugin')).toHaveText('插件')
     await expect(page.getByTestId('slash-item-0')).toContainText('/e2e')
     await expect(page.getByTestId('slash-item-0')).toContainText('测试插件')
+    await expect(page.getByTestId('slash-item-0')).toContainText('向插件提问')
     await page.screenshot({ path: path.join(EVIDENCE, '05-slash-menu.png'), fullPage: true })
     await page.getByTestId('slash-item-0').click()
-    await expect(draft).toHaveValue('请通过测试插件查询病区概况。')
-    await draft.fill('')
+    const chip = page.getByTestId('composer-plugin-chip')
+    await expect(chip).toBeVisible()
+    await expect(chip).toContainText('测试插件')
+    await expect(draft).toHaveValue('')
+    await expect(page.getByTestId('chat-send')).toBeEnabled()
+    await draft.press('Backspace')
+    await expect(page.getByTestId('composer-plugin-chip')).toHaveCount(0)
 
     // ---------- 5. 内置浏览器面板：手动导航 + 页面内容 + 宽度拖拽 ----------
     await page.getByTestId('nav-browser').click()

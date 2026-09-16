@@ -12,6 +12,9 @@ import { IconCompress, IconNewSession, IconGroupProfile } from './ui/Icons'
 import ContextDrawer, { ContextUsageBar, fetchContextPreview } from './ContextDrawer'
 import { useSlashMenu } from './useSlash'
 import { SlashMenu } from './SlashMenu'
+import { ComposerDraft } from './ComposerDraft'
+import { UserTextWithChip } from './PluginChip'
+import { composerPlugin, composerText, emptyComposer, type ComposerState } from './composerState'
 
 /** 项目群聊天窗口（= 微信群） */
 export default function GroupWindow(props: { projectId: string }): React.JSX.Element {
@@ -24,7 +27,7 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
   // 旧会话的流式/更新事件不串进当前会话（threadId 缺失时视为旧数据，保持原行为兼容）
   const streamStale = !!rawStream?.threadId && !!curThread && rawStream.threadId !== curThread
   const stream = streamStale ? undefined : rawStream
-  const [draft, setDraft] = useState('')
+  const [draftComposer, setDraftComposer] = useState<ComposerState>(emptyComposer())
   const [drawer, setDrawer] = useState(false)
   const [contextOpen, setContextOpen] = useState(false)
   const [ctxPreview, setCtxPreview] = useState<ContextPreviewInfo | null>(null)
@@ -40,8 +43,9 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
   const bodyRef = useRef<HTMLDivElement>(null)
   const composerRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
+  const beforeRef = useRef<HTMLTextAreaElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
-  const slash = useSlashMenu({ setDraft, inputRef })
+  const slash = useSlashMenu({ composer: draftComposer, setComposer: setDraftComposer, afterRef: inputRef, beforeRef })
   const composerResize = useComposerResize(composerRef)
 
   useEffect(() => {
@@ -116,9 +120,12 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
   const defaultWorkspace = appInfo ? `${appInfo.dataDir}/workspace` : ''
   const workspaceDir = (project.workspace_dir || '').trim() || defaultWorkspace
 
-  const onDraftChange = (value: string) => {
-    setDraft(value)
-    slash.detect(value)
+  const onDraftChange = (value: string, field: 'before' | 'after' = 'after') => {
+    slash.detect(value, field)
+    if (field !== 'after') {
+      setMention(null)
+      return
+    }
     const el = inputRef.current
     if (!el) return
     const upto = value.slice(0, el.selectionStart ?? value.length)
@@ -132,12 +139,12 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
 
   const pickMention = (name: string) => {
     if (!mention) return
-    const before = draft.slice(0, mention.start)
-    // 补全范围由 mention 自身决定：键盘导航时 textarea 光标未必还停在查询串末尾
+    const cur = draftComposer
+    const fieldText = cur.chip ? cur.after : cur.after
+    const before = fieldText.slice(0, mention.start)
     const end = mention.start + 1 + mention.query.length
-    setDraft(`${before}@${name} ${draft.slice(end)}`)
+    setDraftComposer({ ...cur, after: `${before}@${name} ${fieldText.slice(end)}` })
     setMention(null)
-    // 光标落到插入内容之后，接着输入不用手动挪
     const caret = before.length + name.length + 2
     requestAnimationFrame(() => {
       const el = inputRef.current
@@ -148,14 +155,16 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
   }
 
   const doSend = async () => {
-    // 保留行首缩进（仅裁掉尾部空白/换行）；全空白且无图片时拦截
-    const text = draft.trimEnd()
-    if ((!text.trim() && attachments.images.length === 0) || busy) return
-    setDraft('')
+    // 保留行首缩进（仅裁掉尾部空白/换行）；全空白且无图片、无插件筹码时拦截
+    const text = composerText(draftComposer).trimEnd()
+    const plugin = composerPlugin(draftComposer)
+    if ((!text.trim() && !plugin && attachments.images.length === 0) || busy) return
+    setDraftComposer(emptyComposer())
     setMention(null)
+    slash.close()
     const images = attachments.images
     attachments.clear()
-    await sendGroup(project.id, text, images)
+    await sendGroup(project.id, text, images, plugin)
   }
 
   const doCompress = async () => {
@@ -187,7 +196,7 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
   return (
     <div className="chat-window group-window">
       <div className="chat-header">
-        <Avatar emoji={project.icon} size={34} />
+        <Avatar emoji={project.icon} size={34} busy={busy || !!stream} />
         <div className="chat-header-title">
           <span className="chat-header-name">{project.title}</span>
           <span className="chat-header-sub">{project.memberCount} 个成员 · 群主统筹</span>
@@ -227,7 +236,7 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
         ))}
         {busy && !stream && (
           <div className="msg-row left">
-            <Avatar emoji="⏳" size={34} />
+            <Avatar emoji="⏳" size={34} busy />
             <div className="bubble assistant typing">
               <span className="dot" />
               <span className="dot" />
@@ -242,6 +251,7 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
             stream={stream}
             workspaceDir={workspaceDir}
             time={[...msgs].reverse().find((m) => m.role === 'user')?.time}
+            busy
           />
         )}
       </div>
@@ -313,13 +323,14 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
               <path d="M21 15l-5-5L5 21" />
             </svg>
           </button>
-          <textarea
-            ref={inputRef}
-            value={draft}
-            style={{ height: composerResize.height }}
-            data-testid="chat-draft"
+          <ComposerDraft
+            composer={draftComposer}
+            setComposer={setDraftComposer}
+            afterRef={inputRef}
+            beforeRef={beforeRef}
             placeholder={`在「${project.title}」群里说话…（@某成员 直接指名，支持图片）`}
-            onChange={(e) => onDraftChange(e.target.value)}
+            height={composerResize.height}
+            onDetect={onDraftChange}
             onPaste={(e) => {
               const files = Array.from(e.clipboardData.files || [])
               if (files.length > 0) {
@@ -366,7 +377,7 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
               </svg>
             </button>
           ) : (
-            <button className="send-btn" data-testid="chat-send" onClick={() => void doSend()} disabled={!draft.trim() && attachments.images.length === 0}>
+            <button className="send-btn" data-testid="chat-send" onClick={() => void doSend()} disabled={!composerText(draftComposer).trim() && !draftComposer.chip && attachments.images.length === 0}>
               发送
             </button>
           )}
@@ -431,9 +442,7 @@ function GroupBubble(props: { msg: GroupMessage; workspaceDir?: string }): React
             {isAssistant ? (
               <Markdown text={body} workspaceDir={workspaceDir} />
             ) : (
-              msg.text.split('\n').map((line, i) => (
-                <p key={i}>{line || ' '}</p>
-              ))
+              <UserTextWithChip text={msg.text} plugin={msg.plugin} />
             )}
           </div>
           <CopyButton className="msg-copy" text={body} label="复制消息" testId="msg-copy" />

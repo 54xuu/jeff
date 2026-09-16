@@ -3,7 +3,7 @@ import { api } from './api'
 import { playNotifySound, showDesktopNotify, summarize, windowFocused } from './notify'
 import { readLayout, writeLayout, defaultBrowserWidth, LIST_DEFAULT_WIDTH, type PaneLayout } from './layout/panes'
 import { parseViewport, serializeViewport, VIEWPORT_STORE_KEY, type BrowserViewportRequest } from './browserViewport'
-import type { AgentInfo, ChatMsg, AppInfo, AppSettings, ProviderCatalogItem, ProjectInfo, ProjectMember, TaskInfo, GroupMessage, ChatImage, CronTaskInfo, CronRunInfo, PluginInfo } from '@jeff/core'
+import type { AgentInfo, ChatMsg, AppInfo, AppSettings, ProviderCatalogItem, ProjectInfo, ProjectMember, TaskInfo, GroupMessage, ChatImage, CronTaskInfo, CronRunInfo, PluginInfo, ChatPluginInvoke } from '@jeff/core'
 import { IPC } from '@jeff/core'
 
 export type Tab = 'chats' | 'contacts' | 'schedules' | 'plugins' | 'settings'
@@ -93,8 +93,8 @@ interface JeffState {
   loadHistory: (key: string, opts?: { resetLocal?: boolean }) => Promise<void>
   loadGroupHistory: (projectId: string) => Promise<void>
   loadTasks: (projectId: string) => Promise<void>
-  sendAgent: (agentId: string, text: string, images?: ChatImage[]) => Promise<void>
-  sendGroup: (projectId: string, text: string, images?: ChatImage[]) => Promise<void>
+  sendAgent: (agentId: string, text: string, images?: ChatImage[], plugin?: ChatPluginInvoke) => Promise<void>
+  sendGroup: (projectId: string, text: string, images?: ChatImage[], plugin?: ChatPluginInvoke) => Promise<void>
   newAgentSession: (agentId: string) => Promise<void>
   stopAgent: (agentId: string) => Promise<void>
   stopGroup: (projectId: string) => Promise<void>
@@ -304,14 +304,14 @@ export const useStore = create<JeffState>((set, get) => ({
     set((s) => ({ tasks: { ...s.tasks, [projectId]: tasks } }))
   },
 
-  sendAgent: async (agentId, text, images) => {
+  sendAgent: async (agentId, text, images, plugin) => {
     const key = `agent:${agentId}`
     const now = Date.now()
-    const localUser: ChatMsg = { id: `local-${now}`, role: 'user', text, time: now, ...(images && images.length ? { images } : {}) }
+    const localUser: ChatMsg = { id: `local-${now}`, role: 'user', text, time: now, ...(images && images.length ? { images } : {}), ...(plugin ? { plugin } : {}) }
     set((s) => ({ sending: { ...s.sending, [key]: true } }))
     set((s) => ({ messages: { ...s.messages, [key]: [...(s.messages[key] || []), localUser] } }))
     try {
-      const r = await api.invoke<{ ok: boolean; stopped?: boolean; cancelled?: boolean }>(IPC.chatSend, { agentId, text, ...(images && images.length ? { images } : {}) })
+      const r = await api.invoke<{ ok: boolean; stopped?: boolean; cancelled?: boolean }>(IPC.chatSend, { agentId, text, ...(images && images.length ? { images } : {}), ...(plugin ? { plugin } : {}) })
       // 先重拉历史（整段替换）再补提示，否则刚插入的提示会被冲掉
       await get().loadHistory(key)
       if (r?.stopped) {
@@ -340,7 +340,7 @@ export const useStore = create<JeffState>((set, get) => ({
     }
   },
 
-  sendGroup: async (projectId, text, images) => {
+  sendGroup: async (projectId, text, images, plugin) => {
     const key = projectId
     // 先记下这轮落在哪个话题：用户中途切了话题，回复就不算"正在看的会话"
     const threadId = get().groupThreads[projectId]
@@ -351,12 +351,12 @@ export const useStore = create<JeffState>((set, get) => ({
         ...s.groupMessages,
         [key]: [
           ...(s.groupMessages[key] || []),
-          { id: `local-${now}`, role: 'user', text, time: now, ...(images && images.length ? { images } : {}), sender_name: '我', sender_avatar: '🧑' },
+          { id: `local-${now}`, role: 'user', text, time: now, ...(images && images.length ? { images } : {}), ...(plugin ? { plugin } : {}), sender_name: '我', sender_avatar: '🧑' },
         ],
       },
     }))
     try {
-      await api.invoke(IPC.groupSend, { projectId, text, ...(images && images.length ? { images } : {}) })
+      await api.invoke(IPC.groupSend, { projectId, text, ...(images && images.length ? { images } : {}), ...(plugin ? { plugin } : {}) })
       await get().loadGroupHistory(key)
       await get().loadTasks(key)
       // 整条协作流水线跑完（await 返回）才提醒一次，中间每一跳的流式 done 不响

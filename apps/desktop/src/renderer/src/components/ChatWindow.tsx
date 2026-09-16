@@ -12,6 +12,9 @@ import AgentProfileDrawer from './AgentProfileDrawer'
 import { IconCompress, IconNewSession, IconProfile } from './ui/Icons'
 import { useSlashMenu } from './useSlash'
 import { SlashMenu } from './SlashMenu'
+import { ComposerDraft } from './ComposerDraft'
+import { UserTextWithChip } from './PluginChip'
+import { composerPlugin, composerText, emptyComposer, type ComposerState } from './composerState'
 
 export default function ChatWindow(props: { agentId: string }): React.JSX.Element {
   const { agents, messages, sending, streaming, loadHistory, sendAgent, newAgentSession, stopAgent, catalog, settings, appInfo } = useStore()
@@ -22,7 +25,7 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
   const msgs = messages[key] || []
   const sendingNow = !!sending[key]
   const stream = streaming[key]
-  const [draft, setDraft] = useState('')
+  const [draftComposer, setDraftComposer] = useState<ComposerState>(emptyComposer())
   const [profileOpen, setProfileOpen] = useState(false)
   const [contextOpen, setContextOpen] = useState(false)
   const [ctxPreview, setCtxPreview] = useState<ContextPreviewInfo | null>(null)
@@ -34,7 +37,8 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
   const composerRef = useRef<HTMLDivElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   const draftRef = useRef<HTMLTextAreaElement>(null)
-  const slash = useSlashMenu({ setDraft, inputRef: draftRef })
+  const draftBeforeRef = useRef<HTMLTextAreaElement>(null)
+  const slash = useSlashMenu({ composer: draftComposer, setComposer: setDraftComposer, afterRef: draftRef, beforeRef: draftBeforeRef })
   const composerResize = useComposerResize(composerRef)
 
   useEffect(() => {
@@ -71,13 +75,15 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
   if (!agent) return <div className="empty-hint">智能体不存在</div>
 
   const doSend = async () => {
-    // 保留行首缩进（仅裁掉尾部空白/换行）；全空白且无图片时拦截
-    const text = draft.trimEnd()
-    if ((!text.trim() && attachments.images.length === 0) || sendingNow) return
-    setDraft('')
+    // 保留行首缩进（仅裁掉尾部空白/换行）；全空白且无图片、无插件筹码时拦截
+    const text = composerText(draftComposer).trimEnd()
+    const plugin = composerPlugin(draftComposer)
+    if ((!text.trim() && !plugin && attachments.images.length === 0) || sendingNow) return
+    setDraftComposer(emptyComposer())
+    slash.close()
     const images = attachments.images
     attachments.clear()
-    await sendAgent(agent.id, text, images)
+    await sendAgent(agent.id, text, images, plugin)
   }
 
   const doCompress = async () => {
@@ -99,7 +105,7 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
   return (
     <div className="chat-window" data-testid="chat-window">
       <div className="chat-header">
-        <Avatar emoji={agent.avatar} size={34} />
+        <Avatar emoji={agent.avatar} size={34} busy={sendingNow || !!stream} />
         <div className="chat-header-title">
           <span className="chat-header-name">{agent.name}</span>
           <span className="chat-header-sub">{agent.builtin ? 'Jeff 内置管家' : agent.description || '智能体'}</span>
@@ -143,7 +149,7 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
         ))}
         {sendingNow && !stream && (
           <div className="msg-row left">
-            <Avatar emoji={agent.avatar} size={34} />
+            <Avatar emoji={agent.avatar} size={34} busy />
             <div className="bubble assistant typing">
               <span className="dot" />
               <span className="dot" />
@@ -158,6 +164,7 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
             stream={stream}
             workspaceDir={workspaceDir}
             time={[...msgs].reverse().find((m) => m.role === 'user')?.time}
+            busy
           />
         )}
       </div>
@@ -220,16 +227,14 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
               <path d="M21 15l-5-5L5 21" />
             </svg>
           </button>
-          <textarea
-            ref={draftRef}
-            value={draft}
-            style={{ height: composerResize.height }}
-            data-testid="chat-draft"
+          <ComposerDraft
+            composer={draftComposer}
+            setComposer={setDraftComposer}
+            afterRef={draftRef}
+            beforeRef={draftBeforeRef}
             placeholder={agent.builtin ? '跟小杰说点什么…（例如：帮我创建一个「架构师阿伟」；输入 / 调用插件指令）' : `发消息给 ${agent.name}…（支持粘贴/拖拽图片；输入 / 调用插件指令）`}
-            onChange={(e) => {
-              setDraft(e.target.value)
-              slash.detect(e.target.value)
-            }}
+            height={composerResize.height}
+            onDetect={(value, field) => slash.detect(value, field)}
             onPaste={(e) => {
               const files = Array.from(e.clipboardData.files || [])
               if (files.length > 0) {
@@ -253,7 +258,7 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
               </svg>
             </button>
           ) : (
-            <button className="send-btn" data-testid="chat-send" onClick={() => void doSend()} disabled={!draft.trim() && attachments.images.length === 0}>
+            <button className="send-btn" data-testid="chat-send" onClick={() => void doSend()} disabled={!composerText(draftComposer).trim() && !draftComposer.chip && attachments.images.length === 0}>
               发送
             </button>
           )}
@@ -309,9 +314,7 @@ export function MessageBubble(props: { msg: ChatMsg; agentName: string; agentAva
             {isMarkdown ? (
               <Markdown text={body} workspaceDir={workspaceDir} />
             ) : (
-              msg.text.split('\n').map((line, i) => (
-                <p key={i}>{line || ' '}</p>
-              ))
+              <UserTextWithChip text={msg.text} plugin={msg.plugin} />
             )}
           </div>
           <CopyButton className="msg-copy" text={body} label="复制消息" testId="msg-copy" />

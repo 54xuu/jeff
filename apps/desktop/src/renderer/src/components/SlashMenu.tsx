@@ -1,7 +1,7 @@
 import type { SlashCommand } from '../store'
 import { PluginIcon } from './PluginIcon'
 
-/** 聊天框 `/` 插件指令菜单（私聊 / 群聊共用） */
+/** 聊天框 `/` 指令菜单：按组渲染（本轮只有「插件」） */
 export function SlashMenu(props: {
   candidates: SlashCommand[]
   index: number
@@ -10,7 +10,11 @@ export function SlashMenu(props: {
 }): React.JSX.Element {
   return (
     <div className="mention-pop slash-pop" data-testid="slash-pop">
-      <div className="slash-head">插件指令</div>
+      {props.candidates.length > 0 && (
+        <div className="slash-head" data-testid="slash-group-plugin">
+          插件
+        </div>
+      )}
       {props.candidates.map((c, i) => (
         <button
           key={`${c.pluginId}${c.name}`}
@@ -20,12 +24,10 @@ export function SlashMenu(props: {
           onMouseEnter={() => props.setIndex(i)}
           onClick={() => props.onPick(c)}
         >
-          <span className="slash-plugin-tag">
-            <PluginIcon icon={c.icon} iconSvg={c.iconSvg} size={18} className="slash-plugin-icon" />
-            <span className="slash-plugin-name">{c.pluginName}</span>
-          </span>
-          <code className="slash-cmd-tag">{c.name}</code>
-          {c.description && <span className="slash-desc">{c.description}</span>}
+          <span className="slash-cmd">{c.name}</span>
+          <PluginIcon icon={c.icon} iconSvg={c.iconSvg} size={16} className="slash-item-icon" />
+          <span className="slash-name">{c.pluginName}</span>
+          {c.description ? <span className="slash-desc">{c.description}</span> : null}
         </button>
       ))}
     </div>

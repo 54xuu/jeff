@@ -4,6 +4,7 @@ import { agentSlug } from '../agents/registry.js'
 import type { OcClient, AssistantInfo } from '../oc/client.js'
 import { agentPromptOpts } from '../util/modelKey.js'
 import { composeAutoTitle, placeholderTitle } from '../util/title.js'
+import { decodePluginUserMessage, type ChatPluginInvoke } from '../plugins/invoke.js'
 
 /** UI 侧聊天消息（私聊与群聊共用形状） */
 export interface ChatMsg {
@@ -18,6 +19,8 @@ export interface ChatMsg {
   /** 消息携带的图片（用户发送或历史回放） */
   images?: Array<{ mime: string; dataUrl: string }>
   meta?: Record<string, unknown>
+  /** 用户消息附带的插件筹码（历史从编码文本解出；气泡只显示 text + 筹码） */
+  plugin?: ChatPluginInvoke
 }
 
 const SESSION_KEY = (agentId: string) => `session:private:${agentId}`
@@ -130,7 +133,7 @@ export class PrivateChat {
     const createdAt = Number(kv.get(key))
     if (!createdAt) return
     try {
-      await this.getOc().updateSession(sessionId, { title: composeAutoTitle(createdAt, text) })
+      await this.getOc().updateSession(sessionId, { title: composeAutoTitle(createdAt, decodePluginUserMessage(text).displayText) })
       kv.delete(key)
     } catch (err) {
       this.hooks?.onDebugLog?.('private-autotitle-fail', {
@@ -255,17 +258,19 @@ export class PrivateChat {
         }
       }
       if (role === 'assistant' && !text.trim() && tools.length === 0) continue
+      const decoded = role === 'user' ? decodePluginUserMessage(text) : null
       out.push({
         id: info.id,
         role,
         agentId: info.agent,
-        text,
+        text: decoded ? decoded.displayText : text,
         // 界面时间要能用来量「这一轮花了多久」：智能体消息取完成时刻（与群聊落库 created_at 同理），
         // 用户消息取发送时刻。若用创建的 created，思考 + 工具的耗时会全部漏掉。
         time: (role === 'assistant' ? info.time?.completed ?? info.time?.created : info.time?.created) || 0,
         ...(reasoning.length ? { reasoning } : {}),
         ...(tools.length ? { tools } : {}),
         ...(images.length ? { images } : {}),
+        ...(decoded?.invoke ? { plugin: decoded.invoke } : {}),
       })
     }
     return out
