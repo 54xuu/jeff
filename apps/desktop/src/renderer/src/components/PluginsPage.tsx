@@ -9,14 +9,14 @@ import { Dialog } from './ui/Dialog'
 import { Field } from './ui/Field'
 
 /**
- * 插件视图：装了什么、提供哪些能力和快捷指令、启停与密钥、以及插件的 WebDAV 备份/恢复。
+ * 插件视图：装了什么、提供哪些能力和快捷指令、启停与设置（密钥 + 首页），以及跳转到同步页备份。
  * 插件启用后它的 MCP 会被自动注入引擎（免去手工配 MCP），因此这里同时是「MCP 包装」的入口。
  */
 export default function PluginsPage(): React.JSX.Element {
   const { plugins, refreshPlugins } = useStore()
   const [busy, setBusy] = useState<string | null>(null)
   const [detail, setDetail] = useState<PluginInfo | null>(null)
-  const [secretFor, setSecretFor] = useState<PluginInfo | null>(null)
+  const [settingsFor, setSettingsFor] = useState<PluginInfo | null>(null)
   const [toast, setToast] = useState<{ kind: 'success' | 'error'; message: string } | null>(null)
 
   useEffect(() => {
@@ -119,13 +119,17 @@ export default function PluginsPage(): React.JSX.Element {
                   <path d="M12 16v-4M12 8h.01" />
                 </svg>
               </button>
-              {p.mcp && (
-                <button className="icon-btn" title="配置密钥 / 认证" onClick={() => setSecretFor(p)}>
-                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M15 7a4 4 0 1 1-3.5 5.9L5 19H2v-3l6.1-6.5A4 4 0 0 1 15 7z" />
-                  </svg>
-                </button>
-              )}
+              <button
+                className="icon-btn"
+                title="插件设置（密钥 / 首页）"
+                onClick={() => setSettingsFor(p)}
+                data-testid={`plugin-settings-${p.id}`}
+              >
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="12" cy="12" r="3" />
+                  <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" />
+                </svg>
+              </button>
               {p.homepage && (
                 <button className="icon-btn" title="用内置浏览器打开首页" onClick={() => openHome(p)} data-testid={`plugin-home-${p.id}`}>
                   <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -201,14 +205,14 @@ export default function PluginsPage(): React.JSX.Element {
         </Dialog>
       )}
 
-      {secretFor && (
-        <SecretDialog
-          plugin={secretFor}
-          onClose={() => setSecretFor(null)}
+      {settingsFor && (
+        <SettingsDialog
+          plugin={settingsFor}
+          onClose={() => setSettingsFor(null)}
           onSaved={async () => {
-            setSecretFor(null)
+            setSettingsFor(null)
             await refreshPlugins()
-            setToast({ kind: 'success', message: '密钥已保存（仅本机，不参与 WebDAV 同步）' })
+            setToast({ kind: 'success', message: '插件设置已保存（密钥仅本机；首页已写回清单）' })
           }}
         />
       )}
@@ -218,19 +222,55 @@ export default function PluginsPage(): React.JSX.Element {
   )
 }
 
-function SecretDialog(props: { plugin: PluginInfo; onClose: () => void; onSaved: () => Promise<void> }): React.JSX.Element {
+function SettingsDialog(props: { plugin: PluginInfo; onClose: () => void; onSaved: () => Promise<void> }): React.JSX.Element {
   const [secret, setSecret] = useState('')
+  const [secretDirty, setSecretDirty] = useState(false)
+  const [homepage, setHomepage] = useState(props.plugin.homepage || '')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const headerKeys = Object.keys(props.plugin.mcp?.headers || {})
+  const headerVals = Object.values(props.plugin.mcp?.headers || {})
+  const needsSecret = headerVals.some((v) => String(v).includes('${SECRET}'))
+  const headerKeys = Object.keys(props.plugin.mcp?.headers || {}).filter((k) => String(props.plugin.mcp?.headers?.[k] || '').includes('${SECRET}'))
+
   return (
-    <Dialog title={`${props.plugin.name} · 密钥`} onClose={props.onClose}>
-      <div className="pv-grid">
-        <Field label="密钥 / 令牌" span hint={headerKeys.length ? `将替换请求头里的 ${headerKeys.map((h) => `\${SECRET}`).join('、')} 占位（${headerKeys.join('、')}）` : '该插件未声明需要请求头的占位'}>
-          <input type="password" value={secret} onChange={(e) => setSecret(e.target.value)} placeholder="粘贴令牌（留空 = 清除）" data-testid="plugin-secret" />
+    <Dialog title={`${props.plugin.name} · 设置`} onClose={props.onClose}>
+      <div className="pv-grid" data-testid="plugin-settings">
+        <Field
+          label="官网首页"
+          span
+          hint="写回 plugin.json，随插件目录同步；留空 = 清除。用内置浏览器打开。"
+        >
+          <input
+            type="url"
+            value={homepage}
+            onChange={(e) => setHomepage(e.target.value)}
+            placeholder="https://…（留空 = 清除）"
+            data-testid="plugin-homepage"
+          />
+        </Field>
+        <Field
+          label="密钥 / 令牌"
+          span
+          hint={
+            needsSecret
+              ? `将替换请求头里的 \${SECRET} 占位（${headerKeys.join('、') || '相关头'}）` +
+                (props.plugin.hasSecret ? '；已存密钥，不改请留空' : '')
+              : '该插件未声明密钥占位，仍可保存（仅本机）' + (props.plugin.hasSecret ? '；已存密钥，不改请留空' : '')
+          }
+        >
+          <input
+            type="password"
+            value={secret}
+            onChange={(e) => {
+              setSecret(e.target.value)
+              setSecretDirty(true)
+            }}
+            placeholder={props.plugin.hasSecret ? '已存密钥（改则覆盖；清空并保存 = 清除）' : '粘贴令牌（留空且未改 = 不动）'}
+            data-testid="plugin-secret"
+          />
         </Field>
       </div>
-      <p className="settings-tip">密钥只存在本机（kv），不参与 WebDAV 同步；插件配置里的 ${'{SECRET}'} 会在注入引擎时被替换。</p>
+      <p className="settings-tip">密钥只存在本机（kv），不参与 WebDAV 同步；首页地址写入插件清单，可随目录备份恢复。</p>
       {error && <Toast kind="error" message={error} onClose={() => setError(null)} />}
       <div className="settings-actions" style={{ justifyContent: 'flex-start' }}>
         <Button
@@ -240,8 +280,14 @@ function SecretDialog(props: { plugin: PluginInfo; onClose: () => void; onSaved:
           onClick={() => {
             setSaving(true)
             setError(null)
+            const payload: { id: string; homepage: string; secret?: string } = {
+              id: props.plugin.id,
+              homepage,
+            }
+            // 仅当用户动过密钥框才提交：空串 = 清除；未动则保留本机已有密钥
+            if (secretDirty) payload.secret = secret
             void api
-              .invoke(IPC.pluginSaveSecret, { id: props.plugin.id, secret })
+              .invoke(IPC.pluginSaveSettings, payload)
               .then(() => props.onSaved())
               .catch((e) => setError(String((e as Error)?.message || e)))
               .finally(() => setSaving(false))

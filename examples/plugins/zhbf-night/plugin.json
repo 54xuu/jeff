@@ -1,35 +1,15 @@
 {
   "id": "zhbf-night",
   "name": "智慧病房",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "icon": "🏥",
   "description": "护士站看板首页统计与病区只读查询（zhbf-night MCP：免手工配 MCP）",
   "homepage": "http://192.168.3.249:4199/b/1186f99a68aa415582d1d319f0b2b2e9",
   "commands": [
     {
       "name": "/zhbf",
-      "description": "查看病区看板概况",
-      "prompt": "请通过智慧病房插件（board_home_overview，病区 WARD-1）查询护士站看板首页全部统计，用要点汇总病人总数、护理等级、入院/出院、病危病重与需要关注的名单。"
-    },
-    {
-      "name": "/入院",
-      "description": "今日入院（双口径）",
-      "prompt": "请通过智慧病房插件调用 board_today_admissions（wardCode=WARD-1），同时说明「当前班次」与「自然日」两种口径的人数与名单。"
-    },
-    {
-      "name": "/出院",
-      "description": "今日出院（双口径）",
-      "prompt": "请通过智慧病房插件调用 board_today_discharges（wardCode=WARD-1），同时说明「当前班次」与「自然日」两种口径的人数与名单。"
-    },
-    {
-      "name": "/危重",
-      "description": "病危病重名单",
-      "prompt": "请通过智慧病房插件调用 board_critical_patients（wardCode=WARD-1），列出病危与病重患者的床号和姓名。"
-    },
-    {
-      "name": "/labs",
-      "description": "查近 3 天异常检验",
-      "prompt": "请通过智慧病房插件查询最近 3 天的异常检验结果（含 H/L 标记），按床号列出，并给出优先处理建议。"
+      "description": "智慧病房看板问答",
+      "prompt": "请通过智慧病房插件查询内科一病区（WARD-1）数据并回答。按用户问题选工具：看板概况/在院/护理等级/护理标记 → board_home_overview；今天入院 → board_today_admissions（必须同时说明「当前班次」与「自然日」双口径）；今天出院 → board_today_discharges（同样双口径）；病危病重 → board_critical_patients；检验异常 → ward_labs；综合患者/排班 → ward_overview。用简体中文要点交班，数字必须来自工具返回。"
     }
   ],
   "mcp": {

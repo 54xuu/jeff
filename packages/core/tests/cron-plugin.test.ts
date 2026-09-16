@@ -313,6 +313,44 @@ describe('PluginManager', () => {
     expect(cmds[0].pluginName).toBe('A 插件')
   })
 
+  it('每插件最多一条指令；指令名须英文或拼音', () => {
+    writePlugin('two-cmds', {
+      id: 'two-cmds',
+      name: '两条',
+      commands: [
+        { name: '/a', prompt: 'p1' },
+        { name: '/b', prompt: 'p2' },
+      ],
+    })
+    expect(mgr().list().find((p) => p.id === 'two-cmds')?.error).toMatch(/只能有一条快捷指令/)
+
+    writePlugin('zh-cmd', {
+      id: 'zh-cmd',
+      name: '中文指令',
+      commands: [{ name: '/入院', prompt: '查入院' }],
+    })
+    expect(mgr().list().find((p) => p.id === 'zh-cmd')?.error).toMatch(/英文或拼音/)
+
+    writePlugin('ok-cmd', {
+      id: 'ok-cmd',
+      name: '合法',
+      commands: [{ name: '/zhbf', prompt: '查看板' }],
+    })
+    expect(mgr().list().find((p) => p.id === 'ok-cmd')?.error).toBeUndefined()
+  })
+
+  it('setHomepage 写回 plugin.json；非法协议拒绝', () => {
+    writePlugin('home', { id: 'home', name: '首页', homepage: 'http://old.example/' })
+    const m = mgr()
+    const after = m.setHomepage('home', 'https://new.example/dash')
+    expect(after.homepage).toBe('https://new.example/dash')
+    const raw = JSON.parse(fs.readFileSync(path.join(tmp, 'plugins', 'home', 'plugin.json'), 'utf8'))
+    expect(raw.homepage).toBe('https://new.example/dash')
+    m.setHomepage('home', '')
+    expect(m.get('home')!.homepage).toBeFalsy()
+    expect(() => m.setHomepage('home', 'file:///etc/passwd')).toThrow(/http\/https/)
+  })
+
   it('删除插件：目录、启用状态与密钥一并清理', () => {
     writePlugin('gone', { id: 'gone', name: '待删' })
     const m = mgr()
@@ -482,7 +520,8 @@ describe('plugin tools（小杰对话式开发插件）', () => {
       name: '智慧病房',
       description: '病区动态',
       homepage: 'http://localhost:5173',
-      commands: [{ name: '/zhbf', prompt: '查病区概况' }],
+      command: '/zhbf',
+      command_prompt: '查病区概况',
       mcp_url: 'http://127.0.0.1:8080/mcp',
       mcp_headers: '{"X-Agent-Token":"${SECRET}"}',
     })) as { enabled: boolean; next: string; mcp: { kind: string; target: string } }
@@ -530,7 +569,8 @@ describe('plugin tools（小杰对话式开发插件）', () => {
       icon: '🏥',
       description: '原简介',
       homepage: 'http://localhost:5173',
-      commands: [{ name: '/k', prompt: 'p' }],
+      command: '/k',
+      command_prompt: 'p',
       mcp_url: 'http://ok/mcp',
     })
     // 模型典型的「全字段补空」调用
@@ -541,6 +581,8 @@ describe('plugin tools（小杰对话式开发插件）', () => {
       icon: '',
       description: '',
       homepage: '',
+      command: '',
+      command_prompt: '',
       commands: [],
       mcp_url: '',
       mcp_command: '',
@@ -607,7 +649,8 @@ describe('plugin tools（小杰对话式开发插件）', () => {
     const r = (await call('jeff_plugin_create', {
       id: 'cmd-only',
       name: '纯指令',
-      commands: [{ name: '/hello', prompt: '你好' }],
+      command: '/hello',
+      command_prompt: '你好',
       without_mcp: true,
     })) as { mcp: unknown; next: string }
     expect(r.mcp).toBeNull()

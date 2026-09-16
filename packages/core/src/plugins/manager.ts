@@ -102,6 +102,28 @@ export class PluginManager {
   }
 
   /**
+   * 更新官网首页（写回 plugin.json，随插件目录同步）。
+   * 空串 = 清除 homepage；非空须为 http(s)。
+   */
+  setHomepage(id: string, homepage: string): PluginInfo {
+    const cur = this.get(id)
+    if (!cur) throw new Error('插件不存在')
+    if (cur.error) throw new Error(`插件配置有误，无法改首页：${cur.error}`)
+    const next = String(homepage || '').trim()
+    if (next && !/^https?:\/\//i.test(next)) throw new Error(`homepage 必须是 http/https 地址：${next}`)
+    return this.write({
+      id: cur.id,
+      name: cur.name,
+      version: cur.version,
+      icon: cur.icon,
+      description: cur.description,
+      homepage: next,
+      commands: cur.commands,
+      mcp: cur.mcp,
+    })
+  }
+
+  /**
    * 从本地目录导入插件：校验 plugin.json 后整目录复制到 ~/.jeff/plugins/<id>。
    * 同名已存在时覆盖（先校验再落盘，避免把已有插件搞坏）。
    */
@@ -309,12 +331,19 @@ export class PluginManager {
     const commands: PluginCommand[] = []
     if (raw.commands !== undefined) {
       if (!Array.isArray(raw.commands)) return { info: null, error: 'commands 必须是数组' }
+      if (raw.commands.length > 1) {
+        return { info: null, error: '每个插件只能有一条快捷指令（靠 prompt 描述去调用不同工具/功能）' }
+      }
       for (const c of raw.commands as unknown[]) {
         if (typeof c !== 'object' || c === null) return { info: null, error: 'commands 每一项必须是对象' }
         const o = c as Record<string, unknown>
         const nm = String(o.name ?? '').trim()
         const pr = String(o.prompt ?? '').trim()
         if (!nm.startsWith('/')) return { info: null, error: `指令名必须以 / 开头：${nm || '(空)'}` }
+        // 英文或拼音：/ 后首字符字母，其余字母数字 _ -
+        if (!/^\/[a-zA-Z][a-zA-Z0-9_-]*$/.test(nm)) {
+          return { info: null, error: `指令名须为英文或拼音（如 /zhbf），不能含中文或空格：${nm}` }
+        }
         if (!pr) return { info: null, error: `指令 ${nm} 缺少 prompt` }
         commands.push({ name: nm, ...(o.description ? { description: String(o.description) } : {}), prompt: pr })
       }

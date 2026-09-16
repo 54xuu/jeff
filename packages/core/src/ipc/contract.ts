@@ -101,6 +101,7 @@ export const IPC = {
   pluginsList: 'plugins:list',
   pluginSetEnabled: 'plugin:setEnabled',
   pluginSaveSecret: 'plugin:saveSecret',
+  pluginSaveSettings: 'plugin:saveSettings',
   pluginImport: 'plugin:import',
   pluginDelete: 'plugin:delete',
   pluginRefresh: 'plugin:refresh',

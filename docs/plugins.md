@@ -31,11 +31,12 @@
   "version": "1.0.0",              // 可选，仅展示
   "icon": "🏥",                     // 可选，emoji 图标
   "description": "一句话说明这个插件干什么",  // 可选
-  "homepage": "http://localhost:5173/dashboard", // 可选，http(s)；插件页可一键用内置浏览器打开
+  "homepage": "http://localhost:5173/dashboard", // 可选，http(s)；写在清单里可随目录同步；插件页「设置」可改
 
-  // 可选：聊天框输入 / 呼出的快捷指令（name 必须以 / 开头，prompt 是选中后插入并发送的内容）
+  // 可选且最多 1 条：聊天框 / 快捷指令。name 须英文或拼音（/[a-zA-Z][a-zA-Z0-9_-]*），
+  // prompt 写清功能分流（问入院/出院/危重等分别调哪个工具），不要拆成多条中文指令
   "commands": [
-    { "name": "/zhbf", "description": "查看病区整体动态", "prompt": "请通过智慧病房插件查询当前病区概况…" }
+    { "name": "/zhbf", "description": "智慧病房看板问答", "prompt": "请通过智慧病房插件查询…（按问题选 board_* / ward_* 工具）" }
   ],
 
   // 可选：MCP 接入声明。启用插件时自动写入 Jeff 的 MCP 配置（key = plugin-<id>），停用即摘除
@@ -53,7 +54,7 @@ local（stdio）型 MCP 服务改用 `command` 与 `environment`：
 "mcp": { "command": ["npx", "-y", "@modelcontextprotocol/server-filesystem", "/data"], "environment": { "FOO": "bar" } }
 ```
 
-`mcp` 与 `commands` 都可以省略（纯指令插件、纯展示插件都合法）。
+`mcp` 与 `commands` 都可以省略（纯展示插件合法）。`commands` 若提供则**只能有一条**。
 
 ## 跟小杰说句话就能做插件（v1.8.2+）
 
@@ -72,10 +73,10 @@ local（stdio）型 MCP 服务改用 `command` 与 `environment`：
   这是刻意的安全闸——本地命令会拉起子进程。
 - 小杰**没有文件与命令工具**（`bash` / `edit` / `write` / `patch` 在它的 agent 定义里被禁用），
   插件只能通过 `jeff_plugin_*` 结构化落盘，不能由它直接改磁盘文件。
-- 参数是**平铺标量**（`mcp_url` / `mcp_command` / `mcp_headers` / `mcp_env`，附带文件用 `files` 数组）。
-  这是实测调出来的形状：早期把 MCP 声明写成嵌套对象时，模型侧会把整个对象丢成空串，
-  插件就落成「没有 MCP、没有附带文件」的半成品。空串/空数组一律按「没传」处理，
-  避免模型补默认值把已配好的字段抹掉（否则一次「全字段补空」的 update 就能清空插件）。
+- 参数是**平铺标量**（快捷指令用 `command` / `command_prompt` / `command_description`；
+  MCP 用 `mcp_url` / `mcp_command` / `mcp_headers` / `mcp_env`；附带文件用 `files` 数组）。
+  这是实测调出来的形状：早期把嵌套对象塞进参数时，模型侧会把整个对象丢成空串。
+  空串/空数组一律按「没传」处理，避免模型补默认值把已配好的字段抹掉。
 
 | 工具 | 用途 |
 |------|------|
@@ -85,11 +86,13 @@ local（stdio）型 MCP 服务改用 `command` 与 `environment`：
 | `jeff_plugin_enable` | 启用/停用（本地命令型会被拒绝） |
 | `jeff_plugin_delete` | 卸载（先与用户确认） |
 
-## 密钥管理
+## 密钥与首页（插件设置）
 
 - 清单里需要认证的地方写 `${SECRET}` 占位符。
-- 用户在 **插件页 → 钥匙图标** 里粘贴令牌；Jeff 存到本机 kv（`plugin-secret:<id>`），**不进 WebDAV**。
-- 注入引擎时占位符被替换为真实值——所以插件目录本身可以安全地提交到 Git 或同步到云端。
+- 用户在 **插件页 → 齿轮（设置）** 里同时配置：
+  - **密钥 / 令牌**：存本机 kv（`plugin-secret:<id>`），**不进 WebDAV**；注入引擎时替换 `${SECRET}`。
+  - **官网首页**：写回 `plugin.json` 的 `homepage`（空 = 清除），随插件目录同步。
+- 未声明 `${SECRET}` 的插件仍可打开设置改首页；密钥框会提示「未声明密钥占位」。
 
 ## 启用后发生什么
 
@@ -116,6 +119,8 @@ local（stdio）型 MCP 服务改用 `command` 与 `environment`：
 | `homepage 必须是 http/https` | 填了 `file://` 等本地协议 |
 | `mcp.url 必须是 http/https` | 地址协议不对 |
 | `指令名必须以 / 开头` | `commands[].name` 少了斜杠 |
+| `每个插件只能有一条快捷指令` | `commands` 超过 1 条 |
+| `指令名须为英文或拼音` | name 含中文、空格或不合法字符 |
 | `mcp 需要 url（remote）或 command（local）` | MCP 声明不完整 |
 
 ## 给所有智能体用的能力

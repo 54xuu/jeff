@@ -80,17 +80,35 @@ function asCommand(v: unknown): string[] | undefined {
   return flat
 }
 
-/** 快捷指令：接受 [{name,prompt,description}] / JSON 文本；name 自动补 / 前缀；缺 prompt 的条目丢弃（清单校验要求 prompt） */
-function asCommands(v: unknown): PluginCommand[] | undefined {
-  const arr = asArray(v)
+/**
+ * 单条快捷指令：优先平铺标量 command / command_prompt / command_description
+ * （嵌套对象模型侧会丢）；兼容旧形 commands 数组/JSON。
+ * name 自动补 / 前缀；缺 prompt 视为未提供。
+ */
+function asSingleCommand(args: {
+  command?: unknown
+  command_prompt?: unknown
+  command_description?: unknown
+  commands?: unknown
+}): PluginCommand[] | undefined {
+  const name = str(args.command)
+  const prompt = str(args.command_prompt)
+  if (name && prompt) {
+    const cmd: PluginCommand = { name: name.startsWith('/') ? name : `/${name}`, prompt }
+    const desc = str(args.command_description)
+    if (desc) cmd.description = desc
+    return [cmd]
+  }
+  // 兼容旧形：数组 / JSON（写盘前仍会被 parseManifest 截成最多 1 条）
+  const arr = asArray(args.commands)
   if (!arr) return undefined
   const out: PluginCommand[] = []
   for (const item of arr) {
     const o = asObject(item)
     const raw = str(o?.name ?? o?.command)
-    const prompt = str(o?.prompt)
-    if (!raw || !prompt) continue
-    const cmd: PluginCommand = { name: raw.startsWith('/') ? raw : `/${raw}`, prompt }
+    const pr = str(o?.prompt)
+    if (!raw || !pr) continue
+    const cmd: PluginCommand = { name: raw.startsWith('/') ? raw : `/${raw}`, prompt: pr }
     const desc = str(o?.description)
     if (desc) cmd.description = desc
     out.push(cmd)
@@ -150,6 +168,11 @@ export function registerPluginTools(reg: ToolBridge, deps: PluginToolDeps): void
     icon?: string
     description?: string
     homepage?: string
+    /** 单条快捷指令（平铺；嵌套对象模型侧会丢） */
+    command?: unknown
+    command_prompt?: unknown
+    command_description?: unknown
+    /** @deprecated 兼容旧形；内部仍写成最多一条 */
     commands?: unknown
     mcp_url?: unknown
     mcp_headers?: unknown
@@ -182,7 +205,7 @@ export function registerPluginTools(reg: ToolBridge, deps: PluginToolDeps): void
       icon: str(args.icon) ?? existing?.icon ?? '🧩',
       description: str(args.description) ?? existing?.description ?? '',
       homepage: str(args.homepage) ?? existing?.homepage ?? '',
-      commands: asCommands(args.commands) ?? existing?.commands ?? [],
+      commands: asSingleCommand(args) ?? existing?.commands ?? [],
       mcp,
       ...(files ? { files } : {}),
     })

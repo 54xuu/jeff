@@ -581,6 +581,10 @@ export function registerIpc(core: JeffCore): void {
       const d = p as { id: string; secret: string }
       return core.savePluginSecret(d.id, d.secret)
     },
+    [IPC.pluginSaveSettings]: async (p) => {
+      const d = p as { id: string; secret?: string; homepage?: string }
+      return core.savePluginSettings(d)
+    },
     [IPC.pluginDelete]: async (p) => core.deletePlugin((p as { id: string }).id),
     [IPC.pluginRefresh]: async () => core.refreshPlugins(),
     [IPC.pluginBackupNow]: async () => core.backupPluginsNow(),

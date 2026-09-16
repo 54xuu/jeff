@@ -904,6 +904,27 @@ export class JeffCore extends EventEmitter {
     return info
   }
 
+  /**
+   * 插件设置：密钥（本机 kv）与/或 homepage（写回 plugin.json）。
+   * 只处理传入的字段；secret 传空串 = 清除密钥。
+   */
+  savePluginSettings(input: {
+    id: string
+    secret?: string
+    homepage?: string
+  }): import('./ipc/contract.js').PluginInfo {
+    const id = String(input.id || '').trim()
+    if (!id) throw new Error('id 不能为空')
+    if (!this.plugins.get(id)) throw new Error('插件不存在')
+    if (input.homepage !== undefined) this.plugins.setHomepage(id, input.homepage)
+    if (input.secret !== undefined) this.plugins.saveSecret(id, input.secret)
+    this.markRegistryDirty()
+    this.bus.emit('data-changed', 'plugins')
+    const info = this.plugins.get(id)
+    if (!info) throw new Error('插件不存在')
+    return info
+  }
+
   deletePlugin(id: string): { ok: boolean } {
     const r = this.plugins.delete(id)
     this.markRegistryDirty()

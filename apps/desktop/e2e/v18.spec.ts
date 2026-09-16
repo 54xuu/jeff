@@ -163,11 +163,25 @@ test('v1.8.0：分组 / 定时任务 / 插件 / 斜杠指令 / 内置浏览器',
     await expect(dialog.getByText('/e2e', { exact: true })).toBeVisible()
     await expect(dialog.getByText('ward_overview')).toBeVisible()
     await page.getByTestId('dialog-mask').click({ position: { x: 5, y: 5 } })
-    // 存密钥（会被写进 MCP 注入的请求头）
-    await page.getByTestId('plugin-card-e2e-plugin').locator('button[title="配置密钥 / 认证"]').click()
+    // 设置：密钥 + 官网首页（密钥进 kv；首页写回 plugin.json）
+    await page.getByTestId('plugin-settings-e2e-plugin').click()
+    await expect(page.getByTestId('plugin-settings')).toBeVisible()
+    const homepageUrl = 'http://127.0.0.1:8765/e2e-plugin-home'
+    await page.getByTestId('plugin-homepage').fill(homepageUrl)
     await page.getByTestId('plugin-secret').fill('e2e-token-123')
     await page.getByTestId('plugin-secret-save').click()
     await expect(page.getByText('已存密钥')).toBeVisible({ timeout: 20_000 })
+    await expect(page.getByTestId('plugin-card-e2e-plugin')).toContainText('有首页')
+    // 断言 plugin.json 落盘
+    const pluginJsonPath = path.join(HOME, 'plugins', 'e2e-plugin', 'plugin.json')
+    await expect
+      .poll(() => {
+        if (!fs.existsSync(pluginJsonPath)) return ''
+        return (JSON.parse(fs.readFileSync(pluginJsonPath, 'utf8')) as { homepage?: string }).homepage || ''
+      }, { timeout: 15_000 })
+      .toBe(homepageUrl)
+    // 打开首页按钮用新地址（有首页才显示）
+    await expect(page.getByTestId('plugin-home-e2e-plugin')).toBeVisible()
     // 启用 → settings:mcp 里出现 plugin-e2e-plugin 且 header 用真实密钥替换了 ${SECRET}
     await page.getByTestId('plugin-toggle-e2e-plugin').click()
     await expect
