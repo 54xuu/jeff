@@ -134,6 +134,12 @@ export default function App(): React.JSX.Element {
   return (
     <div className="app">
       <NavRail />
+      {/* 收起时用 display:none 而不是不渲染：列表内部的展开状态（分类折叠、滚动位置）得以保留 */}
+      <div className={`list-pane ${layout.listVisible ? '' : 'is-hidden'}`} style={{ width: listWidth }} data-testid="list-pane">
+        {tab === 'chats' && <ChatList />}
+        {tab === 'schedules' && <SchedulesListPane />}
+        {tab === 'settings' && <SettingsNav />}
+      </div>
       {listHasContent && layout.listVisible && (
         <PaneResizer
           side="left"
@@ -147,12 +153,6 @@ export default function App(): React.JSX.Element {
           testId="list-resizer"
         />
       )}
-      {/* 收起时用 display:none 而不是不渲染：列表内部的展开状态（分类折叠、滚动位置）得以保留 */}
-      <div className={`list-pane ${layout.listVisible ? '' : 'is-hidden'}`} style={{ width: listWidth }} data-testid="list-pane">
-        {tab === 'chats' && <ChatList />}
-        {tab === 'schedules' && <SchedulesListPane />}
-        {tab === 'settings' && <SettingsNav />}
-      </div>
       {listHasContent && !layout.listVisible && (
         <PaneExpandStrip title="展开会话列表" testId="list-expand" onExpand={() => setLayout({ listVisible: true })} />
       )}

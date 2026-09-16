@@ -547,6 +547,13 @@ test('v1.8.4：三栏布局——拖拽调宽 / 显隐开关 / 默认宽度与�
 
     // ---------- 1. 左栏默认 280，拖宽 80px 真的生效并落盘 ----------
     expect(await paneWidth(page, 'list-pane')).toBe(280)
+    const railBox = await page.getByTestId('nav-rail').boundingBox()
+    const listBox = await page.getByTestId('list-pane').boundingBox()
+    const resizerBox = await page.getByTestId('list-resizer').boundingBox()
+    expect(railBox && listBox && resizerBox).toBeTruthy()
+    // 分隔条在列表右边缘（对话区左侧），而不是导航栏与列表之间
+    expect(resizerBox!.x).toBeGreaterThanOrEqual(listBox!.x + listBox!.width - 2)
+    expect(resizerBox!.x).toBeGreaterThan(railBox!.x + railBox!.width + 100)
     await dragPane(page, 'list-resizer', 80)
     await expect.poll(() => paneWidth(page, 'list-pane')).toBe(360)
     expect(await page.evaluate(() => localStorage.getItem('jeff-list-width'))).toBe('360')
