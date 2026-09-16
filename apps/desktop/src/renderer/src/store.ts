@@ -18,6 +18,7 @@ export interface SlashCommand {
   pluginId: string
   pluginName: string
   icon: string
+  iconSvg?: string
 }
 
 /** 内置浏览器面板状态（渲染层持有；动作请求由主进程下发） */
@@ -568,7 +569,17 @@ export function slashCommandsOf(plugins: PluginInfo[]): SlashCommand[] {
   const out: SlashCommand[] = []
   for (const p of plugins) {
     if (!p.enabled || p.error) continue
-    for (const c of p.commands) out.push({ name: c.name, ...(c.description ? { description: c.description } : {}), prompt: c.prompt, pluginId: p.id, pluginName: p.name, icon: p.icon })
+    for (const c of p.commands) {
+      out.push({
+        name: c.name,
+        ...(c.description ? { description: c.description } : {}),
+        prompt: c.prompt,
+        pluginId: p.id,
+        pluginName: p.name,
+        icon: p.icon,
+        ...(p.iconSvg ? { iconSvg: p.iconSvg } : {}),
+      })
+    }
   }
   return out
 }

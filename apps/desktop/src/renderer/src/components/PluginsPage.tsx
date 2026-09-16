@@ -7,6 +7,7 @@ import { Button } from './ui/Button'
 import { Toast } from './ui/Toast'
 import { Dialog } from './ui/Dialog'
 import { Field } from './ui/Field'
+import { PluginIcon } from './PluginIcon'
 
 /**
  * 插件视图：装了什么、提供哪些能力和快捷指令、启停与设置（密钥 + 首页），以及跳转到同步页备份。
@@ -96,7 +97,9 @@ export default function PluginsPage(): React.JSX.Element {
       <div className="plugin-grid">
         {plugins.map((p) => (
           <div key={p.id} className={`plugin-card ${p.enabled ? 'on' : ''}`} data-testid={`plugin-card-${p.id}`}>
-            <div className="plugin-icon">{p.icon}</div>
+            <div className="plugin-icon">
+              <PluginIcon icon={p.icon} iconSvg={p.iconSvg} size={28} />
+            </div>
             <div className="plugin-body">
               <div className="plugin-name">
                 {p.name}
@@ -127,7 +130,7 @@ export default function PluginsPage(): React.JSX.Element {
               >
                 <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                   <circle cx="12" cy="12" r="3" />
-                  <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" />
+                  <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 8 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 3.6 15 1.65 1.65 0 0 0 2.09 14H2a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 3.6 8a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 8 3.6 1.65 1.65 0 0 0 9 2.09V2a2 2 0 1 1 4 0v.09A1.65 1.65 0 0 0 16 3.6a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 20.4 8c.37.52.6 1.13.6 1.75s-.23 1.23-.6 1.75z" />
                 </svg>
               </button>
               {p.homepage && (

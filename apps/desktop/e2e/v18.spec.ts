@@ -30,9 +30,15 @@ function dbQuery<T = Record<string, unknown>>(sql: string, ...params: unknown[])
 }
 
 /** 预置插件目录（含首页 MCP 与一条快捷指令） */
+const E2E_PLUGIN_ICON = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
+  <rect x="4" y="4" width="16" height="16" rx="3" fill="#6366F1"/>
+  <path d="M8 12h8M12 8v8" stroke="#fff" stroke-width="2" stroke-linecap="round"/>
+</svg>`
+
 function seedPlugin(homepage: string): void {
   const dir = path.join(HOME, 'plugins', 'e2e-plugin')
   fs.mkdirSync(dir, { recursive: true })
+  fs.writeFileSync(path.join(dir, 'icon.svg'), E2E_PLUGIN_ICON)
   fs.writeFileSync(
     path.join(dir, 'plugin.json'),
     JSON.stringify(
@@ -226,6 +232,7 @@ test('v1.8.0：分组 / 定时任务 / 插件 / 斜杠指令 / 内置浏览器',
     await draft.fill('/')
     await expect(page.getByTestId('slash-pop')).toBeVisible({ timeout: 15_000 })
     await expect(page.getByTestId('slash-item-0')).toContainText('/e2e')
+    await expect(page.getByTestId('slash-item-0')).toContainText('测试插件')
     await page.screenshot({ path: path.join(EVIDENCE, '05-slash-menu.png'), fullPage: true })
     await page.getByTestId('slash-item-0').click()
     await expect(draft).toHaveValue('请通过测试插件查询病区概况。')

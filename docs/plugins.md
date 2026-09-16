@@ -11,7 +11,8 @@
 ```
 ~/.jeff/plugins/<plugin-id>/
   plugin.json          # 必需：清单（下节）
-  <其它文件>            # 可选：图标、说明、脚本等，会随插件一起备份到 WebDAV
+  icon.svg             # 推荐：按插件内容设计的扁平 SVG（24×24，简洁易区分）
+  <其它文件>            # 可选：说明、脚本等，会随插件一起备份到 WebDAV
 ```
 
 - 目录名与 `plugin.json` 的 `id` 必须一致（不一致时以清单为准，但改名会更清晰）。
@@ -29,12 +30,12 @@
   "id": "zhbf-night",              // 必填，字母数字 . _ -（用作 MCP 注入前缀）
   "name": "智慧病房",               // 必填，界面显示名
   "version": "1.0.0",              // 可选，仅展示
-  "icon": "🏥",                     // 可选，emoji 图标
+  "icon": "🏥",                     // 可选，emoji（无 icon.svg 时的退化显示）
   "description": "一句话说明这个插件干什么",  // 可选
   "homepage": "http://localhost:5173/dashboard", // 可选，http(s)；写在清单里可随目录同步；插件页「设置」可改
 
   // 可选且最多 1 条：聊天框 / 快捷指令。name 须英文或拼音（/[a-zA-Z][a-zA-Z0-9_-]*），
-  // prompt 写清功能分流（问入院/出院/危重等分别调哪个工具），不要拆成多条中文指令
+  // 且跨插件全局唯一；prompt 写清功能分流。界面显示名用上面的中文 name。
   "commands": [
     { "name": "/zhbf", "description": "智慧病房看板问答", "prompt": "请通过智慧病房插件查询…（按问题选 board_* / ward_* 工具）" }
   ],
@@ -55,6 +56,14 @@ local（stdio）型 MCP 服务改用 `command` 与 `environment`：
 ```
 
 `mcp` 与 `commands` 都可以省略（纯展示插件合法）。`commands` 若提供则**只能有一条**。
+
+## icon.svg（推荐）
+
+每个插件应有一份与内容匹配的 **扁平 SVG**（与 `plugin.json` 同级）：
+
+- `viewBox="0 0 24 24"`，单色或最多两色，无渐变/阴影/文字
+- 有 `icon.svg` 时：插件卡片、设置页、`/` 菜单 tag 一律用 SVG；无则退化 `plugin.json` 的 emoji
+- 样例见 `examples/plugins/zhbf-night/icon.svg`
 
 ## 跟小杰说句话就能做插件（v1.8.2+）
 
@@ -98,7 +107,7 @@ local（stdio）型 MCP 服务改用 `command` 与 `environment`：
 
 1. Jeff 把 `mcp` 写进 `settings:mcp`（key 为 `plugin-<id>`，**不会覆盖用户手配的同名 MCP**）。
 2. `opencode.json` 重写，引擎在下次会话前重启加载——插件的 MCP 工具即可被任意智能体调用。
-3. `commands` 出现在私聊/群聊输入框的 `/` 菜单里。
+3. `commands` 出现在私聊/群聊输入框的 `/` 菜单里（tag 样式：SVG 图标 + 中文插件名 + `/指令`）。
 4. `homepage` 可用内置浏览器打开；智能体也能用 `jeff_browser_*` 工具在同一面板里操作这个页面。
 
 ## 备份与恢复
@@ -121,6 +130,7 @@ local（stdio）型 MCP 服务改用 `command` 与 `environment`：
 | `指令名必须以 / 开头` | `commands[].name` 少了斜杠 |
 | `每个插件只能有一条快捷指令` | `commands` 超过 1 条 |
 | `指令名须为英文或拼音` | name 含中文、空格或不合法字符 |
+| `快捷指令 /xxx 已被插件「…」占用` | 与其它插件的 `/` 指令重名 |
 | `mcp 需要 url（remote）或 command（local）` | MCP 声明不完整 |
 
 ## 给所有智能体用的能力

@@ -441,8 +441,10 @@ export interface PluginInfo {
   id: string
   name: string
   version: string
-  /** 图标 emoji */
+  /** 图标 emoji（无 icon.svg 时的退化显示） */
   icon: string
+  /** 插件目录内 icon.svg 原文（有则 UI 优先用 SVG） */
+  iconSvg?: string
   description: string
   /** 插件首页（用内置浏览器打开；空 = 无首页） */
   homepage: string

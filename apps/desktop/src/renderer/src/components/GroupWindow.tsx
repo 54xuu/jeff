@@ -11,6 +11,7 @@ import { useImages, ImagePreviews, MsgImages, AssistantExtras, StreamingBubble, 
 import { IconCompress, IconNewSession, IconGroupProfile } from './ui/Icons'
 import ContextDrawer, { ContextUsageBar, fetchContextPreview } from './ContextDrawer'
 import { useSlashMenu } from './useSlash'
+import { SlashMenu } from './SlashMenu'
 
 /** 项目群聊天窗口（= 微信群） */
 export default function GroupWindow(props: { projectId: string }): React.JSX.Element {
@@ -292,22 +293,7 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
             </div>
           )}
           {slash.open && (
-            <div className="mention-pop slash-pop" data-testid="slash-pop">
-              <div className="slash-head">插件指令</div>
-              {slash.candidates.map((c, i) => (
-                <button
-                  key={`${c.pluginId}${c.name}`}
-                  type="button"
-                  data-testid={`slash-item-${i}`}
-                  className={`mention-item ${i === slash.index ? 'active' : ''}`}
-                  onMouseEnter={() => slash.setIndex(i)}
-                  onClick={() => slash.pick(c)}
-                >
-                  {c.icon} <b>{c.name}</b>
-                  <span className="mention-desc">{c.description || c.pluginName}</span>
-                </button>
-              ))}
-            </div>
+            <SlashMenu candidates={slash.candidates} index={slash.index} setIndex={slash.setIndex} onPick={slash.pick} />
           )}
           <input
             ref={fileRef}

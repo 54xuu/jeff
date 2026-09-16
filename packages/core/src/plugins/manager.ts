@@ -60,7 +60,8 @@ export class PluginManager {
       const info = this.readPlugin(dir, enabledMap)
       if (info) out.push(info)
     }
-    return out.sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'))
+    const sorted = out.sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'))
+    return this.applyGlobalCommandErrors(sorted)
   }
 
   get(id: string): PluginInfo | undefined {
@@ -68,11 +69,13 @@ export class PluginManager {
   }
 
   /** 已启用插件的快捷指令（聊天框 `/` 菜单数据源，name 已带前缀 /） */
-  commands(): Array<PluginCommand & { pluginId: string; pluginName: string; icon: string }> {
-    const out: Array<PluginCommand & { pluginId: string; pluginName: string; icon: string }> = []
+  commands(): Array<PluginCommand & { pluginId: string; pluginName: string; icon: string; iconSvg?: string }> {
+    const out: Array<PluginCommand & { pluginId: string; pluginName: string; icon: string; iconSvg?: string }> = []
     for (const p of this.list()) {
       if (!p.enabled || p.error) continue
-      for (const c of p.commands) out.push({ ...c, pluginId: p.id, pluginName: p.name, icon: p.icon })
+      for (const c of p.commands) {
+        out.push({ ...c, pluginId: p.id, pluginName: p.name, icon: p.icon, ...(p.iconSvg ? { iconSvg: p.iconSvg } : {}) })
+      }
     }
     return out
   }
@@ -134,6 +137,8 @@ export class PluginManager {
     const parsed = this.parseManifest(manifest, path.basename(src))
     if (!parsed.info || parsed.error) throw new Error(parsed.error || 'plugin.json 解析失败')
     const id = parsed.info.id
+    const cmdErr = this.checkGlobalCommandConflict(id, parsed.info.commands)
+    if (cmdErr) throw new Error(cmdErr)
     const dest = path.join(this.root(), id)
     if (path.resolve(src) === path.resolve(dest)) return this.get(id)!
     fs.rmSync(dest, { recursive: true, force: true })
@@ -180,6 +185,12 @@ export class PluginManager {
     const file = path.join(dir, 'plugin.json')
     const prev = existed && fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : null
     fs.writeFileSync(file, JSON.stringify(manifest, null, 2), 'utf8')
+    const cmdErr = this.checkGlobalCommandConflict(id, manifest.commands as PluginCommand[])
+    if (cmdErr) {
+      if (prev != null) fs.writeFileSync(file, prev, 'utf8')
+      else fs.rmSync(dir, { recursive: true, force: true })
+      throw new Error(cmdErr)
+    }
     const parsed = this.parseManifest(file, id)
     if (!parsed.info || parsed.error) {
       if (prev != null) fs.writeFileSync(file, prev, 'utf8')
@@ -312,7 +323,51 @@ export class PluginManager {
         error: error || 'plugin.json 解析失败',
       }
     }
-    return { ...info, enabled, dir, hasSecret: !!this.kv.get(`${SECRET_PREFIX}${info.id}`) }
+    const iconSvg = this.readIconSvg(dir)
+    return { ...info, enabled, dir, ...(iconSvg ? { iconSvg } : {}), hasSecret: !!this.kv.get(`${SECRET_PREFIX}${info.id}`) }
+  }
+
+  /** 读取插件目录 icon.svg（扁平矢量图标，与 plugin.json 同级） */
+  private readIconSvg(dir: string): string | undefined {
+    const file = path.join(dir, 'icon.svg')
+    if (!fs.existsSync(file)) return undefined
+    const raw = fs.readFileSync(file, 'utf8').trim()
+    if (!raw.includes('<svg')) return undefined
+    return raw
+  }
+
+  /** 跨插件指令名全局唯一：后出现的插件标 error；write/import 直接抛错 */
+  private applyGlobalCommandErrors(plugins: PluginInfo[]): PluginInfo[] {
+    const owners = new Map<string, { id: string; name: string }>()
+    return plugins.map((p) => {
+      if (p.error || p.commands.length === 0) return p
+      const cmd = p.commands[0]!.name
+      const prev = owners.get(cmd)
+      if (!prev) {
+        owners.set(cmd, { id: p.id, name: p.name })
+        return p
+      }
+      if (prev.id === p.id) return p
+      return { ...p, error: `快捷指令 ${cmd} 已被插件「${prev.name}」占用` }
+    })
+  }
+
+  /** write/import 前检查：其它插件是否已占用同名指令 */
+  private checkGlobalCommandConflict(selfId: string, commands: PluginCommand[]): string | undefined {
+    if (!commands.length) return undefined
+    const cmd = commands[0]!.name
+    for (const dir of this.listDirs()) {
+      const otherId = path.basename(dir)
+      if (otherId === selfId) continue
+      const manifest = path.join(dir, 'plugin.json')
+      if (!fs.existsSync(manifest)) continue
+      const { info, error } = this.parseManifest(manifest, otherId)
+      if (!info || error) continue
+      if (info.commands.some((c) => c.name === cmd)) {
+        return `快捷指令 ${cmd} 已被插件「${info.name}」占用`
+      }
+    }
+    return undefined
   }
 
   /** 解析并校验 plugin.json（校验不通过返回 error，info 为 null） */

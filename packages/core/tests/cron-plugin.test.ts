@@ -313,6 +313,19 @@ describe('PluginManager', () => {
     expect(cmds[0].pluginName).toBe('A 插件')
   })
 
+  it('同名指令跨插件全局唯一：后装者标 error；write 直接拒绝', () => {
+    writePlugin('first', { id: 'first', name: '甲插件', commands: [{ name: '/foo', prompt: 'p1' }] })
+    writePlugin('second', { id: 'second', name: '乙插件', commands: [{ name: '/foo', prompt: 'p2' }] })
+    const list = mgr().list()
+    expect(list.find((p) => p.id === 'first')?.error).toBeUndefined()
+    expect(list.find((p) => p.id === 'second')?.error).toMatch(/已被插件「甲插件」占用/)
+
+    const m = mgr()
+    expect(() =>
+      m.write({ id: 'third', name: '丙', commands: [{ name: '/foo', prompt: 'p3' }] }),
+    ).toThrow(/已被插件/)
+  })
+
   it('每插件最多一条指令；指令名须英文或拼音', () => {
     writePlugin('two-cmds', {
       id: 'two-cmds',
@@ -337,6 +350,16 @@ describe('PluginManager', () => {
       commands: [{ name: '/zhbf', prompt: '查看板' }],
     })
     expect(mgr().list().find((p) => p.id === 'ok-cmd')?.error).toBeUndefined()
+  })
+
+  it('icon.svg 挂到 PluginInfo.iconSvg', () => {
+    writePlugin('svg-icon', { id: 'svg-icon', name: '带图标', commands: [{ name: '/svg', prompt: 'p' }] })
+    fs.writeFileSync(
+      path.join(tmp, 'plugins', 'svg-icon', 'icon.svg'),
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" fill="#10B981"/></svg>',
+    )
+    const p = mgr().get('svg-icon')
+    expect(p?.iconSvg).toContain('<svg')
   })
 
   it('setHomepage 写回 plugin.json；非法协议拒绝', () => {

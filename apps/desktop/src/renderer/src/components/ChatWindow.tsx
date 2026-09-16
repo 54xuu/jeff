@@ -11,6 +11,7 @@ import ContextDrawer, { ContextUsageBar, fetchContextPreview } from './ContextDr
 import AgentProfileDrawer from './AgentProfileDrawer'
 import { IconCompress, IconNewSession, IconProfile } from './ui/Icons'
 import { useSlashMenu } from './useSlash'
+import { SlashMenu } from './SlashMenu'
 
 export default function ChatWindow(props: { agentId: string }): React.JSX.Element {
   const { agents, messages, sending, streaming, loadHistory, sendAgent, newAgentSession, stopAgent, catalog, settings, appInfo } = useStore()
@@ -199,22 +200,7 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
           }}
         >
           {slash.open && (
-            <div className="mention-pop slash-pop" data-testid="slash-pop">
-              <div className="slash-head">插件指令</div>
-              {slash.candidates.map((c, i) => (
-                <button
-                  key={`${c.pluginId}${c.name}`}
-                  type="button"
-                  data-testid={`slash-item-${i}`}
-                  className={`mention-item ${i === slash.index ? 'active' : ''}`}
-                  onMouseEnter={() => slash.setIndex(i)}
-                  onClick={() => slash.pick(c)}
-                >
-                  {c.icon} <b>{c.name}</b>
-                  <span className="mention-desc">{c.description || c.pluginName}</span>
-                </button>
-              ))}
-            </div>
+            <SlashMenu candidates={slash.candidates} index={slash.index} setIndex={slash.setIndex} onPick={slash.pick} />
           )}
           <input
             ref={fileRef}

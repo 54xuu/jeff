@@ -3700,7 +3700,7 @@ body.composer-resizing * {
 
 /* ===== 斜杠指令菜单 ===== */
 .slash-pop {
-  width: 320px;
+  width: 340px;
 }
 
 .slash-head {
@@ -3708,6 +3708,85 @@ body.composer-resizing * {
   color: var(--text-2);
   padding: 6px 12px 2px;
   letter-spacing: 0.04em;
+}
+
+.slash-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  padding: 8px 10px;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.slash-item:hover,
+.slash-item.active {
+  background: color-mix(in srgb, var(--green) 10%, transparent);
+}
+
+.slash-plugin-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px 3px 4px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--green) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--green) 25%, var(--border));
+  flex: 1;
+  min-width: 0;
+}
+
+.slash-plugin-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.slash-cmd-tag {
+  font-size: 10px;
+  font-family: ui-monospace, monospace;
+  color: var(--text-2);
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  padding: 1px 5px;
+  flex: none;
+}
+
+.slash-desc {
+  flex: 0 0 100%;
+  font-size: 11px;
+  color: var(--text-2);
+  padding-left: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plugin-svg-wrap {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  line-height: 0;
+}
+
+.plugin-svg-wrap svg {
+  display: block;
+}
+
+.plugin-emoji-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 /* ===== 内置浏览器面板 ===== */
