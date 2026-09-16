@@ -397,7 +397,7 @@ export class JeffCore extends EventEmitter {
 
   private chatHooks() {
     return {
-      beforeEnsure: () => this.restartIfRegistryDirty(),
+      beforeEnsure: () => this.ensureSidecarReady(),
       onPipelineIdle: () => this.flushPendingRegistryRestart(),
       onSessionCreated: (sessionId: string, meta: { kind: 'private' | 'group' | 'review'; agentId: string; projectId?: string }) => {
         this.kv().setJSON(sesMetaKey(sessionId), meta)
@@ -1479,7 +1479,22 @@ export class JeffCore extends EventEmitter {
     this.registryDirty = true
   }
 
+  /**
+   * 新会话建立前：先等在途 sidecar 重启结束，再按 dirty 落闸。
+   *
+   * 插件启用会 markRegistryDirty，群流水线在途时只能推迟重启。流水线空闲后
+   * flushPendingRegistryRestart 会清掉 dirty 并开始 stop/start；若下一轮 send
+   * 只看 dirty、不等 this.restarting，就会把请求打到正在关闭的引擎——用户消息
+   * 已落库，但 UI 可能画不出 chat-stop / 助手回复（live16 R10）。
+   */
+  private async ensureSidecarReady(): Promise<void> {
+    if (this.restarting) await this.restarting
+    await this.restartIfRegistryDirty()
+    if (this.restarting) await this.restarting
+  }
+
   private async restartIfRegistryDirty(): Promise<void> {
+    if (this.restarting) await this.restarting
     if (!this.registryDirty || !this.sidecar) return
     // 项目群长任务（流水线/委派回合）在途时推迟重启：sidecar 停止会杀掉正在生成的请求，
     // 曾把 10 分钟级的群任务打断成回合失败；待流水线空闲（onPipelineIdle/onIdle）后再落闸
