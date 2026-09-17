@@ -15,6 +15,7 @@ import { SlashMenu } from './SlashMenu'
 import { ComposerDraft } from './ComposerDraft'
 import { UserTextWithChip } from './PluginChip'
 import { composerPlugin, composerText, emptyComposer, type ComposerState } from './composerState'
+import MessageRail, { toNavPreview, useMessageAnchors, type NavItem } from './MessageRail'
 
 export default function ChatWindow(props: { agentId: string }): React.JSX.Element {
   const { agents, messages, sending, streaming, loadHistory, sendAgent, newAgentSession, stopAgent, catalog, settings, appInfo } = useStore()
@@ -40,6 +41,18 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
   const draftBeforeRef = useRef<HTMLTextAreaElement>(null)
   const slash = useSlashMenu({ composer: draftComposer, setComposer: setDraftComposer, afterRef: draftRef, beforeRef: draftBeforeRef })
   const composerResize = useComposerResize(composerRef)
+  const { anchors, bindAnchor } = useMessageAnchors()
+  const navItems = useMemo<NavItem[]>(
+    () =>
+      msgs.map((m) => ({
+        id: m.id,
+        role: m.role,
+        preview: toNavPreview(m),
+        time: m.time,
+        sender: m.role === 'user' ? '我' : m.role === 'system' ? '系统' : agent?.name || '智能体',
+      })),
+    [msgs, agent?.name],
+  )
 
   useEffect(() => {
     void loadHistory(key)
@@ -136,37 +149,47 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
         </div>
       </div>
 
-      <div className="chat-body" ref={bodyRef}>
-        {msgs.length === 0 && (
-          <div className="chat-welcome">
-            <Avatar emoji={agent.avatar} size={64} />
-            <p className="chat-welcome-name">{agent.name}</p>
-            <p className="chat-welcome-desc">{agent.builtin ? '我是小杰，Jeff 的管家。你想要的都能直接跟我说：创建智能体、配置模型、答疑……' : agent.description || '开始对话吧'}</p>
-          </div>
-        )}
-        {msgs.map((m) => (
-          <MessageBubble key={m.id} msg={m} agentName={agent.name} agentAvatar={agent.avatar} workspaceDir={workspaceDir} />
-        ))}
-        {sendingNow && !stream && (
-          <div className="msg-row left">
-            <Avatar emoji={agent.avatar} size={34} busy />
-            <div className="bubble assistant typing">
-              <span className="dot" />
-              <span className="dot" />
-              <span className="dot" />
+      <div className="chat-body-area">
+        <div className="chat-body" ref={bodyRef}>
+          {msgs.length === 0 && (
+            <div className="chat-welcome">
+              <Avatar emoji={agent.avatar} size={64} />
+              <p className="chat-welcome-name">{agent.name}</p>
+              <p className="chat-welcome-desc">{agent.builtin ? '我是小杰，Jeff 的管家。你想要的都能直接跟我说：创建智能体、配置模型、答疑……' : agent.description || '开始对话吧'}</p>
             </div>
-          </div>
-        )}
-        {stream && (
-          <StreamingBubble
-            avatar={agent.avatar}
-            name={agent.name}
-            stream={stream}
-            workspaceDir={workspaceDir}
-            time={[...msgs].reverse().find((m) => m.role === 'user')?.time}
-            busy
-          />
-        )}
+          )}
+          {msgs.map((m) => (
+            <MessageBubble
+              key={m.id}
+              msg={m}
+              agentName={agent.name}
+              agentAvatar={agent.avatar}
+              workspaceDir={workspaceDir}
+              anchorRef={bindAnchor(m.id)}
+            />
+          ))}
+          {sendingNow && !stream && (
+            <div className="msg-row left">
+              <Avatar emoji={agent.avatar} size={34} busy />
+              <div className="bubble assistant typing">
+                <span className="dot" />
+                <span className="dot" />
+                <span className="dot" />
+              </div>
+            </div>
+          )}
+          {stream && (
+            <StreamingBubble
+              avatar={agent.avatar}
+              name={agent.name}
+              stream={stream}
+              workspaceDir={workspaceDir}
+              time={[...msgs].reverse().find((m) => m.role === 'user')?.time}
+              busy
+            />
+          )}
+        </div>
+        <MessageRail items={navItems} bodyRef={bodyRef} anchors={anchors} />
       </div>
 
       <div className="composer" ref={composerRef}>
@@ -278,8 +301,14 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
   )
 }
 
-export function MessageBubble(props: { msg: ChatMsg; agentName: string; agentAvatar: string; workspaceDir?: string }): React.JSX.Element {
-  const { msg, agentName, agentAvatar, workspaceDir } = props
+export function MessageBubble(props: {
+  msg: ChatMsg
+  agentName: string
+  agentAvatar: string
+  workspaceDir?: string
+  anchorRef?: (el: HTMLElement | null) => void
+}): React.JSX.Element {
+  const { msg, agentName, agentAvatar, workspaceDir, anchorRef } = props
   const mine = msg.role === 'user'
   const isMarkdown = !mine && msg.role === 'assistant'
   // 历史消息里同样剥掉 <think>：与流式气泡保持一致的清爽版面
@@ -289,7 +318,7 @@ export function MessageBubble(props: { msg: ChatMsg; agentName: string; agentAva
   // 系统提示（已停止 / 发送失败）不是智能体说的话：用居中提示条，避免挂在智能体名下造成误读
   if (msg.role === 'system') {
     return (
-      <div className="msg-system">
+      <div className="msg-system" ref={anchorRef} data-msg-id={msg.id}>
         <span>{msg.text}</span>
         <span className="msg-time">{fmtFullTime(msg.time)}</span>
         <CopyButton className="msg-copy msg-copy-system" text={msg.text} label="复制消息" testId="msg-copy-system" />
@@ -297,7 +326,7 @@ export function MessageBubble(props: { msg: ChatMsg; agentName: string; agentAva
     )
   }
   return (
-    <div className={`msg-row ${mine ? 'right' : 'left'}`}>
+    <div className={`msg-row ${mine ? 'right' : 'left'}`} ref={anchorRef} data-msg-id={msg.id}>
       {!mine && <Avatar emoji={agentAvatar} size={34} />}
       <div className="msg-stack">
         {!mine && (

@@ -411,6 +411,141 @@ body {
   user-select: text;
 }
 
+.chat-body-area {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.chat-body-area .chat-body {
+  min-height: 0;
+}
+
+.chat-body-area:has(.msg-rail) .chat-body {
+  padding-left: 32px;
+}
+
+.msg-rail-wrap {
+  position: absolute;
+  left: 4px;
+  top: 20%;
+  bottom: 20%;
+  width: 22px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  z-index: 8;
+  pointer-events: none;
+}
+
+.msg-rail {
+  pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  max-height: 100%;
+  overflow-y: auto;
+  scrollbar-width: none;
+  padding: 6px 3px;
+}
+
+.msg-rail::-webkit-scrollbar {
+  display: none;
+}
+
+.msg-rail-bar {
+  flex: 0 1 auto;
+  width: 16px;
+  height: 5px;
+  min-height: 2px;
+  max-height: 6px;
+  padding: 0;
+  border: none;
+  border-radius: 1px;
+  background: var(--text-2);
+  opacity: 0.45;
+  cursor: pointer;
+  transition: opacity 0.12s ease, transform 0.12s ease, background-color 0.12s ease;
+}
+
+.msg-rail-bar.role-user {
+  width: 16px;
+  background: var(--green);
+}
+
+.msg-rail-bar.role-assistant {
+  width: 12px;
+  background: var(--text-2);
+}
+
+.msg-rail-bar.role-system {
+  width: 10px;
+  background: var(--text-2);
+  opacity: 0.3;
+}
+
+.msg-rail-bar:hover,
+.msg-rail-bar:focus-visible {
+  opacity: 1;
+  transform: scaleX(1.15);
+  outline: none;
+}
+
+.msg-rail-bar.active {
+  opacity: 1;
+  background: var(--green);
+}
+
+.msg-rail-pop {
+  pointer-events: auto;
+  position: absolute;
+  left: calc(100% + 8px);
+  width: 280px;
+  max-width: min(280px, 42vw);
+  transform: translateY(-50%);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow);
+  padding: 8px 10px;
+  z-index: 20;
+}
+
+.msg-rail-pop-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-2);
+  margin-bottom: 4px;
+}
+
+.msg-rail-pop-text {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text);
+  word-break: break-word;
+}
+
+@keyframes msg-flash-outline {
+  0% {
+    outline-color: var(--green);
+  }
+  100% {
+    outline-color: transparent;
+  }
+}
+
+.msg-flash {
+  outline: 2px solid var(--green);
+  outline-offset: 4px;
+  border-radius: var(--radius-md);
+  animation: msg-flash-outline 1.2s ease-out forwards;
+}
+
 .chat-welcome {
   margin: auto;
   display: flex;

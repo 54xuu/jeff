@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { extractThinkTags, mergeReasoning } from '@jeff/core'
 import type { ChatImage } from '@jeff/core'
 import Avatar from './Avatar'
@@ -102,16 +102,21 @@ const STICK_THRESHOLD = 80
 /**
  * 聊天区自动滚动：仅当用户贴在底部时跟随新内容，并用 requestAnimationFrame 合并写入，
  * 避免每个流式 token 都读 scrollHeight / 写 scrollTop 触发强制重排（卡顿主因之一）。
+ *
+ * 挂载时强制贴底：切换会话会整窗重挂载，若历史已在 store 里，首屏 DOM 就是
+ * scrollTop=0 + 内容铺满。若此时按「当前位置」判断贴底，会被误判成在翻历史，
+ * 后面再也不会滚到底部。
  */
 export function useAutoScroll(bodyRef: React.RefObject<HTMLElement | null>, signal: string): void {
   const stickRef = useRef(true)
-  useEffect(() => {
+  useLayoutEffect(() => {
     const el = bodyRef.current
     if (!el) return
+    el.scrollTop = el.scrollHeight
+    stickRef.current = true
     const onScroll = () => {
       stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < STICK_THRESHOLD
     }
-    onScroll()
     el.addEventListener('scroll', onScroll, { passive: true })
     return () => el.removeEventListener('scroll', onScroll)
   }, [bodyRef])

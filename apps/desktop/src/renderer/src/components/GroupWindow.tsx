@@ -15,6 +15,7 @@ import { SlashMenu } from './SlashMenu'
 import { ComposerDraft } from './ComposerDraft'
 import { UserTextWithChip } from './PluginChip'
 import { composerPlugin, composerText, emptyComposer, type ComposerState } from './composerState'
+import MessageRail, { toNavPreview, useMessageAnchors, type NavItem } from './MessageRail'
 
 /** 项目群聊天窗口（= 微信群） */
 export default function GroupWindow(props: { projectId: string }): React.JSX.Element {
@@ -47,6 +48,18 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
   const fileRef = useRef<HTMLInputElement>(null)
   const slash = useSlashMenu({ composer: draftComposer, setComposer: setDraftComposer, afterRef: inputRef, beforeRef })
   const composerResize = useComposerResize(composerRef)
+  const { anchors, bindAnchor } = useMessageAnchors()
+  const navItems = useMemo<NavItem[]>(
+    () =>
+      msgs.map((m) => ({
+        id: m.id,
+        role: m.role,
+        preview: toNavPreview(m),
+        time: m.time,
+        sender: m.role === 'user' ? '我' : m.role === 'system' ? '系统' : m.sender_name || '智能体',
+      })),
+    [msgs],
+  )
 
   useEffect(() => {
     void loadGroupHistory(props.projectId)
@@ -221,39 +234,42 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
         </div>
       </div>
 
-      <div className="chat-body" ref={bodyRef}>
-        {msgs.length === 0 && (
-          <div className="chat-welcome">
-            <Avatar emoji={project.icon} size={64} />
-            <p className="chat-welcome-name">{project.title}</p>
-            <p className="chat-welcome-desc">
-              这是项目「{project.title}」的群聊。消息默认由群主（leader）统筹；工作者（worker）统一角色。用 @成员名 可直接指名对话。
-            </p>
-          </div>
-        )}
-        {msgs.map((m) => (
-          <GroupBubble key={m.id} msg={m} workspaceDir={workspaceDir} />
-        ))}
-        {busy && !stream && (
-          <div className="msg-row left">
-            <Avatar emoji="⏳" size={34} busy />
-            <div className="bubble assistant typing">
-              <span className="dot" />
-              <span className="dot" />
-              <span className="dot" />
+      <div className="chat-body-area">
+        <div className="chat-body" ref={bodyRef}>
+          {msgs.length === 0 && (
+            <div className="chat-welcome">
+              <Avatar emoji={project.icon} size={64} />
+              <p className="chat-welcome-name">{project.title}</p>
+              <p className="chat-welcome-desc">
+                这是项目「{project.title}」的群聊。消息默认由群主（leader）统筹；工作者（worker）统一角色。用 @成员名 可直接指名对话。
+              </p>
             </div>
-          </div>
-        )}
-        {stream && (
-          <StreamingBubble
-            avatar={stream.senderAvatar}
-            name={stream.senderName}
-            stream={stream}
-            workspaceDir={workspaceDir}
-            time={[...msgs].reverse().find((m) => m.role === 'user')?.time}
-            busy
-          />
-        )}
+          )}
+          {msgs.map((m) => (
+            <GroupBubble key={m.id} msg={m} workspaceDir={workspaceDir} anchorRef={bindAnchor(m.id)} />
+          ))}
+          {busy && !stream && (
+            <div className="msg-row left">
+              <Avatar emoji="⏳" size={34} busy />
+              <div className="bubble assistant typing">
+                <span className="dot" />
+                <span className="dot" />
+                <span className="dot" />
+              </div>
+            </div>
+          )}
+          {stream && (
+            <StreamingBubble
+              avatar={stream.senderAvatar}
+              name={stream.senderName}
+              stream={stream}
+              workspaceDir={workspaceDir}
+              time={[...msgs].reverse().find((m) => m.role === 'user')?.time}
+              busy
+            />
+          )}
+        </div>
+        <MessageRail items={navItems} bodyRef={bodyRef} anchors={anchors} />
       </div>
 
       <div className="composer" ref={composerRef}>
@@ -402,8 +418,8 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
   )
 }
 
-function GroupBubble(props: { msg: GroupMessage; workspaceDir?: string }): React.JSX.Element {
-  const { msg, workspaceDir } = props
+function GroupBubble(props: { msg: GroupMessage; workspaceDir?: string; anchorRef?: (el: HTMLElement | null) => void }): React.JSX.Element {
+  const { msg, workspaceDir, anchorRef } = props
   const isAssistant = msg.role === 'assistant'
   // 历史消息里同样剥掉 <think>：与流式气泡保持一致的清爽版面
   const parsed = useMemo(() => (isAssistant ? extractThinkTags(msg.text) : null), [isAssistant, msg.text])
@@ -411,7 +427,7 @@ function GroupBubble(props: { msg: GroupMessage; workspaceDir?: string }): React
   const body = parsed ? parsed.text : msg.text
   if (msg.role === 'system') {
     return (
-      <div className="msg-system">
+      <div className="msg-system" ref={anchorRef} data-msg-id={msg.id}>
         <span>{msg.text}</span>
         <span className="msg-time">{fmtFullTime(msg.time)}</span>
         <CopyButton className="msg-copy msg-copy-system" text={msg.text} label="复制消息" testId="msg-copy-system" />
@@ -420,7 +436,7 @@ function GroupBubble(props: { msg: GroupMessage; workspaceDir?: string }): React
   }
   const mine = msg.role === 'user'
   return (
-    <div className={`msg-row ${mine ? 'right' : 'left'}`}>
+    <div className={`msg-row ${mine ? 'right' : 'left'}`} ref={anchorRef} data-msg-id={msg.id}>
       {!mine && <Avatar emoji={msg.sender_avatar || '🤖'} size={34} />}
       <div className="msg-stack">
         {!mine && (
