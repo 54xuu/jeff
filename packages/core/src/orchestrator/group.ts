@@ -265,6 +265,11 @@ export class GroupChat {
     images?: Array<{ mime: string; dataUrl: string }>
     /** 定时任务触发时带上任务 id：消息会带「定时」标记，便于事后区分「人到点问的」与「自己打的」 */
     cronTaskId?: string
+    /**
+     * 指定话题。定时任务传入专属 thread，不改 active、不把消息写进用户正在看的会话。
+     * 缺省则用（必要时创建）当前活跃话题，与手动发消息一致。
+     */
+    threadId?: string
   }): Promise<GroupSendResult> {
     return this.withProjectLock(input.projectId, () => this.doSend(input))
   }
@@ -285,12 +290,26 @@ export class GroupChat {
     }
   }
 
-  private async doSend(input: { projectId: string; text: string; model?: { providerID: string; modelID: string }; variant?: string; images?: Array<{ mime: string; dataUrl: string }> }): Promise<GroupSendResult> {
+  private async doSend(input: {
+    projectId: string
+    text: string
+    model?: { providerID: string; modelID: string }
+    variant?: string
+    images?: Array<{ mime: string; dataUrl: string }>
+    cronTaskId?: string
+    threadId?: string
+  }): Promise<GroupSendResult> {
     const { projectId, text } = input
     const project = projectRepo(this.db).get(projectId)
     if (!project) throw new Error(`项目不存在: ${projectId}`)
     if (!project.leader_agent_id) throw new Error('项目未设置群主（leader）')
-    const threadId = this.threads.ensureActiveThread(projectId)
+    let threadId: string
+    if (input.threadId) {
+      if (!this.threads.getMeta(projectId, input.threadId)) throw new Error('会话不存在')
+      threadId = input.threadId
+    } else {
+      threadId = this.threads.ensureActiveThread(projectId)
+    }
     // 冻结本次流程的归属：后续 stream/system 公告/取消都只认这个 thread，不随界面切换漂移
     const runState = { threadId, cancelled: false, sessionId: null as string | null }
     this.runStates.set(projectId, runState)

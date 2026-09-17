@@ -3,16 +3,20 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { openDb } from '../src/db/db.js'
-import { agentRepo, cronRunRepo, cronTaskRepo, projectAgentRepo, projectRepo } from '../src/db/repos.js'
+import { agentRepo, cronRunRepo, cronTaskRepo, kvRepo, projectAgentRepo, projectRepo } from '../src/db/repos.js'
 import { buildPaths } from '../src/paths.js'
 import type { DB } from '../src/db/db.js'
 import { CronScheduler } from '../src/cron/scheduler.js'
+import { dispatchCronTask, cronPrivateSessionKey, cronGroupThreadKey } from '../src/cron/dispatch.js'
 import { PluginManager } from '../src/plugins/manager.js'
 import { ToolBridge } from '../src/tools/bridge.js'
 import { PLUGIN_TOOL_NAMES, registerPluginTools } from '../src/tools/pluginTools.js'
 import { registerCronTools } from '../src/tools/cronTools.js'
 import { XIAOJIE_DISABLED_TOOLS, XIAOJIE_ONLY_TOOLS, renderAgentMd } from '../src/agents/registry.js'
 import type { CronTaskRow } from '../src/db/repos.js'
+import { PrivateChat } from '../src/chat/private.js'
+import { GroupChat } from '../src/orchestrator/group.js'
+import type { OcClient } from '../src/oc/client.js'
 
 let tmp: string
 let db: DB
@@ -238,6 +242,151 @@ describe('CronScheduler', () => {
     sched.runNow(id)
     expect(() => sched.runNow(id)).toThrow(/正在执行/)
     release()
+  })
+
+  it('成功执行一次 → onTurnDone 被调用恰好 1 次，参数是该 task', async () => {
+    const id = seedAgentTask()
+    cronTaskRepo(db).update(id, { next_run_at: Date.now() - 1000 })
+    const done: CronTaskRow[] = []
+    const sched = new CronScheduler({
+      db,
+      runTask: async () => undefined,
+      onTurnDone: (t) => done.push(t),
+    })
+    sched.tick()
+    await waitFor(() => done.length === 1)
+    expect(done[0].id).toBe(id)
+    expect(done[0].target_type).toBe('agent')
+    await waitFor(() => cronRunRepo(db).listByTask(id)[0]?.status === 'ok')
+    expect(done.length).toBe(1)
+  })
+
+  it('执行失败 / 跳过 / 目标已删除 / 群未设群主 → onTurnDone 不被调用', async () => {
+    const failId = seedAgentTask('0 8 * * *', { name: '会失败' })
+    cronTaskRepo(db).update(failId, { next_run_at: Date.now() - 1000 })
+
+    const skipId = seedAgentTask('0 8 * * *', { name: '会被跳过' })
+    cronTaskRepo(db).update(skipId, { next_run_at: Date.now() - 1000 })
+
+    const a = agentRepo(db).create({ name: '临时助手' })
+    const missingId = cronTaskRepo(db).create({ name: '目标已删', target_type: 'agent', target_id: a.id, cron_expr: '0 8 * * *', prompt: 'x', next_run_at: Date.now() - 1000 }).id
+    agentRepo(db).softDelete(a.id)
+
+    const p = projectRepo(db).create({ title: '护士站', leader_agent_id: null })
+    const noLeaderId = cronTaskRepo(db).create({ name: '无群主', target_type: 'project', target_id: p.id, cron_expr: '0 8 * * *', prompt: 'x' }).id
+
+    const done: string[] = []
+    let skipRelease!: () => void
+    const skipGate = new Promise<void>((r) => (skipRelease = r))
+    let skipStarted = 0
+    const sched = new CronScheduler({
+      db,
+      runTask: async (t) => {
+        if (t.id === failId) throw new Error('模型 401')
+        if (t.id === skipId) {
+          skipStarted += 1
+          await skipGate
+        }
+      },
+      onTurnDone: (t) => done.push(t.id),
+    })
+
+    sched.tick()
+    await waitFor(() => cronRunRepo(db).listByTask(failId)[0]?.status === 'failed')
+
+    await waitFor(() => skipStarted === 1)
+    cronTaskRepo(db).update(skipId, { next_run_at: Date.now() - 500 })
+    sched.tick()
+    await waitFor(() => cronRunRepo(db).listByTask(skipId).some((r) => r.status === 'skipped'))
+
+    sched.runNow(missingId)
+    await waitFor(() => cronTaskRepo(db).get(missingId)!.enabled === 0)
+
+    sched.runNow(noLeaderId)
+    await waitFor(() => cronRunRepo(db).listByTask(noLeaderId)[0]?.status === 'failed')
+
+    // 失败 / 跳过（上一轮未结束）/ 目标缺失 / 无群主都不该提醒；挂起的那条还不放行
+    expect(done).toEqual([])
+    skipRelease()
+    await waitFor(() => cronRunRepo(db).listByTask(skipId).some((r) => r.status === 'ok'))
+    // 放行后那条才算真正跑完，这时才允许提醒一次
+    expect(done).toEqual([skipId])
+  })
+})
+
+describe('dispatchCronTask 会话隔离', () => {
+  it('同一智能体两条任务走两条 opencode 会话，用户私聊指针不动', async () => {
+    const a = agentRepo(db).create({ name: '资讯助手' })
+    const t1 = cronTaskRepo(db).create({ name: '早报', target_type: 'agent', target_id: a.id, cron_expr: '0 8 * * *', prompt: '请报早报暗号 ALPHA' })
+    const t2 = cronTaskRepo(db).create({ name: '晚报', target_type: 'agent', target_id: a.id, cron_expr: '0 18 * * *', prompt: '请报晚报暗号 BETA' })
+    const created: string[] = []
+    const sent: Array<{ sessionId: string; text?: string }> = []
+    const oc = {
+      getSession: async (id: string) => ({ id }),
+      createSession: async () => {
+        const id = `ses_${created.length + 1}`
+        created.push(id)
+        return { id, title: id }
+      },
+      sendMessage: async (input: { sessionId: string; text?: string }) => {
+        sent.push(input)
+        return { id: 'msg', parts: [{ type: 'text', text: `回:${input.text}` }] }
+      },
+    } as unknown as OcClient
+    const privateChat = new PrivateChat(db, () => oc)
+    const groupChat = new GroupChat(db, () => oc)
+
+    await privateChat.send(a.id, a.name, '用户先聊一句')
+    const userSes = privateChat.getSessionId(a.id)
+
+    await dispatchCronTask({ db, privateChat, groupChat, task: t1 })
+    await dispatchCronTask({ db, privateChat, groupChat, task: t2 })
+
+    expect(privateChat.getSessionId(a.id)).toBe(userSes)
+    expect(kvRepo(db).get(cronPrivateSessionKey(t1.id))).not.toBe(userSes)
+    expect(kvRepo(db).get(cronPrivateSessionKey(t2.id))).not.toBe(userSes)
+    expect(kvRepo(db).get(cronPrivateSessionKey(t1.id))).not.toBe(kvRepo(db).get(cronPrivateSessionKey(t2.id)))
+    expect(sent.filter((s) => s.sessionId === userSes).map((s) => s.text)).toEqual(['用户先聊一句'])
+    expect(sent.find((s) => s.text === '请报早报暗号 ALPHA')?.sessionId).toBe(kvRepo(db).get(cronPrivateSessionKey(t1.id)))
+    expect(sent.find((s) => s.text === '请报晚报暗号 BETA')?.sessionId).toBe(kvRepo(db).get(cronPrivateSessionKey(t2.id)))
+  })
+
+  it('同一项目群两条任务走两条 thread，不抢 active，消息不串线', async () => {
+    const leader = agentRepo(db).create({ name: '护士长' })
+    const p = projectRepo(db).create({ title: '护士站', leader_agent_id: leader.id })
+    projectAgentRepo(db).add(p.id, leader.id, 'leader', 0)
+    db.prepare('UPDATE project SET leader_agent_id = ? WHERE id = ?').run(leader.id, p.id)
+    const t1 = cronTaskRepo(db).create({ name: '晨间问询', target_type: 'project', target_id: p.id, cron_expr: '0 8 * * *', prompt: '晨间暗号 GAMMA' })
+    const t2 = cronTaskRepo(db).create({ name: '晚间交班', target_type: 'project', target_id: p.id, cron_expr: '0 18 * * *', prompt: '晚间暗号 DELTA' })
+
+    const oc = {
+      getSession: async (id: string) => ({ id }),
+      createSession: async () => ({ id: `ses_${Math.random().toString(36).slice(2, 8)}` }),
+      sendMessage: async (input: { text?: string }) => ({ id: 'msg', parts: [{ type: 'text', text: `回:${input.text}` }] }),
+    } as unknown as OcClient
+    const privateChat = new PrivateChat(db, () => oc)
+    const groupChat = new GroupChat(db, () => oc)
+
+    await groupChat.send({ projectId: p.id, text: '用户正在这个话题里聊' })
+    const active = groupChat.activeThreadId(p.id)
+
+    await dispatchCronTask({ db, privateChat, groupChat, task: t1 })
+    await dispatchCronTask({ db, privateChat, groupChat, task: t2 })
+
+    expect(groupChat.activeThreadId(p.id)).toBe(active)
+    const thr1 = kvRepo(db).get(cronGroupThreadKey(t1.id))!
+    const thr2 = kvRepo(db).get(cronGroupThreadKey(t2.id))!
+    expect(thr1).not.toBe(active)
+    expect(thr2).not.toBe(active)
+    expect(thr1).not.toBe(thr2)
+
+    const userTexts = groupChat.history(p.id, active).map((m) => m.text)
+    expect(userTexts.some((t) => t.includes('用户正在这个话题里聊'))).toBe(true)
+    expect(userTexts.some((t) => t.includes('GAMMA'))).toBe(false)
+    expect(userTexts.some((t) => t.includes('DELTA'))).toBe(false)
+    expect(groupChat.history(p.id, thr1).some((m) => m.text.includes('GAMMA') && m.meta?.cron_task_id === t1.id)).toBe(true)
+    expect(groupChat.history(p.id, thr1).some((m) => m.text.includes('DELTA'))).toBe(false)
+    expect(groupChat.history(p.id, thr2).some((m) => m.text.includes('DELTA') && m.meta?.cron_task_id === t2.id)).toBe(true)
   })
 })
 

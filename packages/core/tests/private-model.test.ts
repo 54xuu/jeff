@@ -242,3 +242,68 @@ describe('私聊会话默认命名 {YYYYMMDD-HHmm}-{任务中文名称}', () => 
     expect(patches).toHaveLength(0)
   })
 })
+
+describe('PrivateChat.sendDedicated 会话隔离', () => {
+  it('两条专属会话互不影响，也不改写用户正在聊的 session:private', async () => {
+    const a = agentRepo(db).create({ name: '资讯助手' })
+    const created: string[] = []
+    const sent: Array<{ sessionId: string; text?: string }> = []
+    const oc = {
+      getSession: async (id: string) => ({ id }),
+      createSession: async () => {
+        const id = `ses_${created.length + 1}`
+        created.push(id)
+        return { id }
+      },
+      sendMessage: async (input: { sessionId: string; text?: string }) => {
+        sent.push(input)
+        return { id: 'msg', parts: [{ type: 'text', text: `回:${input.text}` }] }
+      },
+    } as unknown as OcClient
+    const chat = new PrivateChat(db, () => oc)
+
+    await chat.send(a.id, a.name, '用户手打')
+    const userSes = chat.getSessionId(a.id)
+    expect(userSes).toBe('ses_1')
+
+    await chat.sendDedicated(a.id, a.name, '早报任务', `session:cron:taskA`, '早报')
+    await chat.sendDedicated(a.id, a.name, '晚报任务', `session:cron:taskB`, '晚报')
+    expect(chat.getSessionId(a.id)).toBe(userSes)
+    expect(chat.getSessionIdByKey('session:cron:taskA')).toBe('ses_2')
+    expect(chat.getSessionIdByKey('session:cron:taskB')).toBe('ses_3')
+    expect(sent.map((s) => s.sessionId)).toEqual(['ses_1', 'ses_2', 'ses_3'])
+    expect(sent.map((s) => s.text)).toEqual(['用户手打', '早报任务', '晚报任务'])
+
+    // 同一任务再触发：复用自己那条会话
+    await chat.sendDedicated(a.id, a.name, '早报第二天', `session:cron:taskA`, '早报')
+    expect(chat.getSessionIdByKey('session:cron:taskA')).toBe('ses_2')
+    expect(sent[3].sessionId).toBe('ses_2')
+    expect(created).toEqual(['ses_1', 'ses_2', 'ses_3'])
+  })
+
+  it('同一智能体两条专属会话可并行，互不等待 inFlight', async () => {
+    const a = agentRepo(db).create({ name: '并行助手' })
+    let live = 0
+    let peak = 0
+    const oc = {
+      getSession: async (id: string) => ({ id }),
+      createSession: async () => ({ id: `ses_${Math.random().toString(36).slice(2, 8)}` }),
+      sendMessage: async () => {
+        live += 1
+        peak = Math.max(peak, live)
+        await new Promise((r) => setTimeout(r, 40))
+        live -= 1
+        return { id: 'msg', parts: [{ type: 'text', text: 'ok' }] }
+      },
+    } as unknown as OcClient
+    const chat = new PrivateChat(db, () => oc)
+    await Promise.all([
+      chat.sendDedicated(a.id, a.name, 'A', 'session:cron:pa', 'A'),
+      chat.sendDedicated(a.id, a.name, 'B', 'session:cron:pb', 'B'),
+    ])
+    expect(peak).toBe(2)
+    expect(chat.getSessionIdByKey('session:cron:pa')).toBeTruthy()
+    expect(chat.getSessionIdByKey('session:cron:pb')).toBeTruthy()
+    expect(chat.getSessionIdByKey('session:cron:pa')).not.toBe(chat.getSessionIdByKey('session:cron:pb'))
+  })
+})

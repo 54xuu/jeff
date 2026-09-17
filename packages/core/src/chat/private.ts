@@ -154,6 +154,11 @@ export class PrivateChat {
     return kvRepo(this.db).get(SESSION_KEY(agentId))
   }
 
+  /** 按任意 kv 键取会话 id（定时任务专属会话：`session:cron:<taskId>`） */
+  getSessionIdByKey(kvKey: string): string | null {
+    return kvRepo(this.db).get(kvKey)
+  }
+
   /**
    * 发送消息并等待回复完成。
    * 模型/思考以智能体资料为准；入参 model/variant 忽略（兼容旧调用方）。
@@ -175,6 +180,52 @@ export class PrivateChat {
     }
   }
 
+  /**
+   * 发到一条独立会话（不碰用户正在聊的 session:private:<agentId>，也不走该 agent 的停止/在途标记）。
+   * 定时任务用：同一任务反复触发复用 kvKey 指向的会话；不同任务传不同 kvKey。
+   */
+  async sendDedicated(
+    agentId: string,
+    _agentName: string,
+    text: string,
+    kvKey: string,
+    title?: string,
+  ): Promise<AssistantInfo> {
+    const sessionId = await this.ensureDedicatedSession(agentId, kvKey, title)
+    return this.deliverToSession(agentId, sessionId, text, undefined, { checkPendingStop: false, autoTitle: !title })
+  }
+
+  /** 取或创建 kvKey 指向的专属会话；并发同 key 只建一次 */
+  async ensureDedicatedSession(agentId: string, kvKey: string, title?: string): Promise<string> {
+    const inflight = this.ensureInflight.get(kvKey)
+    if (inflight) return inflight
+    const p = this.doEnsureDedicatedSession(agentId, kvKey, title).finally(() => this.ensureInflight.delete(kvKey))
+    this.ensureInflight.set(kvKey, p)
+    return p
+  }
+
+  private async doEnsureDedicatedSession(agentId: string, kvKey: string, title?: string): Promise<string> {
+    await this.hooks?.beforeEnsure?.()
+    const kv = kvRepo(this.db)
+    const existing = kv.get(kvKey)
+    if (existing) {
+      try {
+        await this.getOc().getSession(existing)
+        return existing
+      } catch {
+        kv.delete(kvKey)
+      }
+    }
+    const now = Date.now()
+    const explicit = (title || '').trim()
+    const s = await this.getOc().createSession({ title: explicit || placeholderTitle(now), agent: agentSlug(agentId) })
+    kv.set(kvKey, s.id)
+    // 显式标题（定时任务名）不再走首条消息自动补名
+    if (!explicit) kv.set(autoTitleKey(s.id), String(now))
+    this.hooks?.onSessionCreated?.(s.id, { kind: 'private', agentId })
+    return s.id
+  }
+
   private async doSend(
     agentId: string,
     agentName: string,
@@ -182,12 +233,22 @@ export class PrivateChat {
     images?: Array<{ mime: string; dataUrl: string }>,
   ): Promise<AssistantInfo> {
     const sessionId = await this.ensureSession(agentId, agentName)
+    return this.deliverToSession(agentId, sessionId, text, images, { checkPendingStop: true, autoTitle: true })
+  }
+
+  private async deliverToSession(
+    agentId: string,
+    sessionId: string,
+    text: string,
+    images: Array<{ mime: string; dataUrl: string }> | undefined,
+    flags: { checkPendingStop: boolean; autoTitle: boolean },
+  ): Promise<AssistantInfo> {
     // 建会话期间用户已点停止：这一轮直接按「已停止」收尾（否则停止被丢弃，界面一直转圈到超时）
-    if (this.pendingStop.delete(agentId)) {
+    if (flags.checkPendingStop && this.pendingStop.delete(agentId)) {
       this.hooks?.onDebugLog?.('private-send-stop', { agentId, sessionId, reason: 'stopped-before-session-ready' })
       throw new PrivateChatStoppedError(sessionId, true)
     }
-    await this.maybeAutoTitle(sessionId, text)
+    if (flags.autoTitle) await this.maybeAutoTitle(sessionId, text)
     const agent = agentRepo(this.db).get(agentId)
     const opts = agentPromptOpts(agent, this.hooks?.defaultModel?.() ?? null)
     try {

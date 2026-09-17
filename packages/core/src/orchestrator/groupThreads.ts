@@ -77,7 +77,10 @@ export class GroupThreadStore {
     return out.sort((a, b) => b.updatedAt - a.updatedAt)
   }
 
-  createThread(projectId: string, title?: string): GroupThreadMeta {
+  /**
+   * @param opts.activate 默认 true。定时任务建专属话题时传 false，避免把用户正在看的群会话抢走。
+   */
+  createThread(projectId: string, title?: string, opts?: { activate?: boolean }): GroupThreadMeta {
     const id = genId('thr')
     const now = Date.now()
     const explicit = (title || '').trim()
@@ -91,7 +94,7 @@ export class GroupThreadStore {
     }
     const kv = this.kv()
     kv.setJSON(THREAD_KEY(projectId, id), meta)
-    kv.set(ACTIVE_KEY(projectId), id)
+    if (opts?.activate !== false) kv.set(ACTIVE_KEY(projectId), id)
     return meta
   }
 

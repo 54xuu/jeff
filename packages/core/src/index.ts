@@ -19,6 +19,7 @@ import { allToolDefs } from './tools/definitions.js'
 import { normalizeViewportArgs, parseFullPageFlag, shotName } from './tools/browserArgs.js'
 import { PluginManager } from './plugins/manager.js'
 import { CronScheduler } from './cron/scheduler.js'
+import { dispatchCronTask } from './cron/dispatch.js'
 import { describeCron, nextRunAt } from './cron/expr.js'
 import { UnavailableBrowser, type BrowserControl } from './browser/control.js'
 import { PrivateChat, autoTitleKey } from './chat/private.js'
@@ -327,6 +328,15 @@ export class JeffCore extends EventEmitter {
       db: this.db,
       runTask: (task, isCatchup) => this.runCronTask(task, isCatchup),
       onChanged: () => this.bus.emit('cron-updated'),
+      onTurnDone: (task, ctx) =>
+        this.bus.emit('cron-turn-done', {
+          kind: task.target_type === 'agent' ? 'agent' : 'group',
+          id: task.target_id,
+          taskId: task.id,
+          taskName: task.name,
+          threadId: ctx?.threadId,
+          sessionId: ctx?.sessionId,
+        }),
       log: (tag, detail) => this.debugLog?.log(tag, detail),
     })
     this.cron.start()
@@ -862,21 +872,13 @@ export class JeffCore extends EventEmitter {
   /**
    * 真正执行一次定时任务（调度器回调）。
    *
-   * 私聊与群聊走各自既有链路，因此上下文、记忆、AGENTS.md 注入等行为与用户手打完全一致；
-   * 私聊与用户手动聊天共用同一 session（早报类场景需要跨天记忆连续性）。
+   * 私聊与群聊走各自既有链路，因此上下文、记忆、AGENTS.md 注入等行为与用户手打完全一致。
+   * 每个任务一条独立会话（私聊 = 独立 opencode session，群聊 = 独立 thread）：
+   * 同一任务反复触发复用自己那条（早报跨天连续），不同任务 / 用户手打互不影响。
    */
-  private async runCronTask(task: CronTaskRow, isCatchup: boolean): Promise<void> {
+  private async runCronTask(task: CronTaskRow, isCatchup: boolean): Promise<{ threadId?: string; sessionId?: string }> {
     if (isCatchup) this.debugLog?.log('cron-catchup-run', { id: task.id, name: task.name })
-    if (task.target_type === 'agent') {
-      const agent = agentRepo(this.db).get(task.target_id)
-      if (!agent) throw new Error('目标智能体已被删除')
-      await this.privateChat.send(agent.id, agent.name, task.prompt)
-      return
-    }
-    const project = projectRepo(this.db).get(task.target_id)
-    if (!project) throw new Error('目标项目群已被解散')
-    if (!project.leader_agent_id) throw new Error('目标项目群未设置群主')
-    await this.groupChat.send({ projectId: project.id, text: task.prompt, cronTaskId: task.id })
+    return dispatchCronTask({ db: this.db, privateChat: this.privateChat, groupChat: this.groupChat, task })
   }
 
   // ---------- 插件 ----------
@@ -1744,6 +1746,7 @@ export { formatModelKey, parseModelKey, modelDisplayLabel, agentPromptOpts } fro
 export { normalizeProjectRole, projectRoleLabel, PROJECT_ROLES, type ProjectRole } from './util/projectRole.js'
 export { extractThinkTags, mergeReasoning, type ThinkExtractResult } from './util/thinkTag.js'
 export { CronScheduler, type CronSchedulerDeps } from './cron/scheduler.js'
+export { dispatchCronTask, cronPrivateSessionKey, cronGroupThreadKey } from './cron/dispatch.js'
 export { PluginManager, PLUGIN_MCP_PREFIX, type PluginEnabledMap } from './plugins/manager.js'
 export {
   encodePluginUserMessage,

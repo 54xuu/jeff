@@ -189,16 +189,16 @@ function lastAssistantOf<T extends { role: string }>(list?: T[]): T | null {
  * 触发点是「一轮发送真正结束」（sendAgent/sendGroup 的 await 返回），而不是流式 done 事件：
  * 群聊一轮可能串行跑多个 agent，流式 done 每跳都会来一次，按它提醒会把用户轰炸 3~5 次。
  */
-function notifyTurnDone(key: string, kind: 'agent' | 'group', threadId?: string): void {
+function notifyTurnDone(key: string, kind: 'agent' | 'group', threadId?: string, override?: { title?: string; body?: string }): void {
   // 提醒只是收尾的副作用，绝不能让它把"发送成功"变成"发送失败"（调用点在 send 的 try 里）
   try {
-    notifyTurnDoneInner(key, kind, threadId)
+    notifyTurnDoneInner(key, kind, threadId, override)
   } catch {
     /* 忽略：提醒失败不影响聊天 */
   }
 }
 
-function notifyTurnDoneInner(key: string, kind: 'agent' | 'group', threadId?: string): void {
+function notifyTurnDoneInner(key: string, kind: 'agent' | 'group', threadId?: string, override?: { title?: string; body?: string }): void {
   const s = useStore.getState()
   const st = s.settings
   if (st?.notifySound === false && st?.notifyDesktop === false) return
@@ -218,12 +218,17 @@ function notifyTurnDoneInner(key: string, kind: 'agent' | 'group', threadId?: st
   if (kind === 'agent') {
     const agent = s.agents.find((a) => a.id === id)
     const last = lastAssistantOf(s.messages[key])
-    showDesktopNotify({ title: agent?.name || '新回复', body: (last && summarize(last.text)) || '有新回复', kind, id })
+    showDesktopNotify({
+      title: override?.title || agent?.name || '新回复',
+      body: override?.body || (last && summarize(last.text)) || '有新回复',
+      kind,
+      id,
+    })
   } else {
     const project = s.projects.find((p) => p.id === id)
     const last = lastAssistantOf(s.groupMessages[id])
     const body = last ? `${last.sender_name ? `${last.sender_name}：` : ''}${summarize(last.text) || '有新回复'}` : '群里有新回复'
-    showDesktopNotify({ title: project?.title || '项目群', body, kind, id })
+    showDesktopNotify({ title: override?.title || project?.title || '项目群', body: override?.body || body, kind, id })
   }
 }
 
@@ -524,12 +529,20 @@ export const useStore = create<JeffState>((set, get) => ({
       void get().refreshAgents()
     } else if (what === 'plugins') {
       void get().refreshPlugins()
+    } else if (what === 'cron-turn-done') {
+      // 定时任务有自己的会话/话题，不能重拉用户正在看的聊天（会把别人的回复摘要塞进当前窗口的通知）
+      const p = (payload || {}) as { kind?: 'agent' | 'group'; id?: string; taskName?: string; threadId?: string }
+      const { active, tab } = get()
+      if (p.kind === 'group' && p.id && p.threadId && tab === 'chats' && active?.kind === 'group' && active.id === p.id && get().groupThreads[p.id] === p.threadId) {
+        void get().loadGroupHistory(p.id).catch(() => {})
+      }
+      notifyTurnDone(p.kind === 'agent' ? `agent:${p.id || ''}` : p.id || '', p.kind === 'group' ? 'group' : 'agent', p.threadId, {
+        title: p.taskName || '定时任务',
+        body: '定时任务已完成',
+      })
     } else if (what === 'cron' || what === 'cron-updated') {
       void get().refreshCron()
-      // 定时触发会在会话里落下新消息：刷新会话列表与当前打开的会话
-      const { active } = get()
-      if (active?.kind === 'agent') void get().loadHistory(`agent:${active.id}`)
-      if (active?.kind === 'group') void get().loadGroupHistory(active.id)
+      // 任务定义/运行状态变了即可；专属会话的消息不刷进用户当前窗口
       void get().refreshProjects()
     } else if (what === 'projects' || what === 'tasks') {
       void get().refreshProjects()

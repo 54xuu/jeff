@@ -222,20 +222,26 @@ function CronEditor(props: {
 }): React.JSX.Element {
   const t = props.task
   const [name, setName] = useState(t?.name || '')
-  const [targetType, setTargetType] = useState<'agent' | 'project'>(t?.target_type || 'agent')
-  const [targetId, setTargetId] = useState(t?.target_id || '')
+  const [targetKey, setTargetKey] = useState(t ? `${t.target_type}:${t.target_id}` : '')
   const [expr, setExpr] = useState(t?.cron_expr || '0 8 * * *')
   const [prompt, setPrompt] = useState(t?.prompt || '')
   const [missPolicy, setMissPolicy] = useState<'catchup' | 'skip'>(t?.miss_policy || 'catchup')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const options = targetType === 'agent' ? props.agents : props.projects
+  const allTargets = useMemo(
+    () => [
+      ...props.agents.map((a) => ({ key: `agent:${a.id}`, id: a.id, type: 'agent' as const, label: a.label })),
+      ...props.projects.map((p) => ({ key: `project:${p.id}`, id: p.id, type: 'project' as const, label: p.label })),
+    ],
+    [props.agents, props.projects],
+  )
   useEffect(() => {
-    // 切目标类型时清空不匹配的选择，避免提交到错误的 id
-    if (!options.some((o) => o.id === targetId)) setTargetId(options[0]?.id || '')
+    // 目标被删或列表刷新后，当前选择不在清单里就清空，避免提交到错误的 id
+    if (targetKey && !allTargets.some((o) => o.key === targetKey)) setTargetKey(allTargets[0]?.key || '')
+    if (!targetKey && allTargets[0]) setTargetKey(allTargets[0].key)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [targetType, props.agents.length, props.projects.length])
+  }, [props.agents.length, props.projects.length])
 
   const exprError = useMemo(() => (isValidCron(expr) ? null : '表达式非法（需 5 段：分 时 日 月 周）'), [expr])
   const nextPreview = useMemo(() => {
@@ -250,7 +256,8 @@ function CronEditor(props: {
   const submit = async () => {
     setError(null)
     if (!name.trim()) return setError('请填写任务名')
-    if (!targetId) return setError('请选择目标会话')
+    const picked = allTargets.find((o) => o.key === targetKey)
+    if (!picked) return setError('请选择目标会话')
     if (exprError) return setError(exprError)
     if (!prompt.trim()) return setError('请填写触发时要说的话')
     setSaving(true)
@@ -258,8 +265,8 @@ function CronEditor(props: {
       await api.invoke(IPC.cronSave, {
         ...(t ? { id: t.id } : {}),
         name: name.trim(),
-        target_type: targetType,
-        target_id: targetId,
+        target_type: picked.type,
+        target_id: picked.id,
         cron_expr: expr.trim(),
         prompt: prompt.trim(),
         miss_policy: missPolicy,
@@ -279,20 +286,23 @@ function CronEditor(props: {
         <Field label="任务名 *">
           <input value={name} onChange={(e) => setName(e.target.value)} placeholder="如：晨间病区动态" data-testid="cron-name" />
         </Field>
-        <Field label="目标类型">
-          <select value={targetType} onChange={(e) => setTargetType(e.target.value as 'agent' | 'project')} data-testid="cron-target-type">
-            <option value="agent">私聊某个智能体</option>
-            <option value="project">项目群</option>
-          </select>
-        </Field>
-        <Field label={targetType === 'agent' ? '目标智能体 *' : '目标项目群 *'} span>
-          <select value={targetId} onChange={(e) => setTargetId(e.target.value)} data-testid="cron-target-id">
+        <Field label="目标会话 *" span>
+          <select value={targetKey} onChange={(e) => setTargetKey(e.target.value)} data-testid="cron-target-id">
             <option value="">（请选择）</option>
-            {options.map((o) => (
-              <option key={o.id} value={o.id}>
-                {o.label}
-              </option>
-            ))}
+            <optgroup label="智能体" data-testid="cron-optgroup-agents">
+              {props.agents.map((o) => (
+                <option key={o.id} value={`agent:${o.id}`}>
+                  {o.label}
+                </option>
+              ))}
+            </optgroup>
+            <optgroup label="项目群" data-testid="cron-optgroup-projects">
+              {props.projects.map((o) => (
+                <option key={o.id} value={`project:${o.id}`}>
+                  {o.label}
+                </option>
+              ))}
+            </optgroup>
           </select>
         </Field>
         <Field label="触发时间（5 段 cron：分 时 日 月 周，本机时区）" span>

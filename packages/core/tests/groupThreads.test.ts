@@ -171,4 +171,13 @@ describe('会话默认命名 {YYYYMMDD-HHmm}-{任务中文名称}', () => {
     threads.autoTitleFromFirstMessage(projectId, active, '不该生效')
     expect(threads.getMeta(projectId, active)?.title).toBe('默认会话')
   })
+
+  it('createThread({ activate:false }) 不抢当前活跃话题', () => {
+    const active = threads.ensureActiveThread(projectId)
+    const cron = threads.createThread(projectId, '晨间问询', { activate: false })
+    expect(threads.getActiveThreadId(projectId)).toBe(active)
+    expect(cron.id).not.toBe(active)
+    expect(threads.getMeta(projectId, cron.id)?.title).toBe('晨间问询')
+    expect(threads.getMeta(projectId, cron.id)?.autoTitle).toBe(false)
+  })
 })

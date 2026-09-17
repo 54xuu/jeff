@@ -6,9 +6,14 @@ import { nextRunAt } from './expr.js'
 export interface CronSchedulerDeps {
   db: DB
   /** 真正执行一次任务（私聊发给 agent / 群聊投递到项目群）；抛错=本次运行失败 */
-  runTask: (task: CronTaskRow, isCatchup: boolean) => Promise<void>
+  runTask: (task: CronTaskRow, isCatchup: boolean) => Promise<{ threadId?: string; sessionId?: string } | void>
   /** 任务/运行状态变化后的通知（前端刷新用） */
   onChanged?: () => void
+  /**
+   * 任务真正跑完（产出了一条新消息）后的回调。
+   * 失败、跳过、目标缺失都不调——只在成功产出回复时才让 UI 响铃 / 弹桌面通知。
+   */
+  onTurnDone?: (task: CronTaskRow, ctx?: { threadId?: string; sessionId?: string }) => void
   log?: (tag: string, detail?: unknown) => void
 }
 
@@ -150,9 +155,14 @@ export class CronScheduler {
         return
       }
       const startedAt = Date.now()
-      await this.deps.runTask(task, isCatchup)
+      const result = await this.deps.runTask(task, isCatchup)
       this.runs.finish(runId, 'ok')
       this.deps.log?.('cron-run-ok', { id: task.id, name: task.name, elapsedMs: Date.now() - startedAt, isCatchup })
+      try {
+        this.deps.onTurnDone?.(task, result || undefined)
+      } catch (err) {
+        this.deps.log?.('cron-turn-done-error', String((err as Error)?.message || err))
+      }
     } catch (err) {
       const message = String((err as Error)?.message || err)
       this.runs.finish(runId, 'failed', message)

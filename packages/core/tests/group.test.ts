@@ -487,4 +487,35 @@ describe('taskCardMessage / statusLabel', () => {
     expect((card.meta as { type?: string }).type).toBe('task')
     expect(statusLabel('in_progress')).toBe('进行中')
   })
+
+  it('send({ threadId }) 写入指定话题且不改 active；两条任务的消息互不串', async () => {
+    const p = projectRepo(db).list()[0]
+    const ocStub = {
+      getSession: async (id: string) => ({ id }),
+      createSession: async () => ({ id: `ses_${Math.random().toString(36).slice(2, 8)}` }),
+      sendMessage: async (input: { text?: string }) => ({ id: 'msg', parts: [{ type: 'text', text: `回:${input.text}` }] }),
+    } as unknown as OcClient
+    group = new GroupChat(db, () => ocStub)
+    await group.send({ projectId: p.id, text: '用户正在这个话题里聊' })
+    const active = group.activeThreadId(p.id)
+    const tA = group.threads.createThread(p.id, '任务A', { activate: false })
+    const tB = group.threads.createThread(p.id, '任务B', { activate: false })
+    expect(group.activeThreadId(p.id)).toBe(active)
+
+    await group.send({ projectId: p.id, text: '任务A 的提示词', cronTaskId: 'cronA', threadId: tA.id })
+    await group.send({ projectId: p.id, text: '任务B 的提示词', cronTaskId: 'cronB', threadId: tB.id })
+
+    expect(group.activeThreadId(p.id)).toBe(active)
+    const userHist = group.history(p.id, active).map((m) => m.text)
+    const histA = group.history(p.id, tA.id)
+    const histB = group.history(p.id, tB.id)
+    expect(userHist.some((t) => t.includes('用户正在这个话题里聊'))).toBe(true)
+    expect(userHist.some((t) => t.includes('任务A 的提示词'))).toBe(false)
+    expect(userHist.some((t) => t.includes('任务B 的提示词'))).toBe(false)
+    expect(histA.some((m) => m.text.includes('任务A 的提示词'))).toBe(true)
+    expect(histA.some((m) => m.meta?.cron_task_id === 'cronA')).toBe(true)
+    expect(histA.some((m) => m.text.includes('任务B 的提示词'))).toBe(false)
+    expect(histB.some((m) => m.text.includes('任务B 的提示词'))).toBe(true)
+    expect(histB.some((m) => m.meta?.cron_task_id === 'cronB')).toBe(true)
+  })
 })

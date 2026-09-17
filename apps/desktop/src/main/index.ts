@@ -130,6 +130,7 @@ if (!gotLock) {
     core.bus.on('chat-stream', (p: unknown) => broadcast('chat-stream', p))
     core.bus.on('group-updated', (p: unknown) => broadcast('group-updated', p))
     core.bus.on('cron-updated', () => broadcast('cron-updated'))
+    core.bus.on('cron-turn-done', (p: unknown) => broadcast('cron-turn-done', p))
     core.on('sidecar-status', (p: unknown) => broadcast('sidecar-status', p))
     core.on('sidecar-log', (line: string) => pushSidecarLog(line))
     // 内置浏览器：把主进程实现注入 core（工具调用 → 渲染层 webview）

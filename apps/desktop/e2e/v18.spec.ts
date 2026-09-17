@@ -132,9 +132,7 @@ test('v1.8.0：分组 / 定时任务 / 插件 / 斜杠指令 / 内置浏览器',
     await expect(page.getByTestId('schedules-page')).toBeVisible()
     await page.getByTestId('cron-create').click()
     await page.getByTestId('cron-name').fill('E2E 早报')
-    await page.getByTestId('cron-target-type').selectOption('agent')
-    // 目标下拉里选第一个智能体
-    const targetValue = await page.getByTestId('cron-target-id').locator('option').nth(1).getAttribute('value')
+    const targetValue = await page.getByTestId('cron-target-id').locator('optgroup[label="智能体"] option').first().getAttribute('value')
     await page.getByTestId('cron-target-id').selectOption(targetValue || '')
     await page.getByTestId('cron-expr').fill('30 8 * * 1-5')
     await page.getByTestId('cron-prompt').fill('请汇报今天的病区动态。')
