@@ -419,6 +419,24 @@ test('v1.8.3：定时任务工具边界 / 插件校验 / 内置浏览器点击·
     expect(noInput.ok).toBe(false)
     expect(String(noInput.error)).toContain('没找到输入框')
 
+    // ---------- 5b. target="_blank" 链接点击后在当前页原地跳转（不是静默无反应） ----------
+    await callToolOk(bridge, 'jeff_browser_navigate', { url: site.url })
+    const blankClick = await callToolOk<{ clicked: string }>(bridge, 'jeff_browser_click', { selector: '#blank-link' })
+    expect(blankClick.clicked).toContain('在新标签打开')
+    await expect
+      .poll(
+        async () => {
+          const c = await callToolOk<{ title: string; url: string; text: string }>(bridge, 'jeff_browser_get_content', {})
+          return `${c.title}|${c.url}|${c.text}`
+        },
+        { timeout: 20_000, message: '点击 target=_blank 后应在当前 webview 打开 /wizard，而不是无反应' },
+      )
+      .toMatch(/三步向导|住院登记/)
+    const afterBlank = await callToolOk<{ title: string; url: string; text: string }>(bridge, 'jeff_browser_get_content', {})
+    expect(afterBlank.url).toContain('/wizard')
+    expect(afterBlank.text).toContain('住院登记向导')
+    await page.screenshot({ path: path.join(EVIDENCE, '12b-browser-blank-link.png'), fullPage: true })
+
     // ---------- 6. 定时任务工具：空串不得停用/改策略（真模型补默认值的坑） ----------
     const xiaojieId = dbQuery<{ id: string }>('SELECT id FROM agent WHERE builtin = 1 LIMIT 1')[0]?.id
     expect(xiaojieId, '内置小杰应存在').toBeTruthy()

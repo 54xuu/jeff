@@ -773,6 +773,9 @@ export default function BrowserPanel(): React.JSX.Element {
     readyResolveRef.current = resolveReady
     const wv = document.createElement('webview') as HTMLElement
     wv.setAttribute('partition', 'persist:jeff-browser')
+    // 缺省禁止弹窗：target="_blank" / window.open 会被 Chromium 静默吞掉。
+    // 打开 allowpopups 只是让 guest 能发出新窗口请求，主进程仍一律 deny，并改成当前页原地跳转。
+    wv.setAttribute('allowpopups', '')
     // 没记住过地址就不预加载：about:blank 会被 Electron 当成 https://about:blank/ 加载失败
     if (startUrl) wv.setAttribute('src', startUrl)
     wv.style.width = '100%'

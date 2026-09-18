@@ -137,7 +137,8 @@ export async function startTestSite(): Promise<TestSite> {
             'live13 测试站',
             `<h1>live13 测试站</h1>
              <ul><li><a href="/wizard">三步向导</a></li><li><a href="/upload">文件上传</a></li>
-             <li><a href="/react">受控输入</a></li><li><a href="/broken">故意坏掉的页面</a></li></ul>
+             <li><a href="/react">受控输入</a></li><li><a href="/broken">故意坏掉的页面</a></li>
+             <li><a id="blank-link" href="/wizard" target="_blank">在新标签打开</a></li></ul>
              <div id="home-marker">站首页已就绪</div>`,
           ),
         )

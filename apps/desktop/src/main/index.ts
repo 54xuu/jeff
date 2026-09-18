@@ -403,6 +403,17 @@ function createWindow(): void {
     void shell.openExternal(url)
     return { action: 'deny' }
   })
+  // 内置浏览器（persist:jeff-browser）是单页设计，不做多标签 UI：
+  // 页面内 target="_blank" 链接 / window.open(url) 一律在当前 webview 原地跳转，
+  // 而不是让 Chromium 默认拦截弹窗后静默无反应。
+  win.webContents.on('did-attach-webview', (_event, guestWebContents) => {
+    guestWebContents.setWindowOpenHandler(({ url }) => {
+      if (/^https?:\/\//i.test(url)) {
+        void guestWebContents.loadURL(url).catch(() => {})
+      }
+      return { action: 'deny' }
+    })
+  })
   // 渲染层订阅 push 之前 sidecar 可能已 running：补发一次当前状态（触发渲染层补拉模型目录）
   win.webContents.once('did-finish-load', () => {
     if (core?.sidecar) broadcast('sidecar-status', { status: core.sidecar.status, error: core.sidecar.lastError || undefined })
