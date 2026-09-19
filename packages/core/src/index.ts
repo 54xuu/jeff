@@ -1760,3 +1760,17 @@ export { resolveScreenshotScale } from './tools/browserArgs.js'
 export { CRON_TOOL_NAMES } from './tools/cronTools.js'
 // cron 表达式工具（渲染层在开发态按本文件解析类型，生产打包走 browser.ts，两处都要导出）
 export { isValidCron, describeCron, nextRunAt, parseCron, CRON_PRESETS, type CronFields } from './cron/expr.js'
+export {
+  shouldShowDesktopNotify,
+  visualNotifyChannel,
+  balloonBounds,
+  balloonHtml,
+  osNotificationInit,
+  escapeHtml,
+  BALLOON_WIDTH,
+  BALLOON_HEIGHT,
+  BALLOON_MARGIN,
+  BALLOON_SHOW_MS,
+  type VisualNotifyChannel,
+  type Rect as BalloonWorkArea,
+} from './notify/visual.js'

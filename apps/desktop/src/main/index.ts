@@ -2,9 +2,10 @@ import { app, BrowserWindow, session, shell, Tray, Menu, dialog, nativeImage, No
 import type { MenuItemConstructorOptions } from 'electron'
 import fs from 'node:fs'
 import path from 'node:path'
-import { JeffCore, BridgeBrowserControl } from '@jeff/core'
+import { JeffCore, BridgeBrowserControl, osNotificationInit, visualNotifyChannel } from '@jeff/core'
 import type { BrowserResult, BrowserState } from '@jeff/core'
 import { registerIpc } from './ipc.js'
+import { closeWindowsBalloon, showWindowsBalloon } from './win-balloon.js'
 
 // Windows 下 Toast 通知必须带 AppUserModelID，否则静默丢弃；取值需与 electron-builder 的 appId、
 // 安装器写入的开始菜单快捷方式 AUMID 一致。必须在 app ready 之前设置（越早越稳）。
@@ -148,9 +149,11 @@ if (!gotLock) {
   })
 
   app.on('window-all-closed', async () => {
+    closeWindowsBalloon()
     if (core) await core.dispose().catch(() => {})
     if (process.platform !== 'darwin') app.quit()
   })
+  app.on('before-quit', () => closeWindowsBalloon())
 }
 
 /** 菜单动作 → 渲染层（新会话/发起群聊/设置/主题/使用说明） */
@@ -352,32 +355,68 @@ function focusMainWindow(): void {
   win.focus()
 }
 
-/**
- * 系统桌面文本通知（AI 回复完成时由渲染层判定后调用）。
- *
- * silent 恒为 true：提示音由应用自己播放（Linux 通知无默认音效、Windows 通知音受系统免打扰影响，
- * 交给系统会出现「有的平台响有的不响」），关掉应用提示音即彻底安静，行为可预期。
- * 点击通知 → 唤起窗口并跳转到对应会话。
- */
-export function showDesktopNotification(p: { title: string; body?: string; kind?: 'agent' | 'group'; id?: string }): { ok: boolean; error?: string } {
+/** 防止 Notification 被 GC 后 Windows/部分 Linux 上横幅还没画出来就被拆掉 */
+const liveNotifications: Notification[] = []
+
+function notifyLog(msg: string): void {
+  console.warn(`[jeff] notify: ${msg}`)
+  try {
+    core?.debugLog?.log('notify', msg)
+  } catch {
+    /* 日志失败忽略 */
+  }
+}
+
+function retainNotification(n: Notification): void {
+  liveNotifications.push(n)
+  const drop = () => {
+    const i = liveNotifications.indexOf(n)
+    if (i >= 0) liveNotifications.splice(i, 1)
+  }
+  n.on('close', drop)
+  n.on('click', drop)
+  n.on('failed', (_e, err) => {
+    notifyLog(`系统通知失败：${String(err).slice(0, 200)}`)
+    drop()
+  })
+}
+
+function onNotifyActivate(p: { kind?: 'agent' | 'group'; id?: string }): void {
+  focusMainWindow()
+  if (p.kind && p.id) broadcast('navigate-chat', { kind: p.kind, id: p.id })
+}
+
+function showOsNotification(p: { title: string; body?: string; kind?: 'agent' | 'group'; id?: string }): { ok: boolean; error?: string } {
   if (!Notification.isSupported()) return { ok: false, error: '当前系统不支持桌面通知' }
   try {
-    const icon = iconPath()
-    const n = new Notification({
-      title: p.title,
-      body: (p.body || '').slice(0, 200),
-      silent: true,
-      ...(icon ? { icon } : {}),
-    })
-    n.on('click', () => {
-      focusMainWindow()
-      if (p.kind && p.id) broadcast('navigate-chat', { kind: p.kind, id: p.id })
-    })
+    const n = new Notification(osNotificationInit({ title: p.title, body: p.body, icon: iconPath(), platform: process.platform }))
+    n.on('click', () => onNotifyActivate(p))
+    retainNotification(n)
     n.show()
     return { ok: true }
   } catch (err) {
     return { ok: false, error: String((err as Error)?.message || err).slice(0, 200) }
   }
+}
+
+/**
+ * 任务/回复完成时的视觉提醒。
+ *
+ * 提示音由渲染层自己播（silent 恒为 true）。Windows 不用系统 Toast 当主通道：
+ * NSIS 包上 Toast 经常调用成功但不出右下角横幅，改成自绘气泡；失败再兜底系统通知。
+ * 点击 → 唤起窗口并跳转到对应会话。
+ */
+export function showDesktopNotification(p: { title: string; body?: string; kind?: 'agent' | 'group'; id?: string }): { ok: boolean; error?: string } {
+  if (visualNotifyChannel(process.platform) === 'balloon') {
+    try {
+      showWindowsBalloon({ title: p.title, body: p.body, onClick: () => onNotifyActivate(p) }, win)
+      return { ok: true }
+    } catch (err) {
+      notifyLog(`Windows 气泡失败，改走系统通知：${String((err as Error)?.message || err).slice(0, 200)}`)
+      return showOsNotification(p)
+    }
+  }
+  return showOsNotification(p)
 }
 
 function createWindow(): void {

@@ -6,6 +6,8 @@ const api = {
     smokeViews: process.env.JEFF_SMOKE_VIEWS || '',
     smokeTheme: process.env.JEFF_SMOKE_THEME || '',
     smokeViewDelay: process.env.JEFF_SMOKE_VIEW_DELAY || '',
+    /** 渲染层判断 Windows 气泡策略用；sandbox 关了也拿不到 process.platform */
+    platform: process.platform,
   },
   invoke: (channel: string, payload?: unknown): Promise<unknown> => ipcRenderer.invoke(`jeff:${channel}`, payload),
   /** 主进程推送：{what, payload} */

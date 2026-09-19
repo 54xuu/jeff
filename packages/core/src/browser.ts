@@ -15,3 +15,8 @@ export {
 } from './plugins/invoke.js'
 // cron 表达式工具：纯函数，渲染层用于校验、人性化描述与模板（定时任务编辑弹窗）
 export { isValidCron, describeCron, nextRunAt, parseCron, CRON_PRESETS, type CronFields } from './cron/expr.js'
+export {
+  shouldShowDesktopNotify,
+  visualNotifyChannel,
+  type VisualNotifyChannel,
+} from './notify/visual.js'

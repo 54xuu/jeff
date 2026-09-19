@@ -61,7 +61,7 @@ export default function NotificationSettings(): React.JSX.Element {
             checked={form.notifyDesktop}
             onChange={(e) => void toggle('notifyDesktop', e.target.checked)}
           />
-          <span>桌面文本通知（回复完成时弹系统通知；Linux 走 freedesktop 通知，Windows 走操作中心 Toast）</span>
+          <span>桌面文本通知（回复完成时弹提醒；Linux 走系统通知，Windows 在屏幕右下角弹出气泡）</span>
         </label>
 
         <label className="field check-field">
@@ -83,7 +83,7 @@ export default function NotificationSettings(): React.JSX.Element {
             checked={form.notifyOnlyBackground}
             onChange={(e) => void toggle('notifyOnlyBackground', e.target.checked)}
           />
-          <span>仅当 Jeff 不在前台时弹桌面通知（关掉后，只要不是当前会话，前台也会弹）</span>
+          <span>仅当 Jeff 不在前台时弹桌面通知（Linux 生效；Windows 右下角气泡在看别的会话时也会弹）</span>
         </label>
 
         <div className="field" style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
@@ -106,7 +106,7 @@ export default function NotificationSettings(): React.JSX.Element {
 
       <h3 className="settings-subtitle">提醒规则</h3>
       <p className="settings-tip" style={{ margin: 0 }}>
-        正在看着这个会话（窗口在前台且选中它）→ 不提醒；切到别的会话或离开 Jeff → 响提示音；Jeff 在后台（最小化 / 被遮挡 / 切到别的桌面）→ 提示音 + 系统通知。点击通知会唤起 Jeff 并跳到对应会话。
+        正在看着这个会话（窗口在前台且选中它）→ 不提醒；切到别的会话或离开 Jeff → 响提示音并弹视觉提醒。Linux 默认可勾「仅后台」避免前台横幅；Windows 用屏幕右下角气泡，不依赖系统操作中心。点击提醒会唤起 Jeff 并跳到对应会话。
       </p>
     </div>
   )

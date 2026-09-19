@@ -107,6 +107,14 @@ test.describe('Jeff UI 封闭清单', () => {
       await expect(page.getByTestId('notification-settings')).toBeVisible()
       await page.getByTestId('notify-try-sound').click()
       await page.getByTestId('notify-try-desktop').click()
+      const notifyResult = await page.evaluate(() =>
+        (
+          window as unknown as {
+            jeff: { invoke: (c: string, p?: unknown) => Promise<{ ok: boolean; error?: string }> }
+          }
+        ).jeff.invoke('notify:desktop', { title: 'e2e 桌面通知', body: 'Linux 系统通知通路' }),
+      )
+      expect(notifyResult.ok, notifyResult.error).toBe(true)
       const readSetting = (key: string) =>
         page.evaluate(
           (k) =>

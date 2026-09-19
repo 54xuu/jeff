@@ -4,7 +4,7 @@ import { playNotifySound, showDesktopNotify, summarize, windowFocused } from './
 import { readLayout, writeLayout, defaultBrowserWidth, LIST_DEFAULT_WIDTH, type PaneLayout } from './layout/panes'
 import { parseViewport, serializeViewport, VIEWPORT_STORE_KEY, type BrowserViewportRequest } from './browserViewport'
 import type { AgentInfo, ChatMsg, AppInfo, AppSettings, ProviderCatalogItem, ProjectInfo, ProjectMember, TaskInfo, GroupMessage, ChatImage, CronTaskInfo, CronRunInfo, PluginInfo, ChatPluginInvoke } from '@jeff/core'
-import { IPC } from '@jeff/core'
+import { IPC, shouldShowDesktopNotify } from '@jeff/core'
 
 export type Tab = 'chats' | 'contacts' | 'schedules' | 'plugins' | 'settings'
 export type ActiveChat = { kind: 'agent'; id: string } | { kind: 'group'; id: string } | null
@@ -212,7 +212,13 @@ function notifyTurnDoneInner(key: string, kind: 'agent' | 'group', threadId?: st
   const focused = windowFocused()
   if (st?.notifySound !== false) playNotifySound()
 
-  const wantDesktop = st?.notifyDesktop !== false && (!focused || st?.notifyOnlyBackground === false)
+  const platform = window.jeff?.env?.platform || ''
+  const wantDesktop = shouldShowDesktopNotify({
+    notifyDesktop: st?.notifyDesktop !== false,
+    notifyOnlyBackground: st?.notifyOnlyBackground !== false,
+    focused,
+    platform,
+  })
   if (!wantDesktop) return
 
   if (kind === 'agent') {
