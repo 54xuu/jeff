@@ -195,13 +195,16 @@ export function allToolDefs(): ToolDef[] {
     {
       name: 'jeff_cron_create',
       description:
-        '创建定时任务：到点自动向某个智能体（私聊）或项目群发一条消息并让它执行/回复，用于「每天早上 8 点在群里问今天的病区动态」「每天 8 点让 AI 资讯助手报最新资讯」这类场景。' +
-        'cron_expr 是 5 段式（分 时 日 月 周，本机时区）：0 8 * * * = 每天 08:00；30 8 * * 1-5 = 工作日 08:30。创建前先和用户确认时间与提示词。',
+        '创建定时任务：到点自动向某个智能体（私聊）或项目群发一条消息并让它执行/回复。' +
+        '重复任务用 cron_expr（5 段：分 时 日 月 周，本机时区）：0 8 * * * = 每天 08:00；30 8 * * 1-5 = 工作日 08:30。' +
+        '一次性任务用 run_at，不要用 cron：「今天 12:00」「明天 08:30」「2026-09-22 12:00」。跑完自动停用，不会明年再跑。' +
+        'cron_expr 与 run_at 至少传一个；都传时以 run_at 为准。创建前先和用户确认时间与提示词。',
       args: {
         name: { type: 'string', description: '任务名，如「晨间病区动态」' },
         target_type: { type: 'string', description: '目标类型：agent=私聊某智能体 / project=项目群', enum: ['agent', 'project'] },
         target_id: { type: 'string', description: '目标 id（不是你看到的名字）：先用 jeff_agent_list 或 jeff_project_list 查到对应 id 再传' },
-        cron_expr: { type: 'string', description: '5 段式 cron：分 时 日 月 周（如 0 8 * * *）' },
+        cron_expr: { type: 'string', description: '重复任务的 5 段式 cron：分 时 日 月 周（如 0 8 * * *）。一次性任务不要传这个，改传 run_at' },
+        run_at: { type: 'string', description: '一次性执行时刻（本机时区）：今天 12:00、明天 08:30、2026-09-22 12:00。跑完即停' },
         prompt: { type: 'string', description: '到点要发出的提示词（如「请汇报今天的病区动态」）' },
         miss_policy: { type: 'string', description: '错过处理：catchup=开机后补跑一次（重要）/ skip=顺延跳过（不重要）', enum: ['catchup', 'skip'] },
       },
@@ -213,11 +216,12 @@ export function allToolDefs(): ToolDef[] {
     },
     {
       name: 'jeff_cron_update',
-      description: '修改定时任务（改名/改时间/改提示词/改错过策略/启用停用）。',
+      description:         '修改定时任务（改名/改时间/改成一次性/改提示词/改错过策略/启用停用）。',
       args: {
         id: { type: 'string', description: '任务 id' },
         name: { type: 'string', description: '新任务名（可选）' },
-        cron_expr: { type: 'string', description: '新 cron 表达式（可选）' },
+        cron_expr: { type: 'string', description: '改成重复任务时的新 cron（可选）。传入后不再是一次性' },
+        run_at: { type: 'string', description: '改成一次性：今天 12:00、明天 08:30、2026-09-22 12:00（可选，优先于 cron_expr）' },
         prompt: { type: 'string', description: '新提示词（可选）' },
         miss_policy: { type: 'string', description: '错过处理（可选）', enum: ['catchup', 'skip'] },
         enabled: { type: 'boolean', description: '启用/停用（可选）' },

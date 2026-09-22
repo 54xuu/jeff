@@ -31,6 +31,29 @@ function causeChain(err: unknown, depth = 0): Array<{ name?: string; message?: s
   return [entry, ...causeChain(e.cause, depth + 1)]
 }
 
+/** 从上游 400 响应体里抽出一句人能读的原因（没有就空串，调用方用通用说明） */
+function upstreamErrorHint(body: string): string {
+  const text = String(body || '').trim()
+  if (!text) return ''
+  const pick = (raw: string): string => {
+    try {
+      const j = JSON.parse(raw) as { error?: { message?: string }; message?: string }
+      const nested = j?.error && typeof j.error === 'object' ? j.error.message : ''
+      const msg = (typeof nested === 'string' && nested.trim()) || (typeof j?.message === 'string' ? j.message.trim() : '')
+      return msg
+    } catch {
+      return ''
+    }
+  }
+  let msg = pick(text)
+  if (!msg) {
+    const start = text.indexOf('{')
+    const end = text.lastIndexOf('}')
+    if (start >= 0 && end > start) msg = pick(text.slice(start, end + 1))
+  }
+  return msg.replace(/\s+/g, ' ').slice(0, 180)
+}
+
 /**
  * 把上游 assistant APIError（如 opencode Zen 网关的 400/401/429）映射为可读的中文提示；
  * 返回 null 表示无法识别，调用方回退为原始错误的截断展示。完整原始错误始终进调试日志。
@@ -45,7 +68,11 @@ export function friendlyAssistantError(error: unknown): string | null {
   const model = /"model"\s*:\s*"([^"]+)"/.exec(body)?.[1]
   const modelTag = model ? `（模型 ${model}）` : ''
   if (status === 400) {
-    return `模型服务拒绝了本次请求（400）${modelTag}：常见原因是会话上下文超长、模型暂不可用或请求参数不被支持。可新建话题（清空上下文）后重试，或在 设置→模型供应商 更换模型。`
+    const hint = upstreamErrorHint(body)
+    const cause = hint
+      ? `上游返回：${hint}`
+      : '常见原因是会话上下文超长、模型暂不可用或请求参数不被支持'
+    return `模型服务拒绝了本次请求（400）${modelTag}：${cause}。可新建话题（清空上下文）后重试，或在 设置→模型供应商 更换模型。`
   }
   if (status === 401 || status === 403) {
     return `模型服务认证失败（${status}）${modelTag}：请到 设置→模型供应商 检查 API Key 是否有效。`

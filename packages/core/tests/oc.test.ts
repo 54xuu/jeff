@@ -352,6 +352,12 @@ describe('friendlyAssistantError：上游 APIError 映射为可读中文提示',
     expect(friendlyAssistantError(mk(503))).toContain('暂时故障')
     // 无模型信息时不出现空标签
     expect(friendlyAssistantError({ name: 'APIError', data: { statusCode: 400 } })).toBe('模型服务拒绝了本次请求（400）：常见原因是会话上下文超长、模型暂不可用或请求参数不被支持。可新建话题（清空上下文）后重试，或在 设置→模型供应商 更换模型。')
+    const detail = friendlyAssistantError({
+      name: 'APIError',
+      data: { statusCode: 400, responseBody: '{"type":"error","error":{"type":"MissingSessionID","message":"Request is missing x-opencode-session"}}' },
+    })
+    expect(detail).toContain('上游返回：Request is missing x-opencode-session')
+    expect(detail).not.toContain('abort')
     // 非 APIError / 无状态码：回退原始展示
     expect(friendlyAssistantError({ name: 'OtherError' })).toBeNull()
     expect(friendlyAssistantError({ name: 'APIError', data: {} })).toBeNull()

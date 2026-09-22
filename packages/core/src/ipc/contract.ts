@@ -391,7 +391,9 @@ export interface CronTaskInfo {
   /** 目标是否仍然存在（false = 已失效，任务会被自动停用） */
   target_exists: boolean
   cron_expr: string
-  /** cron 的人性化描述（每天 08:00 等） */
+  /** 一次性绝对触发时间（ms）；null=按 cron 重复 */
+  run_at: number | null
+  /** 人性化描述（每天 08:00 / 仅一次 · 今天 12:00） */
   cron_human: string
   prompt: string
   miss_policy: 'catchup' | 'skip'
@@ -617,6 +619,8 @@ export type InvokeMap = {
     target_type: 'agent' | 'project'
     target_id: string
     cron_expr: string
+    /** 一次性绝对时间（ms）。null=改回重复；不传=编辑时若 cron 未变则保持原一次性 */
+    run_at?: number | null
     prompt?: string
     miss_policy?: 'catchup' | 'skip'
     enabled?: boolean

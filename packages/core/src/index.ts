@@ -20,7 +20,7 @@ import { normalizeViewportArgs, parseFullPageFlag, shotName } from './tools/brow
 import { PluginManager } from './plugins/manager.js'
 import { CronScheduler } from './cron/scheduler.js'
 import { dispatchCronTask } from './cron/dispatch.js'
-import { describeCron, nextRunAt } from './cron/expr.js'
+import { cronExprForOnce, describeSchedule, nextRunAt, resolveOnceTarget } from './cron/expr.js'
 import { UnavailableBrowser, type BrowserControl } from './browser/control.js'
 import { PrivateChat, autoTitleKey } from './chat/private.js'
 import { GroupChat } from './orchestrator/group.js'
@@ -776,7 +776,8 @@ export class JeffCore extends EventEmitter {
           target_label: label,
           target_exists: targetExists,
           cron_expr: t.cron_expr,
-          cron_human: describeCron(t.cron_expr),
+          run_at: t.run_at,
+          cron_human: describeSchedule(t),
           prompt: t.prompt,
           miss_policy: t.miss_policy,
           enabled: !!t.enabled,
@@ -795,6 +796,8 @@ export class JeffCore extends EventEmitter {
     target_type: 'agent' | 'project'
     target_id: string
     cron_expr: string
+    /** 一次性绝对时间（ms）；null/不传=按 cron 重复 */
+    run_at?: number | null
     prompt?: string
     miss_policy?: 'catchup' | 'skip'
     enabled?: boolean
@@ -804,10 +807,30 @@ export class JeffCore extends EventEmitter {
     if (input.target_type !== 'agent' && input.target_type !== 'project') throw new Error('目标类型非法')
     const prompt = (input.prompt || '').trim()
     if (!prompt) throw new Error('触发提示词不能为空')
-    const expr = (input.cron_expr || '').trim()
+    let expr = (input.cron_expr || '').trim()
+    let runAt: number | null = null
     let next: number
     try {
-      next = nextRunAt(expr, Date.now())
+      const nowMs = Date.now()
+      if (typeof input.run_at === 'number') {
+        runAt = resolveOnceTarget(input.run_at, nowMs)
+        expr = cronExprForOnce(runAt)
+        next = runAt
+      } else if (input.id && input.run_at !== null) {
+        const cur = cronTaskRepo(this.db).get(input.id)
+        // 列表上的启用/停用不会带 run_at：时间没改时保持一次性，不要被兼容 cron 滚成每年一次
+        if (cur?.run_at != null && expr === cur.cron_expr) {
+          runAt = cur.run_at
+          if (input.enabled !== false && runAt <= nowMs) {
+            throw new Error('这次的时间已经过了，请编辑任务改到一个还没到的时刻')
+          }
+          next = runAt
+        } else {
+          next = nextRunAt(expr, nowMs)
+        }
+      } else {
+        next = nextRunAt(expr, nowMs)
+      }
     } catch (err) {
       throw new Error(String((err as Error)?.message || err))
     }
@@ -826,6 +849,7 @@ export class JeffCore extends EventEmitter {
         target_type: input.target_type,
         target_id: input.target_id,
         cron_expr: expr,
+        run_at: runAt,
         prompt,
         miss_policy: input.miss_policy === 'skip' ? 'skip' : 'catchup',
         enabled: input.enabled === false ? 0 : 1,
@@ -838,6 +862,7 @@ export class JeffCore extends EventEmitter {
         target_type: input.target_type,
         target_id: input.target_id,
         cron_expr: expr,
+        run_at: runAt,
         prompt,
         miss_policy: input.miss_policy === 'skip' ? 'skip' : 'catchup',
         enabled: input.enabled === false ? 0 : 1,
@@ -1759,7 +1784,7 @@ export { UnavailableBrowser, BridgeBrowserControl, type BrowserControl } from '.
 export { resolveScreenshotScale } from './tools/browserArgs.js'
 export { CRON_TOOL_NAMES } from './tools/cronTools.js'
 // cron 表达式工具（渲染层在开发态按本文件解析类型，生产打包走 browser.ts，两处都要导出）
-export { isValidCron, describeCron, nextRunAt, parseCron, CRON_PRESETS, type CronFields } from './cron/expr.js'
+export { isValidCron, describeCron, describeOnce, describeSchedule, nextRunAt, parseCron, parseRunAt, cronExprForOnce, syncedNextRun, CRON_PRESETS, type CronFields } from './cron/expr.js'
 export {
   shouldShowDesktopNotify,
   visualNotifyChannel,
@@ -1767,10 +1792,13 @@ export {
   balloonHtml,
   osNotificationInit,
   escapeHtml,
+  parseBalloonAction,
   BALLOON_WIDTH,
   BALLOON_HEIGHT,
   BALLOON_MARGIN,
   BALLOON_SHOW_MS,
+  BALLOON_ACTION_CLOSE,
+  BALLOON_ACTION_CLICK,
   type VisualNotifyChannel,
   type Rect as BalloonWorkArea,
 } from './notify/visual.js'

@@ -12,6 +12,7 @@ import {
   BALLOON_WIDTH,
   balloonBounds,
   balloonHtml,
+  parseBalloonAction,
 } from '@jeff/core'
 
 let balloon: BrowserWindow | null = null
@@ -25,11 +26,33 @@ function clearTimer(): void {
   }
 }
 
+function handleBalloonAction(action: 'close' | 'click'): void {
+  if (action === 'close') {
+    closeWindowsBalloon()
+    return
+  }
+  const go = onActivate
+  closeWindowsBalloon()
+  go?.()
+}
+
 export function closeWindowsBalloon(): void {
   clearTimer()
   onActivate = null
   if (balloon && !balloon.isDestroyed()) {
     balloon.hide()
+  }
+}
+
+/** 退出时真正拆掉，避免 hide + preventDefault 把窗口留到 quit 还挡关闭 */
+export function destroyWindowsBalloon(): void {
+  clearTimer()
+  onActivate = null
+  const w = balloon
+  balloon = null
+  if (w && !w.isDestroyed()) {
+    w.removeAllListeners('close')
+    w.destroy()
   }
 }
 
@@ -73,19 +96,22 @@ function ensureBalloon(): BrowserWindow {
   } catch {
     /* Windows 上该 API 可能不可用，忽略 */
   }
-  balloon.webContents.on('did-navigate-in-page', (_e, url) => {
-    if (url.endsWith('#close')) {
-      closeWindowsBalloon()
-      return
-    }
-    if (url.endsWith('#click')) {
-      const go = onActivate
-      closeWindowsBalloon()
-      go?.()
-    }
+  balloon.on('page-title-updated', (event, title) => {
+    const action = parseBalloonAction(title)
+    if (!action) return
+    event.preventDefault()
+    handleBalloonAction(action)
+  })
+  balloon.webContents.on('console-message', (_event, _level, message) => {
+    const action = parseBalloonAction(typeof message === 'string' ? message : '')
+    if (action) handleBalloonAction(action)
+  })
+  balloon.on('close', (event) => {
+    event.preventDefault()
+    closeWindowsBalloon()
   })
   balloon.on('closed', () => {
-    if (balloon) balloon = null
+    balloon = null
     clearTimer()
   })
   return balloon

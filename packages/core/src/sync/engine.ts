@@ -7,7 +7,7 @@ import { agentRepo, cronTaskRepo, projectAgentRepo, projectRepo, taskRepo, type 
 import { BUILTIN_SKILL_DIR, userSkillsDir, type JeffPaths } from '../paths.js'
 import type { MemoryStore, MemoryScope } from '../memory/store.js'
 import type { SkillsBackupReport, SkillsRestoreApply, SkillsRestoreStage } from '../ipc/contract.js'
-import { nextRunAt } from '../cron/expr.js'
+import { syncedNextRun } from '../cron/expr.js'
 
 export interface WebdavConfig {
   url: string
@@ -830,19 +830,16 @@ export class SyncEngine {
     if (!exists) {
       this.db
         .prepare(
-          `INSERT INTO cron_task (id, name, target_type, target_id, cron_expr, prompt, miss_policy, enabled, last_run_at, next_run_at, created_at, updated_at, deleted_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          `INSERT INTO cron_task (id, name, target_type, target_id, cron_expr, run_at, prompt, miss_policy, enabled, last_run_at, next_run_at, created_at, updated_at, deleted_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         )
-        .run(id, d.name, d.target_type, d.target_id, d.cron_expr, d.prompt, d.miss_policy || 'catchup', d.enabled, null, null, d.created_at, updatedAt, deletedAt)
+        .run(id, d.name, d.target_type, d.target_id, d.cron_expr, d.run_at ?? null, d.prompt, d.miss_policy || 'catchup', d.enabled, null, null, d.created_at, updatedAt, deletedAt)
     } else {
       this.db
-        .prepare(`UPDATE cron_task SET name=?, target_type=?, target_id=?, cron_expr=?, prompt=?, miss_policy=?, enabled=?, updated_at=?, deleted_at=? WHERE id=?`)
-        .run(d.name, d.target_type, d.target_id, d.cron_expr, d.prompt, d.miss_policy || 'catchup', d.enabled, updatedAt, deletedAt, id)
+        .prepare(`UPDATE cron_task SET name=?, target_type=?, target_id=?, cron_expr=?, run_at=?, prompt=?, miss_policy=?, enabled=?, updated_at=?, deleted_at=? WHERE id=?`)
+        .run(d.name, d.target_type, d.target_id, d.cron_expr, d.run_at ?? null, d.prompt, d.miss_policy || 'catchup', d.enabled, updatedAt, deletedAt, id)
     }
-    try {
-      cronTaskRepo(this.db).setNextRun(id, nextRunAt(d.cron_expr, Date.now()))
-    } catch {
-      /* 表达式非法时留空：调度器启动/下次 tick 时会再算并记日志 */
-    }
+    // 重复任务按 cron 重算；一次性只用绝对 run_at，过点后留空，避免排到明年
+    cronTaskRepo(this.db).setNextRun(id, syncedNextRun({ cron_expr: d.cron_expr, run_at: d.run_at ?? null }, Date.now()))
   }
 
   // ---------- 远端原语 ----------

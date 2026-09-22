@@ -134,6 +134,21 @@ describe('CronScheduler', () => {
     expect(cronRunRepo(db).listByTask(skipId)[0].status).toBe('missed')
   })
 
+  it('一次性任务到点后停用，tick 不会再排到下一年', async () => {
+    const due = Date.now() - 1000
+    const id = seedAgentTask('0 12 22 9 *', { run_at: due, next_run_at: due })
+    const ran: string[] = []
+    const sched = new CronScheduler({ db, runTask: async (t) => void ran.push(t.id) })
+    sched.tick()
+    await waitFor(() => ran.length === 1)
+    const row = cronTaskRepo(db).get(id)!
+    expect(row.enabled).toBe(0)
+    expect(row.next_run_at).toBeNull()
+    expect(row.run_at).toBe(due)
+    sched.tick()
+    expect(ran).toEqual([id])
+  })
+
   it('到点触发一次并记录 ok + last_run_at', async () => {
     const id = seedAgentTask()
     cronTaskRepo(db).update(id, { next_run_at: Date.now() - 1000 })
@@ -640,6 +655,24 @@ describe('cron tools（小杰代操定时任务）', () => {
     await expect(call('jeff_cron_create', { name: 'x', target_type: 'agent', target_id: a.id, cron_expr: '0 9 * * *', prompt: '  ' })).rejects.toThrow(/prompt 不能为空/)
     await expect(call('jeff_cron_create', { name: 'x', target_type: 'agent', target_id: '不存在', cron_expr: '0 9 * * *', prompt: 'p' })).rejects.toThrow(/智能体不存在/)
     expect(changed()).toBe(1)
+  })
+
+  it('create：今天这种一次性时间只记绝对时刻，不当成每年重复', async () => {
+    const { call } = tools()
+    const a = agentRepo(db).create({ name: '资讯助手' })
+    const created = (await call('jeff_cron_create', {
+      name: '午间提醒',
+      target_type: 'agent',
+      target_id: a.id,
+      run_at: '2099-06-01 12:00',
+      prompt: '该吃饭了',
+    })) as { once: boolean; schedule: string; next_run_at: number; id: string }
+    expect(created.once).toBe(true)
+    expect(created.schedule).toContain('仅一次')
+    expect(created.next_run_at).toBe(new Date(2099, 5, 1, 12, 0, 0, 0).getTime())
+    const row = cronTaskRepo(db).get(created.id)!
+    expect(row.run_at).toBe(created.next_run_at)
+    expect(row.cron_expr).toBe('0 12 1 6 *')
   })
 
   it('update：空串/空值一律当作没传，不能停用任务、不能改错过策略、不能抹掉名字与提示词', async () => {

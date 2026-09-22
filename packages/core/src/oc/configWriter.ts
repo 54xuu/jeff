@@ -175,7 +175,11 @@ export function writeSidecarConfig(
     providerCfg[pv.id] = {
       npm: API_FORMAT_NPM[pv.apiFormat] ?? API_FORMAT_NPM.chat,
       name: pv.name || pv.id,
-      options: { ...(pv.baseURL ? { baseURL: pv.baseURL } : {}) },
+      options: {
+        ...(pv.baseURL ? { baseURL: pv.baseURL } : {}),
+        // 自定义 Responses 端点大多不认 prompt_cache_key；opencode 看到 setCacheKey:false 就不再塞
+        ...(pv.apiFormat === 'responses' ? { setCacheKey: false } : {}),
+      },
       models: Object.fromEntries((pv.models || []).map((m) => [m.id, modelEntry(pv.apiFormat, m)])),
     }
   }

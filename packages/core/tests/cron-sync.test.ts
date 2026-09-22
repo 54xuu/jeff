@@ -94,6 +94,30 @@ describe('定时任务随整库同步', () => {
     fs.rmSync(b.home, { recursive: true, force: true })
   })
 
+  it('一次性任务同步后仍停在绝对时刻，过点不会被重算成明年', async () => {
+    const a = makeSide('a', 'cron-once')
+    const b = makeSide('b', 'cron-once')
+    const past = new Date(2020, 0, 2, 12, 0, 0, 0).getTime()
+    const t = cronTaskRepo(a.db).create({
+      name: '只跑一次的午间提醒',
+      target_type: 'agent',
+      target_id: 'agt_x',
+      cron_expr: '0 12 2 1 *',
+      run_at: past,
+      prompt: '该吃饭了',
+      next_run_at: past,
+    })
+    const ra = await a.engine.sync()
+    expect(ra.ok).toBe(true)
+    const rb = await b.engine.sync()
+    expect(rb.ok).toBe(true)
+    const landed = cronTaskRepo(b.db).get(t.id)
+    expect(landed?.run_at).toBe(past)
+    expect(landed?.next_run_at).toBeNull()
+    fs.rmSync(a.home, { recursive: true, force: true })
+    fs.rmSync(b.home, { recursive: true, force: true })
+  })
+
   it('运行历史（cron_run）属本机日志：任务搬过去，历史不搬', async () => {
     const a = makeSide('a', 'cron2')
     const b = makeSide('b', 'cron2')

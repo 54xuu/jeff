@@ -148,6 +148,21 @@ test.describe('定时任务 10 轮：分组下拉 / 并行 / 会话隔离', () =
     projectTaskA = dbQuery<{ id: string }>('SELECT id FROM cron_task WHERE name = ? AND deleted_at IS NULL', '护士站晨间')[0].id
   })
 
+  test('R3b 仅一次：绝对时刻写入 run_at，不排成每年重复', async () => {
+    await page.getByTestId('cron-create').click()
+    await page.getByTestId('cron-name').fill('只跑一次的午饭')
+    await page.getByTestId('cron-target-id').selectOption(`agent:${agentId}`)
+    await page.getByTestId('cron-mode-once').click()
+    await page.getByTestId('cron-run-at').fill('2099-06-01T12:00')
+    await page.getByTestId('cron-prompt').fill('午饭暗号 ONCE')
+    await page.getByTestId('cron-save').click()
+    const expectAt = new Date(2099, 5, 1, 12, 0, 0, 0).getTime()
+    await expect
+      .poll(() => dbQuery<{ run_at: number | null }>('SELECT run_at FROM cron_task WHERE name = ? AND deleted_at IS NULL', '只跑一次的午饭')[0]?.run_at || 0, { timeout: 15_000 })
+      .toBe(expectAt)
+    await page.screenshot({ path: path.join(EVIDENCE, 'R3b-once.png'), fullPage: true })
+  })
+
   test('R4 同一智能体两条任务 → 两条 session:cron，用户私聊指针不变', async () => {
     const created = await invoke<{ sessionId: string }>(page, 'chat:new', { agentId })
     userPrivateSession = created.sessionId

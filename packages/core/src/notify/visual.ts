@@ -80,7 +80,17 @@ export function osNotificationInit(p: {
   return init
 }
 
-/** 自绘气泡的 HTML。点击卡片 → `#click`，点关闭 → `#close`（主进程听 hash）。 */
+/** 气泡页面向主进程发动作：改 document.title（立刻触发 page-title-updated）。data: URL 上改 hash 经常不导航。 */
+export const BALLOON_ACTION_CLOSE = 'jeff-balloon:close'
+export const BALLOON_ACTION_CLICK = 'jeff-balloon:click'
+
+export function parseBalloonAction(signal: string): 'close' | 'click' | null {
+  if (signal === BALLOON_ACTION_CLOSE) return 'close'
+  if (signal === BALLOON_ACTION_CLICK) return 'click'
+  return null
+}
+
+/** 自绘气泡的 HTML。点关闭立即关；点卡片唤起主窗口。 */
 export function balloonHtml(p: { title: string; body?: string; dark?: boolean }): string {
   const title = escapeHtml(p.title || 'Jeff')
   const body = escapeHtml((p.body || '').slice(0, 200))
@@ -114,12 +124,19 @@ export function balloonHtml(p: { title: string; body?: string; dark?: boolean })
     <button class="x" id="close" aria-label="关闭" type="button">×</button>
   </div>
   <script>
+    function signal(action) {
+      document.title = action;
+      console.log(action);
+      if (action === '${BALLOON_ACTION_CLOSE}') {
+        try { window.close(); } catch (e) {}
+      }
+    }
     document.getElementById('close').addEventListener('click', function (e) {
       e.preventDefault(); e.stopPropagation();
-      location.hash = 'close';
+      signal('${BALLOON_ACTION_CLOSE}');
     });
     document.getElementById('card').addEventListener('click', function () {
-      location.hash = 'click';
+      signal('${BALLOON_ACTION_CLICK}');
     });
   </script>
 </body></html>`

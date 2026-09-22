@@ -1,6 +1,6 @@
 import type { DB } from '../db/db.js'
 import { agentRepo, cronRunRepo, cronTaskRepo, projectRepo } from '../db/repos.js'
-import { describeCron, isValidCron, nextRunAt } from '../cron/expr.js'
+import { cronExprForOnce, describeSchedule, isValidCron, nextRunAt, parseRunAt } from '../cron/expr.js'
 import type { ToolBridge } from './bridge.js'
 
 /** 定时任务工具名（小杰代操用：「每天早上 8 点帮我问 AI 资讯助手」→ jeff_cron_create） */
@@ -57,26 +57,38 @@ export function registerCronTools(reg: ToolBridge, deps: CronToolDeps): void {
     return `${p.icon} ${p.title}`
   }
 
-  reg.register(T_CREATE, async (args: { name?: string; target_type?: string; target_id?: string; cron_expr?: string; prompt?: string; miss_policy?: string }) => {
+  reg.register(T_CREATE, async (args: { name?: string; target_type?: string; target_id?: string; cron_expr?: string; run_at?: string; prompt?: string; miss_policy?: string }) => {
     const name = (args.name || '').trim()
     if (!name) throw new Error('name 不能为空')
     if (args.target_type !== 'agent' && args.target_type !== 'project') throw new Error('target_type 必须是 agent 或 project')
     if (!args.target_id) throw new Error('target_id 不能为空')
-    const expr = (args.cron_expr || '').trim()
-    if (!isValidCron(expr)) throw new Error(`cron 表达式非法（需 5 段：分 时 日 月 周，如 0 8 * * *）: ${expr}`)
     if (!(args.prompt || '').trim()) throw new Error('prompt 不能为空（到点要发给对方的话）')
+    const runAtText = nonEmpty(args.run_at)
+    const exprRaw = (args.cron_expr || '').trim()
+    let expr = exprRaw
+    let runAt: number | null = null
+    let next: number
+    if (runAtText) {
+      runAt = parseRunAt(runAtText, Date.now())
+      expr = cronExprForOnce(runAt)
+      next = runAt
+    } else {
+      if (!isValidCron(expr)) throw new Error(`cron 表达式非法（需 5 段：分 时 日 月 周，如 0 8 * * *）: ${expr}`)
+      next = nextRunAt(expr, Date.now())
+    }
     const targetLabel = resolveTarget(args.target_type, args.target_id)
     const row = tasks.create({
       name,
       target_type: args.target_type,
       target_id: args.target_id,
       cron_expr: expr,
+      run_at: runAt,
       prompt: (args.prompt || '').trim(),
       miss_policy: args.miss_policy === 'skip' ? 'skip' : 'catchup',
-      next_run_at: nextRunAt(expr, Date.now()),
+      next_run_at: next,
     })
     deps.onChanged()
-    return { id: row.id, name: row.name, target: targetLabel, schedule: describeCron(expr), next_run_at: row.next_run_at }
+    return { id: row.id, name: row.name, target: targetLabel, schedule: describeSchedule(row), once: runAt != null, next_run_at: row.next_run_at }
   })
 
   reg.register(T_LIST, async () => {
@@ -89,7 +101,9 @@ export function registerCronTools(reg: ToolBridge, deps: CronToolDeps): void {
       target_id: t.target_id,
       target_label: t.target_type === 'agent' ? agents.get(t.target_id)?.name || '(已删除)' : projectRepo(deps.db).get(t.target_id)?.title || '(已解散)',
       cron_expr: t.cron_expr,
-      schedule: describeCron(t.cron_expr),
+      run_at: t.run_at,
+      once: t.run_at != null,
+      schedule: describeSchedule(t),
       prompt: t.prompt,
       miss_policy: t.miss_policy,
       enabled: !!t.enabled,
@@ -99,7 +113,7 @@ export function registerCronTools(reg: ToolBridge, deps: CronToolDeps): void {
     }))
   })
 
-  reg.register(T_UPDATE, async (args: { id?: string; name?: string; cron_expr?: string; prompt?: string; miss_policy?: string; enabled?: boolean }) => {
+  reg.register(T_UPDATE, async (args: { id?: string; name?: string; cron_expr?: string; run_at?: string; prompt?: string; miss_policy?: string; enabled?: boolean }) => {
     if (!args.id) throw new Error('id 不能为空')
     const cur = tasks.get(args.id)
     if (!cur) throw new Error(`定时任务不存在: ${args.id}`)
@@ -113,14 +127,22 @@ export function registerCronTools(reg: ToolBridge, deps: CronToolDeps): void {
     if (miss !== undefined) patch.miss_policy = miss === 'skip' ? 'skip' : 'catchup'
     const enabled = boolOrUndefined(args.enabled)
     if (enabled !== undefined) patch.enabled = enabled ? 1 : 0
+    const runAtText = nonEmpty(args.run_at)
     const expr = nonEmpty(args.cron_expr)
-    if (expr !== undefined) {
+    if (runAtText !== undefined) {
+      const runAt = parseRunAt(runAtText, Date.now())
+      patch.run_at = runAt
+      patch.cron_expr = cronExprForOnce(runAt)
+      patch.next_run_at = runAt
+      patch.enabled = 1
+    } else if (expr !== undefined) {
       if (!isValidCron(expr)) throw new Error(`cron 表达式非法: ${expr}`)
       patch.cron_expr = expr
+      patch.run_at = null
       patch.next_run_at = nextRunAt(expr, Date.now())
     }
     if (Object.keys(patch).length === 0) {
-      throw new Error('没有要修改的字段：name / cron_expr / prompt / miss_policy / enabled 至少要传一个有值的（空串会被当成没传）')
+      throw new Error('没有要修改的字段：name / cron_expr / run_at / prompt / miss_policy / enabled 至少要传一个有值的（空串会被当成没传）')
     }
     const row = tasks.update(args.id, patch)
     deps.onChanged()

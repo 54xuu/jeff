@@ -93,7 +93,8 @@ CREATE TABLE IF NOT EXISTS cron_task (
   name         TEXT NOT NULL,                    -- 任务名（如「晨间病区动态」）
   target_type  TEXT NOT NULL,                    -- 目标类型：agent（私聊某个智能体）/ project（项目群）
   target_id    TEXT NOT NULL,                    -- 目标 id：agent id 或 project id
-  cron_expr    TEXT NOT NULL,                    -- 5 段式 cron（本机时区）：分 时 日 月 周
+  cron_expr    TEXT NOT NULL,                    -- 5 段式 cron（本机时区）：分 时 日 月 周；一次性任务里只作兼容展示
+  run_at       INTEGER,                          -- 一次性任务的绝对触发时间（ms，本机时区）；NULL=按 cron 重复
   prompt       TEXT NOT NULL DEFAULT '',         -- 触发时向目标发出的提示词
   miss_policy  TEXT NOT NULL DEFAULT 'catchup',  -- 错过处理：catchup=启动时补跑一次 / skip=顺延跳过
   enabled      INTEGER NOT NULL DEFAULT 1,       -- 1=启用 0=停用
@@ -125,6 +126,7 @@ CREATE INDEX IF NOT EXISTS idx_cron_run_task ON cron_run(task_id, started_at);
   addColumn(db, 'agent', 'thinking', "TEXT NOT NULL DEFAULT ''", "默认思考档位：'' /none/low/high/max（''=跟随模型配置）")
   addColumn(db, 'agent', 'category', "TEXT NOT NULL DEFAULT ''", "分组分类（如：项目管理/医疗场景/项目开发；空=默认分组）")
   addColumn(db, 'project', 'workspace_dir', "TEXT NOT NULL DEFAULT ''", '工作空间目录（空=全局 workspace，输出文件默认落这里）')
+  addColumn(db, 'cron_task', 'run_at', 'INTEGER', '一次性任务的绝对触发时间（ms，本机时区）；NULL=按 cron 重复')
 
   // 角色归一：历史 member / 开发 / ui / 测试 / 产品 … → worker；再按 project.leader_agent_id 校正群主
   db.exec(`UPDATE project_agent SET role = 'worker' WHERE role IS NULL OR trim(role) = '' OR lower(role) != 'leader'`)

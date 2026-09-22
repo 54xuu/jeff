@@ -29,8 +29,10 @@ export interface CronTaskRow {
   /** agent=私聊某智能体 / project=项目群 */
   target_type: 'agent' | 'project'
   target_id: string
-  /** 5 段式 cron（本机时区）：分 时 日 月 周 */
+  /** 5 段式 cron（本机时区）：分 时 日 月 周。一次性任务里只作兼容展示 */
   cron_expr: string
+  /** 一次性绝对触发时间（ms）；null=按 cron 重复 */
+  run_at: number | null
   prompt: string
   /** 错过处理：catchup=启动时补跑一次 / skip=顺延跳过 */
   miss_policy: 'catchup' | 'skip'
@@ -445,6 +447,8 @@ export const cronTaskRepo = (db: DB) => ({
     target_type: 'agent' | 'project'
     target_id: string
     cron_expr: string
+    /** 一次性绝对时间；不传=重复任务 */
+    run_at?: number | null
     prompt?: string
     miss_policy?: string
     enabled?: number
@@ -456,6 +460,7 @@ export const cronTaskRepo = (db: DB) => ({
       target_type: data.target_type,
       target_id: data.target_id,
       cron_expr: data.cron_expr,
+      run_at: data.run_at ?? null,
       prompt: data.prompt || '',
       miss_policy: data.miss_policy === 'skip' ? 'skip' : 'catchup',
       enabled: data.enabled === 0 ? 0 : 1,
@@ -466,26 +471,27 @@ export const cronTaskRepo = (db: DB) => ({
       deleted_at: null,
     }
     db.prepare(
-      `INSERT INTO cron_task (id, name, target_type, target_id, cron_expr, prompt, miss_policy, enabled, last_run_at, next_run_at, created_at, updated_at, deleted_at)
-       VALUES (@id, @name, @target_type, @target_id, @cron_expr, @prompt, @miss_policy, @enabled, @last_run_at, @next_run_at, @created_at, @updated_at, @deleted_at)`,
+      `INSERT INTO cron_task (id, name, target_type, target_id, cron_expr, run_at, prompt, miss_policy, enabled, last_run_at, next_run_at, created_at, updated_at, deleted_at)
+       VALUES (@id, @name, @target_type, @target_id, @cron_expr, @run_at, @prompt, @miss_policy, @enabled, @last_run_at, @next_run_at, @created_at, @updated_at, @deleted_at)`,
     ).run(row as unknown as Record<string, never>)
     return row
   },
   update(
     id: string,
-    patch: Partial<Pick<CronTaskRow, 'name' | 'target_type' | 'target_id' | 'cron_expr' | 'prompt' | 'miss_policy' | 'enabled' | 'next_run_at'>>,
+    patch: Partial<Pick<CronTaskRow, 'name' | 'target_type' | 'target_id' | 'cron_expr' | 'run_at' | 'prompt' | 'miss_policy' | 'enabled' | 'next_run_at'>>,
   ): CronTaskRow | undefined {
     const cur = this.get(id)
     if (!cur) return undefined
     const next = { ...cur, ...patch, updated_at: now() }
     db.prepare(
-      `UPDATE cron_task SET name=@name, target_type=@target_type, target_id=@target_id, cron_expr=@cron_expr,
+      `UPDATE cron_task SET name=@name, target_type=@target_type, target_id=@target_id, cron_expr=@cron_expr, run_at=@run_at,
        prompt=@prompt, miss_policy=@miss_policy, enabled=@enabled, next_run_at=@next_run_at, updated_at=@updated_at WHERE id=@id`,
     ).run({
       name: next.name,
       target_type: next.target_type,
       target_id: next.target_id,
       cron_expr: next.cron_expr,
+      run_at: next.run_at,
       prompt: next.prompt,
       miss_policy: next.miss_policy,
       enabled: next.enabled,
@@ -494,6 +500,13 @@ export const cronTaskRepo = (db: DB) => ({
       id: next.id,
     })
     return this.get(id)
+  },
+  /**
+   * 一次性任务已经入队：停用并清掉下次触发。
+   * 这是定义变化（别的设备不能再跑一次），所以要推进 updated_at，和「重复任务只推 next_run_at」不同。
+   */
+  finishOnce(id: string): void {
+    db.prepare('UPDATE cron_task SET enabled = 0, next_run_at = NULL, updated_at = ? WHERE id = ?').run(now(), id)
   },
   /**
    * 标记一次执行结果（调度器内部使用）。

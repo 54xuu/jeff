@@ -112,6 +112,28 @@ export const JeffBridge = async () => {
     tool: {
 ${toolDefs}
     },
+    // 自定义 Responses（@ai-sdk/openai 且不是官方 openai）会带上官方才认的字段，
+    // 硅基流动 / 中转网关常以 400 拒绝整次请求。这里在发出前拿掉。
+    'chat.params': async (input, output) => {
+      const npm = input && input.model && input.model.api && input.model.api.npm
+      const providerID = (input && input.model && input.model.providerID) || (input && input.provider && input.provider.id) || ''
+      if (npm !== '@ai-sdk/openai' || providerID === 'openai') return
+      const o = output && output.options
+      if (!o || typeof o !== 'object') return
+      delete o.include
+      delete o.reasoningSummary
+      delete o.textVerbosity
+      delete o.promptCacheKey
+    },
+    // Zen Go 的 /responses 缺 x-opencode-session 会直接 400。provider id 不以 opencode 开头时引擎不会自动加。
+    'chat.headers': async (input, output) => {
+      const base = String((input && input.provider && input.provider.options && input.provider.options.baseURL) || '')
+      if (!/opencode\\.ai/i.test(base)) return
+      const headers = output && output.headers
+      if (!headers || !input || !input.sessionID) return
+      headers['x-opencode-session'] = input.sessionID
+      headers['x-opencode-request'] = (input.message && input.message.id) || input.sessionID
+    },
   }
 }
 `

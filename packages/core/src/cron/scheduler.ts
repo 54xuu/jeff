@@ -74,6 +74,10 @@ export class CronScheduler {
     const stale = this.runs.failStale()
     if (stale > 0) this.deps.log?.('cron-stale-runs', { count: stale })
     for (const task of this.tasks.listEnabled()) {
+      if (task.run_at != null) {
+        this.alignOnce(task, now)
+        continue
+      }
       let next = task.next_run_at
       if (!next) {
         this.tasks.markRun(task.id, task.last_run_at ?? 0, this.computeNext(task, now))
@@ -96,6 +100,16 @@ export class CronScheduler {
     const now = Date.now()
     let changed = false
     for (const task of this.tasks.listEnabled()) {
+      if (task.run_at != null) {
+        const at = task.next_run_at ?? task.run_at
+        if (at > now) continue
+        if (this.inFlight.has(task.id)) this.runs.log(task.id, 'skipped', '上一轮尚未结束，跳过本次')
+        else this.enqueue(task, false)
+        // 跑完即停：不要按 cron 滚到明年同一天
+        this.tasks.finishOnce(task.id)
+        changed = true
+        continue
+      }
       const next = task.next_run_at ?? this.computeNext(task, now)
       if (next === null) continue
       if (next > now) continue
@@ -189,6 +203,26 @@ export class CronScheduler {
     if (!p || p.deleted_at != null) return '目标项目群已被解散，任务已自动停用'
     if (!p.leader_agent_id) return '目标项目群未设置群主，无法触发'
     return null
+  }
+
+  /**
+   * 一次性任务：未来的时刻只对齐 next_run_at；已经到点则补跑或记错过，然后停用。
+   * 不调用 nextRunAt——固定月日 cron 过点后会滚到下一年。
+   */
+  private alignOnce(task: CronTaskRow, now: number): void {
+    const at = task.next_run_at ?? task.run_at ?? now
+    if (at > now) {
+      if (task.next_run_at !== task.run_at) this.tasks.setNextRun(task.id, task.run_at)
+      return
+    }
+    if (this.inFlight.has(task.id)) return
+    if (task.miss_policy === 'catchup') {
+      this.deps.log?.('cron-catchup', { id: task.id, name: task.name, missedAt: at, once: true })
+      this.enqueue(task, true)
+    } else {
+      this.runs.log(task.id, 'missed', `错过的一次性触发：${new Date(at).toLocaleString()}`)
+    }
+    this.tasks.finishOnce(task.id)
   }
 
   private computeNext(task: CronTaskRow, from: number): number | null {

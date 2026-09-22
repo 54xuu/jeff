@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { CRON_PRESETS, describeCron, isValidCron, nextRunAt, parseCron } from '../src/cron/expr.js'
+import { CRON_PRESETS, cronExprForOnce, describeCron, describeOnce, isValidCron, nextRunAt, parseCron, parseRunAt, syncedNextRun } from '../src/cron/expr.js'
 
 /** 用本地时间构造时间戳（与实现同一时区语义，避免 CI 时区差异导致测试飘） */
 function local(y: number, mo: number, d: number, h: number, mi: number): number {
@@ -91,5 +91,33 @@ describe('describeCron 人性化描述', () => {
       expect(isValidCron(p.expr)).toBe(true)
       expect(typeof nextRunAt(p.expr, Date.now())).toBe('number')
     }
+  })
+})
+
+describe('一次性时刻', () => {
+  const now = local(2026, 9, 22, 10, 0)
+
+  it('今天 12:00 落在当天中午，不滚到明年', () => {
+    const at = parseRunAt('今天 12:00', now)
+    expect(at).toBe(local(2026, 9, 22, 12, 0))
+    expect(describeOnce(at, now)).toBe('仅一次 · 今天 12:00')
+    expect(cronExprForOnce(at)).toBe('0 12 22 9 *')
+  })
+
+  it('明天 / 绝对日期 / 刚过去 30 秒视为立刻', () => {
+    expect(parseRunAt('明天 08:30', now)).toBe(local(2026, 9, 23, 8, 30))
+    expect(parseRunAt('2026-09-22 18:00', now)).toBe(local(2026, 9, 22, 18, 0))
+    expect(parseRunAt('今天12点', now)).toBe(local(2026, 9, 22, 12, 0))
+    const just = now - 20_000
+    expect(parseRunAt('今天 10:00', now)).toBe(now)
+    expect(just).toBeLessThan(now)
+  })
+
+  it('过去超过 1 分钟直接拒绝，而不是排到下一年', () => {
+    expect(() => parseRunAt('今天 08:00', now)).toThrow(/已过去|刚过去/)
+    const yesterday = local(2026, 9, 1, 12, 0)
+    const expr = cronExprForOnce(yesterday)
+    expect(syncedNextRun({ cron_expr: expr, run_at: yesterday }, now)).toBeNull()
+    expect(nextRunAt(expr, now)).toBeGreaterThan(now)
   })
 })

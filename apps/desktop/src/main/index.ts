@@ -5,7 +5,7 @@ import path from 'node:path'
 import { JeffCore, BridgeBrowserControl, osNotificationInit, visualNotifyChannel } from '@jeff/core'
 import type { BrowserResult, BrowserState } from '@jeff/core'
 import { registerIpc } from './ipc.js'
-import { closeWindowsBalloon, showWindowsBalloon } from './win-balloon.js'
+import { destroyWindowsBalloon, showWindowsBalloon } from './win-balloon.js'
 
 // Windows 下 Toast 通知必须带 AppUserModelID，否则静默丢弃；取值需与 electron-builder 的 appId、
 // 安装器写入的开始菜单快捷方式 AUMID 一致。必须在 app ready 之前设置（越早越稳）。
@@ -149,11 +149,11 @@ if (!gotLock) {
   })
 
   app.on('window-all-closed', async () => {
-    closeWindowsBalloon()
+    destroyWindowsBalloon()
     if (core) await core.dispose().catch(() => {})
     if (process.platform !== 'darwin') app.quit()
   })
-  app.on('before-quit', () => closeWindowsBalloon())
+  app.on('before-quit', () => destroyWindowsBalloon())
 }
 
 /** 菜单动作 → 渲染层（新会话/发起群聊/设置/主题/使用说明） */

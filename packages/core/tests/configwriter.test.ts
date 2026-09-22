@@ -129,9 +129,10 @@ describe('writeSidecarConfig（v1.2 三格式 + variants）', () => {
     ]
     writeSidecarConfig(p, providers)
     const cfg = JSON.parse(fs.readFileSync(path.join(p.ocConfigDir, 'opencode.json'), 'utf8')) as Record<string, never>
-    const pv = cfg['provider'] as Record<string, { npm?: string }>
+    const pv = cfg['provider'] as Record<string, { npm?: string; options?: { setCacheKey?: boolean } }>
     expect(pv['off']).toBeUndefined()
     expect(pv['on']?.npm).toBe('@ai-sdk/openai')
+    expect(pv['on']?.options?.setCacheKey).toBe(false)
     expect(cfg['model']).toBe('on/m1')
   })
 

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useStore } from '../store'
 import { api } from '../api'
-import { IPC, CRON_PRESETS, describeCron, isValidCron, nextRunAt, type CronRunInfo, type CronTaskInfo } from '@jeff/core'
+import { IPC, CRON_PRESETS, describeCron, describeOnce, isValidCron, nextRunAt, type CronRunInfo, type CronTaskInfo } from '@jeff/core'
 import { Button } from './ui/Button'
 import { Field } from './ui/Field'
 import { Toast } from './ui/Toast'
@@ -22,6 +22,39 @@ function untilText(ts: number | null): string {
 }
 
 const fmtTime = (ts: number | null | undefined): string => (ts ? new Date(ts).toLocaleString() : '—')
+
+const pad2 = (n: number) => String(n).padStart(2, '0')
+
+/** datetime-local 的值（本机时区，不含秒） */
+function toLocalInput(ts: number): string {
+  const d = new Date(ts)
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`
+}
+
+function todayAt(hm: string): string {
+  const [h, m] = hm.split(':')
+  const d = new Date()
+  d.setHours(Number(h), Number(m), 0, 0)
+  return toLocalInput(d.getTime())
+}
+
+/** 新建一次性任务的默认时刻：今天这个钟点还没到就用今天，否则用明天 */
+function upcomingClock(hm: string): string {
+  const value = todayAt(hm)
+  const ts = fromLocalInput(value)
+  if (ts != null && ts <= Date.now()) {
+    const d = new Date(ts)
+    d.setDate(d.getDate() + 1)
+    return toLocalInput(d.getTime())
+  }
+  return value
+}
+
+function fromLocalInput(value: string): number | null {
+  if (!value) return null
+  const d = new Date(value)
+  return Number.isNaN(d.getTime()) ? null : d.getTime()
+}
 
 /**
  * 定时任务视图：所有「到点自动向某会话发消息」的任务集中管理。
@@ -101,7 +134,7 @@ export default function SchedulesPage(): React.JSX.Element {
         <div>
           <h2>定时任务</h2>
           <p className="settings-tip">
-            到点自动向某个智能体（私聊）或项目群发消息，并让它回复。例：每天早上 8 点在群里问「今天的病区动态」。
+            到点自动向某个智能体（私聊）或项目群发消息，并让它回复。可以每天重复，也可以只跑一次（例如今天 12:00）。
           </p>
         </div>
         <Button variant="primary" data-testid="cron-create" onClick={() => setEditing('new')}>
@@ -157,7 +190,7 @@ export default function SchedulesPage(): React.JSX.Element {
             </div>
             <div className="cron-meta">
               <span className="cron-badge">{t.cron_human}</span>
-              <span className="cron-badge">expr {t.cron_expr}</span>
+              {t.run_at == null && <span className="cron-badge">expr {t.cron_expr}</span>}
               <span className="cron-badge">{t.miss_policy === 'catchup' ? '错过补跑' : '错过跳过'}</span>
             </div>
             <div className="cron-target">
@@ -223,7 +256,9 @@ function CronEditor(props: {
   const t = props.task
   const [name, setName] = useState(t?.name || '')
   const [targetKey, setTargetKey] = useState(t ? `${t.target_type}:${t.target_id}` : '')
+  const [mode, setMode] = useState<'cron' | 'once'>(t?.run_at ? 'once' : 'cron')
   const [expr, setExpr] = useState(t?.cron_expr || '0 8 * * *')
+  const [runAt, setRunAt] = useState(t?.run_at ? toLocalInput(t.run_at) : upcomingClock('12:00'))
   const [prompt, setPrompt] = useState(t?.prompt || '')
   const [missPolicy, setMissPolicy] = useState<'catchup' | 'skip'>(t?.miss_policy || 'catchup')
   const [saving, setSaving] = useState(false)
@@ -243,22 +278,31 @@ function CronEditor(props: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.agents.length, props.projects.length])
 
-  const exprError = useMemo(() => (isValidCron(expr) ? null : '表达式非法（需 5 段：分 时 日 月 周）'), [expr])
+  const exprError = useMemo(() => (mode === 'once' || isValidCron(expr) ? null : '表达式非法（需 5 段：分 时 日 月 周）'), [expr, mode])
+  const onceAt = useMemo(() => (mode === 'once' ? fromLocalInput(runAt) : null), [mode, runAt])
   const nextPreview = useMemo(() => {
+    if (mode === 'once') {
+      if (onceAt == null) return '请选择时间'
+      if (onceAt <= Date.now()) return '这个时间已经过了'
+      return `${describeOnce(onceAt)}（${new Date(onceAt).toLocaleString()}）`
+    }
     if (exprError) return '—'
     try {
       return new Date(nextRunAt(expr, Date.now())).toLocaleString()
     } catch (e) {
       return String((e as Error)?.message || e)
     }
-  }, [expr, exprError])
+  }, [expr, exprError, mode, onceAt])
 
   const submit = async () => {
     setError(null)
     if (!name.trim()) return setError('请填写任务名')
     const picked = allTargets.find((o) => o.key === targetKey)
     if (!picked) return setError('请选择目标会话')
-    if (exprError) return setError(exprError)
+    if (mode === 'once') {
+      if (onceAt == null) return setError('请选择一次性执行时间')
+      if (onceAt <= Date.now()) return setError('一次性任务要选一个还没到的时刻')
+    } else if (exprError) return setError(exprError)
     if (!prompt.trim()) return setError('请填写触发时要说的话')
     setSaving(true)
     try {
@@ -267,7 +311,8 @@ function CronEditor(props: {
         name: name.trim(),
         target_type: picked.type,
         target_id: picked.id,
-        cron_expr: expr.trim(),
+        cron_expr: mode === 'once' ? '0 0 1 1 *' : expr.trim(),
+        run_at: mode === 'once' ? onceAt : null,
         prompt: prompt.trim(),
         miss_policy: missPolicy,
         enabled: t ? t.enabled : true,
@@ -305,20 +350,52 @@ function CronEditor(props: {
             </optgroup>
           </select>
         </Field>
-        <Field label="触发时间（5 段 cron：分 时 日 月 周，本机时区）" span>
-          <div className="cron-expr-row">
-            <input value={expr} onChange={(e) => setExpr(e.target.value)} spellCheck={false} data-testid="cron-expr" />
-            <div className="cron-presets">
-              {CRON_PRESETS.map((p) => (
-                <button key={p.expr} className={`chip ${expr === p.expr ? 'active' : ''}`} onClick={() => setExpr(p.expr)}>
-                  {p.label}
-                </button>
-              ))}
-            </div>
+        <Field label="重复还是只跑一次" span>
+          <div className="cron-presets">
+            <button type="button" className={`chip ${mode === 'cron' ? 'active' : ''}`} onClick={() => setMode('cron')} data-testid="cron-mode-repeat">
+              重复
+            </button>
+            <button type="button" className={`chip ${mode === 'once' ? 'active' : ''}`} onClick={() => setMode('once')} data-testid="cron-mode-once">
+              仅一次
+            </button>
           </div>
         </Field>
+        {mode === 'once' ? (
+          <Field label="执行时刻（本机时区，到点后自动停用）" span>
+            <div className="cron-expr-row">
+              <input type="datetime-local" value={runAt} onChange={(e) => setRunAt(e.target.value)} data-testid="cron-run-at" />
+              <div className="cron-presets">
+                <button type="button" className="chip" onClick={() => setRunAt(todayAt('12:00'))} data-testid="cron-once-today-noon">
+                  今天 12:00
+                </button>
+                <button type="button" className="chip" onClick={() => setRunAt(todayAt('18:00'))}>
+                  今天 18:00
+                </button>
+              </div>
+            </div>
+          </Field>
+        ) : (
+          <Field label="触发时间（5 段 cron：分 时 日 月 周，本机时区）" span>
+            <div className="cron-expr-row">
+              <input value={expr} onChange={(e) => setExpr(e.target.value)} spellCheck={false} data-testid="cron-expr" />
+              <div className="cron-presets">
+                {CRON_PRESETS.map((p) => (
+                  <button key={p.expr} type="button" className={`chip ${expr === p.expr ? 'active' : ''}`} onClick={() => setExpr(p.expr)}>
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </Field>
+        )}
         <p className="settings-tip" style={{ gridColumn: '1 / -1' }}>
-          {exprError ? <span style={{ color: 'var(--red, #d33)' }}>{exprError}</span> : <>将描述为「{describeCron(expr)}」，下次触发：{nextPreview}</>}
+          {mode === 'once' ? (
+            nextPreview
+          ) : exprError ? (
+            <span style={{ color: 'var(--red, #d33)' }}>{exprError}</span>
+          ) : (
+            <>将描述为「{describeCron(expr)}」，下次触发：{nextPreview}</>
+          )}
         </p>
         <Field label="触发时发出的内容 *" span>
           <textarea

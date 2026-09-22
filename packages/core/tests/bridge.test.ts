@@ -72,5 +72,8 @@ describe('renderBridgePlugin', () => {
     }
     expect(code).toContain('Bearer')
     expect(code).toContain('http://127.0.0.1:1234')
+    expect(code).toContain('chat.params')
+    expect(code).toContain('delete o.include')
+    expect(code).toContain('x-opencode-session')
   })
 })

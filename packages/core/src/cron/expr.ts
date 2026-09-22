@@ -176,6 +176,112 @@ function describeDays(f: CronFields): string {
   return `每月 ${f.dom.join('、')} 日或每${f.dow.map((d) => DOW_NAMES[d]).join('、')} `
 }
 
+/** 一次性目标刚过去仍允许立刻补上的窗口（模型算时刻时常差几秒到跨分钟） */
+const ONCE_GRACE_MS = 60 * 1000
+/** 超过这个窗口的过去时间不再当成「刚跨分钟」，必须让用户改到未来 */
+const ONCE_STALE_MS = 30 * 60 * 1000
+
+/**
+ * 把「今天 12:00 / 明天 08:30 / 2026-09-22 12:00」收成绝对时间戳（本机时区）。
+ * 已经过去不足 1 分钟：立刻执行；过去 1 分钟到 30 分钟：拒绝（不要滚到明天或明年）。
+ */
+export function parseRunAt(text: string, now = Date.now()): number {
+  const raw = String(text || '').trim().replace(/^仅一次\s*/, '')
+  if (!raw) throw new Error('一次性时间不能为空。示例：今天 12:00、明天 08:30、2026-09-22 12:00')
+  const compact = raw.replace(/\s+/g, '')
+  let at: number | null = null
+  const rel = /^(今天|明天|后天)(\d{1,2})(?:[:：]|点)(\d{1,2})?分?$/.exec(compact)
+  if (rel) {
+    const day = rel[1] === '今天' ? 0 : rel[1] === '明天' ? 1 : 2
+    const hour = Number(rel[2])
+    const minute = rel[3] === undefined ? 0 : Number(rel[3])
+    if (hour > 23 || minute > 59) throw new Error('时间超出范围：小时 0-23，分钟 0-59')
+    const base = new Date(now)
+    base.setDate(base.getDate() + day)
+    base.setHours(hour, minute, 0, 0)
+    at = base.getTime()
+  } else {
+    const abs = /^(\d{4})[-/](\d{1,2})[-/](\d{1,2})[ T](\d{1,2}):(\d{2})$/.exec(raw)
+    if (abs) {
+      const hour = Number(abs[4])
+      const minute = Number(abs[5])
+      if (hour > 23 || minute > 59) throw new Error('时间超出范围：小时 0-23，分钟 0-59')
+      at = new Date(Number(abs[1]), Number(abs[2]) - 1, Number(abs[3]), hour, minute, 0, 0).getTime()
+    } else if (/^\d{4}-\d{2}-\d{2}T/.test(raw)) {
+      const d = new Date(raw)
+      if (!Number.isNaN(d.getTime())) at = d.getTime()
+    } else {
+      const hm = /^(\d{1,2}):(\d{2})$/.exec(compact)
+      if (hm) {
+        const hour = Number(hm[1])
+        const minute = Number(hm[2])
+        if (hour > 23 || minute > 59) throw new Error('时间超出范围：小时 0-23，分钟 0-59')
+        const base = new Date(now)
+        base.setHours(hour, minute, 0, 0)
+        at = base.getTime()
+      }
+    }
+  }
+  if (at == null || Number.isNaN(at)) {
+    throw new Error('无法识别的一次性时间。示例：今天 12:00、明天 08:30、2026-09-22 12:00')
+  }
+  return resolveOnceTarget(at, now)
+}
+
+/** 过去不足 1 分钟视为立刻执行；更早的目标拒绝，避免一次性任务被排到下一年 */
+export function resolveOnceTarget(at: number, now = Date.now()): number {
+  if (!Number.isFinite(at)) throw new Error('一次性时间无效')
+  if (at > now) return at
+  const age = now - at
+  if (age < ONCE_GRACE_MS) return now
+  if (age <= ONCE_STALE_MS) {
+    throw new Error(`一次性任务的目标时间（${new Date(at).toLocaleString()}）刚过去；请改成还没到的时刻，或点「立即执行」`)
+  }
+  throw new Error(`一次性任务的目标时间（${new Date(at).toLocaleString()}）已过去；请改成未来的时刻`)
+}
+
+/** 一次性任务的兼容 cron（只用于展示/同步；调度以 run_at 为准，不会滚到下一年） */
+export function cronExprForOnce(at: number): string {
+  const d = new Date(at)
+  return `${d.getMinutes()} ${d.getHours()} ${d.getDate()} ${d.getMonth() + 1} *`
+}
+
+/** 卡片副标题：仅一次 · 今天 12:00 */
+export function describeOnce(at: number, now = Date.now()): string {
+  const d = new Date(at)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  const hm = `${pad(d.getHours())}:${pad(d.getMinutes())}`
+  const startOf = (ts: number) => {
+    const x = new Date(ts)
+    x.setHours(0, 0, 0, 0)
+    return x.getTime()
+  }
+  const dayDiff = Math.round((startOf(at) - startOf(now)) / 86_400_000)
+  if (dayDiff === 0) return `仅一次 · 今天 ${hm}`
+  if (dayDiff === 1) return `仅一次 · 明天 ${hm}`
+  if (dayDiff === 2) return `仅一次 · 后天 ${hm}`
+  return `仅一次 · ${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${hm}`
+}
+
+/** 任务卡片上的时间描述：有 run_at 的是一次性，否则按 cron */
+export function describeSchedule(task: { cron_expr: string; run_at?: number | null }, now = Date.now()): string {
+  if (task.run_at != null) return describeOnce(task.run_at, now)
+  return describeCron(task.cron_expr)
+}
+
+/**
+ * 同步落地后的下次触发。
+ * 重复任务按 cron 从本机此刻重算；一次性任务只用绝对 run_at，已经过去就留空（绝不排到明年同一天）。
+ */
+export function syncedNextRun(task: { cron_expr: string; run_at?: number | null }, now = Date.now()): number | null {
+  if (task.run_at != null) return task.run_at > now ? task.run_at : null
+  try {
+    return nextRunAt(task.cron_expr, now)
+  } catch {
+    return null
+  }
+}
+
 /** 常用模板（新建任务一键填充） */
 export const CRON_PRESETS: Array<{ label: string; expr: string }> = [
   { label: '每天 08:00', expr: '0 8 * * *' },

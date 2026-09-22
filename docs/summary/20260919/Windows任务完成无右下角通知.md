@@ -1,8 +1,8 @@
 # Windows 任务完成后只有声音、没有右下角消息提醒
 
-- 日期：2026-09-19
-- 范围：Jeff v1.8.19 → v1.8.20（PATCH）
-- 现象：Windows 上任务/回复完成后能听到提示音，屏幕右下角没有气泡
+- 日期：2026-09-19（关闭按钮跟进：2026-09-20）
+- 范围：Jeff v1.8.19 → v1.8.21（PATCH）
+- 现象：Windows 上任务/回复完成后能听到提示音，屏幕右下角没有气泡；v1.8.20 补上气泡后，点 `×` 不能马上关掉，要等几秒才消失
 
 ## 一、根因
 
@@ -36,24 +36,26 @@ notifyTurnDone
 
 系统 Toast 仍作为 Windows 气泡创建失败时的兜底，并加上 `timeoutType: 'never'`、把 `Notification` 对象留住直到 close/click/failed，避免 GC 把还没画出来的横幅拆掉。
 
+v1.8.21：点 `×` 立刻关掉。原先用 `location.hash` 通知主进程，但 `data:` 页在 Chromium 里经常不触发 `did-navigate-in-page`，等于关掉信号丢了，只能等 8 秒定时器。改成 `document.title` + `console.log` + `window.close()` 三条立刻到达主进程的通道，主进程 `hide()` 掉窗口。
+
 ## 三、测试
 
-- `npm test`：299 passed / 17 skipped（含新增 `notify-visual.test.ts`：通道选择、Windows 前台也弹、气泡坐标、HTML 转义、OS 通知 silent + never）
+- `npm test`：300 passed / 17 skipped（`notify-visual.test.ts` 覆盖通道、Windows 前台也弹、气泡坐标、HTML 转义、`parseBalloonAction`、close 不再走 hash）
 - `npm run typecheck -w jeff-desktop` 通过；core `tsc --noEmit` 通过
-- mock UI E2E：1 passed（设置页「发送测试通知」+ `notify:desktop` 返回 `{ok:true}`）
+- mock UI E2E：1 passed
 - v18 封闭：4 passed
 - cron 10 轮：10 passed
 
-本机是 Linux，Windows 真机气泡以安装 `jeff-Setup-1.8.20.exe` 后任务完成 / 点「发送测试通知」为准。wine 向导不可用（本机 wine 状态问题），不作为验收门。
+本机是 Linux，Windows 真机以安装 `jeff-Setup-1.8.21.exe` 后点气泡 `×` 应立刻消失为准。
 
 ## 四、发版
 
-- 版本 1.8.19 → **1.8.20**（PATCH：已有提醒能力在 Windows 上补上可靠的视觉通道）
+- 版本 1.8.19 → 1.8.20 → **1.8.21**（PATCH：气泡能弹之后，修关闭按钮延迟）
 - 五处版本号一致：根 / core / desktop 三处 `package.json` + `package-lock.json`（4 处）+ `version.ts`
 
 ## 五、产物
 
-- Linux：`jeff-desktop_1.8.20_amd64.deb` + `Jeff-1.8.20.AppImage`
-  - 本机 `dpkg -l jeff-desktop` = **1.8.20**
-  - `/opt/Jeff/resources/app.asar` 与 `linux-unpacked` md5 一致：`20ebb920872208d7cf3df3b007207530`
-- Windows：`jeff-Setup-1.8.20.exe` 为 PE32 Nullsoft；`win-unpacked` 的 `app.asar` 命中 `showWindowsBalloon` / `1.8.20`；`oc-bin/windows-x64/opencode.exe` 在位
+- Linux：`jeff-desktop_1.8.21_amd64.deb` + `Jeff-1.8.21.AppImage`
+  - 本机 `dpkg -l jeff-desktop` = **1.8.21**
+  - `/opt/Jeff/resources/app.asar` 与 `linux-unpacked` md5 一致：`6662a27edeaf1ddc1d0d3c67c08b3302`
+- Windows：`jeff-Setup-1.8.21.exe` 为 PE32 Nullsoft；`win-unpacked` 的 `app.asar` 命中 `jeff-balloon:close` / `1.8.21`；`oc-bin/windows-x64/opencode.exe` 在位

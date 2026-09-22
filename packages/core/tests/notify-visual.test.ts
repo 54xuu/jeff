@@ -4,8 +4,11 @@ import {
   balloonHtml,
   escapeHtml,
   osNotificationInit,
+  parseBalloonAction,
   shouldShowDesktopNotify,
   visualNotifyChannel,
+  BALLOON_ACTION_CLICK,
+  BALLOON_ACTION_CLOSE,
   BALLOON_HEIGHT,
   BALLOON_MARGIN,
   BALLOON_WIDTH,
@@ -70,14 +73,26 @@ describe('escapeHtml / balloonHtml', () => {
     )
   })
 
-  it('气泡 HTML 含转义后的标题/正文，并带 click/close 锚点', () => {
+  it('气泡 HTML 含转义后的标题/正文，并用 title 立即发 close/click', () => {
     const html = balloonHtml({ title: '小杰</title><script>', body: '完成 <b>任务</b>', dark: true })
     expect(html).toContain('小杰&lt;/title&gt;&lt;script&gt;')
     expect(html).toContain('完成 &lt;b&gt;任务&lt;/b&gt;')
     expect(html).not.toContain('</title><script>')
-    expect(html).toContain("location.hash = 'click'")
-    expect(html).toContain("location.hash = 'close'")
+    expect(html).toContain(BALLOON_ACTION_CLOSE)
+    expect(html).toContain(BALLOON_ACTION_CLICK)
+    expect(html).toContain('document.title = action')
+    expect(html).toContain('window.close()')
+    expect(html).not.toContain('location.hash')
     expect(html).toContain('#2c2c2c')
+  })
+})
+
+describe('parseBalloonAction', () => {
+  it('只认约定信号，其它标题忽略', () => {
+    expect(parseBalloonAction(BALLOON_ACTION_CLOSE)).toBe('close')
+    expect(parseBalloonAction(BALLOON_ACTION_CLICK)).toBe('click')
+    expect(parseBalloonAction('Jeff')).toBeNull()
+    expect(parseBalloonAction('')).toBeNull()
   })
 })
 
