@@ -298,6 +298,67 @@ describe('OcClient 网络诊断与超时', () => {
     // 有副作用的 POST 绝不重放
     expect(postCount).toBe(1)
   })
+
+  it('abortSession 立刻打断挂起的 sendMessage，不再空转到总预算超时', async () => {
+    const port = await startServer([
+      {
+        match: (m, u) => m === 'POST' && u.includes('/message'),
+        reply: () => {
+          /* 模拟模型调用卡住：永不回响应头 */
+        },
+      },
+      { match: (m, u) => m === 'POST' && u.includes('/abort'), reply: (_req, res) => json(res, {}) },
+    ])
+    const client = makeClient(port, [], new Agent({ headersTimeout: 0, bodyTimeout: 0, keepAliveTimeout: 1, keepAliveMaxTimeout: 1 }))
+    const pending = client.sendMessage({ sessionId: 'ses_hang', text: 'hi', timeoutMs: 60000 }).then(
+      () => {
+        throw new Error('sendMessage 应被停止打断')
+      },
+      (e: unknown) => e as Error,
+    )
+    await new Promise((r) => setTimeout(r, 30))
+    expect(client.hasInflight()).toBe(true)
+    const t0 = Date.now()
+    await client.abortSession('ses_hang')
+    const err = await pending
+    expect(Date.now() - t0).toBeLessThan(3000)
+    expect(err).toBeTruthy()
+    expect(err!.message.toLowerCase()).toContain('abort')
+    expect(client.isAbortRequested('ses_hang')).toBe(true)
+    expect(client.hasInflight()).toBe(false)
+  })
+
+  it('cancelInflight 用给定原因立刻失败，且原因不含 abort（避免被当成用户停止）', async () => {
+    const port = await startServer([
+      {
+        match: (m, u) => m === 'POST' && u.includes('/message'),
+        reply: () => {
+          /* 挂起 */
+        },
+      },
+    ])
+    const client = makeClient(port, [])
+    let idle = false
+    client.on('inflight-idle', () => {
+      idle = true
+    })
+    const pending = client.sendMessage({ sessionId: 'ses_hang', text: 'hi', timeoutMs: 60000 }).then(
+      () => {
+        throw new Error('sendMessage 应被换代打断')
+      },
+      (e: unknown) => e as Error,
+    )
+    await new Promise((r) => setTimeout(r, 30))
+    const t0 = Date.now()
+    client.cancelInflight('引擎刚刚重启，进行中的对话已中断，请再发一次')
+    const err = await pending
+    expect(Date.now() - t0).toBeLessThan(3000)
+    expect(err!.message).toContain('引擎刚刚重启')
+    expect(err!.message.toLowerCase()).not.toContain('abort')
+    expect(client.isAbortRequested('ses_hang')).toBe(false)
+    expect(client.hasInflight()).toBe(false)
+    expect(idle).toBe(true)
+  })
 })
 
 describe('friendlyAssistantError：上游 APIError 映射为可读中文提示', () => {

@@ -111,14 +111,15 @@ export class OcClient extends EventEmitter {
     return `http://127.0.0.1:${this.port}`
   }
 
-  private async req<T>(method: string, path: string, body?: unknown, timeoutMs = 30000): Promise<T> {
+  private async req<T>(method: string, path: string, body?: unknown, timeoutMs = 30000, external?: AbortSignal): Promise<T> {
     const started = Date.now()
+    const signal = external ? AbortSignal.any([AbortSignal.timeout(timeoutMs), external]) : AbortSignal.timeout(timeoutMs)
     try {
       const res = await undiciFetch(`${this.base()}${path}`, {
         method,
         headers: body !== undefined ? { 'content-type': 'application/json' } : undefined,
         body: body !== undefined ? JSON.stringify(body) : undefined,
-        signal: AbortSignal.timeout(timeoutMs),
+        signal,
         dispatcher: this.dispatcher ?? sidecarDispatcher(),
       })
       if (!res.ok) {
@@ -133,6 +134,12 @@ export class OcClient extends EventEmitter {
       return (await res.json()) as T
     } catch (err) {
       const e = err as Error & { name?: string; cause?: unknown; httpStatus?: number }
+      // 调用方主动取消（用户停止 / 引擎换代）：用取消原因原样抛出。
+      // 用户停止的默认原因含 abort，上层据此显示「已停止」；换代原因故意不含该字样。
+      if (external?.aborted) {
+        const reason = external.reason
+        throw reason instanceof Error ? reason : err
+      }
       // HTTP 业务错误 / 超时 / 用户中止：原样抛出（上层依赖 abort 字样判定「已停止生成」）
       if (e?.httpStatus || e?.name === 'TimeoutError' || e?.name === 'AbortError') throw err
       const chain = causeChain(e)
@@ -192,8 +199,41 @@ export class OcClient extends EventEmitter {
   }
 
   /** 获取会话消息（含 user/assistant 与 parts） */
-  async getMessages(sessionId: string, timeoutMs = 30000): Promise<SessionMessage[]> {
-    return this.req('GET', `/session/${sessionId}/message`, undefined, timeoutMs)
+  async getMessages(sessionId: string, timeoutMs = 30000, external?: AbortSignal): Promise<SessionMessage[]> {
+    return this.req('GET', `/session/${sessionId}/message`, undefined, timeoutMs, external)
+  }
+
+  /**
+   * 每个会话正在等 sidecar 的 sendMessage（POST 会阻塞到整轮结束，最长 90 分钟）。
+   * 停止与引擎换代必须掐这根信号：只 POST /abort 时，卡住的模型调用不会解开本机的 fetch，
+   * 界面的「发送中」要一直转到总预算超时。
+   */
+  private inflightSends = new Map<string, AbortController>()
+
+  /** 是否还有未结束的 sendMessage（引擎重启必须躲开，或在换代时把它们立刻失败） */
+  hasInflight(): boolean {
+    return this.inflightSends.size > 0
+  }
+
+  private trackSend(sessionId: string): AbortController {
+    const ctrl = new AbortController()
+    this.inflightSends.set(sessionId, ctrl)
+    return ctrl
+  }
+
+  private untrackSend(sessionId: string, ctrl: AbortController): void {
+    if (this.inflightSends.get(sessionId) !== ctrl) return
+    this.inflightSends.delete(sessionId)
+    if (this.inflightSends.size === 0) this.emit('inflight-idle')
+  }
+
+  /**
+   * 引擎被换掉时调用：旧客户端上所有在途 send 立刻失败。
+   * 原因故意不含 abort，避免被界面当成「用户点了停止」。
+   */
+  cancelInflight(message: string): void {
+    const reason = new Error(message)
+    for (const ctrl of this.inflightSends.values()) ctrl.abort(reason)
   }
 
   /**
@@ -227,52 +267,67 @@ export class OcClient extends EventEmitter {
     // 总预算从进入时计：POST 与后续轮询共用剩余时间（旧逻辑 POST 结束后才起 deadline，总时长可能翻倍）
     const deadline = Date.now() + waitMs
     const remaining = () => Math.max(1000, deadline - Date.now())
-    const returned = await this.req<{ info?: AssistantInfo; id?: string }>(
-      'POST',
-      `/session/${input.sessionId}/message`,
-      {
-        parts: [
-          ...(input.text ? [{ type: 'text', text: input.text }] : []),
-          ...(input.images || []).map((img) => ({ type: 'file', mime: img.mime, url: img.dataUrl })),
-        ],
-        ...(input.agent ? { agent: input.agent } : {}),
-        ...(input.model ? { model: input.model } : {}),
-        ...(input.variant ? { variant: input.variant } : {}),
-        ...(input.system ? { system: input.system } : {}),
-        ...(input.noReply ? { noReply: true } : {}),
-      },
-      // POST 会阻塞到整个 run 结束（LLM 慢思考/慢网络时可达数分钟），超时必须覆盖全程；
-      // 之前固定 60s 会在 LLM 生成超过 60s 时先炸（TimeoutError 误判为已停止）
-      remaining(),
-    )
-    const assistantId = returned?.info?.id ?? returned?.id
-    if (!assistantId) throw new Error('发送消息未返回 assistant 消息 id')
-    for (;;) {
-      if (Date.now() > deadline) throw new Error('等待 assistant 回复超时')
-      const msgs = await this.getMessages(input.sessionId, remaining())
-      const entry = msgs.find((m) => m.info?.id === assistantId)
-      const found = entry?.info as AssistantInfo | undefined
-      if (found) {
-        // 列表条目的 parts 在顶层（info 里没有）——合并回去，调用方才能提取回复文本
-        if (entry?.parts?.length && !found.parts) found.parts = entry.parts
-        if (found.error) {
-          const raw = JSON.stringify(found.error)
-          // 完整错误只在调试日志里留存（上层提示会被层层截断）
-          this.log?.('assistant-error', { sessionId: input.sessionId, assistantId, error: found.error })
-          // 可识别的上游 APIError（4xx/5xx）映射为可读提示；其余保持原始截断展示
-          const friendly = friendlyAssistantError(found.error)
-          if (friendly) throw new Error(friendly)
-          const hint = /certificate/i.test(raw) ? '（如为企业网络证书拦截，可在 设置→引擎服务 开启「跳过 LLM 证书校验」）' : ''
-          throw new Error(`assistant 消息出错: ${raw.slice(0, 300)}${hint}`)
+    const ctrl = this.trackSend(input.sessionId)
+    try {
+      const returned = await this.req<{ info?: AssistantInfo; id?: string }>(
+        'POST',
+        `/session/${input.sessionId}/message`,
+        {
+          parts: [
+            ...(input.text ? [{ type: 'text', text: input.text }] : []),
+            ...(input.images || []).map((img) => ({ type: 'file', mime: img.mime, url: img.dataUrl })),
+          ],
+          ...(input.agent ? { agent: input.agent } : {}),
+          ...(input.model ? { model: input.model } : {}),
+          ...(input.variant ? { variant: input.variant } : {}),
+          ...(input.system ? { system: input.system } : {}),
+          ...(input.noReply ? { noReply: true } : {}),
+        },
+        // POST 会阻塞到整个 run 结束（LLM 慢思考/慢网络时可达数分钟），超时必须覆盖全程；
+        // 之前固定 60s 会在 LLM 生成超过 60s 时先炸（TimeoutError 误判为已停止）
+        remaining(),
+        ctrl.signal,
+      )
+      const assistantId = returned?.info?.id ?? returned?.id
+      if (!assistantId) throw new Error('发送消息未返回 assistant 消息 id')
+      for (;;) {
+        this.throwIfSendCancelled(ctrl.signal)
+        if (Date.now() > deadline) throw new Error('等待 assistant 回复超时')
+        const msgs = await this.getMessages(input.sessionId, remaining(), ctrl.signal)
+        const entry = msgs.find((m) => m.info?.id === assistantId)
+        const found = entry?.info as AssistantInfo | undefined
+        if (found) {
+          // 列表条目的 parts 在顶层（info 里没有）——合并回去，调用方才能提取回复文本
+          if (entry?.parts?.length && !found.parts) found.parts = entry.parts
+          if (found.error) {
+            const raw = JSON.stringify(found.error)
+            // 完整错误只在调试日志里留存（上层提示会被层层截断）
+            this.log?.('assistant-error', { sessionId: input.sessionId, assistantId, error: found.error })
+            // 可识别的上游 APIError（4xx/5xx）映射为可读提示；其余保持原始截断展示
+            const friendly = friendlyAssistantError(found.error)
+            if (friendly) throw new Error(friendly)
+            const hint = /certificate/i.test(raw) ? '（如为企业网络证书拦截，可在 设置→引擎服务 开启「跳过 LLM 证书校验」）' : ''
+            throw new Error(`assistant 消息出错: ${raw.slice(0, 300)}${hint}`)
+          }
+          if (found.time?.completed) {
+            this.mergeTurnParts(found, msgs)
+            return found
+          }
         }
-        if (found.time?.completed) {
-          this.mergeTurnParts(found, msgs)
-          return found
-        }
+        if (Date.now() > deadline) throw new Error('等待 assistant 回复超时')
+        await sleep(400)
       }
-      if (Date.now() > deadline) throw new Error('等待 assistant 回复超时')
-      await sleep(400)
+    } finally {
+      this.untrackSend(input.sessionId, ctrl)
     }
+  }
+
+  /** 在途 send 已被停止或换代掐断时，把取消原因抛出去（轮询间隙用） */
+  private throwIfSendCancelled(signal: AbortSignal): void {
+    if (!signal.aborted) return
+    const reason = signal.reason
+    if (reason instanceof Error) throw reason
+    throw new Error('已停止生成')
   }
 
   /**
@@ -330,6 +385,9 @@ export class OcClient extends EventEmitter {
     this.aborts.set(sessionId, Date.now())
     // 记录中断尝试：只记失败的话，「点了停止但没停住」在日志里完全看不到（无法判断请求是否发出）
     this.log?.('abort', { sessionId })
+    // 先掐本机正在等的 POST/轮询。sidecar 的 /abort 对「卡在模型调用里」的 run 经常不解开阻塞的 HTTP，
+    // 界面就会一直转圈，停止按钮看起来没反应。
+    this.inflightSends.get(sessionId)?.abort()
     await this.req('POST', `/session/${sessionId}/abort`).catch((err) => {
       // /abort 失败不再完全静默：留诊断现场（会话可能已结束或 sidecar 不可达）
       this.log?.('abort-fail', { sessionId, error: String((err as Error)?.message || err) })

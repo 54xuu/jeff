@@ -1311,6 +1311,8 @@ export class JeffCore extends EventEmitter {
     this.oc.on('event', (evt: { type?: string; properties?: Record<string, unknown> }) => this.handleOcEvent(evt))
     this.oc.on('sse-open', (info: unknown) => this.debugLog.log('sse-open', info))
     this.oc.on('sse-error', (info: unknown) => this.debugLog.log('sse-error', info))
+    // 私聊 send 结束时补一次推迟的引擎重启（群流水线空闲回调覆盖不到这条）
+    this.oc.on('inflight-idle', () => this.flushPendingRegistryRestart())
     this.oc.statusProvider = () => (this.sidecar ? { status: this.sidecar.status, port: this.sidecar.port, generation: this.sidecar.generation } : null)
   }
 
@@ -1555,9 +1557,14 @@ export class JeffCore extends EventEmitter {
   private async restartIfRegistryDirty(): Promise<void> {
     if (this.restarting) await this.restarting
     if (!this.registryDirty || !this.sidecar) return
-    // 项目群长任务（流水线/委派回合）在途时推迟重启：sidecar 停止会杀掉正在生成的请求，
-    // 曾把 10 分钟级的群任务打断成回合失败；待流水线空闲（onPipelineIdle/onIdle）后再落闸
-    if (this.hasActiveGroupWork()) {
+    // 在途请求时推迟重启：sidecar 停止会杀掉正在生成的请求。
+    // 群流水线曾因此被打断成回合失败；私聊同样会把 POST 挂在已死连接上（headers 超时已关），
+    // 停止按钮打到换代后的新客户端，界面一直转圈直到 90 分钟总预算。
+    if (this.hasBlockingSidecarWork()) {
+      const inflight = this.oc?.hasInflight() ?? false
+      if (inflight && !this.hasActiveGroupWork() && !this.pendingRegistryRestart) {
+        this.debugLog.log('sidecar-restart-deferred', { reason: 'inflight-send' })
+      }
       this.pendingRegistryRestart = true
       return
     }
@@ -1570,12 +1577,17 @@ export class JeffCore extends EventEmitter {
     return this.groupChat.hasBusyPipeline() || (this.delegator?.activeCount ?? 0) > 0
   }
 
+  /** 群任务或任意在途 sendMessage（含私聊）——重启都会把这次生成挂死 */
+  private hasBlockingSidecarWork(): boolean {
+    return this.hasActiveGroupWork() || (this.oc?.hasInflight() ?? false)
+  }
+
   private pendingRegistryRestart = false
 
-  /** 群任务空闲后的延迟落闸：有待重启标记且当前无在途群工作时执行重启 */
+  /** 在途工作都结束后的延迟落闸：有待重启标记且当前没有群任务/在途 send 时执行重启 */
   private flushPendingRegistryRestart(): void {
     if (!this.pendingRegistryRestart) return
-    if (this.hasActiveGroupWork()) return
+    if (this.hasBlockingSidecarWork()) return
     this.pendingRegistryRestart = false
     void this.restartIfRegistryDirty().catch((err) => {
       this.debugLog.log('sidecar-restart', { error: String((err as Error)?.message || err) })
@@ -1611,6 +1623,8 @@ export class JeffCore extends EventEmitter {
     if (!this.sidecar) return
     if (this.oc && this.ocGeneration === this.sidecar.generation) return
     this.ocGeneration = this.sidecar.generation
+    // 先失败旧客户端上的在途 send，再换新客户端。否则停止打到新端口，旧 POST 要空转到 90 分钟超时。
+    this.oc?.cancelInflight('引擎刚刚重启，进行中的对话已中断，请再发一次')
     this.oc?.stopEventStream()
     this.oc = new OcClient(this.sidecar.port, this.debugLog.fn())
     this.oc.startEventStream()
