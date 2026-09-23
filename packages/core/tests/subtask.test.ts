@@ -5,7 +5,7 @@ import path from 'node:path'
 import { openDb } from '../src/db/db.js'
 import { buildPaths } from '../src/paths.js'
 import { agentRepo, kvRepo } from '../src/db/repos.js'
-import { SubtaskRunner, SUBTASK_TOOL } from '../src/orchestrator/subtask.js'
+import { SubtaskRunner, SUBTASK_TOOL, wantsIndependentSubtasks, withSubtaskSteer, SUBTASK_STEER } from '../src/orchestrator/subtask.js'
 import { agentSlug } from '../src/agents/registry.js'
 import { sesMetaKey } from '../src/tools/memoryTools.js'
 import { JeffCore } from '../src/index.js'
@@ -178,6 +178,50 @@ describe('JeffCore.resolveSession：子任务会话标记 isSubtask', () => {
     const aid = agentRepo(coreDb).create({ name: 'Y' }).id
     kvRepo(coreDb).setJSON(sesMetaKey('ses_gsub'), { kind: 'group', agentId: aid, projectId: 'proj_1', isSubtask: true })
     expect(core.resolveSession('ses_gsub')).toMatchObject({ kind: 'group', agentId: aid, projectId: 'proj_1', isSubtask: true })
+  })
+})
+
+describe('中文触发：用户不必说出工具名', () => {
+  const userPrompt =
+    '分析 `D:\\标书和竞品资料` 目录下所有 `.md` 文件，读取每一个文件（每一个文件独立处理），' +
+    '分析文件中与 POCT 相关的功能和需求保存到 `POCT完整版\\{文件名}-功能提取.md` 中；' +
+    '再总结并合并每个功能提取文件，保存到 `POCT完整版-功能总结.md`。'
+
+  it('用户原来的说法（每一个文件独立处理 + 目录下所有 md）会命中', () => {
+    expect(wantsIndependentSubtasks(userPrompt)).toBe(true)
+  })
+
+  it('这些文件彼此独立、互不相关也会命中', () => {
+    expect(wantsIndependentSubtasks('这些文件彼此独立、互不相关，请逐份提取 POCT 功能')).toBe(true)
+  })
+
+  it('只说「独立子任务」也算明确要求', () => {
+    expect(wantsIndependentSubtasks('后面用独立子任务做')).toBe(true)
+  })
+
+  it('普通的「独立处理这个异常」不会误触发', () => {
+    expect(wantsIndependentSubtasks('请独立处理这个登录异常')).toBe(false)
+  })
+
+  it('明确否定时不触发', () => {
+    expect(wantsIndependentSubtasks('不要独立处理目录下所有文件，它们是同一份标书的不同章节')).toBe(false)
+  })
+
+  it('命中时把硬指令接到本轮 system 后面，用户原文不变', () => {
+    const system = withSubtaskSteer('已有记忆', userPrompt)
+    expect(system?.startsWith('已有记忆')).toBe(true)
+    expect(system).toContain(SUBTASK_STEER)
+    expect(system).toContain('jeff_spawn_subtask')
+    expect(system).not.toContain(userPrompt)
+  })
+
+  it('小杰不注入（它没有这个工具）', () => {
+    expect(withSubtaskSteer('管家规则', userPrompt, { builtin: true })).toBe('管家规则')
+  })
+
+  it('未命中时 system 原样返回', () => {
+    expect(withSubtaskSteer('已有记忆', '今天天气怎么样')).toBe('已有记忆')
+    expect(withSubtaskSteer(undefined, '今天天气怎么样')).toBeUndefined()
   })
 })
 

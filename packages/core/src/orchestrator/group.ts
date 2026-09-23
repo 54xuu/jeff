@@ -6,6 +6,7 @@ import type { GroupMessage } from '../ipc/contract.js'
 import { agentPromptOpts } from '../util/modelKey.js'
 import { GroupThreadStore, groupMsgScope } from './groupThreads.js'
 import { decodePluginUserMessage } from '../plugins/invoke.js'
+import { wantsIndependentSubtasks, withSubtaskSteer } from './subtask.js'
 
 /** 单次用户消息触发的串行协作流水线最大步数（防死循环） */
 const MAX_PIPELINE_HOPS = 5
@@ -455,7 +456,10 @@ export class GroupChat {
     this.threads.setLastOcSession(projectId, sessionId)
     let reply: AssistantInfo
     const memoryBlock = this.hooks?.buildMemory?.(agentId, projectId)
-    const system = memoryBlock ? `${this.buildBriefing(projectId, agentId)}\n\n${memoryBlock}` : this.buildBriefing(projectId, agentId)
+    const systemBase = memoryBlock ? `${this.buildBriefing(projectId, agentId)}\n\n${memoryBlock}` : this.buildBriefing(projectId, agentId)
+    const builtin = !!target.builtin
+    const system = withSubtaskSteer(systemBase, text, { builtin })
+    if (!builtin && wantsIndependentSubtasks(text)) this.hooks?.onDebugLog?.('subtask-steer', { projectId, threadId, agentId, sessionId })
     const opts = agentPromptOpts(target, this.hooks?.defaultModel?.() ?? null)
     // 用户已点停止：不再发起本回合，直接按已停止收敛（流水线后续回合也会被取消标记拦下）
     if (input.runState?.cancelled) return { content: '', stopped: true }

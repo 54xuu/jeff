@@ -5,6 +5,7 @@ import { DEFAULT_SEND_TIMEOUT_MS, type OcClient, type AssistantInfo } from '../o
 import { agentPromptOpts } from '../util/modelKey.js'
 import { composeAutoTitle, placeholderTitle } from '../util/title.js'
 import { decodePluginUserMessage, type ChatPluginInvoke } from '../plugins/invoke.js'
+import { wantsIndependentSubtasks, withSubtaskSteer } from '../orchestrator/subtask.js'
 
 /** UI 侧聊天消息（私聊与群聊共用形状） */
 export interface ChatMsg {
@@ -251,13 +252,15 @@ export class PrivateChat {
     if (flags.autoTitle) await this.maybeAutoTitle(sessionId, text)
     const agent = agentRepo(this.db).get(agentId)
     const opts = agentPromptOpts(agent, this.hooks?.defaultModel?.() ?? null)
+    const builtin = !!agent?.builtin
+    if (!builtin && wantsIndependentSubtasks(text)) this.hooks?.onDebugLog?.('subtask-steer', { agentId, sessionId })
     try {
       const reply = await this.getOc().sendMessage({
         sessionId,
         text,
         ...(images && images.length ? { images } : {}),
         agent: agentSlug(agentId),
-        system: this.hooks?.buildSystem?.(agentId),
+        system: withSubtaskSteer(this.hooks?.buildSystem?.(agentId), text, { builtin }),
         timeoutMs: DEFAULT_SEND_TIMEOUT_MS,
         ...opts,
       })

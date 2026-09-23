@@ -5,8 +5,37 @@ import type { OcClient } from '../oc/client.js'
 import { agentPromptOpts } from '../util/modelKey.js'
 import { DEFAULT_SEND_TIMEOUT_MS } from '../oc/client.js'
 
-/** 内部工具名（bridge handler 名 = opencode 工具名） */
+/** 内部工具名（bridge handler 名 = opencode 工具名）。用户不需要记住它。 */
 export const SUBTASK_TOOL = 'jeff_spawn_subtask'
+
+/**
+ * 用户用中文声明「这些材料要分开处理」时，追加到本轮 system 的硬指令。
+ * 只给模型看，不写进用户气泡。子任务会话本身不走这条（它直接调 oc.sendMessage）。
+ */
+export const SUBTASK_STEER = [
+  '【独立子任务】用户已经用中文说明：这些材料彼此独立，要分开处理。',
+  '你必须对每一个独立文件单独调用 jeff_spawn_subtask（串行，等上一个结果回来再发下一个），由子任务自己读取原文并写盘。',
+  '当前对话里禁止用 read 读取这些原始文件的正文。',
+  '同一条消息里如果还有合并、总结、汇总：等各子任务完成、提取文件已经落盘之后，再在当前对话里只读那些提取结果来合并；不要把合并本身交给子任务，也不要回头读原始文件。',
+].join('\n')
+
+const INDEPENDENCE_RE = /独立处理|各自单独|各自独立|分开处理|分别处理|互不相关|彼此独立|逐个处理|逐份处理|单独处理/
+const BATCH_RE = /每个文件|每一个文件|每一份|各文件|这些文件|所有[\s\S]{0,16}文件|目录下|逐个|逐份|\.md\b/
+const NEGATED_RE = /不要独立|别独立|无需独立|不需要独立|不用独立|不要用子任务|不用子任务|不要分开处理/
+
+/** 用户原文是否在要求「批量且彼此独立」。单独说「独立子任务」也算明确要求。 */
+export function wantsIndependentSubtasks(text: string): boolean {
+  const t = text || ''
+  if (NEGATED_RE.test(t)) return false
+  if (/独立子任务/.test(t)) return true
+  return INDEPENDENCE_RE.test(t) && BATCH_RE.test(t)
+}
+
+/** 命中中文触发时把硬指令接到本轮 system 后面；小杰没有该工具，不注入。 */
+export function withSubtaskSteer(system: string | undefined, text: string, opts?: { builtin?: boolean }): string | undefined {
+  if (opts?.builtin || !wantsIndependentSubtasks(text)) return system
+  return system ? `${system}\n\n${SUBTASK_STEER}` : SUBTASK_STEER
+}
 
 /** 单条触发消息内最多派生的子任务数（防失控循环；比 jeff_delegate 的 5 次上限高很多，
  * 覆盖真实批量场景如几十份标书，超过则拦下让调用方先汇总）。 */
