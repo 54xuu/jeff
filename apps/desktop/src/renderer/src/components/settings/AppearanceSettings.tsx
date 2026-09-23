@@ -9,7 +9,7 @@ const MODE_OPTIONS: Array<{ id: 'system' | 'light' | 'dark'; label: string; desc
 ]
 
 const PACK_OPTIONS: Array<{ id: 'weui'; label: string; desc: string }> = [
-  { id: 'weui', label: '微信 WeUI', desc: '官方色板 · 简洁耐用（当前唯一）' },
+  { id: 'weui', label: '微信 WeUI', desc: '品牌绿作强调 · 中性工作台底（当前唯一）' },
 ]
 
 /** 设置 → 外观：主题包 + 亮/暗/跟随系统 */

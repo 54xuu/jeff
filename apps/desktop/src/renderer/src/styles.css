@@ -7,30 +7,30 @@
 :root[data-theme-pack='weui'],
 :root[data-theme='light'],
 :root[data-theme-pack='weui'][data-theme='light'] {
-  /* WeUI 官方色 → Jeff 合同 */
+  /* 品牌绿仍用 WeUI，底色改成工作台中性灰（对照 ZCode 的 neutral 表面，不再用微信灰底黑栏） */
   --weui-BRAND: #07c160;
   --weui-RED: #fa5151;
-  --bg: #ededed;
-  --bg-list: #f7f7f7;
+  --bg: #f3f4f6;
+  --bg-list: #f7f8fa;
   --bg-panel: #ffffff;
-  --bg-rail: #2e2e2e;
-  --rail-text: #d8d8d8;
+  --bg-rail: #f7f8fa;
+  --rail-text: #5c6573;
   --rail-active: var(--weui-BRAND);
-  --text: #191919;
-  --text-2: #7a7a7a;
+  --text: #1c1f26;
+  --text-2: #6b7280;
   /* 思考过程正文：比次级文字更弱一档 */
-  --text-reasoning: #a3a3a3;
-  --border: #e5e5e5;
+  --text-reasoning: #9aa1ab;
+  --border: #e6e8ee;
   --green: var(--weui-BRAND);
-  --green-dark: #06ad56;
-  --bubble-user: #35d28d;
-  --bubble-user-text: #0b2618;
+  --green-dark: #059652;
+  --bubble-user: #d7f5e4;
+  --bubble-user-text: #0d3b24;
   --bubble-plugin: #0b3d22;
   --bubble-ai: #ffffff;
   --danger: var(--weui-RED);
   /* 正文超链接（亮色） */
   --link: #2563eb;
-  --shadow: 0 4px 20px rgba(0, 0, 0, 0.12);
+  --shadow: 0 1px 2px rgba(16, 24, 40, 0.06), 0 8px 24px rgba(16, 24, 40, 0.06);
   /* 字号阶 / 间距 / 圆角 */
   --fs-xs: 11px;
   --fs-sm: 12px;
@@ -54,27 +54,27 @@
 :root[data-theme-pack='weui'][data-theme='dark'] {
   --weui-BRAND: #07c160;
   --weui-RED: #fa5151;
-  --bg: #111111;
-  --bg-list: #191919;
-  --bg-panel: #1e1e1e;
-  --bg-rail: #0d0d0d;
-  --rail-text: #b8b8b8;
+  --bg: #0e1014;
+  --bg-list: #14171c;
+  --bg-panel: #1a1d24;
+  --bg-rail: #12141a;
+  --rail-text: #a8b0bd;
   --rail-active: var(--weui-BRAND);
-  --text: #e5e5e5;
-  --text-2: #8c8c8c;
+  --text: #e7e9ee;
+  --text-2: #9aa3b2;
   /* 思考过程正文：比次级文字更弱一档 */
-  --text-reasoning: #757575;
-  --border: #2c2c2c;
+  --text-reasoning: #7d8694;
+  --border: #2a2e38;
   --green: var(--weui-BRAND);
-  --green-dark: #06ad56;
-  --bubble-user: #35d28d;
-  --bubble-user-text: #0b2618;
-  --bubble-plugin: #0b3d22;
-  --bubble-ai: #2c2c2c;
+  --green-dark: #34d399;
+  --bubble-user: #1b4a34;
+  --bubble-user-text: #e7fff3;
+  --bubble-plugin: #d7f5e4;
+  --bubble-ai: #22262f;
   --danger: var(--weui-RED);
   /* 正文超链接（暗色）：亮蓝，保证在深色气泡上的对比度 */
   --link: #7fa7ff;
-  --shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.35);
 }
 
 * {
@@ -90,7 +90,8 @@ body,
 }
 
 body {
-  font-family: 'PingFang SC', 'Microsoft YaHei', 'Noto Sans CJK SC', system-ui, sans-serif;
+  font-family: 'Microsoft YaHei UI', 'PingFang SC', 'Noto Sans CJK SC', 'Microsoft YaHei', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
   font-size: var(--fs-md);
   color: var(--text);
   background: var(--bg);
@@ -107,20 +108,21 @@ body {
 .nav-rail {
   width: 64px;
   background: var(--bg-rail);
+  border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 12px 0;
-  gap: 6px;
+  padding: 8px 0;
+  gap: 2px;
 }
 
 .nav-item {
-  width: 48px;
+  width: 52px;
   height: 48px;
   border: none;
   background: transparent;
   color: var(--rail-text);
-  border-radius: var(--radius-md);
+  border-radius: 10px;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -128,19 +130,26 @@ body {
   gap: 2px;
   cursor: pointer;
   font-size: 10px;
+  line-height: 1;
+}
+
+.nav-item svg {
+  width: 18px;
+  height: 18px;
 }
 
 .nav-item span {
-  display: none;
+  display: block;
 }
 
-.nav-item.active,
 .nav-item:hover {
-  color: #fff;
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 6%, transparent);
 }
 
 .nav-item.active {
-  background: color-mix(in srgb, var(--rail-active) 28%, transparent);
+  color: var(--green-dark);
+  background: color-mix(in srgb, var(--rail-active) 16%, transparent);
 }
 
 .nav-spacer {
@@ -166,8 +175,8 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 14px 16px 10px;
-  font-size: 15px;
+  padding: 12px 14px 8px;
+  font-size: 13px;
   font-weight: 600;
 }
 
@@ -209,8 +218,10 @@ body {
 }
 
 .list-section {
-  padding: 10px 16px 4px;
-  font-size: 12px;
+  padding: 14px 16px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
   color: var(--text-2);
 }
 
@@ -247,8 +258,10 @@ body {
   background: color-mix(in srgb, var(--text) 5%, transparent);
 }
 
-.chat-item.selected {
-  background: color-mix(in srgb, var(--green) 12%, transparent);
+.chat-item.selected,
+.contact-card.selected {
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+  box-shadow: inset 2px 0 0 var(--green);
 }
 
 .chat-item-body,
@@ -637,14 +650,14 @@ body {
 .bubble.user {
   background: var(--bubble-user);
   color: var(--bubble-user-text);
-  border-top-right-radius: 3px;
+  border-radius: 12px;
 }
 
 .bubble.assistant {
   background: var(--bubble-ai);
   border: 1px solid var(--border);
-  border-top-left-radius: 3px;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  border-radius: 12px;
+  box-shadow: none;
 }
 
 .bubble p {
@@ -846,8 +859,8 @@ body {
   flex: 1;
   resize: none;
   border: 1px solid var(--border);
-  background: var(--bg-list);
-  border-radius: var(--radius-md);
+  background: var(--bg-panel);
+  border-radius: 12px;
   padding: 10px 12px;
   font-size: 14px;
   color: var(--text);
@@ -865,8 +878,8 @@ body {
   display: flex;
   align-items: stretch;
   border: 1px solid var(--border);
-  background: var(--bg-list);
-  border-radius: var(--radius-md);
+  background: var(--bg-panel);
+  border-radius: 12px;
   padding: 6px 10px;
   min-height: var(--input-h);
   max-height: 320px;
@@ -1015,9 +1028,11 @@ body.composer-resizing * {
   background: var(--green);
   color: #fff;
   font-size: 13px;
-  padding: 9px 18px;
-  border-radius: var(--radius-md);
+  font-weight: 600;
+  padding: 8px 16px;
+  border-radius: 10px;
   cursor: pointer;
+  min-height: 36px;
 }
 
 .send-btn:hover {
@@ -1707,11 +1722,11 @@ body.composer-resizing * {
 }
 
 .settings-nav-item.on {
-  background: color-mix(in srgb, var(--green) 14%, transparent);
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+  box-shadow: inset 2px 0 0 var(--green);
 }
 
 .settings-nav-item.on .settings-nav-label {
-  color: var(--green);
   font-weight: 600;
 }
 
@@ -1721,7 +1736,7 @@ body.composer-resizing * {
 }
 
 .settings-nav-item.on .settings-nav-icon {
-  color: var(--green);
+  color: var(--green-dark);
 }
 
 .settings-nav-text {
@@ -2487,10 +2502,10 @@ body.composer-resizing * {
 .list-pane:empty { display: none; }
 
 /* ===== v1.3：对话体验重构 ===== */
-/* assistant 气泡弱化为浅底无边框卡片 */
+/* assistant 气泡：白底细边，和用户的浅绿色块拉开，不再用微信式缺角 */
 .bubble.assistant {
-  background: color-mix(in srgb, var(--text) 4%, transparent);
-  border: none;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
 }
 
 /* 气泡内折叠区（思考过程 / 工具调用） */
@@ -4310,6 +4325,7 @@ body.pane-resizing {
   flex: 1;
   min-height: 0;
   display: flex;
+  position: relative;
   /* 信箱模式：按比例 / 精确分辨率时视口比面板小，居中留白（留白处不是页面，用面板底色区分） */
   justify-content: center;
   align-items: center;
@@ -4424,4 +4440,182 @@ body.pane-resizing {
   border-radius: 999px;
   padding: 0 6px;
   font-size: 10px;
+}
+
+.chat-item-lead {
+  position: relative;
+  flex: none;
+}
+
+.chat-unread {
+  position: absolute;
+  left: -8px;
+  top: 6px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #3b82f6;
+}
+
+.chat-row-menu {
+  position: fixed;
+  z-index: 40;
+  min-width: 140px;
+  background: var(--bg-2, var(--bg));
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 12%);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+}
+
+.chat-row-menu button {
+  text-align: left;
+  background: transparent;
+  border: 0;
+  color: var(--text);
+  padding: 8px 10px;
+  border-radius: var(--radius-xs);
+  cursor: pointer;
+}
+
+.chat-row-menu button:hover {
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+}
+
+.quote-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 0 0;
+}
+
+.quote-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 2px 6px 2px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--green) 12%, transparent);
+  font-size: 12px;
+}
+
+.quote-pill-label {
+  color: var(--text-2);
+  flex: none;
+}
+
+.quote-pill-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 240px;
+}
+
+.quote-pill-x {
+  border: 0;
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+  padding: 0 2px;
+}
+
+.suggest-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 0 0;
+}
+
+.suggest-chip {
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  border-radius: 999px;
+  padding: 6px 12px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.suggest-chip:hover {
+  border-color: var(--green);
+}
+
+.back-bottom {
+  position: absolute;
+  right: 16px;
+  bottom: 12px;
+  z-index: 2;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  border-radius: 999px;
+  padding: 6px 12px;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgb(0 0 0 / 12%);
+}
+
+.conv-find {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.conv-find-input {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--text);
+  padding: 4px 8px;
+}
+
+.conv-find-count {
+  font-size: 12px;
+  color: var(--text-2);
+  min-width: 3em;
+  text-align: right;
+}
+
+.msg-row.find-hit .bubble,
+.msg-system[data-find-hit='1'] {
+  outline: 2px solid var(--green);
+  outline-offset: 2px;
+}
+
+.quote-pop {
+  position: fixed;
+  z-index: 50;
+  border: 0;
+  background: var(--text);
+  color: var(--bg);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.tool-error-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.browser-busy {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 3;
+  pointer-events: none;
+  padding: 4px 12px;
+  font-size: 12px;
+  color: var(--text);
+  background: color-mix(in srgb, #3b82f6 16%, transparent);
 }

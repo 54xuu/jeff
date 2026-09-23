@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { RefObject } from 'react'
+import { slashDismissKey } from '@jeff/core'
 import { slashCommandsOf, useStore, type SlashCommand } from '../store'
 import { chipFromCommand, type ComposerState } from './composerState'
 
@@ -33,12 +34,17 @@ export function useSlashMenu(opts: {
   /** 返回 true 表示按键已被菜单消费（调用方不要再处理回车发送） */
   handleKey: (e: React.KeyboardEvent<HTMLTextAreaElement>) => boolean
   close: () => void
+  /** 用方向键回填历史时跳过下一次 detect，避免正文里的 `/` 把菜单重新打开 */
+  suppressDetect: () => void
 } {
   const plugins = useStore((s) => s.plugins)
   const [slash, setSlash] = useState<SlashState | null>(null)
   const [index, setIndex] = useState(0)
   const composerRef = useRef(opts.composer)
   composerRef.current = opts.composer
+  /** Esc 关掉后面板时记下的签名；查询没变就不再打开 */
+  const dismissed = useRef<string | null>(null)
+  const ignoreDetect = useRef(false)
 
   const commands = useMemo(() => slashCommandsOf(plugins), [plugins])
   const candidates = useMemo(() => {
@@ -54,16 +60,32 @@ export function useSlashMenu(opts: {
   }, [slash?.query, candidates.length])
 
   const detect = (value: string, field: 'before' | 'after' = 'after') => {
+    if (ignoreDetect.current) {
+      ignoreDetect.current = false
+      return
+    }
     const el = field === 'before' ? opts.beforeRef.current : opts.afterRef.current
     const caret = el?.selectionStart ?? value.length
     const upto = value.slice(0, caret)
     const at = upto.lastIndexOf('/')
-    if (at < 0) return setSlash(null)
+    if (at < 0) {
+      dismissed.current = null
+      return setSlash(null)
+    }
     const before = at === 0 ? '' : upto[at - 1]
-    if (before && !/\s/.test(before)) return setSlash(null)
+    if (before && !/\s/.test(before)) {
+      dismissed.current = null
+      return setSlash(null)
+    }
     const query = upto.slice(at + 1)
-    if (/\s/.test(query)) return setSlash(null)
+    if (/\s/.test(query)) {
+      dismissed.current = null
+      return setSlash(null)
+    }
     if (commands.length === 0) return setSlash(null)
+    const sig = slashDismissKey(field, at, query)
+    if (dismissed.current === sig) return
+    dismissed.current = null
     setSlash({ query, start: at, field })
   }
 
@@ -73,25 +95,30 @@ export function useSlashMenu(opts: {
     const chip = chipFromCommand(cmd)
     const eat = slash.start + 1 + slash.query.length
     let next: ComposerState
+    const quotes = cur.quotes || []
     if (!cur.chip) {
       next = {
         before: cur.after.slice(0, slash.start),
         chip,
         after: cur.after.slice(eat),
+        quotes,
       }
     } else if (slash.field === 'after') {
       next = {
         before: cur.before + cur.after.slice(0, slash.start),
         chip,
         after: cur.after.slice(eat),
+        quotes,
       }
     } else {
       next = {
         before: cur.before.slice(0, slash.start),
         chip,
         after: cur.before.slice(eat) + cur.after,
+        quotes,
       }
     }
+    dismissed.current = null
     opts.setComposer(next)
     setSlash(null)
     requestAnimationFrame(() => {
@@ -121,11 +148,24 @@ export function useSlashMenu(opts: {
     }
     if (e.key === 'Escape') {
       e.preventDefault()
+      dismissed.current = slashDismissKey(slash.field, slash.start, slash.query)
       setSlash(null)
       return true
     }
     return false
   }
 
-  return { open: !!slash && candidates.length > 0, candidates, index, setIndex, detect, pick, handleKey, close: () => setSlash(null) }
+  return {
+    open: !!slash && candidates.length > 0,
+    candidates,
+    index,
+    setIndex,
+    detect,
+    pick,
+    handleKey,
+    close: () => setSlash(null),
+    suppressDetect: () => {
+      ignoreDetect.current = true
+    },
+  }
 }

@@ -1770,6 +1770,46 @@ export { MEMORY_TOOL, SEARCH_TOOL, DELEGATE_TOOL, type SessionScopeCtx, type Too
 export { formatModelKey, parseModelKey, modelDisplayLabel, agentPromptOpts } from './util/modelKey.js'
 export { normalizeProjectRole, projectRoleLabel, PROJECT_ROLES, type ProjectRole } from './util/projectRole.js'
 export { extractThinkTags, mergeReasoning, type ThinkExtractResult } from './util/thinkTag.js'
+export {
+  HISTORY_LIMIT,
+  QUOTE_MAX_CHARS,
+  STICK_THRESHOLD_PX,
+  UNREAD_STORAGE_KEY,
+  PIN_STORAGE_KEY,
+  XIAOJIE_SUGGESTIONS,
+  agentDraftKey,
+  groupDraftKey,
+  historyKey,
+  scrollKey,
+  slashDismissKey,
+  isDraftEmpty,
+  readDraft,
+  writeDraft,
+  pushHistory,
+  readHistory,
+  writeHistory,
+  stepHistory,
+  arrowShouldRecallHistory,
+  isStuck,
+  readScroll,
+  writeScroll,
+  readIdList,
+  withId,
+  withoutId,
+  readPins,
+  pinKey,
+  unpinKey,
+  sortedPinKeys,
+  clipQuote,
+  messageWithQuotes,
+  relativeDayTime,
+  cronLastLabel,
+  type KvStorage,
+  type DraftChip,
+  type DraftQuote,
+  type DraftSnapshot,
+  type ScrollMemory,
+} from './util/chatUi.js'
 export { CronScheduler, type CronSchedulerDeps } from './cron/scheduler.js'
 export { dispatchCronTask, cronPrivateSessionKey, cronGroupThreadKey } from './cron/dispatch.js'
 export { PluginManager, PLUGIN_MCP_PREFIX, type PluginEnabledMap } from './plugins/manager.js'

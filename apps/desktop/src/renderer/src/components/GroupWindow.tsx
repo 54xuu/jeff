@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useStore } from '../store'
 import { api } from '../api'
-import { IPC, extractThinkTags, mergeReasoning, type ContextPreviewInfo, type GroupMessage } from '@jeff/core'
+import { IPC, extractThinkTags, groupDraftKey, mergeReasoning, type ContextPreviewInfo, type GroupMessage } from '@jeff/core'
 import Avatar from './Avatar'
 import GroupInfoDrawer from './GroupInfoDrawer'
 import { Markdown } from './Markdown'
@@ -14,7 +14,9 @@ import { useSlashMenu } from './useSlash'
 import { SlashMenu } from './SlashMenu'
 import { ComposerDraft } from './ComposerDraft'
 import { UserTextWithChip } from './PluginChip'
-import { composerPlugin, composerText, emptyComposer, type ComposerState } from './composerState'
+import { composerPlugin, canSendComposer, emptyComposer, outgoingText, type ComposerState } from './composerState'
+import { useComposerMemory } from './useComposerMemory'
+import { BackToBottom, FindBar, QuotePills, addQuote, useConversationFind, useTextQuote } from './ChatChrome'
 import MessageRail, { toNavPreview, useMessageAnchors, type NavItem } from './MessageRail'
 
 /** 项目群聊天窗口（= 微信群） */
@@ -47,6 +49,14 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
   const beforeRef = useRef<HTMLTextAreaElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   const slash = useSlashMenu({ composer: draftComposer, setComposer: setDraftComposer, afterRef: inputRef, beforeRef })
+  const memoryKey = curThread ? groupDraftKey(props.projectId, curThread) : null
+  const memory = useComposerMemory({
+    storageKey: memoryKey,
+    composer: draftComposer,
+    setComposer: setDraftComposer,
+    target: { kind: 'group', id: props.projectId },
+    suppressDetect: slash.suppressDetect,
+  })
   const composerResize = useComposerResize(composerRef)
   const { anchors, bindAnchor } = useMessageAnchors()
   const navItems = useMemo<NavItem[]>(
@@ -80,8 +90,9 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
     if (stream?.agentId) setCtxAgentId(stream.agentId)
   }, [stream?.agentId])
 
-  // 贴底时才跟随滚动；流式期间用 RAF 合并，避免每 token 强制重排
-  useAutoScroll(bodyRef, `${msgs.length}:${busy}:${stream?.text.length ?? 0}:${stream?.reasoning?.length ?? 0}`)
+  const scroll = useAutoScroll(bodyRef, `${msgs.length}:${busy}:${stream?.text.length ?? 0}:${stream?.reasoning?.length ?? 0}`, memoryKey)
+  const find = useConversationFind(msgs.map((m) => ({ id: m.id, text: m.text })))
+  const quotePop = useTextQuote(bodyRef, (text) => addQuote(setDraftComposer, 'chat', text))
 
   const ctxAgent = agents.find((a) => a.id === ctxAgentId)
   const currentModel =
@@ -168,16 +179,18 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
   }
 
   const doSend = async () => {
-    // 保留行首缩进（仅裁掉尾部空白/换行）；全空白且无图片、无插件筹码时拦截
-    const text = composerText(draftComposer).trimEnd()
-    const plugin = composerPlugin(draftComposer)
-    if ((!text.trim() && !plugin && attachments.images.length === 0) || busy) return
+    const snap = draftComposer
+    const text = outgoingText(snap)
+    const plugin = composerPlugin(snap)
+    if (!canSendComposer(snap, attachments.images.length) || busy) return
     setDraftComposer(emptyComposer())
     setMention(null)
     slash.close()
     const images = attachments.images
     attachments.clear()
-    await sendGroup(project.id, text, images, plugin)
+    const ok = await sendGroup(project.id, text, images, plugin)
+    if (ok) memory.noteSent(snap)
+    else setDraftComposer(snap)
   }
 
   const doCompress = async () => {
@@ -235,6 +248,9 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
       </div>
 
       <div className="chat-body-area">
+        {find.open && (
+          <FindBar query={find.query} count={find.count} index={find.index} onQuery={find.setQuery} onNext={find.next} onPrev={find.prev} onClose={find.close} />
+        )}
         <div className="chat-body" ref={bodyRef}>
           {msgs.length === 0 && (
             <div className="chat-welcome">
@@ -246,7 +262,7 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
             </div>
           )}
           {msgs.map((m) => (
-            <GroupBubble key={m.id} msg={m} workspaceDir={workspaceDir} anchorRef={bindAnchor(m.id)} />
+            <GroupBubble key={m.id} msg={m} workspaceDir={workspaceDir} anchorRef={bindAnchor(m.id)} findHit={find.hitId === m.id} />
           ))}
           {busy && !stream && (
             <div className="msg-row left">
@@ -269,6 +285,8 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
             />
           )}
         </div>
+        {quotePop}
+        {scroll.away && <BackToBottom onClick={scroll.jumpToBottom} />}
         <MessageRail items={navItems} bodyRef={bodyRef} anchors={anchors} />
       </div>
 
@@ -287,6 +305,7 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
           <span className="composer-hint">默认由群主处理 · @成员名 直达 · 模型/思考用各智能体自己的设置</span>
         </div>
         <ImagePreviews images={attachments.images} onRemove={attachments.remove} />
+        <QuotePills quotes={draftComposer.quotes || []} onRemove={(id) => setDraftComposer((c) => ({ ...c, quotes: (c.quotes || []).filter((q) => q.id !== id) }))} />
         <div
           className={`composer-input ${dragOver ? 'drag-over' : ''}`}
           style={{ position: 'relative' }}
@@ -380,6 +399,7 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
                   return
                 }
               }
+              if (memory.tryHistory(e, e.currentTarget.value, slash.open)) return
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault()
                 void doSend()
@@ -393,7 +413,7 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
               </svg>
             </button>
           ) : (
-            <button className="send-btn" data-testid="chat-send" onClick={() => void doSend()} disabled={!composerText(draftComposer).trim() && !draftComposer.chip && attachments.images.length === 0}>
+            <button className="send-btn" data-testid="chat-send" onClick={() => void doSend()} disabled={!canSendComposer(draftComposer, attachments.images.length)}>
               发送
             </button>
           )}
@@ -418,8 +438,8 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
   )
 }
 
-function GroupBubble(props: { msg: GroupMessage; workspaceDir?: string; anchorRef?: (el: HTMLElement | null) => void }): React.JSX.Element {
-  const { msg, workspaceDir, anchorRef } = props
+function GroupBubble(props: { msg: GroupMessage; workspaceDir?: string; anchorRef?: (el: HTMLElement | null) => void; findHit?: boolean }): React.JSX.Element {
+  const { msg, workspaceDir, anchorRef, findHit } = props
   const isAssistant = msg.role === 'assistant'
   // 历史消息里同样剥掉 <think>：与流式气泡保持一致的清爽版面
   const parsed = useMemo(() => (isAssistant ? extractThinkTags(msg.text) : null), [isAssistant, msg.text])
@@ -427,7 +447,7 @@ function GroupBubble(props: { msg: GroupMessage; workspaceDir?: string; anchorRe
   const body = parsed ? parsed.text : msg.text
   if (msg.role === 'system') {
     return (
-      <div className="msg-system" ref={anchorRef} data-msg-id={msg.id}>
+      <div className="msg-system" ref={anchorRef} data-msg-id={msg.id} data-find-hit={findHit ? '1' : undefined}>
         <span>{msg.text}</span>
         <span className="msg-time">{fmtFullTime(msg.time)}</span>
         <CopyButton className="msg-copy msg-copy-system" text={msg.text} label="复制消息" testId="msg-copy-system" />
@@ -436,7 +456,7 @@ function GroupBubble(props: { msg: GroupMessage; workspaceDir?: string; anchorRe
   }
   const mine = msg.role === 'user'
   return (
-    <div className={`msg-row ${mine ? 'right' : 'left'}`} ref={anchorRef} data-msg-id={msg.id}>
+    <div className={`msg-row ${mine ? 'right' : 'left'}${findHit ? ' find-hit' : ''}`} ref={anchorRef} data-msg-id={msg.id}>
       {!mine && <Avatar emoji={msg.sender_avatar || '🤖'} size={34} />}
       <div className="msg-stack">
         {!mine && (

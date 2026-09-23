@@ -124,9 +124,11 @@ export default function App(): React.JSX.Element {
       const reply = (r: { ok: boolean; data?: unknown; error?: string }) => {
         void api.invoke(IPC.browserResult, { id: req.id, ...r }).catch(() => {})
       }
+      useStore.getState().bumpBrowserBusy(1)
       void runBrowserAction(req.action, req.args || {})
         .then((data) => reply({ ok: true, data }))
         .catch((err) => reply({ ok: false, error: String((err as Error)?.message || err).slice(0, 500) }))
+        .finally(() => useStore.getState().bumpBrowserBusy(-1))
     })
     return off
   }, [])

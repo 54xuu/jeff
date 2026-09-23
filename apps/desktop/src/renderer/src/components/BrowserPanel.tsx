@@ -8,6 +8,8 @@ import { clampBrowserWidth, clampListWidth, defaultBrowserWidth } from '../layou
 import { useViewportWidth } from '../layout/useViewportWidth'
 import { AUTO_VIEWPORT, describeViewport, fitViewport, parseResolutionText, type BrowserViewportRequest, type BrowserViewportSize } from '../browserViewport'
 import { Dialog } from './ui/Dialog'
+import { Toast } from './ui/Toast'
+import { makeQuote } from './composerState'
 
 /** 控制台采集上限：只留最近这些条（agent 分析错误只需要最近的现场，留太多反而不好读） */
 const CONSOLE_KEEP = 200
@@ -49,6 +51,7 @@ function samePage(a: string, b: string): boolean {
  */
 export default function BrowserPanel(): React.JSX.Element {
   const browser = useStore((s) => s.browser)
+  const browserBusy = useStore((s) => s.browserBusy)
   const setBrowser = useStore((s) => s.setBrowser)
   const layout = useStore((s) => s.layout)
   const setLayout = useStore((s) => s.setLayout)
@@ -75,6 +78,7 @@ export default function BrowserPanel(): React.JSX.Element {
    */
   const loadErrorRef = useRef<{ url: string; message: string } | null>(null)
   const [showConsole, setShowConsole] = useState(false)
+  const [quoteToast, setQuoteToast] = useState<string | null>(null)
   // 宽度分两层：store 里是偏好值（落盘），这里按窗口与左栏实时夹出「当前生效宽度」
   const listWidth = clampListWidth(layout.listWidth, winWidth)
   const width = clampBrowserWidth(layout.browserWidth, winWidth, layout.listVisible, listWidth)
@@ -902,6 +906,33 @@ export default function BrowserPanel(): React.JSX.Element {
     void navigateTo(url).catch((e: unknown) => console.warn('[jeff-browser] 打开失败:', e))
   }
 
+  const quoteSelection = async (): Promise<void> => {
+    const wv = viewRef.current as (HTMLElement & { executeJavaScript?: (code: string) => Promise<unknown> }) | null
+    if (!wv?.executeJavaScript) {
+      setQuoteToast('页面还没准备好')
+      return
+    }
+    let text = ''
+    try {
+      text = String(await wv.executeJavaScript('String((window.getSelection && window.getSelection()) || "")')).trim()
+    } catch {
+      text = ''
+    }
+    if (!text) {
+      setQuoteToast('页面上没有选中的文字')
+      return
+    }
+    const target = useStore.getState().active
+    if (!target) {
+      setQuoteToast('先打开一个会话，再引用页面文字')
+      return
+    }
+    const quote = makeQuote('browser', text)
+    if (!quote) return
+    useStore.getState().setComposerSeed({ target, quote })
+    useStore.getState().setTab('chats')
+  }
+
   const openExternal = () => {
     if (browser.url) void api.invoke(IPC.fsOpenPath, { target: browser.url }).catch(() => {})
   }
@@ -1025,6 +1056,12 @@ export default function BrowserPanel(): React.JSX.Element {
               </div>
             )}
           </div>
+          <button className="icon-btn" title="引用选中文字" data-testid="browser-quote" onClick={() => void quoteSelection()}>
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M7 7h4v4H7zM13 13h4v4h-4z" />
+              <path d="M11 9h2v2M11 15H9" />
+            </svg>
+          </button>
           <button className="icon-btn" title="在系统浏览器打开" onClick={openExternal}>
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
               <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
@@ -1053,7 +1090,13 @@ export default function BrowserPanel(): React.JSX.Element {
             </svg>
           </button>
         </div>
-        <div className="browser-view" ref={hostRef} data-testid="browser-view" />
+        <div className="browser-view" ref={hostRef} data-testid="browser-view">
+          {browserBusy > 0 && (
+            <div className="browser-busy" data-testid="browser-agent-busy">
+              小杰正在操作这个页面
+            </div>
+          )}
+        </div>
         {browser.loading && <div className="browser-loading" />}
         {showConsole && (
           <Dialog title={`页面错误（${browser.errorCount}）`} onClose={() => setShowConsole(false)}>
@@ -1078,6 +1121,7 @@ export default function BrowserPanel(): React.JSX.Element {
             <p className="settings-tip">这些错误同样可以通过 jeff_browser_get_console 让智能体读取，用来自查页面为什么不对。</p>
           </Dialog>
         )}
+        {quoteToast && <Toast message={quoteToast} onClose={() => setQuoteToast(null)} />}
       </div>
     </>
   )

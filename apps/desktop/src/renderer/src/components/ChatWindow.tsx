@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useStore } from '../store'
 import { api } from '../api'
-import { IPC, extractThinkTags, mergeReasoning, modelDisplayLabel, type ChatMsg, type ContextPreviewInfo } from '@jeff/core'
+import { IPC, agentDraftKey, extractThinkTags, mergeReasoning, modelDisplayLabel, type ChatMsg, type ContextPreviewInfo } from '@jeff/core'
 import Avatar from './Avatar'
 import { Markdown } from './Markdown'
 import { fmtFullTime } from '../format'
@@ -14,7 +14,9 @@ import { useSlashMenu } from './useSlash'
 import { SlashMenu } from './SlashMenu'
 import { ComposerDraft } from './ComposerDraft'
 import { UserTextWithChip } from './PluginChip'
-import { composerPlugin, composerText, emptyComposer, type ComposerState } from './composerState'
+import { composerPlugin, canSendComposer, emptyComposer, outgoingText, type ComposerState } from './composerState'
+import { useComposerMemory } from './useComposerMemory'
+import { BackToBottom, FindBar, QuotePills, SuggestionChips, addQuote, useConversationFind, useTextQuote } from './ChatChrome'
 import MessageRail, { toNavPreview, useMessageAnchors, type NavItem } from './MessageRail'
 
 export default function ChatWindow(props: { agentId: string }): React.JSX.Element {
@@ -40,6 +42,14 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
   const draftRef = useRef<HTMLTextAreaElement>(null)
   const draftBeforeRef = useRef<HTMLTextAreaElement>(null)
   const slash = useSlashMenu({ composer: draftComposer, setComposer: setDraftComposer, afterRef: draftRef, beforeRef: draftBeforeRef })
+  const memoryKey = ctxPreview?.sessionId ? agentDraftKey(ctxPreview.sessionId) : null
+  const memory = useComposerMemory({
+    storageKey: memoryKey,
+    composer: draftComposer,
+    setComposer: setDraftComposer,
+    target: { kind: 'agent', id: props.agentId },
+    suppressDetect: slash.suppressDetect,
+  })
   const composerResize = useComposerResize(composerRef)
   const { anchors, bindAnchor } = useMessageAnchors()
   const navItems = useMemo<NavItem[]>(
@@ -82,21 +92,25 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
     }
   }, [props.agentId, currentModel?.providerID, currentModel?.modelID, msgs.length, sendingNow])
 
-  // 贴底时才跟随滚动；流式期间用 RAF 合并，避免每 token 强制重排
-  useAutoScroll(bodyRef, `${msgs.length}:${sendingNow}:${stream?.text.length ?? 0}:${stream?.reasoning?.length ?? 0}`)
+  // 贴底时才跟随滚动；上次离开时不在底部则恢复位置
+  const scroll = useAutoScroll(bodyRef, `${msgs.length}:${sendingNow}:${stream?.text.length ?? 0}:${stream?.reasoning?.length ?? 0}`, memoryKey)
+  const find = useConversationFind(msgs.map((m) => ({ id: m.id, text: m.text })))
+  const quotePop = useTextQuote(bodyRef, (text) => addQuote(setDraftComposer, 'chat', text))
 
   if (!agent) return <div className="empty-hint">智能体不存在</div>
 
   const doSend = async () => {
-    // 保留行首缩进（仅裁掉尾部空白/换行）；全空白且无图片、无插件筹码时拦截
-    const text = composerText(draftComposer).trimEnd()
-    const plugin = composerPlugin(draftComposer)
-    if ((!text.trim() && !plugin && attachments.images.length === 0) || sendingNow) return
+    const snap = draftComposer
+    const text = outgoingText(snap)
+    const plugin = composerPlugin(snap)
+    if (!canSendComposer(snap, attachments.images.length) || sendingNow) return
     setDraftComposer(emptyComposer())
     slash.close()
     const images = attachments.images
     attachments.clear()
-    await sendAgent(agent.id, text, images, plugin)
+    const ok = await sendAgent(agent.id, text, images, plugin)
+    if (ok) memory.noteSent(snap)
+    else setDraftComposer(snap)
   }
 
   const doCompress = async () => {
@@ -138,7 +152,17 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
             className="icon-btn"
             data-testid="chat-new-session"
             disabled={sendingNow}
-            onClick={() => void newAgentSession(agent.id)}
+            onClick={() => {
+              void (async () => {
+                await newAgentSession(agent.id)
+                try {
+                  const p = await fetchContextPreview({ agentId: agent.id, ...(currentModel ? { model: currentModel } : {}) })
+                  setCtxPreview(p)
+                } catch {
+                  setCtxPreview(null)
+                }
+              })()
+            }}
             title={sendingNow ? '生成中不能开新会话，请先停止或等待完成' : '开启新会话（旧会话保留在「资料 → 聊天记录」里）'}
           >
             <IconNewSession />
@@ -150,6 +174,17 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
       </div>
 
       <div className="chat-body-area">
+        {find.open && (
+          <FindBar
+            query={find.query}
+            count={find.count}
+            index={find.index}
+            onQuery={find.setQuery}
+            onNext={find.next}
+            onPrev={find.prev}
+            onClose={find.close}
+          />
+        )}
         <div className="chat-body" ref={bodyRef}>
           {msgs.length === 0 && (
             <div className="chat-welcome">
@@ -166,6 +201,7 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
               agentAvatar={agent.avatar}
               workspaceDir={workspaceDir}
               anchorRef={bindAnchor(m.id)}
+              findHit={find.hitId === m.id}
             />
           ))}
           {sendingNow && !stream && (
@@ -189,6 +225,8 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
             />
           )}
         </div>
+        {quotePop}
+        {scroll.away && <BackToBottom onClick={scroll.jumpToBottom} />}
         <MessageRail items={navItems} bodyRef={bodyRef} anchors={anchors} />
       </div>
 
@@ -216,6 +254,8 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
           </button>
         </div>
         <ImagePreviews images={attachments.images} onRemove={attachments.remove} />
+        <QuotePills quotes={draftComposer.quotes || []} onRemove={(id) => setDraftComposer((c) => ({ ...c, quotes: (c.quotes || []).filter((q) => q.id !== id) }))} />
+        {agent.builtin && msgs.length === 0 && !sendingNow && !stream && <SuggestionChips onPick={memory.fillIfEmpty} />}
         <div
           className={`composer-input ${dragOver ? 'drag-over' : ''}`}
           onDragOver={(e) => {
@@ -268,6 +308,7 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
             onKeyDown={(e) => {
               if (e.nativeEvent.isComposing) return
               if (slash.handleKey(e)) return
+              if (memory.tryHistory(e, e.currentTarget.value, slash.open)) return
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault()
                 void doSend()
@@ -281,7 +322,7 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
               </svg>
             </button>
           ) : (
-            <button className="send-btn" data-testid="chat-send" onClick={() => void doSend()} disabled={!composerText(draftComposer).trim() && !draftComposer.chip && attachments.images.length === 0}>
+            <button className="send-btn" data-testid="chat-send" onClick={() => void doSend()} disabled={!canSendComposer(draftComposer, attachments.images.length)}>
               发送
             </button>
           )}
@@ -307,8 +348,9 @@ export function MessageBubble(props: {
   agentAvatar: string
   workspaceDir?: string
   anchorRef?: (el: HTMLElement | null) => void
+  findHit?: boolean
 }): React.JSX.Element {
-  const { msg, agentName, agentAvatar, workspaceDir, anchorRef } = props
+  const { msg, agentName, agentAvatar, workspaceDir, anchorRef, findHit } = props
   const mine = msg.role === 'user'
   const isMarkdown = !mine && msg.role === 'assistant'
   // 历史消息里同样剥掉 <think>：与流式气泡保持一致的清爽版面
@@ -318,7 +360,7 @@ export function MessageBubble(props: {
   // 系统提示（已停止 / 发送失败）不是智能体说的话：用居中提示条，避免挂在智能体名下造成误读
   if (msg.role === 'system') {
     return (
-      <div className="msg-system" ref={anchorRef} data-msg-id={msg.id}>
+      <div className="msg-system" ref={anchorRef} data-msg-id={msg.id} data-find-hit={findHit ? '1' : undefined}>
         <span>{msg.text}</span>
         <span className="msg-time">{fmtFullTime(msg.time)}</span>
         <CopyButton className="msg-copy msg-copy-system" text={msg.text} label="复制消息" testId="msg-copy-system" />
@@ -326,7 +368,7 @@ export function MessageBubble(props: {
     )
   }
   return (
-    <div className={`msg-row ${mine ? 'right' : 'left'}`} ref={anchorRef} data-msg-id={msg.id}>
+    <div className={`msg-row ${mine ? 'right' : 'left'}${findHit ? ' find-hit' : ''}`} ref={anchorRef} data-msg-id={msg.id}>
       {!mine && <Avatar emoji={agentAvatar} size={34} />}
       <div className="msg-stack">
         {!mine && (

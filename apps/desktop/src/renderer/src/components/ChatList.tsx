@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { sortedPinKeys } from '@jeff/core'
 import { useStore } from '../store'
 import type { AgentInfo } from '@jeff/core'
 import Avatar from './Avatar'
@@ -7,10 +8,11 @@ import CreateGroupModal from './CreateGroupModal'
 const DEFAULT_GROUP = '默认'
 
 export default function ChatList(): React.JSX.Element {
-  const { agents, projects, active, setActive, sending, streaming } = useStore()
+  const { agents, projects, active, setActive, sending, streaming, unread, pins, togglePin, markUnread } = useStore()
   const [creating, setCreating] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
+  const [rowMenu, setRowMenu] = useState<{ x: number; y: number; key: string; builtin?: boolean } | null>(null)
   const xiaojie = agents.find((a) => a.builtin)
   const others = agents.filter((a) => !a.builtin)
 
@@ -26,7 +28,29 @@ export default function ChatList(): React.JSX.Element {
     return Array.from(map.entries()).sort(([x], [y]) => (x === DEFAULT_GROUP ? 1 : y === DEFAULT_GROUP ? -1 : x.localeCompare(y, 'zh-CN')))
   }, [others])
 
-  // 应用菜单「发起群聊…」→ 打开建群弹窗
+  const pinOrder = useMemo(() => sortedPinKeys(pins), [pins])
+  const pinnedAgents = pinOrder
+    .filter((k) => k.startsWith('agent:'))
+    .map((k) => others.find((a) => `agent:${a.id}` === k))
+    .filter((a): a is AgentInfo => !!a)
+  const pinnedProjects = pinOrder
+    .filter((k) => k.startsWith('group:'))
+    .map((k) => projects.find((p) => `group:${p.id}` === k))
+    .filter((p): p is (typeof projects)[number] => !!p)
+  const pinnedAgentIds = new Set(pinnedAgents.map((a) => a.id))
+  const pinnedProjectIds = new Set(pinnedProjects.map((p) => p.id))
+
+  useEffect(() => {
+    if (!rowMenu) return
+    const close = () => setRowMenu(null)
+    window.addEventListener('click', close)
+    return () => window.removeEventListener('click', close)
+  }, [rowMenu])
+
+  const openRowMenu = (e: React.MouseEvent, key: string, builtin?: boolean) => {
+    e.preventDefault()
+    setRowMenu({ x: e.clientX, y: e.clientY, key, builtin })
+  }
   useEffect(() => {
     const open = () => setCreating(true)
     window.addEventListener('jeff:new-group', open)
@@ -86,21 +110,59 @@ export default function ChatList(): React.JSX.Element {
           pinned
           busy={!!sending[`agent:${xiaojie.id}`] || !!streaming[`agent:${xiaojie.id}`]}
           selected={active?.kind === 'agent' && active.id === xiaojie.id}
+          unread={unread.includes(`agent:${xiaojie.id}`)}
           onClick={() => setActive({ kind: 'agent', id: xiaojie.id })}
+          onContextMenu={(e) => openRowMenu(e, `agent:${xiaojie.id}`, true)}
         />
+      )}
+      {(pinnedAgents.length > 0 || pinnedProjects.length > 0) && (
+        <>
+          <div className="list-section" data-testid="chat-pin-section">置顶</div>
+          {pinnedProjects.map((p) => (
+            <ChatItem
+              key={p.id}
+              avatar={p.icon}
+              name={p.title}
+              desc={`${p.memberCount} 个成员 · 群主统筹`}
+              isGroup
+              pinned
+              unread={unread.includes(`group:${p.id}`)}
+              busy={!!sending[`group:${p.id}`] || !!streaming[`group:${p.id}`]}
+              selected={active?.kind === 'group' && active.id === p.id}
+              onClick={() => setActive({ kind: 'group', id: p.id })}
+              onContextMenu={(e) => openRowMenu(e, `group:${p.id}`)}
+            />
+          ))}
+          {pinnedAgents.map((a) => (
+            <ChatItem
+              key={a.id}
+              avatar={a.avatar}
+              name={a.name}
+              desc={a.description || '（无简介）'}
+              pinned
+              unread={unread.includes(`agent:${a.id}`)}
+              busy={!!sending[`agent:${a.id}`] || !!streaming[`agent:${a.id}`]}
+              selected={active?.kind === 'agent' && active.id === a.id}
+              onClick={() => setActive({ kind: 'agent', id: a.id })}
+              onContextMenu={(e) => openRowMenu(e, `agent:${a.id}`)}
+            />
+          ))}
+        </>
       )}
       <div className="list-section">项目群</div>
       {projects.length === 0 && <div className="list-empty">还没有项目群：点右上角「发起群聊」或让小杰帮你建</div>}
-      {projects.map((p) => (
+      {projects.filter((p) => !pinnedProjectIds.has(p.id)).map((p) => (
         <ChatItem
           key={p.id}
           avatar={p.icon}
           name={p.title}
           desc={`${p.memberCount} 个成员 · 群主统筹`}
           isGroup
+          unread={unread.includes(`group:${p.id}`)}
           busy={!!sending[`group:${p.id}`] || !!streaming[`group:${p.id}`]}
           selected={active?.kind === 'group' && active.id === p.id}
           onClick={() => setActive({ kind: 'group', id: p.id })}
+          onContextMenu={(e) => openRowMenu(e, `group:${p.id}`)}
         />
       ))}
       <div className="list-section">智能体</div>
@@ -121,21 +183,51 @@ export default function ChatList(): React.JSX.Element {
               <span className="chat-group-count">{list.length}</span>
             </button>
             {!isCollapsed &&
-              list.map((a) => (
+              list
+                .filter((a) => !pinnedAgentIds.has(a.id))
+                .map((a) => (
                 <ChatItem
                   key={a.id}
                   avatar={a.avatar}
                   name={a.name}
                   desc={a.description || '（无简介）'}
+                  unread={unread.includes(`agent:${a.id}`)}
                   busy={!!sending[`agent:${a.id}`] || !!streaming[`agent:${a.id}`]}
                   selected={active?.kind === 'agent' && active.id === a.id}
                   onClick={() => setActive({ kind: 'agent', id: a.id })}
+                  onContextMenu={(e) => openRowMenu(e, `agent:${a.id}`)}
                 />
               ))}
           </div>
         )
       })}
       {creating && <CreateGroupModal onClose={() => setCreating(false)} />}
+      {rowMenu && (
+        <div className="chat-row-menu" data-testid="chat-row-menu" style={{ left: rowMenu.x, top: rowMenu.y }} onClick={(e) => e.stopPropagation()}>
+          <button
+            type="button"
+            data-testid="chat-mark-unread"
+            onClick={() => {
+              markUnread(rowMenu.key)
+              setRowMenu(null)
+            }}
+          >
+            标为未读
+          </button>
+          {!rowMenu.builtin && (
+            <button
+              type="button"
+              data-testid="chat-toggle-pin"
+              onClick={() => {
+                togglePin(rowMenu.key)
+                setRowMenu(null)
+              }}
+            >
+              {rowMenu.key in pins ? '取消置顶' : '置顶'}
+            </button>
+          )}
+        </div>
+      )}
     </div>
   )
 }
@@ -147,12 +239,22 @@ function ChatItem(props: {
   pinned?: boolean
   isGroup?: boolean
   busy?: boolean
+  unread?: boolean
   selected: boolean
   onClick: () => void
+  onContextMenu?: (e: React.MouseEvent) => void
 }): React.JSX.Element {
   return (
-    <div className={`chat-item ${props.selected ? 'selected' : ''}`} data-testid={props.isGroup ? `chat-group-${props.name}` : `chat-agent-${props.name}`} onClick={props.onClick}>
-      <Avatar emoji={props.avatar} busy={props.busy} />
+    <div
+      className={`chat-item ${props.selected ? 'selected' : ''}`}
+      data-testid={props.isGroup ? `chat-group-${props.name}` : `chat-agent-${props.name}`}
+      onClick={props.onClick}
+      onContextMenu={props.onContextMenu}
+    >
+      <span className="chat-item-lead">
+        {props.unread && <span className="chat-unread" data-testid="chat-unread" />}
+        <Avatar emoji={props.avatar} busy={props.busy} />
+      </span>
       <div className="chat-item-body">
         <div className="chat-item-top">
           <span className="chat-item-name">{props.name}</span>

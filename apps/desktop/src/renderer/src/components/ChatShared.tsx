@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { extractThinkTags, mergeReasoning } from '@jeff/core'
+import { extractThinkTags, mergeReasoning, isStuck, readScroll, writeScroll } from '@jeff/core'
 import type { ChatImage } from '@jeff/core'
 import Avatar from './Avatar'
 import { Markdown } from './Markdown'
@@ -100,34 +100,71 @@ export const COMPOSER_MAX_HEIGHT_PX = COMPOSER_MAX_HEIGHT
 const STICK_THRESHOLD = 80
 
 /**
- * 聊天区自动滚动：仅当用户贴在底部时跟随新内容，并用 requestAnimationFrame 合并写入，
- * 避免每个流式 token 都读 scrollHeight / 写 scrollTop 触发强制重排（卡顿主因之一）。
- *
- * 挂载时强制贴底：切换会话会整窗重挂载，若历史已在 store 里，首屏 DOM 就是
- * scrollTop=0 + 内容铺满。若此时按「当前位置」判断贴底，会被误判成在翻历史，
- * 后面再也不会滚到底部。
+ * 聊天区自动滚动：仅当用户贴在底部时跟随新内容。
+ * 程序写入 scrollTop 时打标记，不把恢复位置误判成用户贴底。
+ * memoryKey 有值时记住离开时的位置：上次贴底则仍贴底，否则等内容布局后恢复。
  */
-export function useAutoScroll(bodyRef: React.RefObject<HTMLElement | null>, signal: string): void {
+export function useAutoScroll(
+  bodyRef: React.RefObject<HTMLElement | null>,
+  signal: string,
+  memoryKey: string | null,
+): { away: boolean; jumpToBottom: () => void } {
   const stickRef = useRef(true)
+  const programmatic = useRef(false)
+  const [away, setAway] = useState(false)
+
   useLayoutEffect(() => {
     const el = bodyRef.current
     if (!el) return
-    el.scrollTop = el.scrollHeight
-    stickRef.current = true
+    const mem = memoryKey ? readScroll(localStorage, memoryKey) : null
+    programmatic.current = true
+    if (mem && !mem.stick) {
+      el.scrollTop = Math.min(mem.scrollTop, el.scrollHeight)
+      stickRef.current = false
+      setAway(true)
+    } else {
+      el.scrollTop = el.scrollHeight
+      stickRef.current = true
+      setAway(false)
+    }
     const onScroll = () => {
-      stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < STICK_THRESHOLD
+      if (programmatic.current) {
+        programmatic.current = false
+        return
+      }
+      const stick = isStuck(el.scrollHeight, el.scrollTop, el.clientHeight, STICK_THRESHOLD)
+      stickRef.current = stick
+      setAway(!stick)
+      if (memoryKey) writeScroll(localStorage, memoryKey, { stick, scrollTop: el.scrollTop })
     }
     el.addEventListener('scroll', onScroll, { passive: true })
-    return () => el.removeEventListener('scroll', onScroll)
-  }, [bodyRef])
+    return () => {
+      if (memoryKey) writeScroll(localStorage, memoryKey, { stick: stickRef.current, scrollTop: el.scrollTop })
+      el.removeEventListener('scroll', onScroll)
+    }
+  }, [bodyRef, memoryKey])
+
   useEffect(() => {
     const el = bodyRef.current
     if (!el || !stickRef.current) return
     const id = requestAnimationFrame(() => {
+      programmatic.current = true
       el.scrollTop = el.scrollHeight
     })
     return () => cancelAnimationFrame(id)
   }, [bodyRef, signal])
+
+  const jumpToBottom = () => {
+    const el = bodyRef.current
+    if (!el) return
+    programmatic.current = true
+    el.scrollTop = el.scrollHeight
+    stickRef.current = true
+    setAway(false)
+    if (memoryKey) writeScroll(localStorage, memoryKey, { stick: true, scrollTop: el.scrollHeight })
+  }
+
+  return { away, jumpToBottom }
 }
 
 
@@ -275,6 +312,8 @@ export function AssistantExtras(props: {
   const thinking = !!live && !bodyStarted
   const reasonPreview = thinking ? tailPreview(reasonText) : ''
   const runningTool = live ? (tools || []).find((t) => t.status === 'running') : undefined
+  const failedTool = (tools || []).find((t) => t.status === 'error')
+  const summaryTool = failedTool || runningTool
   // 用户展开时小窗内部跟随最新一行滚动（窗口本身限高，不撑爆气泡）
   useEffect(() => {
     const el = reasonRef.current
@@ -307,8 +346,9 @@ export function AssistantExtras(props: {
               <path d="M14.7 6.3a4.5 4.5 0 0 0-6 6L3 18l3 3 5.7-5.7a4.5 4.5 0 0 0 6-6L14 13l-3-3 3.7-3.7z" />
             </svg>
             <span className="extra-label">工具调用 {tools!.length}</span>
-            {runningTool && <span className="extra-live">运行中…</span>}
-            {runningTool && <span className="extra-preview">{runningTool.tool}</span>}
+            {failedTool && <span className="extra-live danger">失败 · {failedTool.tool}</span>}
+            {!failedTool && runningTool && <span className="extra-live">运行中…</span>}
+            {!failedTool && summaryTool && <span className="extra-preview">{summaryTool.tool}</span>}
           </summary>
           <div className="extra-tools">
             {tools!.map((t, i) => (
@@ -317,7 +357,14 @@ export function AssistantExtras(props: {
                   <span className="extra-tool-name">{t.tool}</span>
                   <span className={`extra-tool-status ${t.status === 'error' ? 'danger' : ''}`}>{TOOL_STATUS_LABEL[t.status || ''] || t.status || ''}</span>
                 </summary>
-                {t.error ? <pre className="tool-output danger">{t.error}</pre> : <ToolOutput text={t.output || '（无输出）'} workspaceDir={props.workspaceDir} />}
+                {t.error ? (
+                  <div className="tool-error-row">
+                    <pre className="tool-output danger">{t.error}</pre>
+                    <CopyButton className="tool-error-copy" text={t.error} label="复制错误" testId="tool-error-copy" />
+                  </div>
+                ) : (
+                  <ToolOutput text={t.output || '（无输出）'} workspaceDir={props.workspaceDir} />
+                )}
               </details>
             ))}
           </div>

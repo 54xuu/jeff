@@ -13,7 +13,7 @@ export default defineConfig({
   reporter: [['list']],
   globalTimeout: 600_000,
   projects: [
-    { name: 'ui', testMatch: /ui\.spec\.ts/ },
+    { name: 'ui', testMatch: /ui\.spec\.ts|p0-ux\.spec\.ts/ },
     { name: 'v18', testMatch: /v18\.spec\.ts/ },
     { name: 'cron', testMatch: /cron\.spec\.ts/ },
     { name: 'live', testMatch: /live\.spec\.ts/ },

@@ -4,7 +4,8 @@ import { playNotifySound, showDesktopNotify, summarize, windowFocused } from './
 import { readLayout, writeLayout, defaultBrowserWidth, LIST_DEFAULT_WIDTH, type PaneLayout } from './layout/panes'
 import { parseViewport, serializeViewport, VIEWPORT_STORE_KEY, type BrowserViewportRequest } from './browserViewport'
 import type { AgentInfo, ChatMsg, AppInfo, AppSettings, ProviderCatalogItem, ProjectInfo, ProjectMember, TaskInfo, GroupMessage, ChatImage, CronTaskInfo, CronRunInfo, PluginInfo, ChatPluginInvoke } from '@jeff/core'
-import { IPC, shouldShowDesktopNotify } from '@jeff/core'
+import { IPC, PIN_STORAGE_KEY, UNREAD_STORAGE_KEY, pinKey, readIdList, readPins, shouldShowDesktopNotify, unpinKey, withId, withoutId } from '@jeff/core'
+import type { ComposerSeed } from './components/composerState'
 
 export type Tab = 'chats' | 'contacts' | 'schedules' | 'plugins' | 'settings'
 export type ActiveChat = { kind: 'agent'; id: string } | { kind: 'group'; id: string } | null
@@ -85,6 +86,20 @@ interface JeffState {
   setLayout: (patch: Partial<PaneLayout>, opts?: { persist?: boolean }) => void
   /** 把当前布局写进 localStorage */
   persistLayout: () => void
+  /** 当前会话以外的新消息（本机，不同步） */
+  unread: string[]
+  /** 用户置顶，值为置顶时间。小杰不进这块 */
+  pins: Record<string, number>
+  /** 进行中的 jeff_browser_* 次数 */
+  browserBusy: number
+  /** 一次性预填当前会话输入框 */
+  composerSeed: ComposerSeed | null
+  setComposerSeed: (seed: Omit<ComposerSeed, 'nonce'>) => void
+  clearComposerSeed: (nonce: number) => void
+  bumpBrowserBusy: (delta: number) => void
+  markUnread: (key: string) => void
+  clearUnread: (key: string) => void
+  togglePin: (key: string) => void
   refreshAgents: () => Promise<void>
   refreshProjects: () => Promise<void>
   refreshCron: () => Promise<void>
@@ -93,8 +108,8 @@ interface JeffState {
   loadHistory: (key: string, opts?: { resetLocal?: boolean }) => Promise<void>
   loadGroupHistory: (projectId: string) => Promise<void>
   loadTasks: (projectId: string) => Promise<void>
-  sendAgent: (agentId: string, text: string, images?: ChatImage[], plugin?: ChatPluginInvoke) => Promise<void>
-  sendGroup: (projectId: string, text: string, images?: ChatImage[], plugin?: ChatPluginInvoke) => Promise<void>
+  sendAgent: (agentId: string, text: string, images?: ChatImage[], plugin?: ChatPluginInvoke) => Promise<boolean>
+  sendGroup: (projectId: string, text: string, images?: ChatImage[], plugin?: ChatPluginInvoke) => Promise<boolean>
   newAgentSession: (agentId: string) => Promise<void>
   stopAgent: (agentId: string) => Promise<void>
   stopGroup: (projectId: string) => Promise<void>
@@ -257,9 +272,16 @@ export const useStore = create<JeffState>((set, get) => ({
   plugins: [],
   browser: { visible: false, url: '', title: '', loading: false, address: '', errorCount: 0, viewport: parseViewport(localStorage.getItem(VIEWPORT_STORE_KEY)) },
   layout: readLayout(),
+  unread: readIdList(localStorage, UNREAD_STORAGE_KEY),
+  pins: readPins(localStorage),
+  browserBusy: 0,
+  composerSeed: null,
 
   setTab: (tab) => set({ tab }),
-  setActive: (active) => set({ active }),
+  setActive: (active) => {
+    set({ active })
+    if (active) get().clearUnread(active.kind === 'agent' ? `agent:${active.id}` : `group:${active.id}`)
+  },
   setSettingsSection: (settingsSection) => set({ settingsSection }),
   setBrowser: (patch) => set((s) => ({ browser: { ...s.browser, ...patch } })),
   setBrowserViewport: (viewport) => {
@@ -275,6 +297,39 @@ export const useStore = create<JeffState>((set, get) => ({
     if (opts?.persist !== false) writeLayout(get().layout)
   },
   persistLayout: () => writeLayout(get().layout),
+
+  setComposerSeed: (seed) => set({ composerSeed: { ...seed, nonce: Date.now() } }),
+  clearComposerSeed: (nonce) =>
+    set((s) => (s.composerSeed && s.composerSeed.nonce === nonce ? { composerSeed: null } : {})),
+  bumpBrowserBusy: (delta) => set((s) => ({ browserBusy: Math.max(0, s.browserBusy + delta) })),
+  markUnread: (key) => {
+    const unread = withId(get().unread, key)
+    set({ unread })
+    try {
+      localStorage.setItem(UNREAD_STORAGE_KEY, JSON.stringify(unread))
+    } catch {
+      /* 隐私模式：本次会话内仍然生效 */
+    }
+  },
+  clearUnread: (key) => {
+    const unread = withoutId(get().unread, key)
+    set({ unread })
+    try {
+      localStorage.setItem(UNREAD_STORAGE_KEY, JSON.stringify(unread))
+    } catch {
+      /* ignore */
+    }
+  },
+  togglePin: (key) => {
+    const cur = get().pins
+    const pins = key in cur ? unpinKey(cur, key) : pinKey(cur, key, Date.now())
+    set({ pins })
+    try {
+      localStorage.setItem(PIN_STORAGE_KEY, JSON.stringify(pins))
+    } catch {
+      /* ignore */
+    }
+  },
 
   refreshAgents: async () => {
     const agents = await api.invoke<AgentInfo[]>(IPC.agentsList)
@@ -338,6 +393,7 @@ export const useStore = create<JeffState>((set, get) => ({
         // 正常回复完成：此刻历史已重拉，摘要取的就是刚落库的正文
         notifyTurnDone(key, 'agent')
       }
+      return true
     } catch (err) {
       // 真失败：保留本地用户消息与失败气泡（重拉历史会把刚插入的提示瞬间冲掉，用户再也看不到失败原因）
       set((s) => ({
@@ -346,6 +402,7 @@ export const useStore = create<JeffState>((set, get) => ({
           [key]: [...(s.messages[key] || []), { id: `err-${now}`, role: 'system', text: `⚠️ 发送失败：${String((err as Error).message).slice(0, 200)}`, time: Date.now() }],
         },
       }))
+      return false
     } finally {
       set((s) => ({ sending: { ...s.sending, [key]: false } }))
     }
@@ -372,6 +429,7 @@ export const useStore = create<JeffState>((set, get) => ({
       await get().loadTasks(key)
       // 整条协作流水线跑完（await 返回）才提醒一次，中间每一跳的流式 done 不响
       notifyTurnDone(key, 'group', threadId)
+      return true
     } catch (err) {
       // 同私聊：失败时保留本地气泡与失败原因，不用历史刷新覆盖
       set((s) => ({
@@ -383,6 +441,7 @@ export const useStore = create<JeffState>((set, get) => ({
           ],
         },
       }))
+      return false
     } finally {
       set((s) => ({ sending: { ...s.sending, [`group:${key}`]: false } }))
     }
@@ -434,7 +493,13 @@ export const useStore = create<JeffState>((set, get) => ({
   },
 
   handlePush: (what, payload) => {
-    const { active } = get()
+    const { active, tab } = get()
+    const viewing = (kind: 'agent' | 'group', id: string) => tab === 'chats' && active?.kind === kind && active.id === id
+    const noteArrival = (kind: 'agent' | 'group', id: string) => {
+      const key = `${kind}:${id}`
+      if (viewing(kind, id)) get().clearUnread(key)
+      else get().markUnread(key)
+    }
     if (what === 'chat-stream') {
       const p = (payload || {}) as { kind: 'private' | 'group'; agentId: string; projectId?: string; threadId?: string; text: string; reasoning?: string; tools?: Array<{ tool: string; status?: string }>; done: boolean }
       const key = p.kind === 'group' ? `group:${p.projectId}` : `agent:${p.agentId}`
@@ -446,6 +511,8 @@ export const useStore = create<JeffState>((set, get) => ({
           delete streaming[key]
           return { streaming }
         })
+        if (p.kind === 'group' && p.projectId) noteArrival('group', p.projectId)
+        else if (p.kind !== 'group' && p.agentId) noteArrival('agent', p.agentId)
       } else {
         const agent = get().agents.find((a) => a.id === p.agentId)
         // 不直接写 store：进缓冲区，50ms 合并一次，避免每个 token 触发一轮 React 渲染
@@ -512,8 +579,11 @@ export const useStore = create<JeffState>((set, get) => ({
         delete streaming[key]
         return { streaming }
       })
-      if (agentId && active?.kind === 'agent' && active.id === agentId) {
+      if (agentId && active?.kind === 'agent' && active.id === agentId && tab === 'chats') {
         void get().loadHistory(`agent:${agentId}`)
+        get().clearUnread(`agent:${agentId}`)
+      } else if (agentId) {
+        get().markUnread(`agent:${agentId}`)
       }
     } else if (what === 'group-updated') {
       const { projectId, threadId } = (payload || {}) as { projectId?: string; threadId?: string }
@@ -527,8 +597,11 @@ export const useStore = create<JeffState>((set, get) => ({
       })
       // 只刷新事件归属的会话：带 threadId 且与当前加载的不一致时，不动当前窗口（防旧会话的完成事件串进新会话）
       const curThread = projectId ? get().groupThreads[projectId] : undefined
-      if (projectId && (!threadId || !curThread || threadId === curThread) && active?.kind === 'group' && active.id === projectId) {
+      if (projectId && (!threadId || !curThread || threadId === curThread) && active?.kind === 'group' && active.id === projectId && tab === 'chats') {
         void get().loadGroupHistory(projectId)
+        get().clearUnread(`group:${projectId}`)
+      } else if (projectId) {
+        get().markUnread(`group:${projectId}`)
       }
       void get().refreshProjects()
     } else if (what === 'agents') {

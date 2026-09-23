@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { useStore } from '../store'
 import { api } from '../api'
-import { IPC, type PluginInfo } from '@jeff/core'
+import { IPC, type PluginInfo, XIAOJIE_ID } from '@jeff/core'
+import { chipFromCommand } from './composerState'
 import { openInBrowser } from '../browserHost'
 import { Button } from './ui/Button'
 import { Toast } from './ui/Toast'
@@ -179,6 +180,27 @@ export default function PluginsPage(): React.JSX.Element {
                     <PluginIcon icon={detail.icon} iconSvg={detail.iconSvg} size={16} />
                     <span>{detail.name}</span>
                     {c.description ? <span className="cron-dim">{c.description}</span> : null}
+                    <button
+                      type="button"
+                      className="link-btn"
+                      data-testid={`plugin-try-${c.name}`}
+                      onClick={() => {
+                        const chip = chipFromCommand({
+                          pluginId: detail.id,
+                          pluginName: detail.name,
+                          name: c.name,
+                          icon: detail.icon,
+                          ...(detail.iconSvg ? { iconSvg: detail.iconSvg } : {}),
+                        })
+                        const store = useStore.getState()
+                        store.setActive({ kind: 'agent', id: XIAOJIE_ID })
+                        store.setTab('chats')
+                        store.setComposerSeed({ target: { kind: 'agent', id: XIAOJIE_ID }, chip })
+                        setDetail(null)
+                      }}
+                    >
+                      试一下
+                    </button>
                   </li>
                 ))}
               </ul>

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useStore } from '../store'
 import { api } from '../api'
-import { IPC, CRON_PRESETS, describeCron, describeOnce, isValidCron, nextRunAt, type CronRunInfo, type CronTaskInfo } from '@jeff/core'
+import { IPC, CRON_PRESETS, cronLastLabel, describeCron, describeOnce, isValidCron, nextRunAt, type CronRunInfo, type CronTaskInfo } from '@jeff/core'
 import { Button } from './ui/Button'
 import { Field } from './ui/Field'
 import { Toast } from './ui/Toast'
@@ -157,7 +157,14 @@ export default function SchedulesPage(): React.JSX.Element {
                 <span className="cron-name">{t.name}</span>
                 {!t.enabled && <span className="tag">已停用</span>}
                 {t.target_exists === false && <span className="tag tag-red">目标失效</span>}
-                {t.last_status === 'failed' && t.enabled && <span className="tag tag-red">上次失败</span>}
+                {(() => {
+                  const last = cronLastLabel(t.last_status, t.last_run_at)
+                  return (
+                    <span className={last.failed ? 'tag tag-red' : 'cron-dim'} data-testid={`cron-last-${t.id}`}>
+                      {last.text}
+                    </span>
+                  )
+                })()}
               </div>
               <div className="cron-card-actions">
                 <button className="icon-btn" title="立即执行一次" data-testid={`cron-run-${t.id}`} disabled={busy === t.id} onClick={() => void runNow(t)}>

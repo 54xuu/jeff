@@ -41,7 +41,7 @@ export function ComposerDraft(props: {
 
   const removeChip = (caret: number) => {
     const merged = `${composer.before}${composer.after}`
-    setComposer({ before: '', chip: null, after: merged })
+    setComposer({ ...composer, before: '', chip: null, after: merged })
     requestAnimationFrame(() => {
       const el = props.afterRef.current
       if (!el) return
@@ -91,7 +91,7 @@ export function ComposerDraft(props: {
           data-testid="chat-draft"
           placeholder={props.placeholder}
           onChange={(e) => {
-            setComposer({ before: '', chip: null, after: e.target.value })
+            setComposer({ ...composer, before: '', chip: null, after: e.target.value })
             props.onDetect(e.target.value, 'after')
           }}
           onKeyDown={(e) => props.onKeyDown(e, 'after')}
