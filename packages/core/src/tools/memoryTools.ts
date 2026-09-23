@@ -12,8 +12,8 @@ export interface ToolCtx {
 }
 
 export type SessionScopeCtx =
-  | { kind: 'private'; agentId: string }
-  | { kind: 'group'; projectId: string; agentId: string; threadId?: string }
+  | { kind: 'private'; agentId: string; isSubtask?: boolean }
+  | { kind: 'group'; projectId: string; agentId: string; threadId?: string; isSubtask?: boolean }
   | { kind: 'review'; agentId: string; projectId?: string }
 
 export interface MemoryToolDeps {

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { extractThinkTags, mergeReasoning, isStuck, readScroll, writeScroll } from '@jeff/core'
+import { extractThinkTags, mergeReasoning, isStuck, readScroll, writeScroll, IPC } from '@jeff/core'
 import type { ChatImage } from '@jeff/core'
 import Avatar from './Avatar'
 import { Markdown } from './Markdown'
@@ -7,6 +7,7 @@ import { CopyButton } from './ui/CopyButton'
 import { splitTextWithFileLinks } from './preview/linkify'
 import FileLink from './preview/FileLink'
 import { fmtFullTime } from '../format'
+import { api } from '../api'
 
 const COMPOSER_MIN_HEIGHT = 40
 const COMPOSER_MAX_HEIGHT = 320
@@ -277,6 +278,89 @@ function ToolOutput(props: { text: string; workspaceDir?: string }): React.JSX.E
   )
 }
 
+interface SubtaskPayload {
+  ok?: boolean
+  label?: string
+  target_path?: string
+  summary?: string
+  error?: string
+  /** 子任务底层 session id：不进全局搜索，仅供这里按需拉完整过程 */
+  subtask_session?: string
+}
+
+/** jeff_spawn_subtask 的工具输出是一段 JSON；非法/非该工具时返回 null，走通用展示兜底 */
+function parseSubtaskPayload(text: string): SubtaskPayload | null {
+  try {
+    const v = JSON.parse(text) as unknown
+    if (v && typeof v === 'object' && !Array.isArray(v)) return v as SubtaskPayload
+  } catch {
+    /* 非 JSON：走通用展示 */
+  }
+  return null
+}
+
+interface SubtaskHistoryMsg {
+  id: string
+  role: string
+  text: string
+}
+
+/** jeff_spawn_subtask 专属展示：label + 完成状态 + 简短摘要/错误；「查看完整过程」懒加载子会话完整历史 */
+function SubtaskToolDetail(props: { payload: SubtaskPayload; workspaceDir?: string }): React.JSX.Element {
+  const { payload } = props
+  const ok = payload.ok !== false
+  const [open, setOpen] = useState(false)
+  const [msgs, setMsgs] = useState<SubtaskHistoryMsg[] | null>(null)
+  const [loading, setLoading] = useState(false)
+
+  const toggle = async () => {
+    const next = !open
+    setOpen(next)
+    if (next && msgs === null && payload.subtask_session) {
+      setLoading(true)
+      try {
+        const r = await api.invoke<{ messages: SubtaskHistoryMsg[] }>(IPC.sessionPreview, { sessionId: payload.subtask_session })
+        setMsgs(r.messages || [])
+      } catch {
+        setMsgs([])
+      } finally {
+        setLoading(false)
+      }
+    }
+  }
+
+  return (
+    <div className="subtask-detail">
+      {payload.target_path && <div className="subtask-target">{payload.target_path}</div>}
+      <p className={`subtask-summary${ok ? '' : ' danger'}`}>{ok ? payload.summary || '（无摘要）' : payload.error || '（失败，无错误详情）'}</p>
+      {payload.subtask_session && (
+        <>
+          <button className="text-btn tool-expand" onClick={() => void toggle()}>
+            {open ? '收起完整过程' : '查看完整过程 ▸'}
+          </button>
+          {open && (
+            <div className="subtask-history">
+              {loading && <p className="settings-tip">加载中…</p>}
+              {!loading && msgs?.length === 0 && <p className="settings-tip">未取到子任务记录（会话可能已过期）。</p>}
+              {!loading &&
+                msgs?.map((m) => (
+                  <div key={m.id} className={`history-msg ${m.role}`}>
+                    <div className="history-msg-meta">{m.role === 'user' ? '指令' : m.role === 'assistant' ? '子任务回复' : '系统'}</div>
+                    {m.role === 'assistant' ? (
+                      <Markdown text={m.text || '（无文本）'} workspaceDir={props.workspaceDir} />
+                    ) : (
+                      <pre className="history-msg-text">{m.text}</pre>
+                    )}
+                  </div>
+                ))}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  )
+}
+
 /** 单行流式预览：只取末尾片段（最新生成的内容），过长交给 CSS 省略号截断 */
 function tailPreview(text: string, max = 140): string {
   const lines = text
@@ -351,22 +435,30 @@ export function AssistantExtras(props: {
             {!failedTool && summaryTool && <span className="extra-preview">{summaryTool.tool}</span>}
           </summary>
           <div className="extra-tools">
-            {tools!.map((t, i) => (
-              <details key={i} className="extra-tool">
-                <summary>
-                  <span className="extra-tool-name">{t.tool}</span>
-                  <span className={`extra-tool-status ${t.status === 'error' ? 'danger' : ''}`}>{TOOL_STATUS_LABEL[t.status || ''] || t.status || ''}</span>
-                </summary>
-                {t.error ? (
-                  <div className="tool-error-row">
-                    <pre className="tool-output danger">{t.error}</pre>
-                    <CopyButton className="tool-error-copy" text={t.error} label="复制错误" testId="tool-error-copy" />
-                  </div>
-                ) : (
-                  <ToolOutput text={t.output || '（无输出）'} workspaceDir={props.workspaceDir} />
-                )}
-              </details>
-            ))}
+            {tools!.map((t, i) => {
+              const subtask = t.tool === 'jeff_spawn_subtask' && !t.error ? parseSubtaskPayload(t.output || '') : null
+              const subtaskFailed = !!subtask && subtask.ok === false
+              return (
+                <details key={i} className="extra-tool">
+                  <summary>
+                    <span className="extra-tool-name">{subtask?.label ? `子任务 · ${subtask.label}` : t.tool}</span>
+                    <span className={`extra-tool-status ${t.status === 'error' || subtaskFailed ? 'danger' : ''}`}>
+                      {subtask ? (subtaskFailed ? '失败' : '完成') : TOOL_STATUS_LABEL[t.status || ''] || t.status || ''}
+                    </span>
+                  </summary>
+                  {subtask ? (
+                    <SubtaskToolDetail payload={subtask} workspaceDir={props.workspaceDir} />
+                  ) : t.error ? (
+                    <div className="tool-error-row">
+                      <pre className="tool-output danger">{t.error}</pre>
+                      <CopyButton className="tool-error-copy" text={t.error} label="复制错误" testId="tool-error-copy" />
+                    </div>
+                  ) : (
+                    <ToolOutput text={t.output || '（无输出）'} workspaceDir={props.workspaceDir} />
+                  )}
+                </details>
+              )
+            })}
           </div>
         </details>
       )}

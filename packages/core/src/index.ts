@@ -25,6 +25,7 @@ import { UnavailableBrowser, type BrowserControl } from './browser/control.js'
 import { PrivateChat, autoTitleKey } from './chat/private.js'
 import { GroupChat } from './orchestrator/group.js'
 import { Delegator } from './orchestrator/delegate.js'
+import { SubtaskRunner, SUBTASK_TOOL } from './orchestrator/subtask.js'
 import { MemoryStore } from './memory/store.js'
 import { SessionIndex } from './memory/indexer.js'
 import type { McpServerCfg } from './mcp/parse.js'
@@ -150,6 +151,7 @@ export class JeffCore extends EventEmitter {
   privateChat!: PrivateChat
   groupChat!: GroupChat
   delegator!: Delegator
+  subtaskRunner!: SubtaskRunner
   memory!: MemoryStore
   indexer!: SessionIndex
   sync!: SyncEngine
@@ -199,6 +201,13 @@ export class JeffCore extends EventEmitter {
     this.delegator.buildMemory = (agentId, projectId) => this.buildMemorySystem(agentId, projectId)
     this.delegator.onDebugLog = this.debugLog.fn()
     this.delegator.onIdle = () => this.flushPendingRegistryRestart()
+    this.subtaskRunner = new SubtaskRunner(this.db, () => this.oc)
+    this.subtaskRunner.buildSystem = (agentId, projectId) => this.buildMemorySystem(agentId, projectId)
+    this.subtaskRunner.defaultModel = () => this.defaultModel()
+    this.subtaskRunner.onDebugLog = this.debugLog.fn()
+    // 子任务会话标 isSubtask：resolveSession 据此拦下嵌套调用；同时不进 session:private/group 指针，
+    // 天然不出现在会话列表/搜索里，仅能通过发起它的那次工具调用（subtask_session）按需预览。
+    this.subtaskRunner.onSessionCreated = (sessionId, meta) => this.kv().setJSON(sesMetaKey(sessionId), { ...meta, isSubtask: true })
     this.sync = new SyncEngine(this.db, this.paths, this.memory, () => this.kv().getJSON<WebdavConfig | null>('settings:webdav', null), (r) => {
       this.lastSyncReport = r
       this.bus.emit('sync-report', r)
@@ -286,6 +295,28 @@ export class JeffCore extends EventEmitter {
         __ctx?.messageID,
       )
       return r.ok ? { member: r.memberName, result: r.result } : { ok: false, error: r.error }
+    })
+    this.bridge.register(SUBTASK_TOOL, async (raw: Record<string, unknown>) => {
+      const { __ctx, label, instruction, target_path } = raw as {
+        __ctx?: { sessionID?: string; agent?: string; messageID?: string }
+        label?: string
+        instruction?: string
+        target_path?: string
+      }
+      const resolved = __ctx?.sessionID ? this.resolveSession(__ctx.sessionID) : null
+      if (!resolved) return { ok: false, error: '无法识别调用者身份（无会话上下文）' }
+      if (resolved.kind === 'review') return { ok: false, error: '该场景不支持子任务' }
+      if ((resolved as { isSubtask?: boolean }).isSubtask) return { ok: false, error: '子任务内部不能再调用 jeff_spawn_subtask（不支持嵌套）' }
+      const caller = agentRepo(this.db).get(resolved.agentId)
+      if (caller?.builtin) return { ok: false, error: '小杰不支持该工具' }
+      if (!instruction?.trim()) return { ok: false, error: 'instruction 不能为空' }
+      const directory = resolved.kind === 'group' ? projectRepo(this.db).get(resolved.projectId)?.workspace_dir || undefined : undefined
+      const callKey = __ctx?.messageID || __ctx?.sessionID || 'unknown'
+      return this.subtaskRunner.run(
+        { agentId: resolved.agentId, kind: resolved.kind, ...(resolved.kind === 'group' ? { projectId: resolved.projectId } : {}), directory },
+        { label, instruction, target_path },
+        callKey,
+      )
     })
     await this.bridge.start()
     this.writeBridgePlugin()
@@ -1236,11 +1267,12 @@ export class JeffCore extends EventEmitter {
 
   /** opencode session → Jeff 会话语义（元数据优先，kv 扫描回退） */
   resolveSession(sessionId: string): SessionScopeCtx | null {
-    const meta = this.kv().getJSON<{ kind: 'private' | 'group' | 'review'; agentId: string; projectId?: string; threadId?: string } | null>(sesMetaKey(sessionId), null)
+    const meta = this.kv().getJSON<{ kind: 'private' | 'group' | 'review'; agentId: string; projectId?: string; threadId?: string; isSubtask?: boolean } | null>(sesMetaKey(sessionId), null)
     if (meta?.agentId) {
-      if (meta.kind === 'group' && meta.projectId) return { kind: 'group', projectId: meta.projectId, agentId: meta.agentId, ...(meta.threadId ? { threadId: meta.threadId } : {}) }
+      if (meta.kind === 'group' && meta.projectId)
+        return { kind: 'group', projectId: meta.projectId, agentId: meta.agentId, ...(meta.threadId ? { threadId: meta.threadId } : {}), ...(meta.isSubtask ? { isSubtask: true } : {}) }
       if (meta.kind === 'review') return { kind: 'review', agentId: meta.agentId, projectId: meta.projectId }
-      return { kind: 'private', agentId: meta.agentId }
+      return { kind: 'private', agentId: meta.agentId, ...(meta.isSubtask ? { isSubtask: true } : {}) }
     }
     for (const agent of agentRepo(this.db).list()) {
       if (this.kv().get(`session:private:${agent.id}`) === sessionId) return { kind: 'private', agentId: agent.id }

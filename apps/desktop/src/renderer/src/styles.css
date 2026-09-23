@@ -2616,6 +2616,22 @@ body.composer-resizing * {
 .tool-output.danger { color: #dc2626; }
 .tool-expand { margin: 4px 10px 8px; font-size: 11px; }
 
+/* jeff_spawn_subtask 专属卡片：label 已上提到 summary，这里只展示目标/摘要/完整过程入口 */
+.subtask-detail { padding: 2px 10px 8px; }
+.subtask-target { font-size: 11px; color: var(--text-2); font-family: ui-monospace, Menlo, Consolas, monospace; margin-bottom: 4px; word-break: break-all; }
+.subtask-summary { margin: 0 0 4px; font-size: 12px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+.subtask-summary.danger { color: #dc2626; }
+.subtask-history {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 6px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--line);
+  max-height: 280px;
+  overflow-y: auto;
+}
+
 /* 发送 ⇄ 停止 */
 .send-btn.stop {
   background: #dc2626;

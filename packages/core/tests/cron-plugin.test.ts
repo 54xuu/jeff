@@ -887,6 +887,9 @@ describe('XIAOJIE 工具隔离', () => {
     // task 也必须禁：子代理带全套工具，不禁就等于把 bash/edit/write 全绕过去（live14 R6 实测）
     expect(XIAOJIE_DISABLED_TOOLS).toContain('task')
     expect(xmd).toContain('task: false')
+    // jeff_spawn_subtask 按调用者身份原样继承工具集，小杰用它等于把上面几个绕出去，同样要禁
+    expect(XIAOJIE_DISABLED_TOOLS).toContain('jeff_spawn_subtask')
+    expect(xmd).toContain('jeff_spawn_subtask: false')
   })
 })
 

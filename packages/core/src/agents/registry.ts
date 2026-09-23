@@ -28,8 +28,10 @@ export const XIAOJIE_ONLY_TOOLS: readonly string[] = [...ADMIN_TOOL_NAMES, ...CR
  * （实测 live14 R6：让小杰用思源技能读文档，它自己调不了 bash，就 task 派个子代理去跑脚本，
  * 然后把结果当成自己读到的——「管家没有命令工具」形同虚设）。子代理委派是项目群 leader 的活
  * （jeff_delegate），不是管家的。
+ * `jeff_spawn_subtask` 同理禁：它按调用者身份原样继承工具集，小杰本该没有的文件/命令工具
+ * 会被一个新会话原样借出去；批量知识类工作也不是管家的职责范围（它是代操配置的管家）。
  */
-export const XIAOJIE_DISABLED_TOOLS: readonly string[] = ['bash', 'edit', 'write', 'patch', 'task']
+export const XIAOJIE_DISABLED_TOOLS: readonly string[] = ['bash', 'edit', 'write', 'patch', 'task', 'jeff_spawn_subtask']
 
 
 export const XIAOJIE_SLUG = 'jeff_xiaojie'
