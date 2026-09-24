@@ -114,11 +114,25 @@ describe('writeSidecarConfig（v1.2 三格式 + variants）', () => {
     ]
     writeSidecarConfig(p, providers)
     const cfg = JSON.parse(fs.readFileSync(path.join(p.ocConfigDir, 'opencode.json'), 'utf8')) as Record<string, never>
-    const pv = cfg['provider'] as Record<string, { npm?: string; models?: Record<string, { variants?: Record<string, { thinking?: { type: string; budgetTokens?: number } }> }> }>
+    const pv = cfg['provider'] as Record<string, { npm?: string; options?: { baseURL?: string }; models?: Record<string, { variants?: Record<string, { thinking?: { type: string; budgetTokens?: number } }> }> }>
     expect(pv['cl']?.npm).toBe('@ai-sdk/anthropic')
+    expect(pv['cl']?.options?.baseURL).toBe('https://api.anthropic.com/v1')
     const variants = pv['cl']?.models?.['claude-x']?.variants
     expect(variants?.['low']?.thinking).toEqual({ type: 'enabled', budgetTokens: 4096 })
     expect(variants?.['max']?.thinking).toEqual({ type: 'enabled', budgetTokens: 32768 })
+  })
+
+  it('写入 sidecar 时把完整请求地址收成 SDK 前缀', () => {
+    const p = buildPaths(tmp)
+    writeSidecarConfig(p, [
+      { id: 'chatp', name: 'Chat', apiFormat: 'chat', baseURL: 'https://api.example.com/v1/chat/completions', enabled: true, models: [{ id: 'm' }] },
+      { id: 'resp', name: 'Resp', apiFormat: 'responses', baseURL: 'https://api.openai.com/v1/responses', enabled: true, models: [{ id: 'm' }] },
+    ])
+    const cfg = JSON.parse(fs.readFileSync(path.join(p.ocConfigDir, 'opencode.json'), 'utf8')) as Record<string, never>
+    const pv = cfg['provider'] as Record<string, { options?: { baseURL?: string; setCacheKey?: boolean } }>
+    expect(pv['chatp']?.options?.baseURL).toBe('https://api.example.com/v1')
+    expect(pv['resp']?.options?.baseURL).toBe('https://api.openai.com/v1')
+    expect(pv['resp']?.options?.setCacheKey).toBe(false)
   })
 
   it('responses 格式使用 @ai-sdk/openai；禁用提供商不写入配置也不参与默认模型', () => {

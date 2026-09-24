@@ -405,6 +405,7 @@ function AddProvider(props: { existingIds: string[]; onClose: () => void; onAdd:
           <span>API Key</span>
           <input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="sk-…" />
         </label>
+        <p className="settings-tip">{API_FORMATS.find((f) => f.id === apiFormat)?.hint}</p>
         <p className="settings-tip">创建后到提供商详情里「+ 添加模型」录入模型 ID 与参数。</p>
         {error && <p className="settings-error">⚠️ {error}</p>}
         <div className="modal-actions">

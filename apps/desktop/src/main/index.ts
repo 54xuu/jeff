@@ -1,5 +1,6 @@
-import { app, BrowserWindow, session, shell, Tray, Menu, dialog, nativeImage, Notification } from 'electron'
+import { app, BrowserWindow, session, shell, Tray, Menu, dialog, nativeImage, Notification, globalShortcut } from 'electron'
 import type { MenuItemConstructorOptions } from 'electron'
+import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import { JeffCore, BridgeBrowserControl, osNotificationInit, visualNotifyChannel } from '@jeff/core'
@@ -112,8 +113,10 @@ if (!gotLock) {
   app.quit()
 } else {
   if (process.env.JEFF_E2E !== '1' && process.env.JEFF_SMOKE !== '1') {
-    app.on('second-instance', () => {
-      if (win) focusMainWindow()
+    app.on('second-instance', (_event, argv) => {
+      if (argv.includes('--toggle-window')) toggleMainWindow()
+      else if (win) focusMainWindow()
+      else createWindow()
     })
   }
 
@@ -142,6 +145,7 @@ if (!gotLock) {
 
     createWindow()
     setupAppMenu()
+    setupWindowShortcut()
     setupTray()
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow()
@@ -153,7 +157,10 @@ if (!gotLock) {
     if (core) await core.dispose().catch(() => {})
     if (process.platform !== 'darwin') app.quit()
   })
-  app.on('before-quit', () => destroyWindowsBalloon())
+  app.on('before-quit', () => {
+    globalShortcut.unregisterAll()
+    destroyWindowsBalloon()
+  })
 }
 
 /** 菜单动作 → 渲染层（新会话/发起群聊/设置/主题/使用说明） */
@@ -235,6 +242,12 @@ function setupAppMenu(): void {
     {
       label: '显示',
       submenu: [
+        {
+          label: '显示/隐藏主窗口',
+          accelerator: 'CmdOrCtrl+Alt+F',
+          click: () => toggleMainWindow(),
+        },
+        { type: 'separator' },
         {
           label: '会话列表',
           accelerator: 'CmdOrCtrl+B',
@@ -353,6 +366,80 @@ function focusMainWindow(): void {
   if (win.isMinimized()) win.restore()
   if (!win.isVisible()) win.show()
   win.focus()
+}
+
+/** 菜单加速键和 globalShortcut 可能在同一次按键里各触发一次，短时间内只认第一次 */
+let lastWindowToggleAt = 0
+
+/**
+ * Ctrl/Cmd+Alt+F：主窗口已在前台就藏起来，否则打开并抢到前面。
+ * 隐藏不退出进程，托盘和快捷键都能再把它叫出来。
+ */
+function toggleMainWindow(): void {
+  const now = Date.now()
+  if (now - lastWindowToggleAt < 400) return
+  lastWindowToggleAt = now
+  if (!win || win.isDestroyed()) {
+    createWindow()
+    return
+  }
+  if (win.isVisible() && !win.isMinimized() && win.isFocused()) {
+    win.hide()
+    return
+  }
+  focusMainWindow()
+}
+
+/** 全局快捷键在窗口藏起来、应用不在前台时仍然生效。E2E/冒烟不抢系统热键。 */
+function setupWindowShortcut(): void {
+  if (process.env.JEFF_E2E === '1' || process.env.JEFF_SMOKE === '1') return
+  const ok = globalShortcut.register('CommandOrControl+Alt+F', () => toggleMainWindow())
+  if (ok) return
+  // Wayland 上 Chromium 的 globalShortcut 全部注册失败。GNOME 改走桌面自定义快捷键，
+  // 由它再拉起一次本程序（--toggle-window），正在运行的实例在 second-instance 里切换显隐。
+  if (!ensureGnomeToggleBinding(toggleLaunchCommand())) {
+    console.error('[jeff] 注册 Ctrl+Alt+F 失败（当前桌面不支持全局热键）')
+  }
+}
+
+const GNOME_TOGGLE_PATH = '/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/jeff-toggle/'
+
+function quoteShell(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`
+}
+
+function toggleLaunchCommand(): string {
+  const bin = quoteShell(process.execPath)
+  if (app.isPackaged) return `${bin} --toggle-window`
+  const entry = process.argv[1] ? quoteShell(path.resolve(process.argv[1])) : ''
+  return entry ? `${bin} ${entry} --toggle-window` : `${bin} --toggle-window`
+}
+
+function gnomeCustomPaths(raw: string): string[] {
+  return [...raw.matchAll(/'([^']+)'/g)].map((m) => m[1])
+}
+
+/** 在 GNOME 自定义快捷键里登记 Ctrl+Alt+F。已有其它绑定时只追加，不覆盖。 */
+function ensureGnomeToggleBinding(command: string): boolean {
+  if (!process.env.XDG_CURRENT_DESKTOP?.toLowerCase().includes('gnome')) return false
+  try {
+    const key = 'org.gnome.settings-daemon.plugins.media-keys'
+    const current = execFileSync('gsettings', ['get', key, 'custom-keybindings'], { encoding: 'utf8' }).trim()
+    const paths = gnomeCustomPaths(current)
+    if (!paths.includes(GNOME_TOGGLE_PATH)) {
+      const next = [...paths, GNOME_TOGGLE_PATH]
+      const serialized = `[${next.map((p) => `'${p}'`).join(', ')}]`
+      execFileSync('gsettings', ['set', key, 'custom-keybindings', serialized])
+    }
+    const schema = `org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:${GNOME_TOGGLE_PATH}`
+    execFileSync('gsettings', ['set', schema, 'name', 'Jeff 显示/隐藏主窗口'])
+    execFileSync('gsettings', ['set', schema, 'command', command])
+    execFileSync('gsettings', ['set', schema, 'binding', '<Control><Alt>f'])
+    return true
+  } catch (err) {
+    console.error('[jeff] 写入 GNOME 快捷键失败:', err)
+    return false
+  }
 }
 
 /** 防止 Notification 被 GC 后 Windows/部分 Linux 上横幅还没画出来就被拆掉 */

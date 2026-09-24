@@ -17,9 +17,21 @@ export const THINKING_TIERS: ThinkingTier[] = ['none', 'low', 'high', 'max']
 /** 供应商 API 格式：决定 opencode 使用的适配包 */
 export type ApiFormat = 'chat' | 'responses' | 'anthropic'
 export const API_FORMATS: Array<{ id: ApiFormat; label: string; hint: string }> = [
-  { id: 'chat', label: 'Chat 格式', hint: 'OpenAI 兼容 /chat/completions，绝大多数中转站与国产模型' },
-  { id: 'responses', label: 'Responses 格式', hint: 'OpenAI 官方 /responses 接口（GPT-5 / o 系列推荐）' },
-  { id: 'anthropic', label: 'Anthropic 格式', hint: 'Anthropic 官方 /v1/messages，如 Claude 系列' },
+  {
+    id: 'chat',
+    label: 'Chat 格式',
+    hint: 'Chat Completions。baseURL 填到 /v1（如 https://api.example.com/v1），实际请求 {baseURL}/chat/completions。贴了完整地址也会自动去掉末尾的 /chat/completions。',
+  },
+  {
+    id: 'responses',
+    label: 'Responses 格式',
+    hint: 'OpenAI Responses。baseURL 填到 /v1（如 https://api.openai.com/v1），实际请求 {baseURL}/responses。不要把 /v1 去掉；贴了完整 /responses 地址会自动剥掉这一段。',
+  },
+  {
+    id: 'anthropic',
+    label: 'Anthropic 格式',
+    hint: 'Anthropic Messages。官方 https://api.anthropic.com 可留空。网关只填前缀（如 https://host/anthropic），实际请求 {前缀}/v1/messages。兼容网关同时带 x-api-key 与 Authorization: Bearer。',
+  },
 ]
 
 export type { ChatMsg }

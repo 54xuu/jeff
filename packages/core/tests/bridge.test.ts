@@ -75,5 +75,7 @@ describe('renderBridgePlugin', () => {
     expect(code).toContain('chat.params')
     expect(code).toContain('delete o.include')
     expect(code).toContain('x-opencode-session')
+    expect(code).toContain("@ai-sdk/anthropic")
+    expect(code).toContain("Bearer ")
   })
 })

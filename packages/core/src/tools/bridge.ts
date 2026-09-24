@@ -125,14 +125,23 @@ ${toolDefs}
       delete o.textVerbosity
       delete o.promptCacheKey
     },
-    // Zen Go 的 /responses 缺 x-opencode-session 会直接 400。provider id 不以 opencode 开头时引擎不会自动加。
+    // 请求头：Zen Go 补 session；Anthropic 兼容网关同时认 x-api-key 与 Bearer。
     'chat.headers': async (input, output) => {
-      const base = String((input && input.provider && input.provider.options && input.provider.options.baseURL) || '')
-      if (!/opencode\\.ai/i.test(base)) return
       const headers = output && output.headers
-      if (!headers || !input || !input.sessionID) return
-      headers['x-opencode-session'] = input.sessionID
-      headers['x-opencode-request'] = (input.message && input.message.id) || input.sessionID
+      if (!headers) return
+      const base = String((input && input.provider && input.provider.options && input.provider.options.baseURL) || '')
+      if (/opencode\\.ai/i.test(base) && input && input.sessionID) {
+        // Zen Go 的 /responses 缺 x-opencode-session 会直接 400。provider id 不以 opencode 开头时引擎不会自动加。
+        headers['x-opencode-session'] = input.sessionID
+        headers['x-opencode-request'] = (input.message && input.message.id) || input.sessionID
+      }
+      const npm = input && input.model && input.model.api && input.model.api.npm
+      if (npm !== '@ai-sdk/anthropic') return
+      const hasAuth = Object.keys(headers).some((k) => k.toLowerCase() === 'authorization')
+      if (hasAuth) return
+      const key = (input && input.provider && (input.provider.key || (input.provider.options && input.provider.options.apiKey))) || ''
+      if (!key) return
+      headers['authorization'] = 'Bearer ' + key
     },
   }
 }

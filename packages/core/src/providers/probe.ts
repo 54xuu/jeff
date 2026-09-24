@@ -1,5 +1,6 @@
 import { Agent, fetch as undiciFetch } from 'undici'
 import type { ProviderSetting } from '../oc/configWriter.js'
+import { providerRequestURL } from './endpoint.js'
 
 export interface ProviderProbe {
   ok: boolean
@@ -28,25 +29,25 @@ export async function probeProviderModel(
 ): Promise<ProviderProbe> {
   const started = Date.now()
   if (!modelId.trim()) return { ok: false, error: '缺少模型 id', elapsedMs: 0 }
-  const baseURL = (provider.baseURL || '').replace(/\/+$/, '')
   const apiKey = provider.apiKey || ''
   const headers: Record<string, string> = { 'content-type': 'application/json' }
   let url: string
   let body: unknown
   try {
+    url = providerRequestURL(provider.apiFormat, provider.baseURL)
+    if (!url) throw new Error('未配置 baseURL')
     if (provider.apiFormat === 'anthropic') {
-      url = `${baseURL || 'https://api.anthropic.com'}/v1/messages`
-      if (apiKey) headers['x-api-key'] = apiKey
+      // 官方认 x-api-key；兼容网关常常只看 Authorization。两边都带，和 ZCode 的适配层一致。
+      if (apiKey) {
+        headers['x-api-key'] = apiKey
+        headers.authorization = `Bearer ${apiKey}`
+      }
       headers['anthropic-version'] = '2023-06-01'
       body = { model: modelId, max_tokens: 1, messages: [{ role: 'user', content: 'ping' }] }
     } else if (provider.apiFormat === 'responses') {
-      if (!baseURL) throw new Error('未配置 baseURL')
-      url = `${baseURL}/responses`
       if (apiKey) headers.authorization = `Bearer ${apiKey}`
       body = { model: modelId, input: 'ping', max_output_tokens: 1 }
     } else {
-      if (!baseURL) throw new Error('未配置 baseURL')
-      url = `${baseURL}/chat/completions`
       if (apiKey) headers.authorization = `Bearer ${apiKey}`
       body = { model: modelId, messages: [{ role: 'user', content: 'ping' }], max_tokens: 1, stream: false }
     }

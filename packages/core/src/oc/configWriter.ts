@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { skillsMount, type JeffPaths } from '../paths.js'
 import type { ApiFormat, ThinkingTier } from '../ipc/contract.js'
+import { sdkBaseURL } from '../providers/endpoint.js'
 
 /** 用户 provider 配置（存 kv settings:providers）。v1.2 起只有自定义提供商，无内置。 */
 export interface ProviderModelCfg {
@@ -172,11 +173,13 @@ export function writeSidecarConfig(
   const providerCfg: Record<string, unknown> = {}
   for (const pv of providers) {
     if (!pv.enabled) continue
+    // 写成 SDK 前缀，而不是用户可能粘贴的完整请求地址（见 sdkBaseURL）
+    const baseURL = sdkBaseURL(pv.apiFormat, pv.baseURL)
     providerCfg[pv.id] = {
       npm: API_FORMAT_NPM[pv.apiFormat] ?? API_FORMAT_NPM.chat,
       name: pv.name || pv.id,
       options: {
-        ...(pv.baseURL ? { baseURL: pv.baseURL } : {}),
+        ...(baseURL ? { baseURL } : {}),
         // 自定义 Responses 端点大多不认 prompt_cache_key；opencode 看到 setCacheKey:false 就不再塞
         ...(pv.apiFormat === 'responses' ? { setCacheKey: false } : {}),
       },

@@ -82,6 +82,12 @@ describe('probeProviderModel（模型连通直连探测）', () => {
     expect(last.headers?.authorization).toBe('Bearer sk-test')
   }, 10000)
 
+  it('chat 粘贴完整 /chat/completions 仍打到同一路径，不会再拼一层', async () => {
+    const r = await probeProviderModel(provider({ baseURL: `http://127.0.0.1:${port}/chat/completions` }), 'good-model')
+    expect(r.ok).toBe(true)
+    expect(last.url).toBe('/chat/completions')
+  }, 10000)
+
   it('responses 格式：POST /responses，max_output_tokens=1', async () => {
     const r = await probeProviderModel(provider({ apiFormat: 'responses' }), 'good-model')
     expect(r.ok).toBe(true)
@@ -98,6 +104,7 @@ describe('probeProviderModel（模型连通直连探测）', () => {
 
     await probeProviderModel(provider({ apiFormat: 'anthropic', apiKey: 'sk-anthropic' }), 'good-model')
     expect(last.headers?.['x-api-key']).toBe('sk-anthropic')
+    expect(last.headers?.authorization).toBe('Bearer sk-anthropic')
   }, 10000)
 
   it('缺 baseURL（非 anthropic）→ 直接报「未配置 baseURL」', async () => {
