@@ -23,4 +23,10 @@ Jeff 已有而 OpenMuse 用另一种形态实现的：多智能体与项目群�
 
 ## 版本与验证
 
-本次只有新增文档，没有代码改动。按仓库版本规则「纯文档不 bump」，版本保持 1.8.29，不重复打包。收尾测试套件验证的是代码行为，本次无代码变更，未跑。
+版本 `1.8.29` → `1.8.30`（五处版本号一起改）。不打 tag，不发 GitHub Release。
+
+- `npm test`：35 个测试文件通过，5 个跳过；343 条通过，17 条跳过。版本一致性校验包含 `1.8.30`。
+- 包级 `tsc`：`packages/core` 与 `apps/desktop` 通过。根目录 `tsc` 仍是改动前就有的 3 个 e2e helper 报错（`apps/desktop/e2e/helpers/launch.ts`）。
+- `npm run test:e2e`：2 条通过。`--project=v18`：4 条通过。`--project=cron`：11 条通过。
+- Linux：`apps/desktop/release/jeff-desktop_1.8.30_amd64.deb`、`apps/desktop/release/Jeff-1.8.30.AppImage`。本机已安装，`dpkg -l jeff-desktop` 为 `1.8.30`。`/opt/Jeff/resources/app.asar` 与 `linux-unpacked` 的 md5 都是 `1a4a7c7620cad5469556bcc097ead28f`。
+- Windows：`apps/desktop/release/jeff-Setup-1.8.30.exe`，`file` 为 PE32 GUI Nullsoft 自解压。`win-unpacked/resources/app.asar` 内能搜到 `1.8.30`。`oc-bin/windows-x64/opencode.exe` 在位。重启 Jeff 后可在「设置 → 关于」看到 `1.8.30`。
