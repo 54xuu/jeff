@@ -42,4 +42,7 @@
 - `tsc`：`packages/core` 与 `apps/desktop` 均通过。根目录 `tsc -p tsconfig.base.json` 仍是原先那 3 条 e2e helper 报错，这次没有新增。
 - `apps/desktop` 封闭测试：`ui` 2 条、`v18` 4 条、`cron` 11 条，全部通过。
 
-安装包结果在编译完成后补在本节。
+安装包：
+
+- Linux：`apps/desktop/release/jeff-desktop_1.8.29_amd64.deb`、`apps/desktop/release/Jeff-1.8.29.AppImage`。本机已安装，`dpkg -l jeff-desktop` 为 `1.8.29`。`/opt/Jeff/resources/app.asar` 与 `linux-unpacked` 的 md5 都是 `8d443f96ea194be0634d5d3807fabb58`。
+- Windows：`apps/desktop/release/jeff-Setup-1.8.29.exe`，`file` 为 PE32 GUI Nullsoft 自解压。`win-unpacked/resources/app.asar` 内能搜到 `1.8.29`。`oc-bin/windows-x64/opencode.exe` 在位。未打 tag，未发 Release。重启 Jeff 后可在「设置 → 关于」看到 `1.8.29`。
