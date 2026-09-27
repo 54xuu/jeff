@@ -35,4 +35,10 @@
 - apt 的 adb 28 连上手机显示未授权。改用 SDK 里的 adb 37 后，设备状态是 `device`。
 - ECS 直连 Docker Hub 超时。镜像默认改为 `docker.m.daocloud.io/library/node:22-alpine`。
 - `ws` 有动态 `require`，esbuild 打成 ESM 后容器起不来。生产包改成 CJS（`server.cjs`）。中转站入口不要从 `remote/index.ts` 引进白名单，否则还得把整份 IPC 契约打进镜像。
-- 华为 iAware 会杀前台服务。23:26 按 Home 把 App 放进后台，约 23:32 熄屏，23:53:35 被 `iAwareF[SystemManager]` 停掉（`importance=125`，当时仍是前台服务；Doze 白名单里已经有 `app.jeff.mobile`）。熄屏到被杀大约 21 分钟，30 分钟这一项没有通过。要在手机上打开「设置 → 应用启动管理」，把 Jeff 改成手动管理并允许后台活动，然后再测一轮。系统电池优化弹窗当时被通知权限弹窗盖住，用户没有点到。
+- 华为 iAware 会杀前台服务。23:26 按 Home 把 App 放进后台，约 23:32 熄屏，23:53:35 被 `iAwareF[SystemManager]` 停掉（`importance=125`，当时仍是前台服务；Doze 白名单里已经有 `app.jeff.mobile`）。熄屏到被杀大约 21 分钟，30 分钟这一项没有通过。要在手机上打开「设置 → 应用启动管理」，把 Jeff 改成手动管理并允许后台活动。系统电池优化弹窗当时被通知权限弹窗盖住，用户没有点到。
+
+## 改在虚拟机上验证
+
+2026-09-28。真机要自己用，后续验证改到本机虚拟机。`dl.google.com` 的 TLS 仍被中间设备掐断，系统镜像是从 `docker.m.daocloud.io/budtmo/docker-android:emulator_14.0` 里拷出 emulator 与 `system-images;android-34;google_apis;x86_64`，放到 `~/Android/Sdk`。AVD 名 `jeff`，`emulator-5554`，Android 14。无线调试已经从 `192.168.3.161:5555` 断开，`adb devices` 里只有这台虚拟机。
+
+调试包装上后，「页面加密」和「原生加密」都是「通过」。按 Home 回到桌面后进程仍是 4779，`RelayForegroundService` 保持 `isForeground=true`，通知还在。截图在 `.tmp/emu-crypto.png`。虚拟机继续开着，无窗口，用 adb 操作即可。
