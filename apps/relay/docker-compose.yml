@@ -1,0 +1,18 @@
+# 在仓库根目录执行：docker compose -f apps/relay/docker-compose.yml up -d --build
+# 服务器上证书放 /opt/jeff-relay/certs/{cert,key}.pem，数据放 /opt/jeff-relay/data。
+services:
+  jeff-relay:
+    build:
+      context: ../..
+      dockerfile: apps/relay/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "9443:9443"
+    environment:
+      TLS_CERT: /certs/cert.pem
+      TLS_KEY: /certs/key.pem
+      DATA_DIR: /data
+      PORT: "9443"
+    volumes:
+      - /opt/jeff-relay/certs:/certs:ro
+      - /opt/jeff-relay/data:/data

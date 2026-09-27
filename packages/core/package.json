@@ -5,7 +5,8 @@
   "type": "module",
   "description": "Jeff 核心：数据库、sidecar 管理、opencode 客户端、编排、记忆、同步",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./remote": "./src/remote/index.ts"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json --noEmit",
@@ -13,6 +14,9 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
+    "@noble/ciphers": "1.3.0",
+    "@noble/curves": "1.9.1",
+    "@noble/hashes": "1.8.0",
     "undici": "^6.28.0",
     "webdav": "^5.8.0"
   },

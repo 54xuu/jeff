@@ -1,0 +1,8 @@
+node_modules
+.git
+.tmp
+apps/desktop
+apps/mobile
+apps/desktop/release
+**/*.deb
+**/*.exe

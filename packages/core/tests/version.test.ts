@@ -4,9 +4,9 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { APP_VERSION } from '../src/version.js'
 
-/** 防版本漂移：core 常量必须与三处 package.json 完全一致（AGENTS.md 发版规范） */
+/** 防版本漂移：core 常量必须与各包 package.json 完全一致（AGENTS.md 发版规范） */
 describe('版本一致性', () => {
-  it('APP_VERSION 与三处 package.json 一致', () => {
+  it('APP_VERSION 与各包 package.json 一致', () => {
     const coreDir = path.dirname(fileURLToPath(import.meta.url))
     const readVersion = (p: string): string => {
       const pkg = JSON.parse(fs.readFileSync(p, 'utf8')) as { version: string }
@@ -17,6 +17,8 @@ describe('版本一致性', () => {
       root: readVersion(path.join(coreDir, '../../../package.json')),
       core: readVersion(path.join(coreDir, '../package.json')),
       desktop: readVersion(path.join(coreDir, '../../../apps/desktop/package.json')),
+      mobile: readVersion(path.join(coreDir, '../../../apps/mobile/package.json')),
+      relay: readVersion(path.join(coreDir, '../../../apps/relay/package.json')),
     }
     expect(new Set(Object.values(versions)).size).toBe(1)
   })

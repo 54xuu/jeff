@@ -19,12 +19,14 @@ ZCode 在本仓库的持久记忆存放在：
 
 ## 版本号（SemVer）
 
-仓库当前版本必须**五处一致**（`packages/core/tests/version.test.ts` 会在单测里强制校验，防漂移）：
+仓库当前版本必须一致（`packages/core/tests/version.test.ts` 会在单测里强制校验，防漂移）：
 
 - 根目录 [`package.json`](package.json)
 - [`packages/core/package.json`](packages/core/package.json)
 - [`apps/desktop/package.json`](apps/desktop/package.json)
-- [`package-lock.json`](package-lock.json) 里的 `version` 字段（4 处）
+- [`apps/mobile/package.json`](apps/mobile/package.json)
+- [`apps/relay/package.json`](apps/relay/package.json)
+- [`package-lock.json`](package-lock.json) 里上述包的 `version` 字段
 - [`packages/core/src/version.ts`](packages/core/src/version.ts) 的 `APP_VERSION`
 
 ### 核心原则：默认 PATCH，MINOR 要克制
@@ -48,7 +50,7 @@ ZCode 在本仓库的持久记忆存放在：
 
 ### 每次任务收尾：bump + 双平台编译（硬性约定）
 
-**每个任务完成后都要产出 Windows 与 Ubuntu 两个安装包**，不需要用户另行提醒。只交代码、或只打一个平台，都算没做完。
+**每个改动了桌面端的任务完成后都要产出 Windows 与 Ubuntu 两个安装包**，不需要用户另行提醒。只交代码、或只打一个平台，都算没做完。只改 `apps/mobile` 或 `apps/relay`、没有改桌面端行为时，不打桌面安装包、不升桌面版本号；改了 App 则另出 apk（见下文「Android 遥控器」）。
 
 ```bash
 npm run package:linux   # → apps/desktop/release/jeff-desktop_<version>_amd64.deb（另出 Jeff-<version>.AppImage）
@@ -101,7 +103,7 @@ ls apps/desktop/release/win-unpacked/resources/oc-bin/windows-x64/opencode.exe
 ### 第一层：所有任务必跑（快速回归）
 
 ```bash
-npm test                    # @jeff/core 单测（含版本一致性校验，bump 后跑可防漂移）
+npm test                    # @jeff/core 与 @jeff/relay 单测（含版本一致性校验，bump 后跑可防漂移）
 npm run typecheck           # core/desktop 包级 tsc；根 tsconfig 有 3 个存量 e2e helper 报错，改动前就在，不算新增
 cd apps/desktop && npm run test:e2e   # mock UI E2E（自带 build）
 # 新增功能块的封闭 UI 测试（无需模型）：分组 / 定时任务 / 插件 / `/` 指令 / 内置浏览器
@@ -162,11 +164,25 @@ deb：`dpkg -l jeff-desktop` 版本正确 + `/opt/Jeff` 与 `linux-unpacked` 的
 - 恢复类操作必须：先本地快照（`~/.jeff/backups/`）再替换、二次确认弹窗说明影响面、按钮旁展示「上次备份」时间与结果。
 - 敏感值（WebDAV 密码、插件密钥等）一律不进备份。
 
+## Android 遥控器
+
+方案全文在 [`docs/notes/20260927-Android遥控器方案.md`](docs/notes/20260927-Android遥控器方案.md)。这里只留协作时会踩的约定。
+
+- **同一个仓库**：App 在 `apps/mobile`（React + Capacitor），中转站在 `apps/relay`，协议和加密在 `packages/core/src/remote`（无 Node 依赖，桌面端、App、中转站共用）。不要把 App 拆出去另开仓库。
+- **契约先行**：新增或修改任何 IPC 通道时，同一提交里在 `packages/core/src/remote/whitelist.ts` 归类为放行、拒绝或替换。漏归类时该模块加载即失败，`packages/core/tests/remote.test.ts` 也会红。
+- **一个功能两端做**：有界面的新功能，默认同一次任务里同时改桌面端和 App。只做了桌面端时，总结文档里写明 App 端待办。
+- **中转站只转发密文**：不在 `apps/relay` 里解析 `e2e.body`，不落盘消息内容。绑定关系是「一台电脑一个 App，一个 App 多台电脑」，靠 `binding.desktop_id` 唯一约束。
+- **真机**：`adb connect 192.168.3.161:5555`（用 `$ANDROID_HOME/platform-tools/adb`，不要用 apt 里的旧 adb）。装包 `adb install -r <apk>`，截图 `adb exec-out screencap -p > .tmp/screen.png`。本机 SDK 在 `~/Android/Sdk`（platforms android-34/35/36，build-tools 35.0.1，emulator 37.1.11）。Google 的下载域名在本机代理下经常握手失败，SDK 是从镜像拷出来的。日常验证用本机虚拟机，不要占真机：AVD 名 `jeff`（Android 14 / API 34，`emulator-5554`）。启动：`emulator -avd jeff -no-window -no-audio -gpu swiftshader_indirect -accel on -no-snapshot`。这台华为（ANA-AN00）的 iAware 会在熄屏约 20 分钟后杀掉前台服务，Doze 白名单挡不住；要在「设置 → 应用启动管理」里把 Jeff 改成手动管理，并允许后台活动。
+- **签名**：release keystore 在 `~/.jeff-android/release.keystore`，口令在 ZCode 记忆 `android-release-keystore.md`，禁止进仓库。调试包用 debug 签名即可。
+- **apk 版本**：`versionName` 与仓库版本号一致，`versionCode = major * 10000 + minor * 100 + patch`。
+- **收尾**：改了 App 就打出 debug 或 release apk，并用 `aapt dump badging` 核对 `versionName`。改了中转站就部署到 ECS `47.106.209.32:9443`（证书指纹写在 `packages/core/src/remote/protocol.ts` 的 `RELAY_CERT_SHA256`）。没有改桌面端行为时不打 deb/exe、不升版本号。
+- **中转站镜像**：`apps/relay/Dockerfile` 把服务打成 CJS（`ws` 有动态 `require`，ESM bundle 起不来）。ECS 直连 Docker Hub 会超时，默认基础镜像是 `docker.m.daocloud.io/library/node:22-alpine`。证书和私钥在服务器 `/opt/jeff-relay/certs/`，不要进仓库。
+
 ## 开发常用命令
 
 ```bash
 npm install
-npm test                    # @jeff/core 单测
+npm test                    # @jeff/core 与 @jeff/relay 单测
 npm run typecheck           # 或分别 tsc core / desktop
 npm run dev -w jeff-desktop
 ```
