@@ -416,7 +416,8 @@ export function App() {
         const last = rows[rows.length - 1]
         if (last) setRecentMap((prev) => ({ ...prev, [`agent:${t.id}`]: { text: last.text, time: last.time } }))
       } else {
-        const rows = await phone.invoke<GroupMessage[]>(IPC.groupHistory, { projectId: t.id })
+        const r = await phone.invoke<{ threadId: string; messages: GroupMessage[] } | GroupMessage[]>(IPC.groupHistory, { projectId: t.id })
+        const rows = Array.isArray(r) ? r : r?.messages || []
         setMessages(rows)
         await cachePut(id, key, JSON.stringify(rows))
         const last = rows[rows.length - 1]
@@ -428,7 +429,8 @@ export function App() {
       markOffline(true)
       const cached = await cacheGet(id, key)
       if (cached) {
-        const rows = JSON.parse(cached) as ChatMsg[]
+        const raw = JSON.parse(cached) as ChatMsg[] | { messages?: ChatMsg[] }
+        const rows = Array.isArray(raw) ? raw : raw?.messages || []
         setMessages(rows)
         const last = rows[rows.length - 1]
         if (last) setRecentMap((prev) => ({ ...prev, [`${t.kind}:${t.id}`]: { text: last.text, time: last.time } }))

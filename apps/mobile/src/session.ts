@@ -111,6 +111,7 @@ export class PhoneLink {
   private listeners = new Set<(ev: PhonePush) => void>()
   private ready: { resolve: () => void; reject: (err: Error) => void } | null = null
   private secureWait = new Map<string, { resolve: () => void; reject: (err: Error) => void }>()
+  private rekeying: Promise<void> | null = null
 
   async init(): Promise<void> {
     try {
@@ -328,12 +329,31 @@ export class PhoneLink {
   }
 
   async hello(desktopId: string): Promise<void> {
+    if (this.rekeying) await this.rekeying
     const link = this.link
     const peer = this.desktops.get(desktopId)
     if (!link || !peer?.x25519) throw new Error('还没有这台电脑的公钥')
     link.setPeerKey(desktopId, peer.x25519)
     if (link.peerReady(desktopId)) return
     await link.hello(desktopId)
+  }
+
+  /** 电脑重新上线说明它换了一条链路，旧会话密钥已作废。先收回原生层的解密，再重新握手。 */
+  private async rekey(desktopId: string): Promise<void> {
+    const link = this.link
+    if (!link?.resetPeer(desktopId)) return
+    const run = (async () => {
+      if (Capacitor.isNativePlatform()) {
+        await Native.disarmRecv({ peerId: desktopId }).catch(() => undefined)
+        this.recvNative = false
+      }
+    })()
+    this.rekeying = run
+    try {
+      await run
+    } finally {
+      if (this.rekeying === run) this.rekeying = null
+    }
   }
 
   async invoke<T>(channel: string, payload?: unknown): Promise<T> {
@@ -400,7 +420,12 @@ export class PhoneLink {
       const peer = this.desktops.get(ev.desktopId)
       if (peer) peer.online = ev.online
       this.emit({ what: 'presence', p: ev })
-      if (ev.online && ev.desktopId === this.activeId) void this.hello(ev.desktopId).catch(() => {})
+      if (ev.online) {
+        const id = ev.desktopId
+        void this.rekey(id)
+          .then(() => (id === this.activeId ? this.hello(id) : undefined))
+          .catch(() => {})
+      }
       return
     }
     if (ev.t === 'pair-result') {

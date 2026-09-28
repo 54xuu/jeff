@@ -181,7 +181,12 @@ export class RemoteGateway {
   private push(what: string, p?: unknown): void {
     if (!this.appId) return
     if (!this.link?.peerReady(this.appId)) {
-      if (this.queue.length < 40) this.queue.push({ what, p })
+      // 流式增量离了前文没用，手机进会话会重拉历史；同样的通知只留一条
+      if (what === 'chat-stream') return
+      const key = `${what}:${JSON.stringify(p ?? null)}`
+      this.queue = this.queue.filter((item) => `${item.what}:${JSON.stringify(item.p ?? null)}` !== key)
+      this.queue.push({ what, p })
+      if (this.queue.length > 20) this.queue.shift()
       return
     }
     this.link.sendPlain(this.appId, { t: 'push', what, p })

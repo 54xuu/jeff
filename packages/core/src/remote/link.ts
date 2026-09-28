@@ -39,7 +39,13 @@ export interface RelayLinkOptions {
   sendRaw: (text: string) => void
   onEvent: (ev: LinkEvent) => void
   requestTimeoutMs?: number
+  /** 每秒最多发多少帧。中转站超过 30 帧/秒直接丢帧，而会话密文要求序号连续，丢一帧整条通道就废了。 */
+  maxFramesPerSec?: number
 }
+
+const DEFAULT_FRAMES_PER_SEC = 20
+/** 中转站按收到的时刻数 1 秒窗口，发送端窗口放宽，免得两批帧卡在窗口边界上被算进同一秒。 */
+const PACE_WINDOW_MS = 1250
 
 /**
  * 一条到中转站的连接：认证、配对、以及和已绑定对端的端到端通道。
@@ -53,6 +59,9 @@ export class RelayLink {
   private externalRecv = new Set<string>()
   private holdingRecv = false
   private heldRaw: string[] = []
+  private outbox: string[] = []
+  private sentAt: number[] = []
+  private drainTimer: ReturnType<typeof setTimeout> | null = null
   readonly id: string
   readonly x25519Pub: string
 
@@ -158,6 +167,18 @@ export class RelayLink {
     return !!this.peers.get(peerId)?.session
   }
 
+  /**
+   * 对端重连后旧会话密钥作废（它那边序号从零开始），丢掉会话，下一次 hello 重新握手。
+   * 握手进行中不打断，返回 false。
+   */
+  resetPeer(peerId: string): boolean {
+    const peer = this.peers.get(peerId)
+    if (!peer || peer.helloPromise) return false
+    this.peers.set(peerId, { staticPub: peer.staticPub, boot: bootCipher(this.opts.x25519Secret, peer.staticPub), ephSecret: null, session: null, hello: null, helloPromise: null })
+    this.externalRecv.delete(peerId)
+    return true
+  }
+
   /** App 发起握手。电脑收到后回自己的临时公钥。重复调用复用同一次握手。 */
   hello(peerId: string): Promise<void> {
     const peer = this.peers.get(peerId)
@@ -221,6 +242,9 @@ export class RelayLink {
   }
 
   failAll(message: string): void {
+    this.outbox = []
+    if (this.drainTimer) clearTimeout(this.drainTimer)
+    this.drainTimer = null
     for (const p of this.pending.values()) {
       clearTimeout(p.timer)
       p.reject(new Error(message))
@@ -242,7 +266,28 @@ export class RelayLink {
   }
 
   private sendRaw(frame: ClientFrame): void {
-    this.opts.sendRaw(encodeFrame(frame))
+    this.outbox.push(encodeFrame(frame))
+    this.drain()
+  }
+
+  private drain(): void {
+    const limit = this.opts.maxFramesPerSec ?? DEFAULT_FRAMES_PER_SEC
+    while (this.outbox.length) {
+      const now = Date.now()
+      this.sentAt = this.sentAt.filter((t) => now - t < PACE_WINDOW_MS)
+      if (this.sentAt.length >= limit) {
+        if (!this.drainTimer) {
+          const wait = Math.max(1, PACE_WINDOW_MS - (now - this.sentAt[0]))
+          this.drainTimer = setTimeout(() => {
+            this.drainTimer = null
+            this.drain()
+          }, wait)
+        }
+        return
+      }
+      this.sentAt.push(now)
+      this.opts.sendRaw(this.outbox.shift()!)
+    }
   }
 
   private dispatchPlain(from: string, msg: E2ePlain): void {
@@ -270,18 +315,40 @@ export class RelayLink {
     }
     try {
       if (!peer.session) {
-        this.acceptHello(from, peer, body)
+        this.acceptHello(from, peer, openPlain(peer.boot, body))
         return
       }
-      const msg = openPlain(peer.session, body)
+      let msg: E2ePlain
+      try {
+        msg = openPlain(peer.session, body)
+      } catch (err) {
+        if (this.rehello(from, peer, body)) return
+        throw err
+      }
       this.dispatchPlain(from, msg)
     } catch (err) {
       this.opts.onEvent({ t: 'error', code: 'e2e', message: (err as Error).message })
     }
   }
 
-  private acceptHello(from: string, peer: Peer, body: string): void {
-    const msg = openPlain(peer.boot, body)
+  /** 手机重开后会用新的引导密钥从零发 hs。电脑解不开旧会话时试一次，是 hs 就换新会话。 */
+  private rehello(from: string, peer: Peer, body: string): boolean {
+    if (this.opts.role !== 'desktop') return false
+    const boot = bootCipher(this.opts.x25519Secret, peer.staticPub)
+    let msg: E2ePlain
+    try {
+      msg = openPlain(boot, body)
+    } catch {
+      return false
+    }
+    if (msg.t !== 'hs') return false
+    peer.boot = boot
+    peer.session = null
+    this.acceptHello(from, peer, msg)
+    return true
+  }
+
+  private acceptHello(from: string, peer: Peer, msg: E2ePlain): void {
     if (msg.t !== 'hs') throw new Error('握手帧不是 hs')
     const peerEph = b64ToBytes(msg.eph)
     if (this.opts.role === 'desktop') {

@@ -40,6 +40,31 @@ function waitFor(events: Array<{ t: string }>, type: string): Promise<void> {
   })
 }
 
+function fakeStorage(): void {
+  const store = new Map<string, string>()
+  Object.defineProperty(globalThis, 'localStorage', {
+    configurable: true,
+    value: {
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => store.set(k, v),
+      removeItem: (k: string) => store.delete(k),
+      clear: () => store.clear(),
+      key: (i: number) => [...store.keys()][i] ?? null,
+      get length() {
+        return store.size
+      },
+    },
+  })
+}
+
+function stopPhone(phone: PhoneLink): void {
+  const raw = phone as unknown as { wantLink: boolean; retryTimer: ReturnType<typeof setTimeout> | null; sockId: number; ws?: { close: () => void } }
+  raw.wantLink = false
+  raw.sockId += 1
+  if (raw.retryTimer) clearTimeout(raw.retryTimer)
+  raw.ws?.close()
+}
+
 describe('端到端链路', () => {
   let relay: RunningRelay
   let dir: string
@@ -136,6 +161,125 @@ describe('端到端链路', () => {
     expect(note.what).toBe('note')
     expect(note.p?.title).toBe('小杰')
   })
+
+  async function pairUp(sign = randomEd25519(), box = randomX25519(), appSign = randomEd25519(), appBox = randomX25519()) {
+    const desk = await attach(relay.url, 'desktop', sign, box)
+    const app = await attach(relay.url, 'app', appSign, appBox)
+    sockets.push(desk, app)
+    await waitFor(desk.events, 'ready')
+    await waitFor(app.events, 'ready')
+    desk.link.pairOpen('测试电脑')
+    await waitFor(desk.events, 'pair-token')
+    const tok = desk.events.find((e) => e.t === 'pair-token') as unknown as { token: string }
+    app.link.setPeerKey(desk.link.id, desk.link.x25519Pub)
+    app.link.pairRequest(tok.token, '测试手机')
+    await waitFor(desk.events, 'pair-ask')
+    desk.link.setPeerKey(app.link.id, app.link.x25519Pub)
+    desk.link.pairConfirm(tok.token, true)
+    await waitFor(app.events, 'pair-result')
+    await app.link.hello(desk.link.id)
+    return { desk, app }
+  }
+
+  function echo(link: RelayLink, events: Array<{ t: string }>): void {
+    const prev = events.push.bind(events)
+    events.push = (ev) => {
+      const n = prev(ev)
+      if (ev.t === 'req') {
+        const req = ev as unknown as { from: string; id: string; p?: unknown }
+        link.respond(req.from, req.id, true, { echoed: req.p })
+      }
+      return n
+    }
+  }
+
+  it('电脑一口气推几十帧也不会被中转站限流丢帧，后续回应照样解得开', async () => {
+    dir = mkdtempSync(path.join(os.tmpdir(), 'jeff-link-'))
+    relay = await startRelay({ dataFile: path.join(dir, 'relay.db'), port: 0 })
+    const { desk, app } = await pairUp()
+    echo(desk.link, desk.events)
+    for (let i = 0; i < 61; i++) desk.link.sendPlain(app.link.id, { t: 'push', what: 'data-changed', p: { i } })
+    const r = await app.link.request(desk.link.id, 'chat:history', { agentId: 'x' })
+    expect(r).toEqual({ echoed: { agentId: 'x' } })
+    expect(app.events.filter((e) => e.t === 'push')).toHaveLength(61)
+    expect(desk.events.filter((e) => e.t === 'error')).toEqual([])
+    expect(app.events.filter((e) => e.t === 'error')).toEqual([])
+  }, 15_000)
+
+  it('手机重开后重新握手，电脑放弃旧会话密钥', async () => {
+    dir = mkdtempSync(path.join(os.tmpdir(), 'jeff-link-'))
+    relay = await startRelay({ dataFile: path.join(dir, 'relay.db'), port: 0 })
+    const appSign = randomEd25519()
+    const appBox = randomX25519()
+    const { desk, app } = await pairUp(randomEd25519(), randomX25519(), appSign, appBox)
+    echo(desk.link, desk.events)
+    await app.link.request(desk.link.id, 'agents:list')
+    app.close()
+    const reborn = await attach(relay.url, 'app', appSign, appBox)
+    sockets.push(reborn)
+    await waitFor(reborn.events, 'ready')
+    reborn.link.setPeerKey(desk.link.id, desk.link.x25519Pub)
+    await reborn.link.hello(desk.link.id)
+    const r = await reborn.link.request(desk.link.id, 'agents:list', { again: true })
+    expect(r).toEqual({ echoed: { again: true } })
+  }, 15_000)
+
+  it('电脑重启后手机收到上线通知就重新握手', async () => {
+    dir = mkdtempSync(path.join(os.tmpdir(), 'jeff-link-'))
+    relay = await startRelay({ dataFile: path.join(dir, 'relay.db'), port: 0 })
+    const sign = randomEd25519()
+    const box = randomX25519()
+    const { desk, app } = await pairUp(sign, box)
+    echo(desk.link, desk.events)
+    await app.link.request(desk.link.id, 'agents:list')
+    desk.close()
+    const desk2 = await attach(relay.url, 'desktop', sign, box)
+    sockets.push(desk2)
+    echo(desk2.link, desk2.events)
+    await waitFor(desk2.events, 'ready')
+    expect(app.link.resetPeer(desk.link.id)).toBe(true)
+    await app.link.hello(desk.link.id)
+    const r = await app.link.request(desk.link.id, 'agents:list', { after: 'restart' })
+    expect(r).toEqual({ echoed: { after: 'restart' } })
+  }, 15_000)
+
+  it('手机页面的 PhoneLink：电脑重启后不用重开 App 也能继续调用', async () => {
+    fakeStorage()
+    dir = mkdtempSync(path.join(os.tmpdir(), 'jeff-link-'))
+    relay = await startRelay({ dataFile: path.join(dir, 'relay.db'), port: 0 })
+    const sign = randomEd25519()
+    const box = randomX25519()
+    const desk = await attach(relay.url, 'desktop', sign, box)
+    sockets.push(desk)
+    await waitFor(desk.events, 'ready')
+    echo(desk.link, desk.events)
+    const prev = desk.events.push.bind(desk.events)
+    desk.events.push = (ev) => {
+      const n = prev(ev)
+      if (ev.t === 'pair-ask') {
+        const ask = ev as unknown as { token: string; appId: string; x25519Pub: string }
+        desk.link.setPeerKey(ask.appId, ask.x25519Pub)
+        desk.link.pairConfirm(ask.token, true)
+      }
+      return n
+    }
+    desk.link.pairOpen('测试电脑')
+    await waitFor(desk.events, 'pair-token')
+    const tok = desk.events.find((e) => e.t === 'pair-token') as unknown as { token: string }
+    const phone = new PhoneLink()
+    try {
+      await phone.pair(encodePairingQr({ relay: relay.url, certSha256: 'TEST', desktopId: desk.link.id, desktopName: '测试电脑', desktopX25519Pub: desk.link.x25519Pub, token: tok.token }), '测试手机')
+      expect(await phone.invoke('agents:list', { n: 1 })).toEqual({ echoed: { n: 1 } })
+      desk.close()
+      const desk2 = await attach(relay.url, 'desktop', sign, box)
+      sockets.push(desk2)
+      echo(desk2.link, desk2.events)
+      await waitFor(desk2.events, 'secure')
+      expect(await phone.invoke('agents:list', { n: 2 })).toEqual({ echoed: { n: 2 } })
+    } finally {
+      stopPhone(phone)
+    }
+  }, 20_000)
 
   it('手机连接断开后会自己重连', async () => {
     const store = new Map<string, string>()
