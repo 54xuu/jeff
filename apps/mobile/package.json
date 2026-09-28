@@ -1,6 +1,6 @@
 {
   "name": "@jeff/mobile",
-  "version": "1.8.30",
+  "version": "1.9.0",
   "private": true,
   "type": "module",
   "scripts": {

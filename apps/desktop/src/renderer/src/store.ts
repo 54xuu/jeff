@@ -9,7 +9,7 @@ import type { ComposerSeed } from './components/composerState'
 
 export type Tab = 'chats' | 'contacts' | 'schedules' | 'plugins' | 'settings'
 export type ActiveChat = { kind: 'agent'; id: string } | { kind: 'group'; id: string } | null
-export type SettingsSection = 'providers' | 'mcp' | 'memory' | 'engine' | 'sync' | 'notification' | 'appearance' | 'about'
+export type SettingsSection = 'providers' | 'mcp' | 'memory' | 'engine' | 'sync' | 'notification' | 'appearance' | 'remote' | 'about'
 
 /** 插件快捷指令（`/` 菜单条目） */
 export interface SlashCommand {
@@ -77,7 +77,7 @@ interface JeffState {
   /** 三栏布局（会话列表 / 内置浏览器）的显隐与宽度偏好 */
   layout: PaneLayout
   setTab: (t: Tab) => void
-  setActive: (a: ActiveChat) => void
+  setActive: (a: ActiveChat, opts?: { echo?: boolean }) => void
   setSettingsSection: (s: SettingsSection) => void
   setBrowser: (patch: Partial<BrowserUiState>) => void
   /** 改内置浏览器视口分辨率（人机共用入口：工具栏菜单与 jeff_browser_set_viewport 都走它） */
@@ -278,9 +278,10 @@ export const useStore = create<JeffState>((set, get) => ({
   composerSeed: null,
 
   setTab: (tab) => set({ tab }),
-  setActive: (active) => {
+  setActive: (active, opts) => {
     set({ active })
     if (active) get().clearUnread(active.kind === 'agent' ? `agent:${active.id}` : `group:${active.id}`)
+    if (opts?.echo !== false && active) void api.invoke(IPC.remoteFocus, { kind: active.kind, id: active.id }).catch(() => {})
   },
   setSettingsSection: (settingsSection) => set({ settingsSection }),
   setBrowser: (patch) => set((s) => ({ browser: { ...s.browser, ...patch } })),
@@ -604,6 +605,20 @@ export const useStore = create<JeffState>((set, get) => ({
         get().markUnread(`group:${projectId}`)
       }
       void get().refreshProjects()
+    } else if (what === 'remote-nav') {
+      const p = (payload || {}) as { kind?: 'agent' | 'group'; id?: string }
+      const kind = p.kind
+      const id = p.id
+      if ((kind === 'agent' || kind === 'group') && id) {
+        void (async () => {
+          if (kind === 'group') await get().refreshProjects()
+          else await get().refreshAgents()
+          get().setActive({ kind, id }, { echo: false })
+          set({ tab: 'chats' })
+          if (kind === 'agent') await get().loadHistory(`agent:${id}`)
+          else await get().loadGroupHistory(id)
+        })()
+      }
     } else if (what === 'agents') {
       void get().refreshAgents()
     } else if (what === 'plugins') {

@@ -13,7 +13,8 @@ import type {
   AppInfo,
   FileNode,
 } from '@jeff/core'
-import { IPC, XIAOJIE_ID, agentRepo, projectRepo, projectAgentRepo, taskRepo, taskCardMessage, APP_VERSION, PrivateChatStoppedError, resolveSendText, resolveScreenshotScale, type ThinkingTier, type ChatPluginInvoke } from '@jeff/core'
+import { IPC, XIAOJIE_ID, agentRepo, projectRepo, projectAgentRepo, taskRepo, taskCardMessage, APP_VERSION, PrivateChatStoppedError, resolveSendText, resolveScreenshotScale, type ThinkingTier, type ChatPluginInvoke, type RemoteStatus } from '@jeff/core'
+import { listDirs, makeDir } from '../../../../packages/core/src/remote/dirs.js'
 import type { MemoryScopeInfo } from '@jeff/core'
 import type { JeffCore, TaskRow } from '@jeff/core'
 import { getMainWindow, getSidecarLogs, showDesktopNotification, setBrowserResult, setBrowserState } from './index.js'
@@ -29,7 +30,7 @@ function pngDimensions(buf: Buffer): { width: number; height: number } {
 /**
  * 注册全部 IPC handler：渲染进程 invoke('jeff:<channel>') → core 调用。
  */
-export function registerIpc(core: JeffCore): void {
+export function registerIpc(core: JeffCore): Record<string, Handler> {
   const handlers: Record<string, Handler> = {
     [IPC.appInfo]: async (): Promise<AppInfo> => ({
       version: app.getVersion(),
@@ -401,6 +402,31 @@ export function registerIpc(core: JeffCore): void {
       if (err) throw new Error(err)
       return { ok: true }
     },
+    [IPC.fsListDirs]: async (p) => {
+      const { dir } = (p || {}) as { dir?: string }
+      return listDirs(dir)
+    },
+    [IPC.fsMkdir]: async (p) => {
+      const { dir } = p as { dir: string }
+      if (!dir) throw new Error('缺少目录')
+      return { ok: true, dir: makeDir(dir) }
+    },
+    [IPC.remoteStatus]: async (): Promise<RemoteStatus> => ({
+      connected: false,
+      desktopId: '',
+      desktopName: '',
+      bound: null,
+      openAtLogin: false,
+      preventSleep: true,
+      pairing: null,
+    }),
+    [IPC.remotePairStart]: async () => {
+      throw new Error('远程控制还没启动')
+    },
+    [IPC.remotePairConfirm]: async () => ({ ok: true }),
+    [IPC.remoteUnbind]: async () => ({ ok: true }),
+    [IPC.remoteSettings]: async () => ({ ok: true }),
+    [IPC.remoteFocus]: async () => ({ ok: true }),
 
     // ---------- skills 备份/恢复 ----------
     [IPC.skillsBackupNow]: async () => core.skillsBackupNow(),
@@ -676,8 +702,12 @@ export function registerIpc(core: JeffCore): void {
     },
   }
 
-  for (const [channel, handler] of Object.entries(handlers)) {
-    ipcMain.handle(`jeff:${channel}`, (_evt, payload) => handler(payload))
+  for (const channel of Object.keys(handlers)) {
+    ipcMain.handle(`jeff:${channel}`, (_evt, payload) => {
+      const handler = handlers[channel]
+      if (!handler) throw new Error(`未注册通道 ${channel}`)
+      return handler(payload)
+    })
   }
 
   // 冒烟钩子（JEFF_SMOKE=1）：渲染层逐视图驱动截图后退出
@@ -702,10 +732,10 @@ export function registerIpc(core: JeffCore): void {
       return { ok: true }
     }
     for (const channel of [IPC.smokeShot, IPC.smokeDone]) {
-      const handler = handlers[channel]
-      ipcMain.handle(`jeff:${channel}`, (_evt, payload) => handler(payload))
+      ipcMain.handle(`jeff:${channel}`, (_evt, payload) => handlers[channel](payload))
     }
   }
+  return handlers
 }
 
 export function toAgentInfo(row: import('@jeff/core').AgentRow): AgentInfo {

@@ -7,6 +7,7 @@ import SyncSettings from './SyncSettings'
 import NotificationSettings from './NotificationSettings'
 import AppearanceSettings from './AppearanceSettings'
 import AboutSettings from './AboutSettings'
+import RemoteSettings from './RemoteSettings'
 
 /** 设置页右侧内容区：按左侧导航选中的分组渲染 */
 export default function SettingsContent(): React.JSX.Element {
@@ -20,6 +21,7 @@ export default function SettingsContent(): React.JSX.Element {
       {settingsSection === 'sync' && <SyncSettings />}
       {settingsSection === 'notification' && <NotificationSettings />}
       {settingsSection === 'appearance' && <AppearanceSettings />}
+      {settingsSection === 'remote' && <RemoteSettings />}
       {settingsSection === 'about' && <AboutSettings />}
     </div>
   )

@@ -76,6 +76,17 @@ const SECTIONS: Array<{ id: SettingsSection; label: string; desc: string; icon: 
     ),
   },
   {
+    id: 'remote',
+    label: '远程控制',
+    desc: '绑定手机 / 保持开机',
+    icon: (
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        <rect x="7" y="2" width="10" height="20" rx="2" />
+        <path d="M11 18h2" />
+      </svg>
+    ),
+  },
+  {
     id: 'about',
     label: '关于',
     desc: '版本与数据目录',

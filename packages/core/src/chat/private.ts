@@ -172,6 +172,7 @@ export class PrivateChat {
     images?: Array<{ mime: string; dataUrl: string }>,
     _variant?: string,
   ): Promise<AssistantInfo> {
+    if (this.inFlight.has(agentId)) throw new Error('正在回复中')
     this.inFlight.add(agentId)
     try {
       return await this.doSend(agentId, agentName, text, images)

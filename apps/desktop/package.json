@@ -1,7 +1,7 @@
 {
   "name": "jeff-desktop",
   "productName": "Jeff",
-  "version": "1.8.30",
+  "version": "1.9.0",
   "private": true,
   "type": "module",
   "main": "out/main/index.js",
@@ -18,11 +18,15 @@
   },
   "dependencies": {
     "@jeff/core": "*",
+    "@types/qrcode": "^1.5.5",
+    "@types/ws": "^8.18.1",
     "emoji-picker-react": "^4.20.2",
     "mermaid": "^11.17.2",
+    "qrcode": "^1.5.4",
     "react-markdown": "^10.1.0",
     "rehype-highlight": "^7.0.2",
-    "remark-gfm": "^4.0.1"
+    "remark-gfm": "^4.0.1",
+    "ws": "^8.18.3"
   },
   "devDependencies": {
     "@playwright/test": "^1.63.0",

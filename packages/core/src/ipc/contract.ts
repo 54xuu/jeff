@@ -131,6 +131,14 @@ export const IPC = {
   fsListFiles: 'fs:listFiles',
   fsReadFile: 'fs:readFile',
   fsOpenPath: 'fs:openPath',
+  fsListDirs: 'fs:listDirs',
+  fsMkdir: 'fs:mkdir',
+  remoteStatus: 'remote:status',
+  remotePairStart: 'remote:pairStart',
+  remotePairConfirm: 'remote:pairConfirm',
+  remoteUnbind: 'remote:unbind',
+  remoteSettings: 'remote:settings',
+  remoteFocus: 'remote:focus',
   // 冒烟钩子（仅 JEFF_SMOKE=1 时注册）
   smokeShot: 'smoke:shot',
   smokeDone: 'smoke:done',
@@ -373,6 +381,37 @@ export interface SkillsRestoreApply {
 }
 
 /** 工作空间文件树节点（fsListFiles 返回；目录在前、按名排序） */
+export interface FsDirEntry {
+  name: string
+  path: string
+}
+
+export interface RemoteBoundPhone {
+  appId: string
+  appName: string
+  appX25519: string
+}
+
+export interface RemoteStatus {
+  connected: boolean
+  desktopId: string
+  desktopName: string
+  bound: RemoteBoundPhone | null
+  openAtLogin: boolean
+  preventSleep: boolean
+  pairing: { token: string; expiresAt: number; payload: string } | null
+  lastError?: string
+}
+
+export interface RemotePairAsk {
+  token: string
+  appId: string
+  appName: string
+  safety: string
+  /** 这台电脑已经绑过别的手机 */
+  replace: boolean
+}
+
 export interface FileNode {
   name: string
   /** 相对列出目录的路径（POSIX 风格 / 分隔） */
@@ -623,6 +662,14 @@ export type InvokeMap = {
   [IPC.fsListFiles]: { dir: string }
   [IPC.fsReadFile]: { file: string }
   [IPC.fsOpenPath]: { target: string; reveal?: boolean }
+  [IPC.fsListDirs]: { dir?: string }
+  [IPC.fsMkdir]: { dir: string }
+  [IPC.remoteStatus]: void
+  [IPC.remotePairStart]: void
+  [IPC.remotePairConfirm]: { token: string; accept: boolean; replace?: boolean }
+  [IPC.remoteUnbind]: void
+  [IPC.remoteSettings]: { openAtLogin?: boolean; preventSleep?: boolean; desktopName?: string }
+  [IPC.remoteFocus]: { kind: 'agent' | 'group'; id: string }
   // 定时任务
   [IPC.cronList]: void
   [IPC.cronSave]: {

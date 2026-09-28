@@ -135,3 +135,41 @@ export function decodeServerFrame(raw: string): ServerFrame {
 export function encodeFrame(frame: ClientFrame | ServerFrame): string {
   return JSON.stringify(frame)
 }
+
+/** 电脑上二维码的内容。App 扫到后按这里的地址连，并校验证书指纹。 */
+export interface PairingQr {
+  relay: string
+  certSha256: string
+  desktopId: string
+  desktopName: string
+  desktopX25519Pub: string
+  token: string
+}
+
+export function encodePairingQr(q: PairingQr): string {
+  return JSON.stringify(q)
+}
+
+export function decodePairingQr(raw: string): PairingQr {
+  let v: unknown
+  try {
+    v = JSON.parse(raw)
+  } catch {
+    throw new Error('二维码不是 JSON')
+  }
+  if (!v || typeof v !== 'object') throw new Error('二维码内容不对')
+  const o = v as Record<string, unknown>
+  const need = (k: string) => {
+    const s = o[k]
+    if (typeof s !== 'string' || !s) throw new Error(`二维码缺少 ${k}`)
+    return s
+  }
+  return {
+    relay: need('relay'),
+    certSha256: need('certSha256'),
+    desktopId: need('desktopId'),
+    desktopName: need('desktopName'),
+    desktopX25519Pub: need('desktopX25519Pub'),
+    token: need('token'),
+  }
+}

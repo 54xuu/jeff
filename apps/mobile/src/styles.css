@@ -1,66 +1,84 @@
 :root {
-  color-scheme: light;
+  color-scheme: light dark;
+  --bg: #ededed;
+  --card: #fff;
+  --text: #111;
+  --sub: #888;
+  --brand: #07c160;
+  --me: #95ec69;
+  --line: #e5e5e5;
   font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Noto Sans SC", "Microsoft YaHei", sans-serif;
-  background: #ededed;
-  color: #111;
 }
-
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #111;
+    --card: #1c1c1c;
+    --text: #f2f2f2;
+    --sub: #9a9a9a;
+    --me: #3eb575;
+    --line: #2a2a2a;
+  }
+}
 * { box-sizing: border-box; }
-
-body {
-  margin: 0;
-}
-
-header {
+body { margin: 0; background: var(--bg); color: var(--text); }
+button, input, textarea { font: inherit; color: inherit; }
+.shell { height: 100dvh; display: flex; flex-direction: column; }
+.bar {
   height: 48px;
   display: flex;
   align-items: center;
-  justify-content: center;
-  background: #ededed;
-  font-size: 17px;
-  font-weight: 600;
-}
-
-section {
-  margin: 12px;
-  padding: 20px 16px;
-  background: #fff;
-  border-radius: 8px;
-}
-
-h1 {
-  margin: 0 0 8px;
-  font-size: 22px;
-  font-weight: 600;
-}
-
-p {
-  margin: 0 0 16px;
-  color: #888;
-  font-size: 14px;
-  line-height: 1.5;
-}
-
-ul {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-
-li {
-  display: flex;
   justify-content: space-between;
-  align-items: center;
-  min-height: 48px;
-  border-top: 1px solid #f0f0f0;
-  font-size: 16px;
+  padding: 0 12px;
+  background: var(--bg);
+  font-weight: 600;
 }
-
-b {
-  font-weight: 500;
-  color: #fa5151;
+.bar-title { background: none; border: 0; display: flex; gap: 8px; align-items: center; font-weight: 600; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--brand); display: inline-block; }
+.dot.off { background: #c4c4c4; }
+.banner, .hint, .err, .path { margin: 0; padding: 8px 12px; color: var(--sub); font-size: 13px; }
+.err { color: #fa5151; }
+.msgs { list-style: none; margin: 0; padding: 0; flex: 1; }
+.msgs li button, .dirs li button {
+  width: 100%;
+  text-align: left;
+  background: var(--card);
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  padding: 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
-
-b[data-ok="true"] {
-  color: #07c160;
+.msgs span, .bubble small { color: var(--sub); font-size: 12px; }
+.pair, .me, .lock { padding: 24px 16px; display: flex; flex-direction: column; gap: 12px; }
+.pair textarea { min-height: 96px; border: 1px solid var(--line); border-radius: 8px; padding: 8px; background: var(--card); }
+.pair button, .me button, .lock button, .composer button, .plus button, .dirs form button {
+  background: var(--brand);
+  color: #fff;
+  border: 0;
+  border-radius: 6px;
+  padding: 10px 14px;
 }
+.chat { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.bubbles { flex: 1; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+.bubble { max-width: 78%; background: var(--card); border-radius: 8px; padding: 8px 10px; }
+.bubble.me { align-self: flex-end; background: var(--me); }
+.bubble p { margin: 0; white-space: pre-wrap; word-break: break-word; }
+.bubble img { max-width: 100%; border-radius: 6px; display: block; margin-top: 6px; }
+.composer { display: flex; gap: 8px; padding: 8px; background: var(--card); }
+.composer input { flex: 1; border: 0; background: var(--bg); border-radius: 6px; padding: 8px; }
+.plus { padding: 8px 12px; background: var(--card); border-top: 1px solid var(--line); }
+.file input { display: none; }
+.tabs {
+  display: flex;
+  margin-top: auto;
+  border-top: 1px solid var(--line);
+  background: var(--card);
+}
+.tabs button { flex: 1; border: 0; background: transparent; padding: 12px; }
+.tabs button.on { color: var(--brand); }
+.lock { min-height: 100dvh; align-items: center; justify-content: center; }
+.dirs ul { list-style: none; margin: 0; padding: 0; }
+.dirs li { display: flex; background: var(--card); border-bottom: 1px solid var(--line); }
+.dirs li button { background: transparent; color: var(--text); }
+.empty { padding: 24px; color: var(--sub); }

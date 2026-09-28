@@ -15,10 +15,16 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(JeffSpikePlugin.class);
         super.onCreate(savedInstanceState);
         if (Build.VERSION.SDK_INT >= 33) {
-            requestPermissions(new String[] {"android.permission.POST_NOTIFICATIONS"}, 1);
+            requestPermissions(new String[] {"android.permission.POST_NOTIFICATIONS", "android.permission.CAMERA"}, 1);
         }
         ContextCompat.startForegroundService(this, new Intent(this, RelayForegroundService.class));
         askBatteryExemption();
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
     }
 
     /** 国产 ROM 会杀掉后台。这里弹出系统的电池优化豁免，用户点允许后前台服务才稳。 */

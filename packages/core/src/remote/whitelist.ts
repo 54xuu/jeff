@@ -16,6 +16,12 @@ const DENY: Record<string, string> = {
   [IPC.browserPageShot]: '截图走电脑上的 webview，手机不能直接调',
   [IPC.smokeShot]: '冒烟钩子',
   [IPC.smokeDone]: '冒烟钩子',
+  [IPC.remoteStatus]: '远程控制设置只在电脑上操作',
+  [IPC.remotePairStart]: '配对由电脑发起',
+  [IPC.remotePairConfirm]: '确认绑定只在电脑上点',
+  [IPC.remoteUnbind]: '这条是电脑设置页用的，手机解绑走中转站自己的帧',
+  [IPC.remoteSettings]: '开机自启和防睡眠只在电脑上改',
+  [IPC.remoteFocus]: '桌面端把当前会话推给手机，不接受手机回调这一条',
 }
 
 const REPLACE: Record<string, string> = {

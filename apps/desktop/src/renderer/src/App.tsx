@@ -16,6 +16,7 @@ import { useViewportWidth } from './layout/useViewportWidth'
 import { emitConsoleEntry, registerBrowserOpener, runBrowserAction } from './browserHost'
 import SettingsNav from './components/settings/SettingsNav'
 import SettingsContent from './components/settings/SettingsContent'
+import RemotePairDialog from './components/settings/RemotePairDialog'
 import MarkdownPreviewModal, { PreviewNotice } from './components/preview/MarkdownPreviewModal'
 import type { SettingsSection } from './store'
 
@@ -172,6 +173,7 @@ export default function App(): React.JSX.Element {
       {/* 全局公共 Markdown 预览器（任意处调用）+ 轻提示 */}
       <MarkdownPreviewModal />
       <PreviewNotice />
+      <RemotePairDialog />
     </div>
   )
 }

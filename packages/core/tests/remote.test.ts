@@ -4,10 +4,13 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { IPC } from '../src/ipc/contract.js'
 import { bytesToHex, utf8Decode } from '../src/remote/bytes.js'
+import os from 'node:os'
 import {
   FIXTURE_PRIV,
   REMOTE_POLICY,
   RemoteCipher,
+  applyRemoteStream,
+  createChatStreamGate,
   createStreamCoalescer,
   decodeClientFrame,
   decodeServerFrame,
@@ -18,6 +21,7 @@ import {
   safetyCode,
   streamDelta,
 } from '../src/remote/index.js'
+import { listDirs, makeDir } from '../src/remote/dirs.js'
 
 describe('远程加密', () => {
   const fixturePath = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures/remote-crypto-vectors.json')
@@ -42,6 +46,23 @@ describe('远程加密', () => {
     expect(utf8Decode(box.open(0, hexToBytes(fixture.ciphertext0)))).toBe(fixture.plaintext)
     expect(utf8Decode(box.open(1, hexToBytes(fixture.ciphertext1)))).toBe(fixture.plaintext)
     expect(() => box.open(1, hexToBytes(fixture.ciphertext1))).toThrow(/序号不符/)
+  })
+
+  it('原生层解开后，JS 只前进接收序号', () => {
+    const alicePub = hexToBytes(fixture.aliceStaticPub)
+    const aliceEph = hexToBytes(fixture.aliceEphPub)
+    const bob = handshake({
+      myStaticPriv: FIXTURE_PRIV.bobStatic,
+      myEphPriv: FIXTURE_PRIV.bobEph,
+      peerStaticPub: alicePub,
+      peerEphPub: aliceEph,
+    })
+    const box = new RemoteCipher(bob.sendKey, bob.recvKey)
+    expect(box.snapshotRecv()).toMatchObject({ recvN: 0 })
+    box.acceptRecv(0)
+    expect(box.snapshotRecv().recvN).toBe(1)
+    expect(() => box.acceptRecv(0)).toThrow(/序号不符/)
+    expect(utf8Decode(box.open(1, hexToBytes(fixture.ciphertext1)))).toBe(fixture.plaintext)
   })
 
   it('安全码与公钥顺序无关', () => {
@@ -75,7 +96,21 @@ describe('远程白名单', () => {
         .map(([k]) => k)
         .sort()
     expect(of('deny')).toEqual(
-      ['browser:pageShot', 'browser:result', 'browser:state', 'debugLog:openDir', 'notify:desktop', 'smoke:done', 'smoke:shot'].sort(),
+      [
+        'browser:pageShot',
+        'browser:result',
+        'browser:state',
+        'debugLog:openDir',
+        'notify:desktop',
+        'remote:focus',
+        'remote:pairConfirm',
+        'remote:pairStart',
+        'remote:settings',
+        'remote:status',
+        'remote:unbind',
+        'smoke:done',
+        'smoke:shot',
+      ].sort(),
     )
     expect(of('replace')).toEqual(['dialog:pickDir', 'fs:openPath', 'plugin:import'].sort())
   })
@@ -85,6 +120,38 @@ describe('流式增量', () => {
   it('延伸文本只取增量，中途被替换则重置', () => {
     expect(streamDelta('你好', '你好世界')).toEqual({ reset: false, delta: '世界' })
     expect(streamDelta('你好世界', '你好')).toEqual({ reset: true, delta: '你好' })
+  })
+
+  it('累计全文收成增量，结束帧带长度', () => {
+    let t = 0
+    const gate = createChatStreamGate(180, () => t)
+    const base = { kind: 'private' as const, agentId: 'a', messageId: 'm', tools: undefined, done: false }
+    expect(gate.push({ ...base, text: '你', reasoning: '' })).toMatchObject({ textDelta: '你', textLen: 1, done: false })
+    t = 20
+    expect(gate.push({ ...base, text: '你好', reasoning: '' })).toBeNull()
+    t = 200
+    const mid = gate.push({ ...base, text: '你好世界', reasoning: '想' })
+    expect(mid).toMatchObject({ reset: false, textDelta: '好世界', reasoningDelta: '想', textLen: 4, done: false })
+    const acc = applyRemoteStream({ text: '你', reasoning: '' }, mid!)
+    expect(acc).toEqual({ text: '你好世界', reasoning: '想', ok: true })
+    const done = gate.push({ ...base, text: '', reasoning: '', done: true })
+    expect(done).toMatchObject({ textDelta: '', textLen: 4, reasoningLen: 1, done: true })
+  })
+
+  it('目录列表只含子目录，新建文件夹落在父目录下', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'jeff-dirs-'))
+    try {
+      fs.mkdirSync(path.join(root, 'box'))
+      fs.writeFileSync(path.join(root, 'note.txt'), 'x')
+      fs.mkdirSync(path.join(root, '.hidden'))
+      const listed = listDirs(root)
+      expect(listed.entries.map((e) => e.name)).toEqual(['box'])
+      const created = makeDir(path.join(root, 'box', 'inner'))
+      expect(fs.statSync(created).isDirectory()).toBe(true)
+      expect(() => makeDir(path.join(root, 'missing', 'nope'))).toThrow(/上级目录不存在/)
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true })
+    }
   })
 
   it('未到间隔先攒着，force 立刻吐出', () => {

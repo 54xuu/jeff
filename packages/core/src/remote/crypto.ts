@@ -2,7 +2,7 @@ import { gcm } from '@noble/ciphers/aes'
 import { ed25519, x25519 } from '@noble/curves/ed25519'
 import { hkdf } from '@noble/hashes/hkdf'
 import { sha256 } from '@noble/hashes/sha2'
-import { bytesToHex, compareBytes, concatBytes, hexToBytes, nonceFor, utf8, utf8Decode } from './bytes.js'
+import { bytesToB64, bytesToHex, compareBytes, concatBytes, hexToBytes, nonceFor, utf8, utf8Decode } from './bytes.js'
 
 const E2E_LABEL = 'jeff-remote-e2e-v1'
 const SALT = utf8(E2E_LABEL)
@@ -19,9 +19,17 @@ export function randomEd25519(): { secretKey: Uint8Array; publicKey: Uint8Array 
   return { secretKey, publicKey: ed25519.getPublicKey(secretKey) }
 }
 
+export function ed25519PublicKey(secretKey: Uint8Array): Uint8Array {
+  return ed25519.getPublicKey(secretKey)
+}
+
 export function randomX25519(): { secretKey: Uint8Array; publicKey: Uint8Array } {
   const secretKey = x25519.utils.randomPrivateKey()
   return { secretKey, publicKey: x25519.getPublicKey(secretKey) }
+}
+
+export function x25519PublicKey(secretKey: Uint8Array): Uint8Array {
+  return x25519.getPublicKey(secretKey)
 }
 
 /** 中转站 challenge 的签名原文。签名覆盖公钥本身，防止把别人的公钥拿来注册。 */
@@ -120,6 +128,33 @@ export class RemoteCipher {
     this.recvN += 1
     return plain
   }
+
+  /** 交给原生层解密后，JS 只前进接收序号，避免两边各解一次。 */
+  acceptRecv(n: number): void {
+    if (n !== this.recvN) throw new Error(`序号不符：期望 ${this.recvN}，收到 ${n}`)
+    this.recvN += 1
+  }
+
+  snapshotRecv(): { recvKey: string; recvN: number } {
+    return { recvKey: bytesToB64(this.recvKey), recvN: this.recvN }
+  }
+}
+
+const BOOT_LABEL = 'jeff-remote-boot-v1'
+
+/**
+ * 临时公钥交换之前，用双方长期 X25519 算出一把引导密钥。
+ * 中转站看得到长期公钥，但没有私钥，读不了也改不了这层密文。
+ */
+export function bootCipher(myStaticPriv: Uint8Array, peerStaticPub: Uint8Array): RemoteCipher {
+  const myPub = x25519.getPublicKey(myStaticPriv)
+  const ss = x25519.getSharedSecret(myStaticPriv, peerStaticPub)
+  const lowIsMe = compareBytes(myPub, peerStaticPub) < 0
+  const info = concatBytes(utf8(`${BOOT_LABEL}|`), lowIsMe ? myPub : peerStaticPub, lowIsMe ? peerStaticPub : myPub)
+  const okm = hkdf(sha256, ss, utf8(BOOT_LABEL), info, 64)
+  const lowToHigh = okm.subarray(0, 32)
+  const highToLow = okm.subarray(32, 64)
+  return new RemoteCipher(lowIsMe ? lowToHigh : highToLow, lowIsMe ? highToLow : lowToHigh)
 }
 
 /** 两边公钥派生的 6 位安全码，配对时人眼核对。顺序无关。 */
@@ -192,4 +227,4 @@ export function referenceFixture(): CryptoFixture {
   }
 }
 
-export { bytesToB64, bytesToHex, hexToBytes } from './bytes.js'
+export { b64ToBytes, bytesToB64, bytesToHex, hexToBytes } from './bytes.js'

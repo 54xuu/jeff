@@ -10,6 +10,7 @@ export default defineConfig({
   resolve: {
     alias: {
       '@jeff/core/remote': path.resolve(root, '../../packages/core/src/remote/index.ts'),
+      '@jeff/core': path.resolve(root, '../../packages/core/src/browser.ts'),
     },
   },
   server: {

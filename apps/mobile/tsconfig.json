@@ -9,7 +9,12 @@
     "noEmit": true,
     "resolveJsonModule": true,
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
-    "types": ["vite/client"]
+    "types": ["vite/client"],
+    "baseUrl": ".",
+    "paths": {
+      "@jeff/core": ["../../packages/core/src/browser.ts"],
+      "@jeff/core/remote": ["../../packages/core/src/remote/index.ts"]
+    }
   },
   "include": ["src"]
 }

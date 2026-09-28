@@ -17,5 +17,6 @@ export default defineConfig({
     { name: 'v18', testMatch: /v18\.spec\.ts/ },
     { name: 'cron', testMatch: /cron\.spec\.ts/ },
     { name: 'live', testMatch: /live\.spec\.ts/ },
+    { name: 'remote', testMatch: /remote\.spec\.ts/ },
   ],
 })

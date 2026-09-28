@@ -39,6 +39,8 @@ object CryptoSelfTest {
         val c1 = seal(hs.sendKey, 1, plain)
         checkHex("ciphertext0", c0, fx)
         checkHex("ciphertext1", c1, fx)
+        val back = NoteWatch.open(hs.sendKey, 0, c0)
+        if (!back.contentEquals(plain)) error("ciphertext0 解不开")
         return "通过"
     }
 

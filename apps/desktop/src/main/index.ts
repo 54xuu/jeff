@@ -6,6 +6,7 @@ import path from 'node:path'
 import { JeffCore, BridgeBrowserControl, osNotificationInit, visualNotifyChannel } from '@jeff/core'
 import type { BrowserResult, BrowserState } from '@jeff/core'
 import { registerIpc } from './ipc.js'
+import { startRemoteGateway, type RemoteGateway } from './remote/gateway.js'
 import { destroyWindowsBalloon, showWindowsBalloon } from './win-balloon.js'
 
 // Windows 下 Toast 通知必须带 AppUserModelID，否则静默丢弃；取值需与 electron-builder 的 appId、
@@ -14,6 +15,7 @@ if (process.platform === 'win32') app.setAppUserModelId('com.jeffxuu.jeff')
 
 let win: BrowserWindow | null = null
 let core: JeffCore | null = null
+let remote: RemoteGateway | null = null
 let tray: Tray | null = null
 
 /**
@@ -139,7 +141,8 @@ if (!gotLock) {
     core.on('sidecar-log', (line: string) => pushSidecarLog(line))
     // 内置浏览器：把主进程实现注入 core（工具调用 → 渲染层 webview）
     core.browser = browserControl
-    registerIpc(core)
+    const handlers = registerIpc(core)
+    remote = startRemoteGateway({ core, handlers, broadcast: (what, payload) => broadcast(what, payload) })
     // 内置浏览器的资源加载失败（图片/脚本/接口 404 等）只有主进程看得到，补进控制台采集
     watchBrowserResourceErrors()
 
@@ -154,13 +157,42 @@ if (!gotLock) {
 
   app.on('window-all-closed', async () => {
     destroyWindowsBalloon()
+    remote?.stop()
+    remote = null
     if (core) await core.dispose().catch(() => {})
     if (process.platform !== 'darwin') app.quit()
   })
   app.on('before-quit', () => {
+    remote?.stop()
+    remote = null
     globalShortcut.unregisterAll()
     destroyWindowsBalloon()
+    // 中转站重连或 sidecar 停不干净时，quit 会停在事件循环里。先清掉子进程，stdio 才能关掉。
+    setTimeout(() => {
+      killDescendants(process.pid)
+      app.exit(0)
+    }, 2500).unref()
   })
+}
+
+/** 退出时清掉 zygote / sidecar，避免父进程被杀掉后 stdio 还被子进程占着。 */
+function killDescendants(pid: number): void {
+  let raw = ''
+  try {
+    raw = fs.readFileSync(`/proc/${pid}/task/${pid}/children`, 'utf8')
+  } catch {
+    return
+  }
+  for (const part of raw.trim().split(/\s+/)) {
+    const child = Number(part)
+    if (!child) continue
+    killDescendants(child)
+    try {
+      process.kill(child, 'SIGKILL')
+    } catch {
+      /* 已经退出 */
+    }
+  }
 }
 
 /** 菜单动作 → 渲染层（新会话/发起群聊/设置/主题/使用说明） */

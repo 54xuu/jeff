@@ -47,6 +47,22 @@ describe('PrivateChat.send 模型归属', () => {
     expect(sent[0].variant).toBe('high')
   })
 
+  it('同一智能体已有回复在途时，后一次发送直接拒绝', async () => {
+    const a = agentRepo(db).create({ name: '忙' })
+    let release!: () => void
+    const gate = new Promise<void>((r) => (release = r))
+    const oc = {
+      getSession: async () => ({ id: 'x' }),
+      createSession: async () => ({ id: 'ses_busy' }),
+      sendMessage: () => gate.then(() => ({ id: 'msg', parts: [{ type: 'text', text: 'ok' }] })),
+    } as unknown as OcClient
+    const chat = new PrivateChat(db, () => oc)
+    const first = chat.send(a.id, a.name, '先说')
+    await expect(chat.send(a.id, a.name, '再说')).rejects.toThrow(/正在回复中/)
+    release()
+    await first
+  })
+
   it('sendMessage 显式传入 DEFAULT_SEND_TIMEOUT_MS（覆盖渲染视频等长阻塞工具）', async () => {
     const agents = agentRepo(db)
     const a = agents.create({ name: '宣经理' })

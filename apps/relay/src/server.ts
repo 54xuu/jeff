@@ -57,13 +57,30 @@ export function startRelay(opts: RelayListenOptions): Promise<RunningRelay> {
         url: `${scheme}://${host}:${actual}`,
         close: () =>
           new Promise((done) => {
+            let finished = false
+            const finish = () => {
+              if (finished) return
+              finished = true
+              try {
+                store.close()
+              } catch {
+                /* 已经关过 */
+              }
+              server.unref()
+              done()
+            }
+            const timer = setTimeout(() => {
+              for (const client of wss.clients) client.terminate()
+              server.closeAllConnections()
+              finish()
+            }, 1500)
             hub.stop()
             for (const client of wss.clients) client.close()
-            wss.close()
-            server.closeAllConnections()
-            server.close(() => {
-              store.close()
-              done()
+            wss.close(() => {
+              server.close(() => {
+                clearTimeout(timer)
+                finish()
+              })
             })
           }),
       })
