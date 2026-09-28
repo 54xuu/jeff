@@ -60,6 +60,45 @@ export function App() {
   const [activeId, setActiveId] = useState('')
   const [, bump] = useState(0)
 
+  const screenRef = useRef<Screen>('list')
+  screenRef.current = screen
+
+  const tabRef = useRef<Tab>('messages')
+  tabRef.current = tab
+
+  const plusRef = useRef(false)
+  plusRef.current = plus
+
+  const addingRef = useRef(false)
+  addingRef.current = adding
+
+  const handleBack = () => {
+    if (plusRef.current) {
+      setPlus(false)
+      return
+    }
+    if (screenRef.current === 'dirs') {
+      setScreen('chat')
+      return
+    }
+    if (screenRef.current === 'chat') {
+      setScreen('list')
+      return
+    }
+    if (tabRef.current === 'me') {
+      if (addingRef.current) {
+        setAdding(false)
+        return
+      }
+      setTab('messages')
+      return
+    }
+    // 已经在最外层主列表，返回则退到系统后台而不是强制关进程
+    if (Capacitor.isNativePlatform()) {
+      void Native.minimize()
+    }
+  }
+
   const refreshPeers = () => {
     setComputers(new Map(phone.desktops))
     setActiveId(phone.activeId)
@@ -115,17 +154,24 @@ export function App() {
     const onHide = () => sessionStorage.setItem('jeff-hidden-at', String(Date.now()))
     document.addEventListener('visibilitychange', onVis)
     let resumeHandle: { remove: () => Promise<void> } | null = null
+    let backHandle: { remove: () => Promise<void> } | null = null
     if (Capacitor.isNativePlatform()) {
       void Native.addListener('resume', () => {
         void openFromNote()
       }).then((handle) => {
         resumeHandle = handle
       })
+      void Native.addListener('back', () => {
+        handleBack()
+      }).then((handle) => {
+        backHandle = handle
+      })
     }
     return () => {
       off()
       document.removeEventListener('visibilitychange', onVis)
       void resumeHandle?.remove()
+      void backHandle?.remove()
     }
     // boot once
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -377,6 +423,7 @@ export function App() {
               <i className={!bound || offline ? 'dot off' : 'dot'} />
               {peer?.name || '未绑定电脑'}
             </button>
+            <span style={{ width: 48 }} />
           </header>
           {offline ? <p className="banner">电脑离线，以下是只读缓存{syncedAt ? `，最后同步于 ${new Date(syncedAt).toLocaleString()}` : ''}</p> : null}
           {!bound ? (
@@ -441,16 +488,16 @@ export function App() {
       {screen === 'chat' && target && (
         <section className="chat" data-testid="chat">
           <header className="bar">
-            <button type="button" data-testid="chat-back" onClick={() => setScreen('list')}>
-              返回
+            <button type="button" className="btn-nav-back" data-testid="chat-back" onClick={() => setScreen('list')}>
+              ‹ 返回
             </button>
             <b>{target.name}</b>
             {target.kind === 'group' ? (
-              <button type="button" data-testid="workspace" onClick={() => void openDirs()}>
+              <button type="button" className="btn-nav-action" data-testid="workspace" onClick={() => void openDirs()}>
                 工作空间
               </button>
             ) : (
-              <span />
+              <span style={{ width: 48 }} />
             )}
           </header>
           <div className="bubbles" data-testid="bubbles">
@@ -542,10 +589,11 @@ export function App() {
       {screen === 'dirs' && dirs && (
         <section className="dirs" data-testid="dir-picker">
           <header className="bar">
-            <button type="button" onClick={() => setScreen('chat')}>
-              返回
+            <button type="button" className="btn-nav-back" onClick={() => setScreen('chat')}>
+              ‹ 返回
             </button>
             <b>选择电脑上的目录</b>
+            <span style={{ width: 48 }} />
           </header>
           <p className="path">{dirs.dir || '从这里开始'}</p>
           <ul>
@@ -585,6 +633,7 @@ export function App() {
         <section className="me" data-testid="me">
           <header className="bar">
             <b>我</b>
+            <span style={{ width: 48 }} />
           </header>
           <ul className="msgs">
             {[...computers.values()].map((c) => (

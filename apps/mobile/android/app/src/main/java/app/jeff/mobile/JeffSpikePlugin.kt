@@ -87,7 +87,16 @@ class JeffSpikePlugin : Plugin() {
         call.resolve()
     }
 
+    companion object {
+        var instance: JeffSpikePlugin? = null
+    }
+
+    fun dispatchBack() {
+        notifyListeners("back", JSObject())
+    }
+
     override fun load() {
+        instance = this
         NoteWatch.appContext = context
         try {
             android.util.Log.i("JeffCrypto", CryptoSelfTest.run(context))
@@ -101,6 +110,11 @@ class JeffSpikePlugin : Plugin() {
             data.put("json", item.json)
             notifyListeners("plain", data)
         }
+    }
+
+    override fun handleOnDestroy() {
+        if (instance == this) instance = null
+        super.handleOnDestroy()
     }
 
     @PluginMethod
@@ -300,6 +314,12 @@ class JeffSpikePlugin : Plugin() {
         ret.put("text", if (file.exists()) file.readText() else "")
         if (file.exists()) file.delete()
         call.resolve(ret)
+    }
+
+    @PluginMethod
+    fun minimize(call: PluginCall) {
+        activity?.moveTaskToBack(true)
+        call.resolve()
     }
 
     @PluginMethod

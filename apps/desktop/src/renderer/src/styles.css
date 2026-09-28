@@ -1,36 +1,39 @@
 /* ===== Jeff 主题变量合同（themePack × light/dark） =====
- * data-theme-pack：皮肤（当前仅 weui）
- * data-theme：亮/暗
+ * data-theme-pack：皮肤，默认 weui（经典微信绿 · 护眼温润），亦支持 catppuccin（低饱和粉彩）
+ * data-theme：亮/暗（light / dark）
  * 组件只吃下列变量，禁止硬编码色值。
  */
+
+/* 1. 默认与 WeUI 绿色（亮色：经典生机绿 · 护眼工作台底） */
 :root,
-:root[data-theme-pack='weui'],
 :root[data-theme='light'],
+:root[data-theme-pack='weui'],
 :root[data-theme-pack='weui'][data-theme='light'] {
-  /* 品牌绿仍用 WeUI，底色改成工作台中性灰（对照 ZCode 的 neutral 表面，不再用微信灰底黑栏） */
   --weui-BRAND: #07c160;
   --weui-RED: #fa5151;
-  --bg: #f3f4f6;
-  --bg-list: #f7f8fa;
+  --bg: #f4f5f7;
+  --bg-rail: #e9ebef;
+  --bg-list: #f5f6f8;
   --bg-panel: #ffffff;
-  --bg-rail: #f7f8fa;
   --rail-text: #5c6573;
-  --rail-active: var(--weui-BRAND);
-  --text: #1c1f26;
-  --text-2: #6b7280;
-  /* 思考过程正文：比次级文字更弱一档 */
-  --text-reasoning: #9aa1ab;
-  --border: #e6e8ee;
-  --green: var(--weui-BRAND);
-  --green-dark: #059652;
+  --rail-active: #07c160;
+  --text: #191c24;
+  --text-2: #646b79;
+  --text-reasoning: #8f96a3;
+  --border: #e2e4ea;
+  --line: #e2e4ea;
+  --green: #07c160;
+  --green-dark: #06ad56;
+  --green-gradient-end: #34d399;
+  --btn-primary-text: #ffffff;
   --bubble-user: #d7f5e4;
   --bubble-user-text: #0d3b24;
-  --bubble-plugin: #0b3d22;
+  --bubble-plugin: #06ad56;
   --bubble-ai: #ffffff;
-  --danger: var(--weui-RED);
-  /* 正文超链接（亮色） */
-  --link: #2563eb;
-  --shadow: 0 1px 2px rgba(16, 24, 40, 0.06), 0 8px 24px rgba(16, 24, 40, 0.06);
+  --danger: #fa5151;
+  --link: #06ad56;
+  --shadow: 0 1px 3px rgba(7, 193, 96, 0.08), 0 8px 24px rgba(25, 28, 36, 0.06);
+
   /* 字号阶 / 间距 / 圆角 */
   --fs-xs: 11px;
   --fs-sm: 12px;
@@ -50,31 +53,140 @@
   --input-h: 36px;
 }
 
+/* 2. 默认与 WeUI 绿色（暗色：深邃夜间墨绿） */
 :root[data-theme='dark'],
 :root[data-theme-pack='weui'][data-theme='dark'] {
   --weui-BRAND: #07c160;
   --weui-RED: #fa5151;
-  --bg: #0e1014;
-  --bg-list: #14171c;
-  --bg-panel: #1a1d24;
-  --bg-rail: #12141a;
-  --rail-text: #a8b0bd;
-  --rail-active: var(--weui-BRAND);
-  --text: #e7e9ee;
-  --text-2: #9aa3b2;
-  /* 思考过程正文：比次级文字更弱一档 */
-  --text-reasoning: #7d8694;
-  --border: #2a2e38;
-  --green: var(--weui-BRAND);
-  --green-dark: #34d399;
+  --bg: #101216;
+  --bg-rail: #0b0d10;
+  --bg-list: #15181e;
+  --bg-panel: #1b1e26;
+  --rail-text: #9aa1ad;
+  --rail-active: #10b981;
+  --text: #e6e8ee;
+  --text-2: #9299a6;
+  --text-reasoning: #717783;
+  --border: #262a34;
+  --line: #262a34;
+  --green: #10b981;
+  --green-dark: #059652;
+  --green-gradient-end: #34d399;
+  --btn-primary-text: #ffffff;
   --bubble-user: #1b4a34;
   --bubble-user-text: #e7fff3;
-  --bubble-plugin: #d7f5e4;
-  --bubble-ai: #22262f;
-  --danger: var(--weui-RED);
-  /* 正文超链接（暗色）：亮蓝，保证在深色气泡上的对比度 */
-  --link: #7fa7ff;
-  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.35);
+  --bubble-plugin: #34d399;
+  --bubble-ai: #21252f;
+  --danger: #fa5151;
+  --link: #34d399;
+  --shadow: 0 1px 3px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+/* 3. Catppuccin Latte（亮色备选） */
+:root[data-theme-pack='catppuccin'],
+:root[data-theme-pack='catppuccin'][data-theme='light'] {
+  --ctp-rosewater: #dc8a78;
+  --ctp-flamingo: #dd7878;
+  --ctp-pink: #ea76cb;
+  --ctp-mauve: #8839ef;
+  --ctp-red: #d20f39;
+  --ctp-maroon: #e64553;
+  --ctp-peach: #fe640b;
+  --ctp-yellow: #df8e1d;
+  --ctp-green: #40a02b;
+  --ctp-teal: #179299;
+  --ctp-sky: #04a5e5;
+  --ctp-sapphire: #209fb5;
+  --ctp-blue: #1e66f5;
+  --ctp-lavender: #7287fd;
+  --ctp-text: #4c4f69;
+  --ctp-subtext1: #5c5f77;
+  --ctp-subtext0: #6c6f85;
+  --ctp-overlay2: #7c7f93;
+  --ctp-overlay1: #8c8fa1;
+  --ctp-overlay0: #9ca0b0;
+  --ctp-surface2: #acb0be;
+  --ctp-surface1: #bcc0cc;
+  --ctp-surface0: #ccd0da;
+  --ctp-base: #eff1f5;
+  --ctp-mantle: #e6e9ef;
+  --ctp-crust: #dce0e8;
+
+  --bg: #eff1f5;
+  --bg-rail: #dce0e8;
+  --bg-list: #e6e9ef;
+  --bg-panel: #ffffff;
+  --rail-text: #6c6f85;
+  --rail-active: #1e66f5;
+  --text: #4c4f69;
+  --text-2: #6c6f85;
+  --text-reasoning: #8c8fa1;
+  --border: #ccd0da;
+  --line: #ccd0da;
+  --green: #1e66f5;
+  --green-dark: #1558d6;
+  --green-gradient-end: #7287fd;
+  --btn-primary-text: #ffffff;
+  --bubble-user: #dce5fa;
+  --bubble-user-text: #1d2b4f;
+  --bubble-plugin: #1e66f5;
+  --bubble-ai: #ffffff;
+  --danger: #d20f39;
+  --link: #1e66f5;
+  --shadow: 0 1px 3px rgba(30, 102, 245, 0.05), 0 8px 24px rgba(76, 79, 105, 0.06);
+}
+
+/* 4. Catppuccin Mocha（暗色备选） */
+:root[data-theme-pack='catppuccin'][data-theme='dark'] {
+  --ctp-rosewater: #f5e0dc;
+  --ctp-flamingo: #f2cdcd;
+  --ctp-pink: #f5c2e7;
+  --ctp-mauve: #cba6f7;
+  --ctp-red: #f38ba8;
+  --ctp-maroon: #eba0ac;
+  --ctp-peach: #fab387;
+  --ctp-yellow: #f9e2af;
+  --ctp-green: #a6e3a1;
+  --ctp-teal: #94e2d5;
+  --ctp-sky: #89dceb;
+  --ctp-sapphire: #74c7ec;
+  --ctp-blue: #89b4fa;
+  --ctp-lavender: #b4befe;
+  --ctp-text: #cdd6f4;
+  --ctp-subtext1: #bac2de;
+  --ctp-subtext0: #a6adc8;
+  --ctp-overlay2: #9399b2;
+  --ctp-overlay1: #7f849c;
+  --ctp-overlay0: #6c7086;
+  --ctp-surface2: #585b70;
+  --ctp-surface1: #45475a;
+  --ctp-surface0: #313244;
+  --ctp-base: #1e1e2e;
+  --ctp-mantle: #181825;
+  --ctp-crust: #11111b;
+
+  --bg: #1e1e2e;
+  --bg-rail: #11111b;
+  --bg-list: #181825;
+  --bg-panel: #1e1e2e;
+  --rail-text: #a6adc8;
+  --rail-active: #89b4fa;
+  --text: #cdd6f4;
+  --text-2: #9399b2;
+  --text-reasoning: #7f849c;
+  --border: #313244;
+  --line: #313244;
+  --green: #89b4fa;
+  --green-dark: #b4befe;
+  --green-gradient-end: #b4befe;
+  --btn-primary-text: #11111b;
+  --bubble-user: #313244;
+  --bubble-user-text: #cdd6f4;
+  --bubble-plugin: #89b4fa;
+  --bubble-ai: #181825;
+  --danger: #f38ba8;
+  --link: #89b4fa;
+  --shadow: 0 2px 8px rgba(0, 0, 0, 0.4), 0 12px 32px rgba(0, 0, 0, 0.35);
 }
 
 * {
@@ -131,6 +243,7 @@ body {
   cursor: pointer;
   font-size: 10px;
   line-height: 1;
+  transition: all 0.15s ease;
 }
 
 .nav-item svg {
@@ -147,8 +260,12 @@ body {
   background: color-mix(in srgb, var(--text) 6%, transparent);
 }
 
+.nav-item:active {
+  transform: scale(0.95);
+}
+
 .nav-item.active {
-  color: var(--green-dark);
+  color: var(--rail-active);
   background: color-mix(in srgb, var(--rail-active) 16%, transparent);
 }
 
@@ -251,6 +368,7 @@ body {
   gap: 10px;
   padding: 10px 14px;
   cursor: pointer;
+  transition: background 0.12s ease;
 }
 
 .chat-item:hover,
@@ -260,8 +378,8 @@ body {
 
 .chat-item.selected,
 .contact-card.selected {
-  background: color-mix(in srgb, var(--text) 5%, transparent);
-  box-shadow: inset 2px 0 0 var(--green);
+  background: color-mix(in srgb, var(--green) 9%, transparent);
+  box-shadow: inset 3px 0 0 var(--green);
 }
 
 .chat-item-body,
@@ -339,8 +457,8 @@ body {
   width: 72px;
   height: 72px;
   border-radius: 18px;
-  background: linear-gradient(135deg, var(--green), #4cd08d);
-  color: #fff;
+  background: linear-gradient(135deg, var(--green), var(--green-gradient-end, #4cd08d));
+  color: var(--btn-primary-text, #fff);
   font-size: 40px;
   font-weight: 700;
   display: flex;
@@ -888,7 +1006,7 @@ body {
 
 .chip-draft:focus-within {
   border-color: var(--green);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--green) 18%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--green) 24%, transparent);
 }
 
 .chip-draft textarea {
@@ -1014,7 +1132,7 @@ body {
 
 .composer-input textarea:focus {
   border-color: var(--green);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--green) 18%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--green) 24%, transparent);
 }
 
 body.composer-resizing,
@@ -1026,17 +1144,25 @@ body.composer-resizing * {
 .send-btn {
   border: none;
   background: var(--green);
-  color: #fff;
+  color: var(--btn-primary-text, #fff);
   font-size: 13px;
   font-weight: 600;
   padding: 8px 16px;
   border-radius: 10px;
   cursor: pointer;
   min-height: 36px;
+  box-shadow: 0 2px 6px color-mix(in srgb, var(--green) 28%, transparent);
+  transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .send-btn:hover {
   background: var(--green-dark);
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--green) 38%, transparent);
+  transform: translateY(-1px);
+}
+
+.send-btn:active {
+  transform: scale(0.97);
 }
 
 .send-btn:disabled {
@@ -1186,6 +1312,7 @@ body.composer-resizing * {
   justify-content: center;
   gap: var(--space-2);
   box-sizing: border-box;
+  transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .btn.ghost {
@@ -1196,16 +1323,30 @@ body.composer-resizing * {
 .btn:hover {
   border-color: var(--green);
   color: var(--green);
+  background: color-mix(in srgb, var(--green) 5%, var(--bg-panel));
+}
+
+.btn:active {
+  transform: scale(0.98);
 }
 
 .btn.primary {
   background: var(--green);
   border-color: var(--green);
-  color: #fff;
+  color: var(--btn-primary-text, #fff);
+  box-shadow: 0 2px 6px color-mix(in srgb, var(--green) 28%, transparent);
 }
 
 .btn.primary:hover {
   background: var(--green-dark);
+  border-color: var(--green-dark);
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--green) 38%, transparent);
+  transform: translateY(-1px);
+}
+
+.btn.primary:active {
+  transform: scale(0.98);
+  box-shadow: 0 1px 3px color-mix(in srgb, var(--green) 25%, transparent);
 }
 
 .btn.primary:disabled {
@@ -1544,7 +1685,7 @@ body.composer-resizing * {
   font-size: 13px;
   padding: 2px 6px;
   border-radius: var(--radius-sm);
-  border: 1px solid var(--accent, #07c160);
+  border: 1px solid var(--accent, var(--green));
   background: var(--bg);
   color: var(--text);
 }
@@ -1951,11 +2092,31 @@ body.composer-resizing * {
 }
 
 .appearance-preview[data-preview='dark'] {
-  background: #222;
+  background: #181825;
 }
 
 .appearance-preview[data-preview='light'] {
-  background: #f2f2f2;
+  background: #eff1f5;
+}
+
+.appearance-preview[data-preview='system'] {
+  background: linear-gradient(135deg, #eff1f5 50%, #181825 50%);
+}
+
+.appearance-preview[data-preview='catppuccin'] {
+  background: linear-gradient(135deg, #eff1f5 50%, #1e1e2e 50%);
+}
+
+.appearance-preview[data-preview='catppuccin'] .appearance-preview-dot {
+  background: #1e66f5;
+}
+
+.appearance-preview[data-preview='weui'] {
+  background: linear-gradient(135deg, #f7f8fa 50%, #14171c 50%);
+}
+
+.appearance-preview[data-preview='weui'] .appearance-preview-dot {
+  background: #07c160;
 }
 
 .appearance-preview-dot {
@@ -2007,8 +2168,8 @@ body.composer-resizing * {
   width: 56px;
   height: 56px;
   border-radius: 14px;
-  background: linear-gradient(135deg, var(--green), #4cd08d);
-  color: #fff;
+  background: linear-gradient(135deg, var(--green), var(--green-gradient-end, #4cd08d));
+  color: var(--btn-primary-text, #fff);
   font-size: 30px;
   font-weight: 700;
   display: flex;
@@ -2177,36 +2338,51 @@ body.composer-resizing * {
   font-size: inherit;
 }
 
-/* 代码高亮（rehype-highlight 默认类名，双主题各一版配色） */
+/* 代码高亮（rehype-highlight 默认类名，Catppuccin 优雅配色 + WeUI 兼容） */
 :root[data-theme='light'] .hljs-comment,
-:root[data-theme='light'] .hljs-quote { color: #6a737d; font-style: italic; }
+:root[data-theme='light'] .hljs-quote { color: #8c8fa1; font-style: italic; }
 :root[data-theme='light'] .hljs-keyword,
-:root[data-theme='light'] .hljs-selector-tag,
-:root[data-theme='light'] .hljs-literal { color: #d73a49; }
+:root[data-theme='light'] .hljs-selector-tag { color: #8839ef; }
+:root[data-theme='light'] .hljs-literal { color: #d20f39; }
 :root[data-theme='light'] .hljs-string,
-:root[data-theme='light'] .hljs-attr { color: #032f62; }
+:root[data-theme='light'] .hljs-attr { color: #40a02b; }
 :root[data-theme='light'] .hljs-number,
-:root[data-theme='light'] .hljs-built_in { color: #005cc5; }
+:root[data-theme='light'] .hljs-built_in { color: #fe640b; }
 :root[data-theme='light'] .hljs-title,
 :root[data-theme='light'] .hljs-name,
-:root[data-theme='light'] .hljs-function .hljs-title { color: #6f42c1; }
+:root[data-theme='light'] .hljs-function .hljs-title { color: #1e66f5; font-weight: 500; }
 :root[data-theme='light'] .hljs-variable,
-:root[data-theme='light'] .hljs-template-variable { color: #e36209; }
+:root[data-theme='light'] .hljs-template-variable { color: #df8e1d; }
 
 :root[data-theme='dark'] .hljs-comment,
-:root[data-theme='dark'] .hljs-quote { color: #7f848e; font-style: italic; }
+:root[data-theme='dark'] .hljs-quote { color: #6c7086; font-style: italic; }
 :root[data-theme='dark'] .hljs-keyword,
-:root[data-theme='dark'] .hljs-selector-tag,
-:root[data-theme='dark'] .hljs-literal { color: #ff7b72; }
+:root[data-theme='dark'] .hljs-selector-tag { color: #cba6f7; }
+:root[data-theme='dark'] .hljs-literal { color: #f38ba8; }
 :root[data-theme='dark'] .hljs-string,
-:root[data-theme='dark'] .hljs-attr { color: #a5d6ff; }
+:root[data-theme='dark'] .hljs-attr { color: #a6e3a1; }
 :root[data-theme='dark'] .hljs-number,
-:root[data-theme='dark'] .hljs-built_in { color: #79c0ff; }
+:root[data-theme='dark'] .hljs-built_in { color: #fab387; }
 :root[data-theme='dark'] .hljs-title,
 :root[data-theme='dark'] .hljs-name,
-:root[data-theme='dark'] .hljs-function .hljs-title { color: #d2a8ff; }
+:root[data-theme='dark'] .hljs-function .hljs-title { color: #89b4fa; font-weight: 500; }
 :root[data-theme='dark'] .hljs-variable,
-:root[data-theme='dark'] .hljs-template-variable { color: #ffa657; }
+:root[data-theme='dark'] .hljs-template-variable { color: #f9e2af; }
+
+:root[data-theme-pack='weui'][data-theme='light'] .hljs-comment,
+:root[data-theme-pack='weui'][data-theme='light'] .hljs-quote { color: #6a737d; }
+:root[data-theme-pack='weui'][data-theme='light'] .hljs-keyword,
+:root[data-theme-pack='weui'][data-theme='light'] .hljs-selector-tag,
+:root[data-theme-pack='weui'][data-theme='light'] .hljs-literal { color: #d73a49; }
+:root[data-theme-pack='weui'][data-theme='light'] .hljs-string,
+:root[data-theme-pack='weui'][data-theme='light'] .hljs-attr { color: #032f62; }
+:root[data-theme-pack='weui'][data-theme='light'] .hljs-number,
+:root[data-theme-pack='weui'][data-theme='light'] .hljs-built_in { color: #005cc5; }
+:root[data-theme-pack='weui'][data-theme='light'] .hljs-title,
+:root[data-theme-pack='weui'][data-theme='light'] .hljs-name,
+:root[data-theme-pack='weui'][data-theme='light'] .hljs-function .hljs-title { color: #6f42c1; }
+:root[data-theme-pack='weui'][data-theme='light'] .hljs-variable,
+:root[data-theme-pack='weui'][data-theme='light'] .hljs-template-variable { color: #e36209; }
 
 /* ===== v1.1：图片消息与附件 ===== */
 .msg-images {
@@ -4655,8 +4831,8 @@ body.pane-resizing {
 .remote-pair-badge {
   font-size: 12px;
   font-weight: 600;
-  color: var(--weui-BRAND);
-  background: color-mix(in srgb, var(--weui-BRAND) 12%, transparent);
+  color: var(--green);
+  background: color-mix(in srgb, var(--green) 12%, transparent);
   padding: 2px 8px;
   border-radius: var(--radius-pill);
 }

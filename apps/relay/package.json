@@ -1,6 +1,6 @@
 {
   "name": "@jeff/relay",
-  "version": "1.9.2",
+  "version": "1.9.4",
   "private": true,
   "type": "module",
   "description": "Jeff 远程控制中转站：只转发密文，保存绑定关系",

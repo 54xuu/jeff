@@ -248,8 +248,8 @@ export interface GroupThreadBrief {
 
 export interface AppSettings {
   theme: 'system' | 'light' | 'dark'
-  /** 主题包（视觉皮肤）；当前仅 weui，为后续扩展预留 */
-  themePack: 'weui'
+  /** 主题包（视觉皮肤）；当前支持 weui（默认绿色）与 catppuccin */
+  themePack: 'weui' | 'catppuccin'
   /** AI 回复完成时弹系统桌面通知（文本提醒） */
   notifyDesktop: boolean
   /** AI 回复完成时播放提示音（声音提醒） */

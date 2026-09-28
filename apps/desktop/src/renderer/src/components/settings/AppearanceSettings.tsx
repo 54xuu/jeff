@@ -8,8 +8,9 @@ const MODE_OPTIONS: Array<{ id: 'system' | 'light' | 'dark'; label: string; desc
   { id: 'system', label: '跟随系统', desc: '自动切换' },
 ]
 
-const PACK_OPTIONS: Array<{ id: 'weui'; label: string; desc: string }> = [
-  { id: 'weui', label: '微信 WeUI', desc: '品牌绿作强调 · 中性工作台底（当前唯一）' },
+const PACK_OPTIONS: Array<{ id: 'weui' | 'catppuccin'; label: string; desc: string }> = [
+  { id: 'weui', label: '微信翡翠绿（推荐）', desc: '经典微信绿强调 · 护眼温润工作台' },
+  { id: 'catppuccin', label: 'Catppuccin 粉彩', desc: '低饱和粉彩 · 柔和极简' },
 ]
 
 /** 设置 → 外观：主题包 + 亮/暗/跟随系统 */
@@ -25,7 +26,7 @@ export default function AppearanceSettings(): React.JSX.Element {
     void refreshSettings()
   }
 
-  const setPack = async (themePack: 'weui') => {
+  const setPack = async (themePack: 'weui' | 'catppuccin') => {
     await api.invoke(IPC.settingsSet, { themePack })
     applyThemePack(themePack)
     void refreshSettings()
@@ -47,7 +48,7 @@ export default function AppearanceSettings(): React.JSX.Element {
             data-testid={`theme-pack-${o.id}`}
             onClick={() => void setPack(o.id)}
           >
-            <span className="appearance-preview" data-preview="weui">
+            <span className="appearance-preview" data-preview={o.id}>
               <span className="appearance-preview-dot" />
               <span className="appearance-preview-lines">
                 <i />

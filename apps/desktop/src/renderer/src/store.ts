@@ -663,8 +663,8 @@ export function applyTheme(theme: 'system' | 'light' | 'dark' | undefined): void
   }
 }
 
-/** 主题包（皮肤）：当前仅 weui */
-export function applyThemePack(pack: 'weui' | undefined): void {
+/** 主题包（皮肤）：默认 weui（绿色），亦可切换为 catppuccin */
+export function applyThemePack(pack: 'weui' | 'catppuccin' | undefined): void {
   document.documentElement.dataset.themePack = pack || 'weui'
 }
 

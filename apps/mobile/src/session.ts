@@ -26,7 +26,8 @@ export interface NativeBridge {
   cachePut(opts: { desktopId: string; key: string; json: string }): Promise<void>
   readDebugPair(): Promise<{ text: string }>
   openBattery(): Promise<void>
-  addListener(event: 'frame' | 'plain' | 'resume', cb: (ev: { text?: string; from?: string; n?: number; json?: string; closed?: string }) => void): Promise<{ remove: () => Promise<void> }>
+  minimize(): Promise<void>
+  addListener(event: 'frame' | 'plain' | 'resume' | 'back', cb: (ev: { text?: string; from?: string; n?: number; json?: string; closed?: string }) => void): Promise<{ remove: () => Promise<void> }>
   armRecv(opts: { peerId: string; recvKey: string; recvN: number }): Promise<void>
   feedFrame(opts: { text: string }): Promise<void>
   goLive(): Promise<void>

@@ -27,6 +27,15 @@ public class MainActivity extends BridgeActivity {
         setIntent(intent);
     }
 
+    @Override
+    public void onBackPressed() {
+        if (JeffSpikePlugin.Companion.getInstance() != null) {
+            JeffSpikePlugin.Companion.getInstance().dispatchBack();
+            return;
+        }
+        super.onBackPressed();
+    }
+
     /** 国产 ROM 会杀掉后台。这里弹出系统的电池优化豁免，用户点允许后前台服务才稳。 */
     private void askBatteryExemption() {
         if (Build.VERSION.SDK_INT < 23) return;
