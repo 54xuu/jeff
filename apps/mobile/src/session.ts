@@ -27,6 +27,8 @@ export interface NativeBridge {
   readDebugPair(): Promise<{ text: string }>
   openBattery(): Promise<void>
   minimize(): Promise<void>
+  getPersistedProfile(): Promise<{ profileJson: string }>
+  savePersistedProfile(opts: { profileJson: string }): Promise<void>
   addListener(event: 'frame' | 'plain' | 'resume' | 'back', cb: (ev: { text?: string; from?: string; n?: number; json?: string; closed?: string }) => void): Promise<{ remove: () => Promise<void> }>
   armRecv(opts: { peerId: string; recvKey: string; recvN: number }): Promise<void>
   feedFrame(opts: { text: string }): Promise<void>
@@ -45,6 +47,20 @@ export interface DesktopPeer {
   x25519: string
 }
 
+export interface PhoneProfile {
+  identity?: {
+    id: string
+    signSecret: string
+    x25519Secret: string
+  }
+  relay?: {
+    url: string
+    pin: string
+  }
+  desktops?: DesktopPeer[]
+  activeId?: string
+}
+
 export interface PhonePush {
   what: string
   p?: unknown
@@ -57,6 +73,7 @@ interface Identity {
 }
 
 const ID_KEY = 'jeff-phone-identity'
+const PROFILE_KEY = 'jeff-phone-profile'
 
 function freshId(pub: Uint8Array): string {
   return bytesToB64(pub).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '').slice(0, 22)
@@ -77,7 +94,7 @@ function loadIdentity(): Identity {
 
 /** 手机侧协议客户端。网页里用浏览器 WebSocket，真机把套接字放在前台服务里。 */
 export class PhoneLink {
-  readonly me = loadIdentity()
+  me: Identity = loadIdentity()
   desktops = new Map<string, DesktopPeer>()
   activeId = ''
   private link: RelayLink | null = null
@@ -95,6 +112,74 @@ export class PhoneLink {
   private ready: { resolve: () => void; reject: (err: Error) => void } | null = null
   private secureWait = new Map<string, { resolve: () => void; reject: (err: Error) => void }>()
 
+  async init(): Promise<void> {
+    try {
+      let profile: PhoneProfile | null = null
+      if (Capacitor.isNativePlatform()) {
+        const r = await Native.getPersistedProfile().catch(() => ({ profileJson: '' }))
+        if (r.profileJson) {
+          try {
+            profile = JSON.parse(r.profileJson) as PhoneProfile
+          } catch {}
+        }
+      }
+      if (!profile) {
+        const raw = localStorage.getItem(PROFILE_KEY)
+        if (raw) {
+          try {
+            profile = JSON.parse(raw) as PhoneProfile
+          } catch {}
+        }
+      }
+      if (profile?.identity?.id && profile.identity.signSecret && profile.identity.x25519Secret) {
+        this.me = {
+          id: profile.identity.id,
+          signSecret: b64ToBytes(profile.identity.signSecret),
+          x25519Secret: b64ToBytes(profile.identity.x25519Secret),
+        }
+      }
+      if (profile?.desktops && Array.isArray(profile.desktops)) {
+        for (const d of profile.desktops) {
+          if (d?.id) {
+            this.desktops.set(d.id, { ...d, online: false })
+          }
+        }
+      }
+      if (profile?.activeId && this.desktops.has(profile.activeId)) {
+        this.activeId = profile.activeId
+      } else if (!this.activeId && this.desktops.size > 0) {
+        this.activeId = [...this.desktops.keys()][0]
+      }
+      if (profile?.relay?.url) {
+        this.url = profile.relay.url
+        this.pin = profile.relay.pin || ''
+        void this.connect(this.url, this.pin).catch(() => {})
+      }
+      void this.persistProfile()
+    } catch {}
+  }
+
+  async persistProfile(): Promise<void> {
+    try {
+      const data: PhoneProfile = {
+        identity: {
+          id: this.me.id,
+          signSecret: bytesToB64(this.me.signSecret),
+          x25519Secret: bytesToB64(this.me.x25519Secret),
+        },
+        relay: this.url ? { url: this.url, pin: this.pin } : undefined,
+        desktops: [...this.desktops.values()],
+        activeId: this.activeId,
+      }
+      const json = JSON.stringify(data)
+      localStorage.setItem(PROFILE_KEY, json)
+      localStorage.setItem(ID_KEY, JSON.stringify(data.identity))
+      if (Capacitor.isNativePlatform()) {
+        await Native.savePersistedProfile({ profileJson: json }).catch(() => {})
+      }
+    } catch {}
+  }
+
   onPush(cb: (ev: PhonePush) => void): () => void {
     this.listeners.add(cb)
     return () => this.listeners.delete(cb)
@@ -106,6 +191,7 @@ export class PhoneLink {
     this.url = url
     this.pin = pin
     this.attempt = 0
+    void this.persistProfile()
     if (this.retryTimer) clearTimeout(this.retryTimer)
     await this.openNow()
   }
@@ -237,6 +323,7 @@ export class PhoneLink {
     link.pairRequest(qr.token, appName)
     await result
     this.activeId = qr.desktopId
+    void this.persistProfile()
     await this.hello(qr.desktopId)
   }
 
@@ -263,10 +350,12 @@ export class PhoneLink {
     this.link?.unbind(this.activeId)
     this.desktops.delete(this.activeId)
     this.activeId = [...this.desktops.keys()][0] || ''
+    void this.persistProfile()
   }
 
   select(id: string): void {
     this.activeId = id
+    void this.persistProfile()
     const peer = this.desktops.get(id)
     if (peer?.online) void this.hello(id).catch(() => {})
   }
@@ -356,6 +445,7 @@ export class PhoneLink {
       })
     }
     if (!this.activeId && bindings[0]) this.activeId = bindings[0].desktopId
+    void this.persistProfile()
   }
 
   async pullNative(): Promise<void> {

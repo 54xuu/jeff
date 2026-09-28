@@ -186,13 +186,23 @@ test('手机页面在 390×844 里完成绑定并列出会话', async () => {
         } else if (ev.ch === 'projects:list') {
           desk.respond(ev.from, ev.id, true, [{ id: 'p1', title: '验收群', description: '', icon: '', status: 'active', leader_agent_id: 'agt_xiaojie', workspace_dir: '' }])
         } else if (ev.ch === 'chat:history') {
-          desk.respond(ev.from, ev.id, true, [{
-            id: 'm1',
-            role: 'user',
-            text: '看这张图',
-            time: Date.now(),
-            images: [{ mime: 'image/png', dataUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAIAAADYYG7QAAAAOklEQVR42u3OMQ0AAAgDsEnix78ucEE4mlRAM12vREhISEhISEhISEhISEhISEhISEhISEhISEjozgL2L7q1TMsYewAAAABJRU5ErkJggg==' }],
-          }])
+          desk.respond(ev.from, ev.id, true, [
+            {
+              id: 'm1',
+              role: 'user',
+              text: '看这张图',
+              time: Date.now() - 60000,
+              images: [{ mime: 'image/png', dataUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAIAAADYYG7QAAAAOklEQVR42u3OMQ0AAAgDsEnix78ucEE4mlRAM12vREhISEhISEhISEhISEhISEhISEhISEhISEjozgL2L7q1TMsYewAAAABJRU5ErkJggg==' }],
+            },
+            {
+              id: 'm2',
+              role: 'assistant',
+              text: '收到，这是一张测试图片，已完成分析。',
+              time: Date.now(),
+              reasoning: ['正在分析图片特征...', '检测到这是一个 48x48 纯色测试图像。'],
+              tools: [{ tool: 'jeff_browser_snapshot', status: 'done', output: 'ok' }],
+            },
+          ])
         } else if (ev.ch === 'sessions:list') desk.respond(ev.from, ev.id, true, { sessions: [{ id: 's1', title: '当前', active: true }] })
         else if (ev.ch === 'chat:stop' || ev.ch === 'chat:new' || ev.ch === 'session:activate') {
           calls.push(ev.ch)
@@ -254,9 +264,13 @@ test('手机页面在 390×844 里完成绑定并列出会话', async () => {
     await page.getByTestId('pair-go').click()
     await confirm
     await expect(page.getByTestId('msg-list')).toContainText('小杰', { timeout: 15000 })
+    await page.screenshot({ path: path.join(REPO_ROOT, '.tmp/remote-list-light.png'), fullPage: true })
     await page.getByTestId('msg-list').getByRole('button', { name: /小杰/ }).click()
     await expect(page.getByTestId('bubbles')).toContainText('看这张图')
     await expect(page.getByTestId('bubbles').locator('img')).toHaveAttribute('src', /^data:image\/png/)
+    await expect(page.getByText('思考过程')).toBeVisible()
+    await expect(page.getByText(/工具调用/)).toBeVisible()
+    await page.screenshot({ path: path.join(REPO_ROOT, '.tmp/remote-chat-light.png'), fullPage: true })
     await page.getByTestId('plus').click()
     const png = path.join(dir, 'shot.png')
     fs.writeFileSync(png, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAIAAADYYG7QAAAAOklEQVR42u3OMQ0AAAgDsEnix78ucEE4mlRAM12vREhISEhISEhISEhISEhISEhISEhISEhISEjozgL2L7q1TMsYewAAAABJRU5ErkJggg==', 'base64'))

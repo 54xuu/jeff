@@ -1,9 +1,11 @@
 package app.jeff.mobile
 
 import android.Manifest
+import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.os.Build
+import android.os.Environment
 import android.util.Base64
 import androidx.activity.result.ActivityResult
 import androidx.biometric.BiometricManager
@@ -327,6 +329,54 @@ class JeffSpikePlugin : Plugin() {
         val intent = android.content.Intent(android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
         intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
         context.startActivity(intent)
+        call.resolve()
+    }
+
+    @PluginMethod
+    fun getPersistedProfile(call: PluginCall) {
+        val prefs = context.getSharedPreferences("jeff_profile", Context.MODE_PRIVATE)
+        var json = prefs.getString("profile_json", "") ?: ""
+        if (json.isEmpty()) {
+            // 尝试从备用文件读取（应对 apk 卸载后重装场景）
+            val files = listOf(
+                File(context.getExternalFilesDir(null), "profile_backup.json"),
+                File(context.getExternalFilesDir("backup"), "profile.json"),
+                File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), ".jeff_profile_backup.json")
+            )
+            for (f in files) {
+                try {
+                    if (f.exists() && f.length() > 0) {
+                        val content = f.readText()
+                        if (content.contains("identity") || content.contains("signSecret")) {
+                            json = content
+                            prefs.edit().putString("profile_json", json).apply()
+                            break
+                        }
+                    }
+                } catch (_: Exception) {}
+            }
+        }
+        val ret = JSObject()
+        ret.put("profileJson", json)
+        call.resolve(ret)
+    }
+
+    @PluginMethod
+    fun savePersistedProfile(call: PluginCall) {
+        val json = call.getString("profileJson") ?: return call.reject("缺少 profileJson")
+        val prefs = context.getSharedPreferences("jeff_profile", Context.MODE_PRIVATE)
+        prefs.edit().putString("profile_json", json).apply()
+        val files = listOf(
+            File(context.getExternalFilesDir(null), "profile_backup.json"),
+            File(context.getExternalFilesDir("backup"), "profile.json"),
+            File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), ".jeff_profile_backup.json")
+        )
+        for (f in files) {
+            try {
+                f.parentFile?.mkdirs()
+                f.writeText(json)
+            } catch (_: Exception) {}
+        }
         call.resolve()
     }
 
