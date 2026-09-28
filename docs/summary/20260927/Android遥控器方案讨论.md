@@ -45,7 +45,7 @@
 
 ## 一期做了什么
 
-2026-09-28。一期是「能在外面聊起来」，版本升到 1.9.0。安装包给真机手工验收：`jeff-desktop_1.9.0_amd64.deb`、`jeff-Setup-1.9.0.exe`、apk `versionName=1.9.0` / `versionCode=10900`。
+2026-09-28。一期是「能在外面聊起来」，版本升到 1.9.0。安装包：`apps/desktop/release/jeff-desktop_1.9.0_amd64.deb`（本机已装，`dpkg` 显示 1.9.0，`/opt/Jeff` 与 `linux-unpacked` 的 app.asar md5 都是 `d0e4e44f4f1f3bd8318b3a12fd739f08`）、`apps/desktop/release/jeff-Setup-1.9.0.exe`（PE32 Nullsoft，包内能搜到 `remote-pair`，`opencode.exe` 在位）、调试 apk `apps/mobile/android/app/build/outputs/apk/debug/app-debug.apk`（`versionName=1.9.0`，`versionCode=10900`）。
 
 电脑「设置 → 远程控制」可以出配对二维码、弹出 6 位安全码确认、看到已绑定的手机、解除绑定、开机自启、已绑定时防止睡眠、显示中转站连接状态。远程网关和本机共用同一张 IPC 表，白名单没放行的通道（例如系统选目录）手机会被拒绝。`chat-stream` 改成增量，完成帧带全文长度，避免把累计全文一遍遍推到公网。手机上的 `session:activate` / `chat:new` / `group:threadNew` / `group:threadActivate` 会把电脑界面切到同一个会话。
 
