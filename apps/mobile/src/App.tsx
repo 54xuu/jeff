@@ -12,6 +12,9 @@ type Screen = 'list' | 'chat' | 'dirs'
 type ChatTarget = { kind: 'agent'; id: string; name: string } | { kind: 'group'; id: string; name: string }
 
 const phone = new PhoneLink()
+if (import.meta.env.DEV && typeof window !== 'undefined') {
+  ;(window as unknown as { __phone?: PhoneLink }).__phone = phone
+}
 const LOCK_MS = 5 * 60 * 1000
 
 async function cacheGet(desktopId: string, key: string): Promise<string | null> {
@@ -197,6 +200,7 @@ export function App() {
   const [activeId, setActiveId] = useState('')
   const [, bump] = useState(0)
   const [recentMap, setRecentMap] = useState<Record<string, { text: string; time: number }>>({})
+  const [copied, setCopied] = useState(false)
   const bubblesEndRef = useRef<HTMLDivElement>(null)
 
   const screenRef = useRef<Screen>('list')
@@ -1015,136 +1019,271 @@ export function App() {
 
       {tab === 'me' && screen === 'list' && (
         <section className="me wechat-me" data-testid="me">
-          <header className="bar wechat-bar">
-            <b>我与设备</b>
-            <span style={{ width: 48 }} />
-          </header>
-
-          <div className="wechat-me-profile">
-            <WeChatAvatar kind="user" name="我" size={56} />
+          <div className="wechat-me-profile" data-testid="me-profile">
+            <div className="wechat-me-avatar-wrap">
+              <WeChatAvatar kind="user" name="我" size={60} />
+            </div>
             <div className="wechat-me-info">
-              <h3>我的手机</h3>
-              <p>ID: {phone.me.id.slice(0, 10)}…</p>
+              <div className="wechat-me-title-row">
+                <h3 className="wechat-me-name">我的手机</h3>
+                <span className={`wechat-me-status-pill ${bound ? (peer?.online ? 'online' : 'offline') : 'unbound'}`}>
+                  <span className="dot" />
+                  {bound ? (peer?.online ? '已连接' : '已离线') : '未绑定'}
+                </span>
+              </div>
+              <div
+                className="wechat-me-id-row"
+                title="点击复制完整ID"
+                onClick={() => {
+                  void navigator.clipboard?.writeText(phone.me.id)
+                  setCopied(true)
+                  setTimeout(() => setCopied(false), 1500)
+                }}
+              >
+                <span className="wechat-me-id-label">Jeff ID:</span>
+                <span className="wechat-me-id-val">{phone.me.id.slice(0, 10)}…</span>
+                <span className="wechat-copy-icon">
+                  {copied ? (
+                    <span className="wechat-copied-tip">已复制</span>
+                  ) : (
+                    <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2">
+                      <rect x="9" y="9" width="13" height="13" rx="2" />
+                      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                    </svg>
+                  )}
+                </span>
+              </div>
+            </div>
+            <div className="wechat-me-profile-arrow">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="9 18 15 12 9 6" />
+              </svg>
             </div>
           </div>
 
-          <div className="wechat-section-title">已绑定电脑</div>
-          <ul className="wechat-me-computers">
-            {[...computers.values()].map((c) => {
-              const isCurrent = c.id === activeId
-              return (
-                <li key={c.id} className={`wechat-comp-item ${isCurrent ? 'active' : ''}`}>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      phone.select(c.id)
-                      refreshPeers()
-                      void loadLists()
-                      setTab('messages')
-                    }}
-                  >
-                    <div className="wechat-comp-main">
-                      <i className={c.online ? 'dot' : 'dot off'} />
-                      <div className="wechat-comp-names">
-                        <b>{c.name}</b>
-                        <small>{c.online ? '在线（点击切换为主控）' : '离线'}</small>
-                      </div>
+          {computers.size > 0 && (
+            <div className="wechat-group-section">
+              <div className="wechat-group-header">已连接电脑 ({computers.size})</div>
+              <div className="wechat-card-group">
+                {[...computers.values()].map((c, idx) => {
+                  const isCurrent = c.id === activeId
+                  return (
+                    <div key={c.id} className="wechat-group-row">
+                      {idx > 0 && <div className="wechat-cell-divider" />}
+                      <button
+                        type="button"
+                        className={`wechat-comp-cell ${isCurrent ? 'current' : ''}`}
+                        data-testid={`comp-item-${c.id}`}
+                        onClick={() => {
+                          phone.select(c.id)
+                          refreshPeers()
+                          void loadLists()
+                          setTab('messages')
+                        }}
+                      >
+                        <div className="wechat-cell-icon-wrap" style={{ background: c.online ? '#07c160' : '#888888' }}>
+                          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <rect x="2" y="3" width="20" height="14" rx="2" />
+                            <line x1="8" y1="21" x2="16" y2="21" />
+                            <line x1="12" y1="17" x2="12" y2="21" />
+                          </svg>
+                        </div>
+                        <div className="wechat-comp-meta">
+                          <span className="wechat-comp-title" title={c.name}>{c.name}</span>
+                          <span className="wechat-comp-sub">
+                            <span className={`wechat-status-dot ${c.online ? 'online' : 'offline'}`} />
+                            {c.online ? (isCurrent ? '在线 · 当前主控' : '在线 · 点击切换主控') : '离线'}
+                          </span>
+                        </div>
+                        <div className="wechat-comp-action">
+                          {isCurrent ? (
+                            <span className="wechat-badge-pill">当前使用</span>
+                          ) : (
+                            <span className="wechat-switch-text">切换 ›</span>
+                          )}
+                        </div>
+                      </button>
                     </div>
-                    {isCurrent ? <span className="wechat-comp-badge">当前使用</span> : <span className="wechat-comp-switch">切换 ›</span>}
-                  </button>
-                </li>
-              )
-            })}
-          </ul>
+                  )
+                })}
+              </div>
+            </div>
+          )}
 
-          <div className="wechat-section-title">连接操作</div>
-          <div className="wechat-card-group">
-            {bound ? (
-              <button type="button" className="wechat-cell-btn" data-testid="pair-another" onClick={() => setAdding((v) => !v)}>
-                <span>➕ 绑定另一台电脑</span>
-                <span>›</span>
-              </button>
-            ) : null}
-            {adding || !bound ? (
-              <div className="wechat-me-pair-box">
-                {Capacitor.isNativePlatform() ? (
+          <div className="wechat-group-section">
+            <div className="wechat-group-header">设备连接</div>
+            <div className="wechat-card-group">
+              {bound ? (
+                <div className="wechat-group-row">
                   <button
                     type="button"
-                    data-testid="pair-scan"
-                    className="btn-scan"
-                    disabled={busy}
-                    onClick={() => {
-                      setError('')
-                      void Native.scan()
-                        .then((r) => acceptPair(r.text))
-                        .catch((err) => {
-                          const msg = (err as Error).message || ''
-                          if (msg && !msg.includes('取消')) setError(msg)
-                        })
-                    }}
+                    className="wechat-cell-btn"
+                    data-testid="pair-another"
+                    onClick={() => setAdding((v) => !v)}
                   >
-                    📷 扫码绑定电脑
+                    <div className="wechat-cell-icon-wrap" style={{ background: '#10aeff' }}>
+                      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <circle cx="12" cy="12" r="10" />
+                        <line x1="12" y1="8" x2="12" y2="16" />
+                        <line x1="8" y1="12" x2="16" y2="12" />
+                      </svg>
+                    </div>
+                    <div className="wechat-cell-content">
+                      <span className="wechat-cell-label">绑定另一台电脑</span>
+                    </div>
+                    <span className={`wechat-arrow ${adding ? 'down' : ''}`}>
+                      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                        <polyline points="9 18 15 12 9 6" />
+                      </svg>
+                    </span>
                   </button>
-                ) : null}
-                <div className="pair-divider">
-                  <span>或手动粘贴绑定码</span>
                 </div>
-                <textarea
-                  data-testid="pair-paste"
-                  value={paste}
-                  placeholder="在此粘贴电脑端生成的绑定码或 JSON 字符串"
-                  onChange={(e) => setPaste(e.target.value)}
-                />
-                <button
-                  type="button"
-                  data-testid="pair-go"
-                  className="btn-paste-go"
-                  disabled={busy || !paste.trim()}
-                  onClick={() => void acceptPair(paste)}
-                >
-                  {busy ? '正在绑定…' : '使用粘贴内容绑定这台电脑'}
+              ) : null}
+
+              {(adding || !bound) && (
+                <div className="wechat-me-pair-box" data-testid="pair-box">
+                  {Capacitor.isNativePlatform() ? (
+                    <button
+                      type="button"
+                      data-testid="pair-scan"
+                      className="btn-scan"
+                      disabled={busy}
+                      onClick={() => {
+                        setError('')
+                        void Native.scan()
+                          .then((r) => acceptPair(r.text))
+                          .catch((err) => {
+                            const msg = (err as Error).message || ''
+                            if (msg && !msg.includes('取消')) setError(msg)
+                          })
+                      }}
+                    >
+                      <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+                        <path d="M4 4h6v6H4V4zm2 2v2h2V6H6zm8-2h6v6h-6V4zm2 2v2h2V6h-2zM4 14h6v6H4v-6zm2 2v2h2v-2H6zm10 0h2v2h-2v-2zm2-2h2v2h-2v-2zm-2 4h4v2h-4v-2zm-2-2h2v2h-2v-2zm0-2h2v2h-2v-2z" />
+                      </svg>
+                      <span>扫码绑定电脑</span>
+                    </button>
+                  ) : null}
+                  <div className="pair-divider">
+                    <span>{Capacitor.isNativePlatform() ? '或手动粘贴绑定码' : '手动粘贴绑定码'}</span>
+                  </div>
+                  <textarea
+                    data-testid="pair-paste"
+                    value={paste}
+                    placeholder="在此粘贴电脑端生成的绑定码或 JSON 字符串"
+                    onChange={(e) => setPaste(e.target.value)}
+                  />
+                  <button
+                    type="button"
+                    data-testid="pair-go"
+                    className="btn-paste-go"
+                    disabled={busy || !paste.trim()}
+                    onClick={() => void acceptPair(paste)}
+                  >
+                    {busy ? '正在绑定…' : '使用粘贴内容绑定这台电脑'}
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="wechat-group-section">
+            <div className="wechat-group-header">系统与安全</div>
+            <div className="wechat-card-group">
+              {Capacitor.isNativePlatform() ? (
+                <>
+                  <div className="wechat-group-row">
+                    <button type="button" className="wechat-cell-btn" onClick={() => void Native.openBattery()}>
+                      <div className="wechat-cell-icon-wrap" style={{ background: '#fa9d3b' }}>
+                        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <rect x="2" y="7" width="16" height="10" rx="2" />
+                          <line x1="20" y1="11" x2="20" y2="13" />
+                          <line x1="6" y1="12" x2="12" y2="12" />
+                        </svg>
+                      </div>
+                      <div className="wechat-cell-content">
+                        <span className="wechat-cell-label">忽略电池优化</span>
+                        <span className="wechat-cell-desc">防止熄屏后被系统杀后台</span>
+                      </div>
+                      <span className="wechat-cell-right">
+                        去设置
+                        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                          <polyline points="9 18 15 12 9 6" />
+                        </svg>
+                      </span>
+                    </button>
+                  </div>
+                  <div className="wechat-cell-divider" />
+                </>
+              ) : null}
+
+              <div className="wechat-group-row">
+                <button type="button" className="wechat-cell-btn" data-testid="lock-app" onClick={() => setLocked(true)}>
+                  <div className="wechat-cell-icon-wrap" style={{ background: '#576b95' }}>
+                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <rect x="3" y="11" width="18" height="11" rx="2" />
+                      <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                    </svg>
+                  </div>
+                  <div className="wechat-cell-content">
+                    <span className="wechat-cell-label">锁屏安全保护</span>
+                    <span className="wechat-cell-desc">需指纹或系统凭证解锁</span>
+                  </div>
+                  <span className="wechat-cell-right">
+                    立即锁定
+                    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="9 18 15 12 9 6" />
+                    </svg>
+                  </span>
                 </button>
               </div>
-            ) : null}
-
-            {bound ? (
-              <button
-                type="button"
-                className="wechat-cell-btn danger"
-                data-testid="unbind"
-                onClick={() => {
-                  phone.unbind()
-                  refreshPeers()
-                  setAgents([])
-                  setProjects([])
-                }}
-              >
-                <span>解除当前电脑绑定</span>
-                <span>›</span>
-              </button>
-            ) : null}
+            </div>
           </div>
 
-          <div className="wechat-section-title">后台保活与安全</div>
-          <div className="wechat-card-group">
-            {Capacitor.isNativePlatform() ? (
-              <button type="button" className="wechat-cell-btn" onClick={() => void Native.openBattery()}>
-                <span>🔋 忽略电池优化（防被杀后台）</span>
-                <span>设置 ›</span>
-              </button>
-            ) : null}
-            <button type="button" className="wechat-cell-btn" onClick={() => setLocked(true)}>
-              <span>🔒 立即锁屏保护</span>
-              <span>锁定 ›</span>
-            </button>
-          </div>
-          <p className="hint wechat-hint">
-            华为/荣耀等机型请在「系统设置 → 应用启动管理」中，将 Jeff 设为「手动管理」并允许「允许后台活动」，以防熄屏后连接被系统阻断。
-          </p>
+          {bound ? (
+            <div className="wechat-group-section danger-zone">
+              <div className="wechat-card-group">
+                <div className="wechat-group-row">
+                  <button
+                    type="button"
+                    className="wechat-cell-btn danger"
+                    data-testid="unbind"
+                    onClick={() => {
+                      phone.unbind()
+                      refreshPeers()
+                      setAgents([])
+                      setProjects([])
+                    }}
+                  >
+                    <div className="wechat-cell-icon-wrap" style={{ background: '#fa5151' }}>
+                      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+                        <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+                        <line x1="2" y1="2" x2="22" y2="22" />
+                      </svg>
+                    </div>
+                    <div className="wechat-cell-content">
+                      <span className="wechat-cell-label danger-text">解除当前电脑绑定</span>
+                    </div>
+                    <span className="wechat-arrow danger-arrow">
+                      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                        <polyline points="9 18 15 12 9 6" />
+                      </svg>
+                    </span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : null}
 
-          <button type="button" className="btn-back-msgs" onClick={() => setTab('messages')}>
-            返回会话列表
-          </button>
+          <div className="wechat-me-hint-card">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor">
+              <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z" />
+            </svg>
+            <p className="wechat-hint">
+              华为/荣耀等机型请在「系统设置 → 应用启动管理」中，将 Jeff 设为「手动管理」并允许「允许后台活动」，以防熄屏后连接被系统阻断。
+            </p>
+          </div>
         </section>
       )}
 

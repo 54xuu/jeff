@@ -12,7 +12,6 @@ export default defineConfig({
   reporter: [['list']],
   use: {
     viewport: { width: 390, height: 844 },
-    channel: 'chrome',
     baseURL: 'http://127.0.0.1:5277',
   },
   webServer: {
