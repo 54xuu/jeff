@@ -357,6 +357,7 @@ export class RemoteGateway {
       this.schedule()
     })
     ws.on('error', (err) => {
+      if (this.stopped) return
       this.lastError = err.message
       this.publish()
     })
@@ -397,13 +398,14 @@ export class RemoteGateway {
 function openSocket(url: string, pin: string, onPinFail: (message: string) => void): WebSocket {
   if (url.startsWith('ws://')) return new WebSocket(url)
   const ws = new WebSocket(url, { rejectUnauthorized: false })
-  ws.on('upgrade', () => {
+  // upgrade 发出时 _socket 还没赋上，这时读指纹一定是空的。
+  // 若在这里 close()，ws 会报「WebSocket was closed before the connection was established」，把真正的原因盖掉。
+  ws.on('open', () => {
     const sock = (ws as unknown as { _socket?: tls.TLSSocket })._socket
     const fp = sock?.getPeerCertificate?.().fingerprint256 || ''
-    if (!pin || fp.toUpperCase() !== pin.toUpperCase()) {
-      onPinFail(`证书指纹不符：${fp || '没有证书'}`)
-      ws.close()
-    }
+    if (pin && fp.toUpperCase() === pin.toUpperCase()) return
+    onPinFail(`证书指纹不符：${fp || '没有证书'}`)
+    ws.terminate()
   })
   return ws
 }

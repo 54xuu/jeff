@@ -24,6 +24,15 @@
 
         </activity>
 
+        <activity
+            android:name=".CustomScannerActivity"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:hardwareAccelerated="true"
+            android:screenOrientation="portrait"
+            android:stateNotNeeded="true"
+            android:theme="@style/AppTheme.NoActionBar"
+            android:windowSoftInputMode="stateAlwaysHidden" />
+
         <service
             android:name=".RelayForegroundService"
             android:exported="false"

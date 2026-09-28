@@ -20,6 +20,7 @@ export default function RemoteSettings(): React.JSX.Element {
   const [qr, setQr] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [copied, setCopied] = useState(false)
 
   const reload = async () => {
     const next = await api.invoke<RemoteStatus>(IPC.remoteStatus)
@@ -41,7 +42,7 @@ export default function RemoteSettings(): React.JSX.Element {
       setQr('')
       return
     }
-    void QRCode.toDataURL(payload, { margin: 1, width: 220 }).then(setQr)
+    void QRCode.toDataURL(payload, { margin: 2, width: 480, errorCorrectionLevel: 'H' }).then(setQr)
   }, [status.pairing?.payload])
 
   const saveName = async () => {
@@ -124,10 +125,54 @@ export default function RemoteSettings(): React.JSX.Element {
           绑定手机
         </button>
         {status.pairing && qr ? (
-          <div data-testid="remote-qr">
-            <img src={qr} alt="配对二维码" width={220} height={220} />
-            <pre data-testid="remote-qr-payload">{status.pairing.payload}</pre>
-            <p className="settings-tip">五分钟内用 Jeff App 扫这个码。手机上会显示一串安全码，和电脑上的对上再点确认。</p>
+          <div className="remote-pair-card" data-testid="remote-qr">
+            <div className="remote-pair-header">
+              <span className="remote-pair-badge">等待扫码</span>
+              <span className="settings-tip">5 分钟内有效</span>
+            </div>
+            <div className="remote-pair-body">
+              <div className="remote-qr-box">
+                <img src={qr} alt="配对二维码" width={280} height={280} />
+              </div>
+              <div className="remote-pair-info">
+                <h4>使用 Jeff 手机端扫码绑定</h4>
+                <ol className="remote-pair-steps">
+                  <li>打开手机上的 Jeff App</li>
+                  <li>在「消息」或「我」页面点击<strong>「扫码绑定」</strong></li>
+                  <li>对准此二维码，核对两端出现的 6 位数字安全码即可绑定</li>
+                </ol>
+                <div className="remote-pair-manual">
+                  <span className="settings-tip">若摄像头不便扫描，可点击下方复制绑定码后在手机上手动粘贴：</span>
+                  <div className="remote-copy-row">
+                    <button
+                      type="button"
+                      className="btn"
+                      data-testid="remote-copy"
+                      onClick={() => {
+                        const text = status.pairing?.payload || ''
+                        const done = () => {
+                          setCopied(true)
+                          window.setTimeout(() => setCopied(false), 2000)
+                        }
+                        void navigator.clipboard.writeText(text).then(done).catch(() => {
+                          const el = document.createElement('textarea')
+                          el.value = text
+                          document.body.appendChild(el)
+                          el.select()
+                          document.execCommand('copy')
+                          el.remove()
+                          done()
+                        })
+                      }}
+                    >
+                      {copied ? '已复制' : '复制绑定码'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+            {/* 隐藏保留原始 payload 元素供 E2E 自动化测试读取 */}
+            <pre data-testid="remote-qr-payload" style={{ display: 'none' }}>{status.pairing.payload}</pre>
           </div>
         ) : null}
         <label className="field check-field">

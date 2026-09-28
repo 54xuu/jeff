@@ -147,26 +147,41 @@ export interface PairingQr {
 }
 
 export function encodePairingQr(q: PairingQr): string {
-  return JSON.stringify(q)
+  const body: Record<string, string> = {
+    token: q.token,
+    desktopId: q.desktopId,
+    desktopName: q.desktopName,
+    desktopX25519Pub: q.desktopX25519Pub,
+  }
+  // 正式中转站地址和证书指纹手机里已经有，写进二维码只会把码变密，屏幕上更难扫。
+  if (q.relay !== RELAY_URL) body.relay = q.relay
+  if (q.certSha256 !== RELAY_CERT_SHA256) body.certSha256 = q.certSha256
+  return JSON.stringify(body)
 }
 
 export function decodePairingQr(raw: string): PairingQr {
+  const text = raw.trim().replace(/^\uFEFF/, '')
+  const start = text.indexOf('{')
+  const end = text.lastIndexOf('}')
+  const json = start >= 0 && end > start ? text.slice(start, end + 1) : text
   let v: unknown
   try {
-    v = JSON.parse(raw)
+    v = JSON.parse(json)
   } catch {
-    throw new Error('二维码不是 JSON')
+    throw new Error('绑定码不是配对内容')
   }
-  if (!v || typeof v !== 'object') throw new Error('二维码内容不对')
+  if (!v || typeof v !== 'object') throw new Error('绑定码不是配对内容')
   const o = v as Record<string, unknown>
   const need = (k: string) => {
     const s = o[k]
-    if (typeof s !== 'string' || !s) throw new Error(`二维码缺少 ${k}`)
+    if (typeof s !== 'string' || !s) throw new Error(`绑定码缺少 ${k}`)
     return s
   }
+  const relay = typeof o.relay === 'string' && o.relay ? o.relay : RELAY_URL
+  const certSha256 = typeof o.certSha256 === 'string' && o.certSha256 ? o.certSha256 : RELAY_CERT_SHA256
   return {
-    relay: need('relay'),
-    certSha256: need('certSha256'),
+    relay,
+    certSha256,
     desktopId: need('desktopId'),
     desktopName: need('desktopName'),
     desktopX25519Pub: need('desktopX25519Pub'),

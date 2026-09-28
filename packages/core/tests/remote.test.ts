@@ -7,8 +7,12 @@ import { bytesToHex, utf8Decode } from '../src/remote/bytes.js'
 import os from 'node:os'
 import {
   FIXTURE_PRIV,
+  RELAY_CERT_SHA256,
+  RELAY_URL,
   REMOTE_POLICY,
   RemoteCipher,
+  decodePairingQr,
+  encodePairingQr,
   applyRemoteStream,
   createChatStreamGate,
   createStreamCoalescer,
@@ -79,6 +83,30 @@ describe('远程帧', () => {
     expect(decodeClientFrame(raw)).toEqual({ t: 'ping' })
     expect(() => decodeClientFrame('{"t":"pair-open"}')).toThrow(/desktopName/)
     expect(() => decodeServerFrame(raw)).toThrow(/不是服务端帧/)
+  })
+})
+
+describe('配对码', () => {
+  const full = {
+    relay: 'ws://127.0.0.1:9',
+    certSha256: 'TEST',
+    desktopId: 'desk',
+    desktopName: '家里的电脑',
+    desktopX25519Pub: 'abc',
+    token: 'tok',
+  }
+
+  it('正式环境省略中转站地址，旧的完整 JSON 仍能粘贴', () => {
+    const compact = encodePairingQr({ ...full, relay: RELAY_URL, certSha256: RELAY_CERT_SHA256 })
+    expect(compact).not.toContain('relay')
+    expect(compact).not.toContain('certSha256')
+    expect(decodePairingQr(compact)).toEqual({ ...full, relay: RELAY_URL, certSha256: RELAY_CERT_SHA256 })
+    expect(decodePairingQr(`请粘贴：\n${JSON.stringify(full)}\n`)).toEqual(full)
+    expect(() => decodePairingQr('不是绑定码')).toThrow(/绑定码不是配对内容/)
+  })
+
+  it('缺了电脑身份时说明缺哪个字段', () => {
+    expect(() => decodePairingQr('{"token":"tok"}')).toThrow(/desktopId/)
   })
 })
 

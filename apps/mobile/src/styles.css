@@ -59,6 +59,38 @@ button, input, textarea { font: inherit; color: inherit; }
   border-radius: 6px;
   padding: 10px 14px;
 }
+.btn-scan {
+  font-size: 16px;
+  font-weight: 600;
+  padding: 14px 16px !important;
+  background: #07c160 !important;
+  box-shadow: 0 4px 12px rgba(7, 193, 96, 0.25);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+.pair-divider {
+  display: flex;
+  align-items: center;
+  text-align: center;
+  color: var(--sub);
+  font-size: 12px;
+  margin: 6px 0;
+}
+.pair-divider::before, .pair-divider::after {
+  content: '';
+  flex: 1;
+  border-bottom: 1px solid var(--line);
+}
+.pair-divider span {
+  padding: 0 10px;
+}
+.btn-paste-go {
+  background: var(--card) !important;
+  color: var(--brand) !important;
+  border: 1px solid var(--brand) !important;
+}
 .chat { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 .bubbles { flex: 1; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
 .bubble { max-width: 78%; background: var(--card); border-radius: 8px; padding: 8px 10px; }

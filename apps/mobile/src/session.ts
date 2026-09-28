@@ -216,6 +216,14 @@ export class PhoneLink {
     const result = new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error('电脑没有确认配对')), 5 * 60 * 1000)
       const off = this.onPush((ev) => {
+        if (ev.what === 'error') {
+          const message = (ev.p as { message?: string } | undefined)?.message
+          if (!message) return
+          clearTimeout(timer)
+          off()
+          reject(new Error(message))
+          return
+        }
         if (ev.what !== '__pair__') return
         const r = ev.p as { ok?: boolean; error?: string; desktopId?: string }
         if (r.desktopId && r.desktopId !== qr.desktopId) return

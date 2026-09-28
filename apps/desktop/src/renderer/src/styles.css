@@ -4635,3 +4635,73 @@ body.pane-resizing {
   color: var(--text);
   background: color-mix(in srgb, #3b82f6 16%, transparent);
 }
+
+/* 远程配对卡片 */
+.remote-pair-card {
+  margin-top: 14px;
+  padding: 16px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--bg-panel);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.remote-pair-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.remote-pair-badge {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--weui-BRAND);
+  background: color-mix(in srgb, var(--weui-BRAND) 12%, transparent);
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+}
+.remote-pair-body {
+  display: flex;
+  gap: 20px;
+  align-items: flex-start;
+}
+.remote-qr-box {
+  background: #ffffff;
+  padding: 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.remote-pair-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.remote-pair-info h4 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+.remote-pair-steps {
+  margin: 0;
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-2);
+}
+.remote-pair-manual {
+  margin-top: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.remote-copy-row {
+  display: flex;
+  gap: 8px;
+}

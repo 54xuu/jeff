@@ -86,6 +86,7 @@ test('假手机经本地中转站绑定，并让桌面切到新项目群', async
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'jeff-remote-e2e-'))
   const relay: RunningRelay = await startRelay({ dataFile: path.join(dir, 'relay.db'), port: 0 })
   const home = path.join(REPO_ROOT, '.tmp/jeff-remote-e2e')
+  fs.rmSync(home, { recursive: true, force: true })
   let launched: Awaited<ReturnType<typeof launchJeff>> | undefined
   let phone: Awaited<ReturnType<typeof connectPhone>> | undefined
   try {
@@ -367,6 +368,7 @@ test('假手机让小杰回复，桌面气泡和历史一致', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'jeff-remote-live-'))
   const relay: RunningRelay = await startRelay({ dataFile: path.join(dir, 'relay.db'), port: 0 })
   const home = path.join(REPO_ROOT, '.tmp/jeff-remote-live')
+  fs.rmSync(home, { recursive: true, force: true })
   let launched: Awaited<ReturnType<typeof launchJeff>> | undefined
   let phone: Awaited<ReturnType<typeof connectPhone>> | undefined
   try {

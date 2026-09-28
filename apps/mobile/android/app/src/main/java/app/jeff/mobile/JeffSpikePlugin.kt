@@ -183,11 +183,18 @@ class JeffSpikePlugin : Plugin() {
 
     @PluginMethod
     fun scan(call: PluginCall) {
-        val integrator = IntentIntegrator(activity)
+        val host = activity
+        if (host == null) {
+            call.reject("没有界面")
+            return
+        }
+        val integrator = IntentIntegrator(host)
+        integrator.setCaptureActivity(CustomScannerActivity::class.java)
         integrator.setDesiredBarcodeFormats(IntentIntegrator.QR_CODE)
-        integrator.setPrompt("扫描电脑上的配对二维码")
+        integrator.setPrompt("")
         integrator.setBeepEnabled(false)
-        integrator.setOrientationLocked(true)
+        // 清单里已经锁了竖屏。这里再锁一次会让界面重建，摄像头还在，解码器已经丢了。
+        integrator.setOrientationLocked(false)
         startActivityForResult(call, integrator.createScanIntent(), "onScan")
     }
 

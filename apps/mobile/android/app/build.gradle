@@ -9,8 +9,8 @@ android {
         applicationId "app.jeff.mobile"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 10900
-        versionName "1.9.0"
+        versionCode 10902
+        versionName "1.9.2"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -25,10 +25,26 @@ android {
     kotlinOptions {
         jvmTarget = '21'
     }
+    def keystorePath = System.getenv('JEFF_ANDROID_KEYSTORE') ?: "${System.properties['user.home']}/.jeff-android/release.keystore"
+    def storePass = System.getenv('JEFF_ANDROID_STORE_PASSWORD') ?: ''
+    def keyPass = System.getenv('JEFF_ANDROID_KEY_PASSWORD') ?: storePass
+    signingConfigs {
+        release {
+            if (file(keystorePath).exists() && storePass) {
+                storeFile file(keystorePath)
+                storePassword storePass
+                keyAlias System.getenv('JEFF_ANDROID_KEY_ALIAS') ?: 'jeff'
+                keyPassword keyPass
+            }
+        }
+    }
     buildTypes {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            if (signingConfigs.release.storeFile) {
+                signingConfig signingConfigs.release
+            }
         }
     }
 }
@@ -62,6 +78,19 @@ tasks.register('copyCryptoVectors', Copy) {
     into 'src/main/assets'
 }
 tasks.named('preBuild').configure { dependsOn 'copyCryptoVectors' }
+
+tasks.matching { it.name == 'assembleRelease' }.configureEach {
+    doLast {
+        def version = android.defaultConfig.versionName
+        def dest = file("${rootProject.projectDir}/release")
+        dest.mkdirs()
+        copy {
+            from layout.buildDirectory.file('outputs/apk/release/app-release.apk')
+            into dest
+            rename { "jeff-${version}.apk" }
+        }
+    }
+}
 
 try {
     def servicesJSON = file('google-services.json')

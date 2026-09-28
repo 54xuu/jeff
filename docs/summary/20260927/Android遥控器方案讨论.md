@@ -63,7 +63,11 @@ App 有扫码和粘贴两种绑定、消息列表、私聊和项目群、流式�
 
 ## 一期修过的问题
 
-- 本地 `ws://` 验收没有证书指纹。二维码里放非空占位 `local`，否则手机解不开配对内容。正式 `wss` 仍用固定指纹。
+- 正式 `wss` 核对证书时，原先在 `upgrade` 事件里读指纹。那时套接字还没挂上，指纹是空的，连接会被立刻关掉，界面只看到「WebSocket was closed before the connection was established」。指纹改到连接打开之后再对。1.9.1 的包：`apps/desktop/release/jeff-desktop_1.9.1_amd64.deb`（本机已装，app.asar md5 `f834f922cf456ab136d347d1c7d9d688`）、`apps/desktop/release/jeff-Setup-1.9.1.exe`、正式 apk `apps/mobile/android/release/jeff-1.9.1.apk`（`versionName=1.9.1`，`versionCode=10901`，用 `~/.jeff-android/release.keystore` 别名 `jeff` 签名，证书 SHA-256 `3F:F7:DF:F8:F4:1E:9E:70:25:E6:E2:97:82:0D:D5:82:25:E3:D1:7B:14:7B:6E:E7:01:3B:AB:6D:77:C4:9C:1D`）。手机图标换成和电脑端一样的绿色 JF。真机上如果已经装过调试包，要先卸载再装这个正式包，两套签名不能互相覆盖。
+- 电脑端配对二维码下方直接暴露了原始裸 JSON 字符串，容易产生困惑且难以核对。已全面优化为卡片化步骤指引：顶部显示 5 分钟有效徽章、中间突出二维码、右侧列出 1-2-3 扫码步骤，并提供「复制绑定码」按钮，不再直接在界面上贴裸露 JSON。
+- 手机端扫码界面原先使用 ZXing 默认白底文字，无明确扫码框、返回键和手电筒开关。现新增 `CustomScannerActivity`，提供 260dp 居中激光扫描取景框、带半透明暗角遮罩、顶部取消返回按钮、底部文字提示与闪光灯开关，对焦和自动解析清晰明了。
+- 手机端启动时指纹识别逻辑优化：增加调用状态防抖（防重复拉起系统弹窗与循环）、界面展示明确解锁失败状态提示，取消或失败后停留在解锁页并可随时重试，成功后平滑进入主界面。
+- 1.9.2：扫码界面能出画面但解不出码。华为上 TextureView 预览正常、送给解码器的帧是坏的，另外竖屏锁会把界面重建一次，解码器跟着丢。改为 SurfaceView、连续对焦，正色和反色都试。正式环境的二维码不再塞中转站地址和证书指纹，改成 480 像素、高纠错，屏幕上更好扫。粘贴仍接受完整 JSON，前后多出来的字会剥掉；中转站拒绝时马上提示，不再干等五分钟。包：`apps/mobile/android/release/jeff-1.9.2.apk`（`versionName=1.9.2`，`versionCode=10902`，同一把正式签名，可覆盖 1.9.1）、`apps/desktop/release/jeff-desktop_1.9.2_amd64.deb`（本机已装，app.asar md5 `2ed918a24c7e33313c22586f982817e1`）、`apps/desktop/release/jeff-Setup-1.9.2.exe`。
 - 配对成功后中转站会再推一条「电脑在线」。手机若因此再发一轮握手，会把临时密钥换掉，后续调用对不上序号。同一次握手现在复用，不另起一轮。
 - Electron 被强制结束时，zygote 会继承 stdout，Playwright 会一直等到超时。验收结束时先记下子进程再关掉。正常退出也会在几秒后清掉子进程。
 - 高屏上底栏原先跟在表单后面，下面空出一大块。壳层改为铺满视口，底栏贴底。

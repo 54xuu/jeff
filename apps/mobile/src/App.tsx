@@ -133,8 +133,12 @@ export function App() {
 
   async function boot() {
     if (Capacitor.isNativePlatform()) {
-      const unlocked = await Native.unlock().catch(() => ({ ok: false, skipped: false }))
-      if (unlocked.ok || unlocked.skipped) setLocked(false)
+      try {
+        const unlocked = await Native.unlock()
+        if (unlocked.ok || unlocked.skipped) setLocked(false)
+      } catch (err) {
+        setUnlockError((err as Error).message || '解锁未通过，请点击下方按钮重试')
+      }
       const dbg = await Native.readDebugPair().catch(() => ({ text: '' }))
       if (dbg.text) await acceptPair(dbg.text)
     } else {
@@ -327,6 +331,25 @@ export function App() {
   const peer = computers.get(activeId)
   const bound = computers.size > 0
 
+  const [authenticating, setAuthenticating] = useState(false)
+  const [unlockError, setUnlockError] = useState('')
+
+  const requestUnlock = async () => {
+    if (authenticating) return
+    setAuthenticating(true)
+    setUnlockError('')
+    try {
+      const r = await Native.unlock()
+      if (r.ok || r.skipped) {
+        setLocked(false)
+      }
+    } catch (err) {
+      setUnlockError((err as Error).message || '解锁未通过，请重试')
+    } finally {
+      setAuthenticating(false)
+    }
+  }
+
   if (locked) {
     return (
       <main className="lock">
@@ -335,16 +358,12 @@ export function App() {
         <button
           type="button"
           data-testid="unlock"
-          onClick={() => {
-            void Native.unlock()
-              .then((r) => {
-                if (r.ok || r.skipped) setLocked(false)
-              })
-              .catch(() => setLocked(true))
-          }}
+          disabled={authenticating}
+          onClick={() => void requestUnlock()}
         >
-          指纹或锁屏密码解锁
+          {authenticating ? '正在调起解锁…' : '指纹或锁屏密码解锁'}
         </button>
+        {unlockError ? <p className="err">{unlockError}</p> : null}
       </main>
     )
   }
@@ -363,24 +382,43 @@ export function App() {
           {!bound ? (
             <section className="pair" data-testid="pair-panel">
               <h1>绑定电脑</h1>
-              <p>在电脑 Jeff 的「设置 → 远程控制」里点绑定手机，然后扫二维码。</p>
+              <p className="hint">在电脑 Jeff 的「设置 → 远程控制」里点绑定手机，然后用下方按钮扫码。</p>
               {Capacitor.isNativePlatform() ? (
                 <button
                   type="button"
                   data-testid="pair-scan"
+                  className="btn-scan"
                   disabled={busy}
                   onClick={() => {
+                    setError('')
                     void Native.scan()
                       .then((r) => acceptPair(r.text))
-                      .catch((err) => setError((err as Error).message))
+                      .catch((err) => {
+                        const msg = (err as Error).message || ''
+                        if (msg && !msg.includes('取消')) setError(msg)
+                      })
                   }}
                 >
-                  扫码绑定
+                  📷 扫码绑定
                 </button>
               ) : null}
-              <textarea data-testid="pair-paste" value={paste} placeholder="或粘贴二维码内容" onChange={(e) => setPaste(e.target.value)} />
-              <button type="button" data-testid="pair-go" disabled={busy || !paste.trim()} onClick={() => void acceptPair(paste)}>
-                使用粘贴内容绑定
+              <div className="pair-divider">
+                <span>或手动粘贴绑定码</span>
+              </div>
+              <textarea
+                data-testid="pair-paste"
+                value={paste}
+                placeholder="在此粘贴电脑端生成的绑定码或 JSON 字符串"
+                onChange={(e) => setPaste(e.target.value)}
+              />
+              <button
+                type="button"
+                data-testid="pair-go"
+                className="btn-paste-go"
+                disabled={busy || !paste.trim()}
+                onClick={() => void acceptPair(paste)}
+              >
+                {busy ? '正在绑定…' : '使用粘贴内容绑定'}
               </button>
               {error ? <p className="err">{error}</p> : null}
             </section>
@@ -577,19 +615,38 @@ export function App() {
                 <button
                   type="button"
                   data-testid="pair-scan"
+                  className="btn-scan"
                   disabled={busy}
                   onClick={() => {
+                    setError('')
                     void Native.scan()
                       .then((r) => acceptPair(r.text))
-                      .catch((err) => setError((err as Error).message))
+                      .catch((err) => {
+                        const msg = (err as Error).message || ''
+                        if (msg && !msg.includes('取消')) setError(msg)
+                      })
                   }}
                 >
-                  扫码绑定
+                  📷 扫码绑定这台电脑
                 </button>
               ) : null}
-              <textarea data-testid="pair-paste" value={paste} placeholder="粘贴另一台电脑的二维码" onChange={(e) => setPaste(e.target.value)} />
-              <button type="button" data-testid="pair-go" disabled={busy || !paste.trim()} onClick={() => void acceptPair(paste)}>
-                绑定这台电脑
+              <div className="pair-divider">
+                <span>或手动粘贴绑定码</span>
+              </div>
+              <textarea
+                data-testid="pair-paste"
+                value={paste}
+                placeholder="在此粘贴电脑端生成的绑定码或 JSON 字符串"
+                onChange={(e) => setPaste(e.target.value)}
+              />
+              <button
+                type="button"
+                data-testid="pair-go"
+                className="btn-paste-go"
+                disabled={busy || !paste.trim()}
+                onClick={() => void acceptPair(paste)}
+              >
+                {busy ? '正在绑定…' : '使用粘贴内容绑定这台电脑'}
               </button>
             </>
           ) : null}
