@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -p tsconfig.json --noEmit && vite build",
+    "test": "vitest run",
+    "test:e2e": "playwright test -c e2e/playwright.config.ts",
     "cap:sync": "npm run build && cap sync android",
     "cap:open": "cap open android"
   },
@@ -13,15 +15,20 @@
     "@capacitor/android": "^7.4.3",
     "@capacitor/core": "^7.4.3",
     "@jeff/core": "*",
+    "mermaid": "^11.17.2",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
     "@capacitor/cli": "^7.4.3",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^4.3.4",
+    "happy-dom": "^17.6.3",
     "typescript": "^5.7.0",
-    "vite": "^7.0.0"
+    "vite": "^7.0.0",
+    "vitest": "^3.2.7"
   }
 }

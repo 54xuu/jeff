@@ -1,0 +1,36 @@
+import { expect, test } from '@playwright/test'
+
+test('对话 Markdown 与 Mermaid 在手机视口渲染', async ({ page }) => {
+  await page.goto('/?fixture=markdown')
+  await expect(page.getByRole('heading', { name: '巡检结论' })).toBeVisible()
+  await expect(page.getByRole('listitem').filter({ hasText: '体温正常' })).toBeVisible()
+  await expect(page.getByRole('cell', { name: '98%' })).toBeVisible()
+  await expect(page.locator('.md-code code')).toContainText('const ok = true')
+
+  const fig = page.getByTestId('md-mermaid-fig')
+  const svg = fig.locator('svg')
+  await expect(svg).toBeVisible()
+  await expect(fig).toContainText('开始')
+  const inline = await svg.boundingBox()
+  expect(inline && inline.width).toBeGreaterThan(40)
+
+  await page.getByTestId('md-mermaid-toggle-src').click()
+  await expect(page.locator('.md-mermaid-src')).toContainText('graph TD')
+  await page.getByTestId('md-mermaid-toggle-src').click()
+  await expect(svg).toBeVisible()
+
+  await page.getByTestId('md-mermaid-zoom').click()
+  const lightbox = page.getByTestId('mermaid-lightbox')
+  await expect(lightbox).toBeVisible()
+  const zoomed = await lightbox.locator('svg').boundingBox()
+  const viewport = page.viewportSize()
+  expect(zoomed && viewport).toBeTruthy()
+  expect(zoomed!.y).toBeGreaterThanOrEqual(0)
+  expect(zoomed!.y + zoomed!.height).toBeLessThanOrEqual(viewport!.height + 1)
+  expect(zoomed!.x).toBeGreaterThanOrEqual(0)
+  expect(zoomed!.x + zoomed!.width).toBeLessThanOrEqual(viewport!.width + 1)
+  await expect(lightbox).toContainText('开始')
+  await expect(lightbox).toContainText('结束')
+  await page.getByTestId('mermaid-lightbox-close').click()
+  await expect(lightbox).toBeHidden()
+})

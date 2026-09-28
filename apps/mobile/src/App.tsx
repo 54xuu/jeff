@@ -1,8 +1,10 @@
 import { Capacitor } from '@capacitor/core'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { IPC } from '@jeff/core'
+import { IPC, extractThinkTags, mergeReasoning } from '@jeff/core'
 import type { AgentInfo, ChatMsg, FsDirEntry, GroupMessage, ProjectInfo } from '@jeff/core'
 import type { RemoteStreamFrame } from '@jeff/core/remote'
+import { consumeBack } from './backstack'
+import { Markdown } from './Markdown'
 import { Native, PhoneLink, mergeStream, shrinkImage } from './session'
 
 type Tab = 'messages' | 'me'
@@ -110,7 +112,21 @@ function ReasoningView({ reasoning, live }: { reasoning?: string | string[]; liv
   )
 }
 
-function ToolsView({ tools }: { tools?: Array<{ tool: string; status?: string; output?: string; error?: string }> }) {
+type ToolItem = { tool: string; status?: string; output?: string; error?: string }
+
+function AssistantText(props: { text: string; reasoning?: string | string[]; tools?: ToolItem[]; live?: boolean }): React.JSX.Element {
+  const parsed = useMemo(() => extractThinkTags(props.text), [props.text])
+  const reasoning = useMemo(() => mergeReasoning(props.reasoning, parsed.reasoning), [props.reasoning, parsed])
+  return (
+    <>
+      {reasoning ? <ReasoningView reasoning={reasoning} live={props.live} /> : null}
+      {props.tools && props.tools.length > 0 ? <ToolsView tools={props.tools} /> : null}
+      {parsed.text ? <Markdown text={parsed.text} live={props.live} /> : props.live && !reasoning ? <p>…</p> : null}
+    </>
+  )
+}
+
+function ToolsView({ tools }: { tools?: ToolItem[] }) {
   const [open, setOpen] = useState(false)
   if (!tools || tools.length === 0) return null
 
@@ -196,6 +212,7 @@ export function App() {
   addingRef.current = adding
 
   const handleBack = () => {
+    if (consumeBack()) return
     if (plusRef.current) {
       setPlus(false)
       return
@@ -773,17 +790,21 @@ export function App() {
                       <span className="wechat-sender-name">{m.sender_name}</span>
                     ) : null}
                     <div className={isMe ? 'bubble me' : 'bubble'}>
-                      {!isMe && m.reasoning && m.reasoning.length > 0 ? (
-                        <ReasoningView reasoning={m.reasoning} />
-                      ) : null}
-                      {!isMe && m.tools && m.tools.length > 0 ? (
-                        <ToolsView tools={m.tools} />
-                      ) : null}
-                      {m.text ? <p>{m.text}</p> : null}
+                      {m.role === 'assistant' ? (
+                        <AssistantText text={m.text} reasoning={m.reasoning} tools={m.tools} />
+                      ) : (
+                        <>
+                          {!isMe && m.reasoning && m.reasoning.length > 0 ? <ReasoningView reasoning={m.reasoning} /> : null}
+                          {!isMe && m.tools && m.tools.length > 0 ? <ToolsView tools={m.tools} /> : null}
+                          {m.text ? <p>{m.text}</p> : null}
+                        </>
+                      )}
                       {m.images?.map((img, i) => (
                         <img key={i} src={img.dataUrl} alt="" />
                       ))}
-                      {m.tools?.length ? <small className="tools">{m.tools.map((t) => t.tool).join(' · ')}</small> : null}
+                      {m.role !== 'assistant' && m.tools?.length ? (
+                        <small className="tools">{m.tools.map((t) => t.tool).join(' · ')}</small>
+                      ) : null}
                     </div>
                   </div>
                   {isMe && (
@@ -801,14 +822,7 @@ export function App() {
                 </div>
                 <div className="wechat-msg-content">
                   <div className="bubble">
-                    {stream.reasoning ? <ReasoningView reasoning={stream.reasoning} live /> : null}
-                    {stream.tools?.length ? <ToolsView tools={stream.tools} /> : null}
-                    {stream.tools?.length ? (
-                      <small className="tools">
-                        {stream.tools.map((t) => `${t.tool}${t.status ? `(${t.status})` : ''}`).join(' · ')}
-                      </small>
-                    ) : null}
-                    <p>{stream.text || (stream.reasoning ? '' : '…')}</p>
+                    <AssistantText text={stream.text} reasoning={stream.reasoning} tools={stream.tools} live />
                   </div>
                 </div>
               </div>

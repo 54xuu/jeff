@@ -461,7 +461,7 @@ button, input, textarea {
   border-left: 6px solid var(--me);
 }
 
-.bubble p {
+.bubble > p {
   margin: 0;
   white-space: pre-wrap;
   word-break: break-word;
@@ -1385,4 +1385,251 @@ button, input, textarea {
   text-align: center;
   color: var(--sub);
   font-size: 14px;
+}
+
+/* ===== 对话 Markdown / Mermaid ===== */
+.wechat-msg-content:has(.md-mermaid) {
+  max-width: 92%;
+}
+
+.md-body {
+  font-size: 15.5px;
+  line-height: 1.5;
+  word-break: break-word;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.md-body > :first-child {
+  margin-top: 0;
+}
+
+.md-body > :last-child {
+  margin-bottom: 0;
+}
+
+.md-body p {
+  margin: 6px 0;
+}
+
+.md-body a {
+  color: #576b95;
+  word-break: break-all;
+}
+
+.md-body h1,
+.md-body h2,
+.md-body h3,
+.md-body h4 {
+  margin: 10px 0 6px;
+  line-height: 1.35;
+  font-weight: 600;
+}
+
+.md-body h1 { font-size: 18px; }
+.md-body h2 { font-size: 16.5px; }
+.md-body h3,
+.md-body h4 { font-size: 15.5px; }
+
+.md-body ul,
+.md-body ol {
+  margin: 6px 0;
+  padding-left: 1.3em;
+}
+
+.md-body li {
+  margin: 2px 0;
+}
+
+.md-body blockquote {
+  margin: 6px 0;
+  padding: 2px 10px;
+  border-left: 3px solid var(--brand);
+  color: var(--sub);
+}
+
+.md-body table {
+  display: block;
+  overflow-x: auto;
+  border-collapse: collapse;
+  margin: 8px 0;
+  font-size: 13px;
+  max-width: 100%;
+}
+
+.md-body th,
+.md-body td {
+  border: 1px solid var(--line-strong);
+  padding: 4px 8px;
+  white-space: nowrap;
+}
+
+.md-body th {
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+}
+
+.md-body code {
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 12.5px;
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  border-radius: 4px;
+  padding: 1px 4px;
+}
+
+.md-body hr {
+  border: none;
+  border-top: 1px solid var(--line);
+  margin: 10px 0;
+}
+
+.md-body img {
+  max-width: 100%;
+}
+
+.md-code {
+  margin: 8px 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--text) 4%, var(--bubble-other));
+}
+
+.md-code-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--sub);
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--line);
+}
+
+.md-copy-btn,
+.md-mermaid-bar button {
+  border: 0;
+  background: transparent;
+  color: var(--sub);
+  font-size: 12px;
+  padding: 2px 6px;
+}
+
+.md-code pre {
+  margin: 0;
+  padding: 8px 10px;
+  overflow-x: auto;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.md-code code {
+  background: transparent;
+  padding: 0;
+  font-size: inherit;
+  white-space: pre;
+}
+
+.md-mermaid {
+  margin: 8px 0;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--card);
+  overflow: hidden;
+}
+
+.md-mermaid-fig {
+  display: flex;
+  justify-content: center;
+  padding: 8px;
+  overflow-x: auto;
+}
+
+.md-mermaid-fig svg {
+  max-width: 100% !important;
+  height: auto !important;
+}
+
+.md-mermaid-src,
+.md-mermaid-error,
+.md-mermaid-pending {
+  margin: 0;
+  padding: 8px 10px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.md-mermaid-error {
+  color: var(--danger);
+  white-space: normal;
+}
+
+.md-mermaid-pending {
+  color: var(--sub);
+}
+
+.md-mermaid-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px 4px;
+  border-top: 1px dashed var(--line);
+}
+
+.mermaid-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 400;
+  background: rgba(0, 0, 0, 0.78);
+  display: flex;
+  flex-direction: column;
+  touch-action: none;
+  user-select: none;
+}
+
+.mermaid-lightbox-close {
+  position: absolute;
+  top: calc(10px + var(--safe-top));
+  right: 12px;
+  z-index: 1;
+  border: 0;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.92);
+  color: #191919;
+  font-size: 14px;
+  padding: 6px 14px;
+}
+
+.mermaid-lightbox-stage {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.mermaid-lightbox-fig {
+  background: var(--card);
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.mermaid-lightbox-fig svg {
+  width: 100% !important;
+  height: auto !important;
+  max-width: none !important;
+  display: block;
+}
+
+.mermaid-lightbox-tip {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(12px + var(--safe-bottom));
+  margin: 0;
+  text-align: center;
+  font-size: 12px;
+  color: #d8d8d8;
+  pointer-events: none;
 }
