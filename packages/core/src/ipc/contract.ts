@@ -139,6 +139,7 @@ export const IPC = {
   remoteUnbind: 'remote:unbind',
   remoteSettings: 'remote:settings',
   remoteFocus: 'remote:focus',
+  remoteReconnect: 'remote:reconnect',
   // 冒烟钩子（仅 JEFF_SMOKE=1 时注册）
   smokeShot: 'smoke:shot',
   smokeDone: 'smoke:done',
@@ -401,6 +402,11 @@ export interface RemoteStatus {
   preventSleep: boolean
   pairing: { token: string; expiresAt: number; payload: string } | null
   lastError?: string
+  relayUrl?: string
+  state?: 'connected' | 'connecting' | 'disconnected' | 'error'
+  rttMs?: number
+  lastPingAt?: number
+  lastConnectedAt?: number
 }
 
 export interface RemotePairAsk {
@@ -670,6 +676,7 @@ export type InvokeMap = {
   [IPC.remoteUnbind]: void
   [IPC.remoteSettings]: { openAtLogin?: boolean; preventSleep?: boolean; desktopName?: string }
   [IPC.remoteFocus]: { kind: 'agent' | 'group'; id: string }
+  [IPC.remoteReconnect]: void
   // 定时任务
   [IPC.cronList]: void
   [IPC.cronSave]: {

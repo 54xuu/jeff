@@ -1,6 +1,6 @@
 import os from 'node:os'
 import tls from 'node:tls'
-import { app, powerSaveBlocker } from 'electron'
+import { app, powerMonitor, powerSaveBlocker } from 'electron'
 import WebSocket from 'ws'
 import type { JeffCore } from '@jeff/core'
 import { IPC, type RemotePairAsk, type RemoteStatus } from '@jeff/core'
@@ -49,6 +49,14 @@ export class RemoteGateway {
   private noted = new Set<string>()
   private url: string
   private pin: string
+  private state: 'connected' | 'connecting' | 'disconnected' | 'error' = 'connecting'
+  private rttMs?: number
+  private lastPingAt?: number
+  private lastConnectedAt?: number
+  private pingTimer: ReturnType<typeof setInterval> | null = null
+  private pingWaitTimer: ReturnType<typeof setTimeout> | null = null
+  private onResumeHandler: (() => void) | null = null
+  private onSuspendHandler: (() => void) | null = null
 
   constructor(private host: RemoteHost) {
     this.identity = loadIdentity(host.core.paths.root)
@@ -58,6 +66,7 @@ export class RemoteGateway {
     this.bindHandlers()
     this.applyLogin()
     this.applySleep()
+    this.bindPowerMonitor()
     this.listen()
     this.connect()
   }
@@ -65,6 +74,8 @@ export class RemoteGateway {
   stop(): void {
     this.stopped = true
     if (this.timer) clearTimeout(this.timer)
+    this.clearHeartbeat()
+    this.unbindPowerMonitor()
     this.dropSleep()
     this.ws?.close()
   }
@@ -80,6 +91,11 @@ export class RemoteGateway {
       preventSleep: this.prefs.preventSleep,
       pairing: this.pairing && this.pairing.expiresAt > Date.now() ? this.pairing : null,
       lastError: this.lastError || undefined,
+      relayUrl: this.url,
+      state: this.state,
+      rttMs: this.rttMs,
+      lastPingAt: this.lastPingAt,
+      lastConnectedAt: this.lastConnectedAt,
     }
   }
 
@@ -110,6 +126,10 @@ export class RemoteGateway {
     h[IPC.remoteFocus] = async (p) => {
       const d = p as { kind?: string; id?: string }
       if ((d.kind === 'agent' || d.kind === 'group') && d.id) this.push('remote-nav', { kind: d.kind, id: d.id })
+      return { ok: true }
+    }
+    h[IPC.remoteReconnect] = async () => {
+      this.reconnect(0)
       return { ok: true }
     }
   }
@@ -228,7 +248,10 @@ export class RemoteGateway {
       this.bindings = (ev.bindings as BindingView[]) || []
       this.appId = this.bindings[0]?.appId || ''
       this.connected = true
+      this.state = 'connected'
+      this.lastConnectedAt = Date.now()
       this.lastError = ''
+      this.startHeartbeat()
       this.applySleep()
       this.publish()
       return
@@ -280,6 +303,7 @@ export class RemoteGateway {
     }
     if (ev.t === 'error') {
       this.lastError = String(ev.message || ev.code || '')
+      this.state = 'error'
       this.publish()
     }
   }
@@ -334,9 +358,13 @@ export class RemoteGateway {
 
   private connect(): void {
     if (this.stopped) return
+    this.clearHeartbeat()
+    this.state = 'connecting'
+    this.publish()
     const ws = openSocket(this.url, this.pin, (message) => {
       this.lastError = message
       this.stopped = true
+      this.state = 'error'
       this.publish()
     })
     this.ws = ws
@@ -355,8 +383,20 @@ export class RemoteGateway {
       this.attempt = 0
     })
     ws.on('message', (data) => link.handleRaw(data.toString()))
+    ws.on('pong', () => {
+      if (this.pingWaitTimer) {
+        clearTimeout(this.pingWaitTimer)
+        this.pingWaitTimer = null
+      }
+      if (this.lastPingAt) {
+        this.rttMs = Math.max(1, Date.now() - this.lastPingAt)
+      }
+      this.publish()
+    })
     ws.on('close', () => {
       this.connected = false
+      this.state = this.stopped ? 'disconnected' : 'connecting'
+      this.clearHeartbeat()
       link.failAll('连接已断开')
       this.publish()
       this.schedule()
@@ -364,8 +404,111 @@ export class RemoteGateway {
     ws.on('error', (err) => {
       if (this.stopped) return
       this.lastError = err.message
+      this.state = 'error'
       this.publish()
     })
+  }
+
+  private startHeartbeat(): void {
+    this.clearHeartbeat()
+    this.pingTimer = setInterval(() => {
+      if (!this.connected || !this.ws || this.ws.readyState !== WebSocket.OPEN) return
+      this.lastPingAt = Date.now()
+      try {
+        this.ws.ping()
+        if (this.pingWaitTimer) clearTimeout(this.pingWaitTimer)
+        this.pingWaitTimer = setTimeout(() => {
+          this.pingWaitTimer = null
+          if (this.ws && this.connected) {
+            this.lastError = '心跳超时（10秒未响应），正在重新连接'
+            this.state = 'connecting'
+            this.publish()
+            this.ws.terminate()
+          }
+        }, 10_000)
+      } catch {
+        /* ws 状态异常时由 close 事件收敛 */
+      }
+    }, 20_000)
+  }
+
+  private clearHeartbeat(): void {
+    if (this.pingTimer) {
+      clearInterval(this.pingTimer)
+      this.pingTimer = null
+    }
+    if (this.pingWaitTimer) {
+      clearTimeout(this.pingWaitTimer)
+      this.pingWaitTimer = null
+    }
+  }
+
+  private bindPowerMonitor(): void {
+    this.onResumeHandler = () => {
+      if (this.stopped) return
+      this.lastError = ''
+      this.state = 'connecting'
+      this.publish()
+      // 系统唤醒后底层网卡/Wi-Fi 通常需要 1~2 秒重新获取 DHCP IP，延迟 1.5s 后强制重连
+      this.reconnect(1500)
+    }
+    this.onSuspendHandler = () => {
+      this.clearHeartbeat()
+      if (this.timer) {
+        clearTimeout(this.timer)
+        this.timer = null
+      }
+      if (this.ws) {
+        try {
+          this.ws.terminate()
+        } catch {
+          /* 忽略 */
+        }
+        this.ws = null
+      }
+      this.connected = false
+      this.state = 'disconnected'
+      this.publish()
+    }
+    powerMonitor.on('resume', this.onResumeHandler)
+    powerMonitor.on('suspend', this.onSuspendHandler)
+  }
+
+  private unbindPowerMonitor(): void {
+    if (this.onResumeHandler) {
+      powerMonitor.removeListener('resume', this.onResumeHandler)
+      this.onResumeHandler = null
+    }
+    if (this.onSuspendHandler) {
+      powerMonitor.removeListener('suspend', this.onSuspendHandler)
+      this.onSuspendHandler = null
+    }
+  }
+
+  reconnect(delayMs = 0): void {
+    if (this.stopped) return
+    this.attempt = 0
+    if (this.timer) {
+      clearTimeout(this.timer)
+      this.timer = null
+    }
+    this.clearHeartbeat()
+    if (this.ws) {
+      try {
+        this.ws.terminate()
+      } catch {
+        /* 忽略 */
+      }
+      this.ws = null
+    }
+    this.connected = false
+    this.state = 'connecting'
+    this.publish()
+    if (delayMs > 0) {
+      this.timer = setTimeout(() => this.connect(), delayMs)
+    } else {
+      this.connect()
+    }
   }
 
   private schedule(): void {

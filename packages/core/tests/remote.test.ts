@@ -133,6 +133,7 @@ describe('远程白名单', () => {
         'remote:focus',
         'remote:pairConfirm',
         'remote:pairStart',
+        'remote:reconnect',
         'remote:settings',
         'remote:status',
         'remote:unbind',

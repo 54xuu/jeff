@@ -22,6 +22,7 @@ const DENY: Record<string, string> = {
   [IPC.remoteUnbind]: '这条是电脑设置页用的，手机解绑走中转站自己的帧',
   [IPC.remoteSettings]: '开机自启和防睡眠只在电脑上改',
   [IPC.remoteFocus]: '桌面端把当前会话推给手机，不接受手机回调这一条',
+  [IPC.remoteReconnect]: '重新连接中转站只在电脑上操作',
 }
 
 const REPLACE: Record<string, string> = {

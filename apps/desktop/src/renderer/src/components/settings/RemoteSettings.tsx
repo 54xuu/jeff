@@ -97,13 +97,67 @@ export default function RemoteSettings(): React.JSX.Element {
     }
   }
 
+  const reconnect = async () => {
+    setBusy(true)
+    setError('')
+    try {
+      await api.invoke(IPC.remoteReconnect)
+      await reload()
+    } catch (err) {
+      setError((err as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
   return (
     <div className="settings-content" data-testid="remote-settings">
       <h2 className="settings-title">远程控制</h2>
       <p className="settings-tip">手机通过中转站连上这台电脑。消息是端到端加密的，中转站只负责转发。电脑睡着或 Jeff 没开，手机就操作不了。</p>
+
+      {/* 中转站连接状态卡片 */}
+      <div className="remote-status-card" data-testid="remote-status-card">
+        <div className="remote-status-header">
+          <div className="remote-status-indicator-group">
+            <span className={`status-dot ${status.connected ? 'online' : status.state === 'error' ? 'error' : 'connecting'}`} />
+            <span className="remote-status-text" data-testid="remote-connection">
+              {status.connected ? '中转站已连接' : status.state === 'error' ? '中转站连接失败' : '正在连接中转站'}
+            </span>
+          </div>
+          <button
+            type="button"
+            className="btn small"
+            data-testid="remote-reconnect"
+            disabled={busy}
+            onClick={() => void reconnect()}
+          >
+            重新连接
+          </button>
+        </div>
+        <div className="remote-status-details">
+          <div className="remote-status-item">
+            <span className="remote-status-label">中转站地址</span>
+            <span className="remote-status-val">{status.relayUrl || '默认中转服务'}</span>
+          </div>
+          {status.connected ? (
+            <>
+              <div className="remote-status-item">
+                <span className="remote-status-label">心跳延迟</span>
+                <span className="remote-status-val">{status.rttMs != null ? `${status.rttMs} ms` : '检测中…'}</span>
+              </div>
+              <div className="remote-status-item">
+                <span className="remote-status-label">已连通自</span>
+                <span className="remote-status-val">
+                  {status.lastConnectedAt ? new Date(status.lastConnectedAt).toLocaleTimeString() : '刚刚'}
+                </span>
+              </div>
+            </>
+          ) : null}
+        </div>
+        {status.lastError ? <p className="settings-error remote-status-error">{status.lastError}</p> : null}
+      </div>
+
       <div className="pv-detail">
-        <p data-testid="remote-connection">{status.connected ? '中转站已连接' : '正在连接中转站'}</p>
-        {status.lastError ? <p className="settings-tip">{status.lastError}</p> : null}
         <label className="field">
           <span>这台电脑的名字</span>
           <input data-testid="remote-name" value={name} onChange={(e) => setName(e.target.value)} />

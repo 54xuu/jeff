@@ -4812,6 +4812,58 @@ body.pane-resizing {
   background: color-mix(in srgb, #3b82f6 16%, transparent);
 }
 
+/* 远程控制中转站连接状态卡片 */
+.remote-status-card {
+  margin-top: 14px;
+  padding: 14px 16px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--bg-panel);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.remote-status-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.remote-status-indicator-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.remote-status-text {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+.remote-status-details {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  padding-top: 4px;
+  border-top: 1px dashed color-mix(in srgb, var(--border) 60%, transparent);
+}
+.remote-status-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+.remote-status-label {
+  color: var(--text-muted);
+}
+.remote-status-val {
+  color: var(--text);
+  font-family: var(--font-mono, monospace);
+}
+.remote-status-error {
+  margin: 0;
+  font-size: 12px;
+  color: var(--danger, #ef4444);
+}
+
 /* 远程配对卡片 */
 .remote-pair-card {
   margin-top: 14px;

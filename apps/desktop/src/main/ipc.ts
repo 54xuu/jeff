@@ -427,6 +427,7 @@ export function registerIpc(core: JeffCore): Record<string, Handler> {
     [IPC.remoteUnbind]: async () => ({ ok: true }),
     [IPC.remoteSettings]: async () => ({ ok: true }),
     [IPC.remoteFocus]: async () => ({ ok: true }),
+    [IPC.remoteReconnect]: async () => ({ ok: true }),
 
     // ---------- skills 备份/恢复 ----------
     [IPC.skillsBackupNow]: async () => core.skillsBackupNow(),
