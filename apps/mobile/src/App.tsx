@@ -1,6 +1,6 @@
 import { Capacitor } from '@capacitor/core'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { IPC, extractThinkTags, mergeReasoning } from '@jeff/core'
+import { IPC, extractThinkTags, mergeReasoning, sortedPinKeys } from '@jeff/core'
 import type { AgentInfo, ChatMsg, FsDirEntry, GroupMessage, ProjectInfo } from '@jeff/core'
 import type { RemoteStreamFrame } from '@jeff/core/remote'
 import { consumeBack } from './backstack'
@@ -9,7 +9,11 @@ import { Native, PhoneLink, mergeStream, shrinkImage } from './session'
 
 type Tab = 'messages' | 'me'
 type Screen = 'list' | 'chat' | 'dirs'
-type ChatTarget = { kind: 'agent'; id: string; name: string } | { kind: 'group'; id: string; name: string }
+type ChatTarget =
+  | { kind: 'agent'; id: string; name: string; avatar?: string }
+  | { kind: 'group'; id: string; name: string; icon?: string }
+
+const DEFAULT_GROUP = '默认'
 
 const phone = new PhoneLink()
 if (import.meta.env.DEV && typeof window !== 'undefined') {
@@ -59,17 +63,34 @@ function formatWeChatTime(ts?: number): string {
   return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()}`
 }
 
-function WeChatAvatar({ kind, name, size = 48 }: { kind: 'user' | 'agent' | 'group'; name: string; size?: number }) {
+export function WeChatAvatar({
+  kind,
+  name,
+  emoji,
+  size = 48,
+  busy = false,
+}: {
+  kind: 'user' | 'agent' | 'group'
+  name: string
+  emoji?: string
+  size?: number
+  busy?: boolean
+}) {
   const initial = (name || '').trim().slice(0, 1).toUpperCase() || 'J'
   const isGroup = kind === 'group'
   const isUser = kind === 'user'
+  const trimmedEmoji = (emoji || '').trim()
 
   return (
     <div
-      className={`wechat-avatar ${isUser ? 'user' : isGroup ? 'group' : 'agent'}`}
+      className={`wechat-avatar ${isUser ? 'user' : trimmedEmoji ? (isGroup ? 'group-avatar' : 'emoji-avatar') : isGroup ? 'group' : 'agent'}`}
       style={{ width: size, height: size, minWidth: size, minHeight: size }}
     >
-      {isUser ? (
+      {trimmedEmoji ? (
+        <span className="wechat-avatar-emoji" style={{ fontSize: size * 0.54 }}>
+          {trimmedEmoji}
+        </span>
+      ) : isUser ? (
         <svg viewBox="0 0 24 24" width={size * 0.52} height={size * 0.52} fill="currentColor">
           <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z" />
         </svg>
@@ -80,7 +101,101 @@ function WeChatAvatar({ kind, name, size = 48 }: { kind: 'user' | 'agent' | 'gro
       ) : (
         <span className="wechat-avatar-char">{initial}</span>
       )}
+      {busy ? <span className="wechat-avatar-busy" /> : null}
     </div>
+  )
+}
+
+export function WeChatItemRow(props: {
+  title: string
+  sub: string
+  time?: number
+  avatar?: string
+  kind: 'agent' | 'group'
+  isGroup?: boolean
+  isBuiltin?: boolean
+  pinned?: boolean
+  busy?: boolean
+  onClick: () => void
+  onLongPress: () => void
+}) {
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const startPos = useRef({ x: 0, y: 0 })
+  const moved = useRef(false)
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    moved.current = false
+    const t = e.touches[0]
+    if (t) startPos.current = { x: t.clientX, y: t.clientY }
+    timerRef.current = setTimeout(() => {
+      if (!moved.current) {
+        if (typeof navigator !== 'undefined' && navigator.vibrate) {
+          try { navigator.vibrate(35) } catch {}
+        }
+        props.onLongPress()
+      }
+    }, 450)
+  }
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    const t = e.touches[0]
+    if (t) {
+      const dx = Math.abs(t.clientX - startPos.current.x)
+      const dy = Math.abs(t.clientY - startPos.current.y)
+      if (dx > 8 || dy > 8) {
+        moved.current = true
+        if (timerRef.current) clearTimeout(timerRef.current)
+      }
+    }
+  }
+
+  const handleTouchEnd = () => {
+    if (timerRef.current) clearTimeout(timerRef.current)
+  }
+
+  return (
+    <li
+      className={`wechat-item ${props.pinned ? 'pinned' : ''}`}
+      data-testid={props.isGroup ? `chat-group-${props.title}` : `chat-agent-${props.title}`}
+    >
+      <button
+        type="button"
+        className="wechat-item-btn"
+        onClick={() => {
+          if (!moved.current) props.onClick()
+        }}
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
+        onTouchCancel={handleTouchEnd}
+        onContextMenu={(e) => {
+          e.preventDefault()
+          props.onLongPress()
+        }}
+      >
+        <span className="wechat-item-lead">
+          <WeChatAvatar
+            kind={props.kind}
+            name={props.title}
+            emoji={props.avatar}
+            size={48}
+            busy={props.busy}
+          />
+        </span>
+        <div className="wechat-item-main">
+          <div className="wechat-item-top">
+            <b className="wechat-item-title">{props.title}</b>
+            {props.isBuiltin ? <span className="wechat-tag wechat-tag-blue">管家</span> : null}
+            {props.pinned ? <span className="wechat-tag wechat-tag-green">置顶</span> : null}
+            {props.isGroup ? <span className="wechat-tag wechat-tag-gray">群</span> : null}
+            {props.time ? <span className="wechat-time">{formatWeChatTime(props.time)}</span> : null}
+          </div>
+          <div className="wechat-item-bot">
+            <span className="wechat-item-sub">{props.sub}</span>
+          </div>
+        </div>
+      </button>
+    </li>
   )
 }
 
@@ -194,13 +309,24 @@ export function App() {
   }
   const [syncedAt, setSyncedAt] = useState(0)
   const [plus, setPlus] = useState(false)
-  const [sessions, setSessions] = useState<Array<{ id: string; title: string }>>([])
+  const [sessions, setSessions] = useState<Array<{ id: string; title: string; active?: boolean }>>([])
   const [dirs, setDirs] = useState<{ dir: string; parent?: string; entries: FsDirEntry[] } | null>(null)
   const [computers, setComputers] = useState(phone.desktops)
   const [activeId, setActiveId] = useState('')
   const [, bump] = useState(0)
   const [recentMap, setRecentMap] = useState<Record<string, { text: string; time: number }>>({})
   const [copied, setCopied] = useState(false)
+  const [pins, setPins] = useState<Record<string, number>>({})
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
+  const [actionMenu, setActionMenu] = useState<{
+    key: string
+    title: string
+    avatar?: string
+    isPinned: boolean
+    isBuiltin?: boolean
+    target: ChatTarget
+  } | null>(null)
+  const [sessionDrawer, setSessionDrawer] = useState(false)
   const bubblesEndRef = useRef<HTMLDivElement>(null)
 
   const screenRef = useRef<Screen>('list')
@@ -217,6 +343,14 @@ export function App() {
 
   const handleBack = () => {
     if (consumeBack()) return
+    if (actionMenu) {
+      setActionMenu(null)
+      return
+    }
+    if (sessionDrawer) {
+      setSessionDrawer(false)
+      return
+    }
     if (plusRef.current) {
       setPlus(false)
       return
@@ -375,11 +509,15 @@ export function App() {
     // 1. 瞬时从本地缓存填充，消灭白屏与空列表
     const cachedA = await cacheGet(id, 'agents')
     const cachedP = await cacheGet(id, 'projects')
+    const cachedPins = await cacheGet(id, 'pins')
     if (cachedA) {
       try { setAgents(JSON.parse(cachedA) as AgentInfo[]) } catch {}
     }
     if (cachedP) {
       try { setProjects(JSON.parse(cachedP) as ProjectInfo[]) } catch {}
+    }
+    if (cachedPins) {
+      try { setPins(JSON.parse(cachedPins) as Record<string, number>) } catch {}
     }
     refreshPeers()
 
@@ -525,13 +663,27 @@ export function App() {
   async function loadSessions() {
     if (!target) return
     if (target.kind === 'agent') {
-      const r = await phone.invoke<{ sessions: Array<{ id: string; title: string }> }>(IPC.sessionsList, { agentId: target.id })
+      const r = await phone.invoke<{ sessions: Array<{ id: string; title: string; active?: boolean }> }>(IPC.sessionsList, { agentId: target.id })
       setSessions(r.sessions || [])
     } else {
-      const r = await phone.invoke<{ threads: Array<{ id: string; title: string }> }>(IPC.groupThreadsList, { projectId: target.id })
-      setSessions((r.threads || []).map((t) => ({ id: t.id, title: t.title })))
+      const r = await phone.invoke<{ threads: Array<{ id: string; title: string; active?: boolean }> }>(IPC.groupThreadsList, { projectId: target.id })
+      setSessions((r.threads || []).map((t) => ({ id: t.id, title: t.title, active: t.active })))
     }
     setPlus(true)
+  }
+
+  async function openSessionDrawer() {
+    if (!target) return
+    setSessionDrawer(true)
+    try {
+      if (target.kind === 'agent') {
+        const r = await phone.invoke<{ sessions: Array<{ id: string; title: string; active?: boolean }> }>(IPC.sessionsList, { agentId: target.id })
+        setSessions(r.sessions || [])
+      } else {
+        const r = await phone.invoke<{ threads: Array<{ id: string; title: string; active?: boolean }> }>(IPC.groupThreadsList, { projectId: target.id })
+        setSessions((r.threads || []).map((t) => ({ id: t.id, title: t.title, active: t.active })))
+      }
+    } catch {}
   }
 
   async function activateSession(sessionId: string) {
@@ -539,6 +691,7 @@ export function App() {
     if (target.kind === 'agent') await phone.invoke(IPC.sessionActivate, { scope: 'private', agentId: target.id, sessionId })
     else await phone.invoke(IPC.groupThreadActivate, { projectId: target.id, threadId: sessionId })
     setPlus(false)
+    setSessionDrawer(false)
     await loadHistory(target)
   }
 
@@ -547,7 +700,24 @@ export function App() {
     if (target.kind === 'agent') await phone.invoke(IPC.chatNew, { agentId: target.id })
     else await phone.invoke(IPC.groupThreadNew, { projectId: target.id })
     setPlus(false)
+    setSessionDrawer(false)
     await loadHistory(target)
+  }
+
+  const togglePin = (key: string) => {
+    setPins((prev) => {
+      const next = { ...prev }
+      if (key in next) {
+        delete next[key]
+      } else {
+        next[key] = Date.now()
+      }
+      if (phone.activeId) {
+        void cachePut(phone.activeId, 'pins', JSON.stringify(next))
+      }
+      return next
+    })
+    setActionMenu(null)
   }
 
   async function openDirs(dir?: string) {
@@ -571,30 +741,43 @@ export function App() {
     setScreen('chat')
   }
 
-  const rows = useMemo(() => {
-    const items: Array<{ key: string; title: string; sub: string; time?: number; target: ChatTarget }> = []
-    for (const a of agents) {
-      const rec = recentMap[`agent:${a.id}`]
-      items.push({
-        key: `a:${a.id}`,
-        title: a.name,
-        sub: rec?.text ? (rec.text.length > 40 ? rec.text.slice(0, 40) + '…' : rec.text) : (a.description || '私聊会话'),
-        time: rec?.time,
-        target: { kind: 'agent', id: a.id, name: a.name },
-      })
+  const xiaojie = useMemo(() => agents.find((a) => a.builtin), [agents])
+  const others = useMemo(() => agents.filter((a) => !a.builtin), [agents])
+
+  const groups = useMemo(() => {
+    const map = new Map<string, AgentInfo[]>()
+    for (const a of others) {
+      const key = (a.category || '').trim() || DEFAULT_GROUP
+      const arr = map.get(key)
+      if (arr) arr.push(a)
+      else map.set(key, [a])
     }
-    for (const p of projects) {
-      const rec = recentMap[`group:${p.id}`]
-      items.push({
-        key: `g:${p.id}`,
-        title: p.title,
-        sub: rec?.text ? (rec.text.length > 40 ? rec.text.slice(0, 40) + '…' : rec.text) : (p.description || '项目群协作'),
-        time: rec?.time,
-        target: { kind: 'group', id: p.id, name: p.title },
-      })
-    }
-    return items
-  }, [agents, projects, recentMap])
+    return Array.from(map.entries()).sort(([x], [y]) =>
+      x === DEFAULT_GROUP ? 1 : y === DEFAULT_GROUP ? -1 : x.localeCompare(y, 'zh-CN')
+    )
+  }, [others])
+
+  const pinOrder = useMemo(() => sortedPinKeys(pins), [pins])
+  const pinnedAgents = useMemo(
+    () =>
+      pinOrder
+        .filter((k) => k.startsWith('agent:'))
+        .map((k) => others.find((a) => `agent:${a.id}` === k))
+        .filter((a): a is AgentInfo => !!a),
+    [pinOrder, others]
+  )
+  const pinnedProjects = useMemo(
+    () =>
+      pinOrder
+        .filter((k) => k.startsWith('group:'))
+        .map((k) => projects.find((p) => `group:${p.id}` === k))
+        .filter((p): p is ProjectInfo => !!p),
+    [pinOrder, projects]
+  )
+  const pinnedAgentIds = useMemo(() => new Set(pinnedAgents.map((a) => a.id)), [pinnedAgents])
+  const pinnedProjectIds = useMemo(() => new Set(pinnedProjects.map((p) => p.id)), [pinnedProjects])
+
+  const totalChatCount = (xiaojie ? 1 : 0) + others.length + projects.length
 
   const peer = computers.get(activeId)
   const bound = computers.size > 0
@@ -732,23 +915,207 @@ export function App() {
             </section>
           ) : (
             <ul className="msgs wechat-list" data-testid="msg-list">
-              {rows.map((row) => (
-                <li key={row.key} className="wechat-item">
-                  <button type="button" className="wechat-item-btn" onClick={() => void openChat(row.target)}>
-                    <WeChatAvatar kind={row.target.kind} name={row.title} size={48} />
-                    <div className="wechat-item-main">
-                      <div className="wechat-item-top">
-                        <b className="wechat-item-title">{row.title}</b>
-                        {row.time ? <span className="wechat-time">{formatWeChatTime(row.time)}</span> : null}
-                      </div>
-                      <div className="wechat-item-bot">
-                        <span className="wechat-item-sub">{row.sub}</span>
-                      </div>
-                    </div>
-                  </button>
-                </li>
-              ))}
-              {rows.length === 0 ? <li className="empty">这台电脑上还没有会话</li> : null}
+              {xiaojie && (
+                <WeChatItemRow
+                  title={xiaojie.name}
+                  sub={
+                    recentMap[`agent:${xiaojie.id}`]?.text
+                      ? (recentMap[`agent:${xiaojie.id}`].text.length > 40
+                          ? recentMap[`agent:${xiaojie.id}`].text.slice(0, 40) + '…'
+                          : recentMap[`agent:${xiaojie.id}`].text)
+                      : 'Jeff 内置管家 · 问我什么都能办'
+                  }
+                  time={recentMap[`agent:${xiaojie.id}`]?.time}
+                  avatar={xiaojie.avatar || '🤖'}
+                  kind="agent"
+                  isBuiltin
+                  pinned
+                  busy={stream !== null && target?.id === xiaojie.id}
+                  onClick={() => void openChat({ kind: 'agent', id: xiaojie.id, name: xiaojie.name, avatar: xiaojie.avatar })}
+                  onLongPress={() =>
+                    setActionMenu({
+                      key: `agent:${xiaojie.id}`,
+                      title: xiaojie.name,
+                      avatar: xiaojie.avatar || '🤖',
+                      isPinned: true,
+                      isBuiltin: true,
+                      target: { kind: 'agent', id: xiaojie.id, name: xiaojie.name, avatar: xiaojie.avatar },
+                    })
+                  }
+                />
+              )}
+
+              {(pinnedAgents.length > 0 || pinnedProjects.length > 0) && (
+                <>
+                  <li className="wechat-section-header" data-testid="chat-pin-section">
+                    <span>置顶</span>
+                    <span className="wechat-section-count">{pinnedAgents.length + pinnedProjects.length}</span>
+                  </li>
+                  {pinnedProjects.map((p) => {
+                    const rec = recentMap[`group:${p.id}`]
+                    return (
+                      <WeChatItemRow
+                        key={`pin:g:${p.id}`}
+                        title={p.title}
+                        sub={
+                          rec?.text
+                            ? (rec.text.length > 40 ? rec.text.slice(0, 40) + '…' : rec.text)
+                            : `${p.memberCount || 0} 个成员 · 群主统筹`
+                        }
+                        time={rec?.time}
+                        avatar={p.icon}
+                        kind="group"
+                        isGroup
+                        pinned
+                        busy={stream !== null && target?.id === p.id}
+                        onClick={() => void openChat({ kind: 'group', id: p.id, name: p.title, icon: p.icon })}
+                        onLongPress={() =>
+                          setActionMenu({
+                            key: `group:${p.id}`,
+                            title: p.title,
+                            avatar: p.icon,
+                            isPinned: true,
+                            target: { kind: 'group', id: p.id, name: p.title, icon: p.icon },
+                          })
+                        }
+                      />
+                    )
+                  })}
+                  {pinnedAgents.map((a) => {
+                    const rec = recentMap[`agent:${a.id}`]
+                    return (
+                      <WeChatItemRow
+                        key={`pin:a:${a.id}`}
+                        title={a.name}
+                        sub={
+                          rec?.text
+                            ? (rec.text.length > 40 ? rec.text.slice(0, 40) + '…' : rec.text)
+                            : (a.description || '（无简介）')
+                        }
+                        time={rec?.time}
+                        avatar={a.avatar}
+                        kind="agent"
+                        pinned
+                        busy={stream !== null && target?.id === a.id}
+                        onClick={() => void openChat({ kind: 'agent', id: a.id, name: a.name, avatar: a.avatar })}
+                        onLongPress={() =>
+                          setActionMenu({
+                            key: `agent:${a.id}`,
+                            title: a.name,
+                            avatar: a.avatar,
+                            isPinned: true,
+                            target: { kind: 'agent', id: a.id, name: a.name, avatar: a.avatar },
+                          })
+                        }
+                      />
+                    )
+                  })}
+                </>
+              )}
+
+              <li className="wechat-section-header">
+                <span>项目群</span>
+                <span className="wechat-section-count">{projects.length}</span>
+              </li>
+              {projects.length === 0 && <li className="wechat-empty-hint">还没有项目群，可在电脑端发起群聊</li>}
+              {projects
+                .filter((p) => !pinnedProjectIds.has(p.id))
+                .map((p) => {
+                  const rec = recentMap[`group:${p.id}`]
+                  return (
+                    <WeChatItemRow
+                      key={`g:${p.id}`}
+                      title={p.title}
+                      sub={
+                        rec?.text
+                          ? (rec.text.length > 40 ? rec.text.slice(0, 40) + '…' : rec.text)
+                          : `${p.memberCount || 0} 个成员 · 群主统筹`
+                      }
+                      time={rec?.time}
+                      avatar={p.icon}
+                      kind="group"
+                      isGroup
+                      busy={stream !== null && target?.id === p.id}
+                      onClick={() => void openChat({ kind: 'group', id: p.id, name: p.title, icon: p.icon })}
+                      onLongPress={() =>
+                        setActionMenu({
+                          key: `group:${p.id}`,
+                          title: p.title,
+                          avatar: p.icon,
+                          isPinned: false,
+                          target: { kind: 'group', id: p.id, name: p.title, icon: p.icon },
+                        })
+                      }
+                    />
+                  )
+                })}
+
+              <li className="wechat-section-header">
+                <span>智能体</span>
+                <span className="wechat-section-count">{others.length}</span>
+              </li>
+              {others.length === 0 && <li className="wechat-empty-hint">还没有其他智能体，可在电脑端或找小杰创建</li>}
+              {groups.map(([name, list]) => {
+                const isCollapsed = !!collapsed[name]
+                return (
+                  <li className="wechat-group-block" key={name}>
+                    <button
+                      type="button"
+                      className="wechat-group-head"
+                      data-testid={`chat-agent-group-${name}`}
+                      onClick={() => setCollapsed((c) => ({ ...c, [name]: !c[name] }))}
+                    >
+                      <svg
+                        viewBox="0 0 24 24"
+                        width="12"
+                        height="12"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2.5"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        className={isCollapsed ? 'rot' : ''}
+                      >
+                        <path d="M6 9l6 6 6-6" />
+                      </svg>
+                      <span>{name}</span>
+                      <span className="wechat-group-count">{list.length}</span>
+                    </button>
+                    {!isCollapsed &&
+                      list
+                        .filter((a) => !pinnedAgentIds.has(a.id))
+                        .map((a) => {
+                          const rec = recentMap[`agent:${a.id}`]
+                          return (
+                            <WeChatItemRow
+                              key={`a:${a.id}`}
+                              title={a.name}
+                              sub={
+                                rec?.text
+                                  ? (rec.text.length > 40 ? rec.text.slice(0, 40) + '…' : rec.text)
+                                  : (a.description || '（无简介）')
+                              }
+                              time={rec?.time}
+                              avatar={a.avatar}
+                              kind="agent"
+                              busy={stream !== null && target?.id === a.id}
+                              onClick={() => void openChat({ kind: 'agent', id: a.id, name: a.name, avatar: a.avatar })}
+                              onLongPress={() =>
+                                setActionMenu({
+                                  key: `agent:${a.id}`,
+                                  title: a.name,
+                                  avatar: a.avatar,
+                                  isPinned: false,
+                                  target: { kind: 'agent', id: a.id, name: a.name, avatar: a.avatar },
+                                })
+                              }
+                            />
+                          )
+                        })}
+                  </li>
+                )
+              })}
+              {totalChatCount === 0 && <li className="empty">这台电脑上还没有会话</li>}
             </ul>
           )}
         </>
@@ -766,11 +1133,16 @@ export function App() {
               {target.kind === 'group' ? <span className="wechat-group-tag">群聊</span> : null}
             </div>
             {target.kind === 'group' ? (
-              <button type="button" className="btn-nav-action" data-testid="workspace" onClick={() => void openDirs()}>
-                工作空间
-              </button>
+              <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                <button type="button" className="btn-nav-action" data-testid="session-history" onClick={() => void openSessionDrawer()}>
+                  话题
+                </button>
+                <button type="button" className="btn-nav-action" data-testid="workspace" onClick={() => void openDirs()}>
+                  工作空间
+                </button>
+              </div>
             ) : (
-              <button type="button" className="btn-nav-action" onClick={() => (plus ? setPlus(false) : void loadSessions())}>
+              <button type="button" className="btn-nav-action" data-testid="session-history" onClick={() => void openSessionDrawer()}>
                 会话
               </button>
             )}
@@ -785,6 +1157,11 @@ export function App() {
                       <WeChatAvatar
                         kind={target.kind === 'group' ? 'group' : 'agent'}
                         name={'sender_name' in m && m.sender_name ? m.sender_name : target.name}
+                        emoji={
+                          target.kind === 'agent'
+                            ? target.avatar
+                            : ('agent_id' in m && m.agent_id ? agents.find((a) => a.id === m.agent_id)?.avatar : undefined) || target.icon
+                        }
                         size={40}
                       />
                     </div>
@@ -822,7 +1199,13 @@ export function App() {
             {stream ? (
               <div className="wechat-msg-row other" data-testid="stream">
                 <div className="wechat-msg-avatar">
-                  <WeChatAvatar kind={target.kind === 'group' ? 'group' : 'agent'} name={target.name} size={40} />
+                  <WeChatAvatar
+                    kind={target.kind === 'group' ? 'group' : 'agent'}
+                    name={target.name}
+                    emoji={target.kind === 'agent' ? target.avatar : target.icon}
+                    size={40}
+                    busy
+                  />
                 </div>
                 <div className="wechat-msg-content">
                   <div className="bubble">
@@ -1329,6 +1712,94 @@ export function App() {
             <span>我</span>
           </button>
         </nav>
+      )}
+
+      {actionMenu && (
+        <div className="wechat-sheet-mask" onClick={() => setActionMenu(null)}>
+          <div className="wechat-sheet-panel" onClick={(e) => e.stopPropagation()}>
+            <div className="wechat-sheet-head">
+              <WeChatAvatar
+                kind={actionMenu.target.kind}
+                name={actionMenu.title}
+                emoji={actionMenu.avatar}
+                size={38}
+              />
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <div className="wechat-sheet-title">{actionMenu.title}</div>
+                <div className="wechat-sheet-sub">{actionMenu.target.kind === 'group' ? '项目群' : '智能体'}</div>
+              </div>
+            </div>
+            {!actionMenu.isBuiltin && (
+              <button
+                type="button"
+                className="wechat-sheet-btn"
+                data-testid="sheet-toggle-pin"
+                onClick={() => togglePin(actionMenu.key)}
+              >
+                {actionMenu.isPinned ? '取消置顶' : '置顶该聊天'}
+              </button>
+            )}
+            <button
+              type="button"
+              className="wechat-sheet-btn"
+              onClick={() => {
+                const t = actionMenu.target
+                setActionMenu(null)
+                void openChat(t)
+              }}
+            >
+              打开会话
+            </button>
+            <button
+              type="button"
+              className="wechat-sheet-btn wechat-sheet-cancel"
+              onClick={() => setActionMenu(null)}
+            >
+              取消
+            </button>
+          </div>
+        </div>
+      )}
+
+      {sessionDrawer && target && (
+        <div className="wechat-drawer-mask" onClick={() => setSessionDrawer(false)}>
+          <div className="wechat-drawer-panel" onClick={(e) => e.stopPropagation()}>
+            <div className="wechat-drawer-bar">
+              <button type="button" className="wechat-drawer-btn cancel" onClick={() => setSessionDrawer(false)}>
+                取消
+              </button>
+              <span className="wechat-drawer-title">{target.kind === 'group' ? '群话题记录' : '会话记录'}</span>
+              <button
+                type="button"
+                className="wechat-drawer-btn"
+                data-testid="drawer-new-session"
+                onClick={() => void newSession()}
+              >
+                + 新会话
+              </button>
+            </div>
+            <ul className="wechat-drawer-list">
+              {sessions.map((s) => (
+                <li
+                  key={s.id}
+                  className={`wechat-drawer-item ${s.active ? 'active' : ''}`}
+                  onClick={() => void activateSession(s.id)}
+                >
+                  <div className="wechat-drawer-item-info">
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <b className="wechat-drawer-item-title">{s.title || s.id}</b>
+                      {s.active ? <span className="wechat-tag wechat-tag-green">当前</span> : null}
+                    </div>
+                  </div>
+                  <span className="wechat-drawer-item-action">{s.active ? '进行中' : '切换 ›'}</span>
+                </li>
+              ))}
+              {sessions.length === 0 && (
+                <li className="wechat-empty-hint">暂无其他历史会话，点击右上角「+ 新会话」开启</li>
+              )}
+            </ul>
+          </div>
+        </div>
       )}
     </main>
   )
