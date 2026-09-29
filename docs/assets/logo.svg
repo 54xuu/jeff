@@ -1,28 +1,17 @@
-<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="100%" height="100%">
-  <!-- Rind Outer -->
-  <path d="M 16,46 C 16,96 48,114 64,114 C 80,114 112,96 112,46 Z" fill="#10B981" />
-  
-  <!-- Rind Inner -->
-  <path d="M 22,46 C 22,90 50,106 64,106 C 78,106 106,90 106,46 Z" fill="#ECFDF5" />
+  <!-- Semi-circle watermelon slice -->
+  <path d="M 16,42 C 12,42 10,46 12,50 C 20,88 38,104 64,104 C 90,104 108,88 116,50 C 118,46 116,42 112,42 Z" fill="#10B981" />
 
-  <!-- Flesh Red -->
-  <path d="M 28,46 C 28,84 52,98 64,98 C 76,98 100,84 100,46 Z" fill="#F43F5E" />
+  <!-- Inner red flesh -->
+  <path d="M 21,48 C 27,82 42,96 64,96 C 86,96 101,82 107,48 Z" fill="#F43F5E" />
 
-  <!-- Eyes as Watermelon Seeds -->
-  <ellipse cx="48" cy="63" rx="4.5" ry="6" fill="#0F172A" transform="rotate(-6 48 63)" />
-  <circle cx="46.5" cy="61" r="1.5" fill="#FFFFFF" />
+  <!-- Big white eyes with round black pupils (Cue Agent gaze) -->
+  <circle cx="50" cy="64" r="11" fill="#FFFFFF" />
+  <circle cx="52" cy="64" r="5.5" fill="#0F172A" />
 
-  <ellipse cx="80" cy="63" rx="4.5" ry="6" fill="#0F172A" transform="rotate(6 80 63)" />
-  <circle cx="78.5" cy="61" r="1.5" fill="#FFFFFF" />
+  <circle cx="78" cy="64" r="11" fill="#FFFFFF" />
+  <circle cx="80" cy="64" r="5.5" fill="#0F172A" />
 
-  <!-- Blush -->
-  <circle cx="36" cy="72" r="5" fill="#FDA4AF" />
-  <circle cx="92" cy="72" r="5" fill="#FDA4AF" />
-
-  <!-- Smile -->
-  <path d="M 57,73 Q 64,80 71,73" fill="none" stroke="#881337" stroke-width="3.5" stroke-linecap="round" />
-
-  <!-- Top Vine -->
-  <path d="M 64,46 C 64,30 56,18 64,12 C 70,8 78,13 75,20 C 72,25 66,24 65,20" fill="none" stroke="#059669" stroke-width="4.5" stroke-linecap="round" />
+  <!-- Cute curved smile -->
+  <path d="M 60,78 Q 64,83 69,79" fill="none" stroke="#0F172A" stroke-width="3" stroke-linecap="round" />
 </svg>
