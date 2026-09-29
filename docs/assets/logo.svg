@@ -1,17 +1,16 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="100%" height="100%">
-  <!-- Semi-circle watermelon slice -->
-  <path d="M 16,42 C 12,42 10,46 12,50 C 20,88 38,104 64,104 C 90,104 108,88 116,50 C 118,46 116,42 112,42 Z" fill="#10B981" />
+  
+    <!-- Dome semicircle green body -->
+    <path d="M 18,88 C 14,88 12,84 14,80 C 22,40 40,28 64,28 C 88,28 106,40 114,80 C 116,84 114,88 110,88 Z" fill="#10B981" />
 
-  <!-- Inner red flesh -->
-  <path d="M 21,48 C 27,82 42,96 64,96 C 86,96 101,82 107,48 Z" fill="#F43F5E" />
+    <!-- Cue eyes -->
+    <circle cx="51" cy="62" r="11" fill="#FFFFFF" />
+    <circle cx="52" cy="62" r="5.5" fill="#0F172A" />
 
-  <!-- Big white eyes with round black pupils (Cue Agent gaze) -->
-  <circle cx="50" cy="64" r="11" fill="#FFFFFF" />
-  <circle cx="52" cy="64" r="5.5" fill="#0F172A" />
+    <circle cx="77" cy="62" r="11" fill="#FFFFFF" />
+    <circle cx="78" cy="62" r="5.5" fill="#0F172A" />
 
-  <circle cx="78" cy="64" r="11" fill="#FFFFFF" />
-  <circle cx="80" cy="64" r="5.5" fill="#0F172A" />
+    <!-- Smile -->
+    <path d="M 60,76 Q 64,81 69,77" fill="none" stroke="#0F172A" stroke-width="3" stroke-linecap="round" />
 
-  <!-- Cute curved smile -->
-  <path d="M 60,78 Q 64,83 69,79" fill="none" stroke="#0F172A" stroke-width="3" stroke-linecap="round" />
 </svg>
