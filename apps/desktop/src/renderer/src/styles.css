@@ -31,6 +31,8 @@
   --bubble-plugin: #06ad56;
   --bubble-ai: #ffffff;
   --danger: #fa5151;
+  --warn: #d97706;
+  --text-muted: var(--text-2);
   --link: #06ad56;
   --shadow: 0 1px 3px rgba(7, 193, 96, 0.08), 0 8px 24px rgba(25, 28, 36, 0.06);
 
@@ -78,6 +80,13 @@
   --bubble-plugin: #34d399;
   --bubble-ai: #21252f;
   --danger: #fa5151;
+  --warn: #fbbf24;
+  --text-muted: var(--text-2);
+  --green-bright: #34d399;
+  --btn-primary-bg: color-mix(in srgb, var(--green) 72%, #000);
+  --btn-primary-bg-hover: color-mix(in srgb, var(--green) 62%, #000);
+  --btn-bg: color-mix(in srgb, var(--text) 7%, var(--bg-panel));
+  --btn-border: color-mix(in srgb, var(--text) 20%, transparent);
   --link: #34d399;
   --shadow: 0 1px 3px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.35);
 }
@@ -106,6 +115,8 @@
   --bubble-plugin: #059669;
   --bubble-ai: #ffffff;
   --danger: #fa5151;
+  --warn: #d97706;
+  --text-muted: var(--text-2);
   --link: #047857;
   --shadow: 0 1px 3px rgba(16, 185, 129, 0.08), 0 8px 24px rgba(15, 23, 42, 0.06);
 }
@@ -133,6 +144,13 @@
   --bubble-plugin: #34d399;
   --bubble-ai: #212b26;
   --danger: #fa5151;
+  --warn: #fbbf24;
+  --text-muted: var(--text-2);
+  --green-bright: #34d399;
+  --btn-primary-bg: color-mix(in srgb, var(--green) 72%, #000);
+  --btn-primary-bg-hover: color-mix(in srgb, var(--green) 62%, #000);
+  --btn-bg: color-mix(in srgb, var(--text) 7%, var(--bg-panel));
+  --btn-border: color-mix(in srgb, var(--text) 20%, transparent);
   --link: #34d399;
   --shadow: 0 1px 3px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.35);
 }
@@ -187,6 +205,8 @@
   --bubble-plugin: #1e66f5;
   --bubble-ai: #ffffff;
   --danger: #d20f39;
+  --warn: #d97706;
+  --text-muted: var(--text-2);
   --link: #1e66f5;
   --shadow: 0 1px 3px rgba(30, 102, 245, 0.05), 0 8px 24px rgba(76, 79, 105, 0.06);
 }
@@ -240,6 +260,13 @@
   --bubble-plugin: #89b4fa;
   --bubble-ai: #181825;
   --danger: #f38ba8;
+  --warn: var(--ctp-yellow);
+  --text-muted: var(--text-2);
+  --green-bright: var(--green);
+  --btn-primary-bg: var(--green);
+  --btn-primary-bg-hover: color-mix(in srgb, var(--green) 88%, #fff);
+  --btn-bg: color-mix(in srgb, var(--text) 7%, var(--bg-panel));
+  --btn-border: color-mix(in srgb, var(--text) 20%, transparent);
   --link: #89b4fa;
   --shadow: 0 2px 8px rgba(0, 0, 0, 0.4), 0 12px 32px rgba(0, 0, 0, 0.35);
 }
@@ -561,7 +588,7 @@ body {
 .text-btn {
   border: none;
   background: transparent;
-  color: var(--green);
+  color: var(--green-bright, var(--green));
   font-size: 12px;
   cursor: pointer;
   padding: 4px 8px;
@@ -1447,8 +1474,8 @@ body.composer-resizing * {
 }
 
 .btn {
-  border: 1px solid var(--border);
-  background: var(--bg-panel);
+  border: 1px solid var(--btn-border, var(--border));
+  background: var(--btn-bg, var(--bg-panel));
   color: var(--text);
   font-size: var(--fs-md);
   height: var(--btn-h);
@@ -1471,7 +1498,7 @@ body.composer-resizing * {
 .btn:hover {
   border-color: var(--green);
   color: var(--green);
-  background: color-mix(in srgb, var(--green) 5%, var(--bg-panel));
+  background: color-mix(in srgb, var(--green) 5%, var(--btn-bg, var(--bg-panel)));
 }
 
 .btn:active {
@@ -1479,15 +1506,15 @@ body.composer-resizing * {
 }
 
 .btn.primary {
-  background: var(--green);
-  border-color: var(--green);
+  background: var(--btn-primary-bg, var(--green));
+  border-color: var(--btn-primary-bg, var(--green));
   color: var(--btn-primary-text, #fff);
   box-shadow: 0 2px 6px color-mix(in srgb, var(--green) 28%, transparent);
 }
 
 .btn.primary:hover {
-  background: var(--green-dark);
-  border-color: var(--green-dark);
+  background: var(--btn-primary-bg-hover, var(--green-dark));
+  border-color: var(--btn-primary-bg-hover, var(--green-dark));
   box-shadow: 0 4px 12px color-mix(in srgb, var(--green) 38%, transparent);
   transform: translateY(-1px);
 }
@@ -1599,9 +1626,9 @@ body.composer-resizing * {
   word-break: break-word;
   margin: 0;
   padding: 8px 10px;
-  border: 1px solid color-mix(in srgb, #c45656 35%, var(--border));
+  border: 1px solid color-mix(in srgb, var(--danger) 35%, var(--border));
   border-radius: var(--radius-md);
-  background: color-mix(in srgb, #c45656 8%, var(--bg));
+  background: color-mix(in srgb, var(--danger) 8%, var(--bg));
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 12px;
   cursor: text;
@@ -1639,6 +1666,10 @@ body.composer-resizing * {
 }
 
 .settings-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
   margin-top: 12px;
 }
 
@@ -2028,6 +2059,10 @@ body.composer-resizing * {
   color: var(--green-dark);
 }
 
+:root[data-theme='dark'] .settings-nav-item.on .settings-nav-icon {
+  color: var(--green-bright, var(--green));
+}
+
 .settings-nav-text {
   display: flex;
   flex-direction: column;
@@ -2074,9 +2109,7 @@ body.composer-resizing * {
 }
 
 .settings-content h2.settings-title:not(:first-child) {
-  margin-top: 26px;
-  padding-top: 18px;
-  border-top: 1px solid var(--border);
+  margin-top: 24px;
 }
 
 .settings-error {
@@ -2111,7 +2144,39 @@ body.composer-resizing * {
 .sync-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 0 12px;
+  gap: 12px 16px;
+}
+
+/* 设置页通用分区卡片：标题/说明在卡片外，控件收进卡片 */
+.settings-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-panel);
+  padding: 14px 16px;
+  margin-bottom: 14px;
+}
+
+.settings-card .settings-tip:last-child,
+.settings-card .settings-actions:last-child {
+  margin-bottom: 0;
+}
+
+/* 卡片内再嵌 pv-detail（如 skills 恢复确认框）：退为内嵌块，不做双层面板 */
+.settings-card .pv-detail {
+  background: transparent;
+  margin-top: 12px;
+}
+
+.sync-report {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--text) 3%, transparent);
+}
+
+.sync-report .settings-tip {
+  margin-bottom: 4px;
 }
 
 /* 记忆：分层 scope + 编辑器 */
@@ -2701,10 +2766,12 @@ body.composer-resizing * {
 .pv-dot.on { background: var(--green); }
 
 .pv-detail {
-  border: 1px solid var(--line);
-  border-radius: var(--radius-md);
-  padding: 12px;
-  margin-bottom: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-panel);
+  padding: 14px 16px;
+  margin-top: 12px;
+  margin-bottom: 14px;
 }
 
 .pv-grid {
@@ -2792,8 +2859,8 @@ body.composer-resizing * {
   overflow: hidden;
 }
 .memory-budget-fill { height: 100%; background: var(--green); border-radius: 999px; }
-.memory-budget-fill.warn { background: #d97706; }
-.memory-budget-fill.danger { background: #dc2626; }
+.memory-budget-fill.warn { background: var(--warn); }
+.memory-budget-fill.danger { background: var(--danger); }
 
 .memory-entries { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
 .memory-entry {
@@ -2931,12 +2998,12 @@ body.composer-resizing * {
 /* 中文动作名后面跟一个弱化的英文原名（映射不到的工具只显示原名，保持等宽） */
 .extra-tool-en { margin-left: 6px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 10px; color: var(--text-reasoning); }
 .extra-tool-status { margin-left: auto; font-size: 11px; color: var(--text-2); }
-.extra-tool-status.danger { color: #dc2626; }
+.extra-tool-status.danger { color: var(--danger); }
 
 /* 进度卡步骤状态图标 */
 .step-icon { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 13px; height: 13px; }
 .step-icon.done { color: var(--green); }
-.step-icon.danger { color: #dc2626; }
+.step-icon.danger { color: var(--danger); }
 .step-icon.idle { width: 7px; height: 7px; border-radius: 50%; border: 1.5px solid var(--border); }
 .step-icon.spinner {
   width: 11px;
@@ -2960,14 +3027,14 @@ body.composer-resizing * {
   white-space: pre-wrap;
   word-break: break-all;
 }
-.tool-output.danger { color: #dc2626; }
+.tool-output.danger { color: var(--danger); }
 .tool-expand { margin: 4px 10px 8px; font-size: 11px; }
 
 /* jeff_spawn_subtask 专属卡片：label 已上提到 summary，这里只展示目标/摘要/完整过程入口 */
 .subtask-detail { padding: 2px 10px 8px; }
 .subtask-target { font-size: 11px; color: var(--text-2); font-family: ui-monospace, Menlo, Consolas, monospace; margin-bottom: 4px; word-break: break-all; }
 .subtask-summary { margin: 0 0 4px; font-size: 12px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
-.subtask-summary.danger { color: #dc2626; }
+.subtask-summary.danger { color: var(--danger); }
 .subtask-history {
   display: flex;
   flex-direction: column;
@@ -2981,10 +3048,10 @@ body.composer-resizing * {
 
 /* 发送 ⇄ 停止 */
 .send-btn.stop {
-  background: #dc2626;
+  background: var(--danger);
   color: #fff;
 }
-.send-btn.stop:hover { background: #b91c1c; }
+.send-btn.stop:hover { background: color-mix(in srgb, var(--danger) 80%, #000); }
 
 /* 模型菜单搜索框 */
 .model-menu-search {

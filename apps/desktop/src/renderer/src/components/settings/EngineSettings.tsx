@@ -96,7 +96,7 @@ export default function EngineSettings(): React.JSX.Element {
               {appInfo?.opencodeVersion ? <span className="tag">opencode {appInfo.opencodeVersion}</span> : null}
             </div>
             <div className="provider-sub">二进制：{appInfo?.opencodeBinary || '未找到'}</div>
-            {appInfo?.sidecarError && <div className="provider-sub" style={{ color: '#dc2626' }}>⚠️ {appInfo.sidecarError}</div>}
+            {appInfo?.sidecarError && <div className="provider-sub" style={{ color: 'var(--danger)' }}>⚠️ {appInfo.sidecarError}</div>}
             <div className="provider-sub">数据目录：{appInfo?.dataDir}</div>
           </div>
           <button className="text-btn" disabled={restarting} onClick={() => void restart()}>{restarting ? '重启中…' : '重启服务'}</button>

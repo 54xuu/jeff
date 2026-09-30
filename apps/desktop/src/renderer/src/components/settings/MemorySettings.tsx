@@ -95,7 +95,8 @@ export default function MemorySettings(): React.JSX.Element {
 
       {!loaded && <p className="settings-tip">加载中…</p>}
       {loaded && (
-        <div className="memory-layout">
+        <div className="settings-card">
+          <div className="memory-layout">
           <div className="memory-scopes">
             {groups.map((g) => (
               <div key={g.title} className="memory-group">
@@ -164,7 +165,7 @@ export default function MemorySettings(): React.JSX.Element {
                     placeholder="每行一条；条目以 § 分隔。"
                     style={{ fontFamily: 'inherit', fontSize: 12, width: '100%', marginTop: 6 }}
                   />
-                  <div className="settings-actions" style={{ justifyContent: 'flex-start' }}>
+                  <div className="settings-actions">
                     <button
                       className="btn primary"
                       data-testid="memory-save"
@@ -190,10 +191,11 @@ export default function MemorySettings(): React.JSX.Element {
               <div className="empty-card">选择左侧任意记忆范围查看内容</div>
             )}
           </div>
+          </div>
         </div>
       )}
 
-      <h2 className="settings-title" style={{ marginTop: 24 }}>AGENTS.md（规则文件）</h2>
+      <h2 className="settings-title">AGENTS.md（规则文件）</h2>
       <p className="settings-tip">
         用户级 AGENTS.md 对所有对话生效；项目级按项目保存在 Jeff 数据目录（agents-md/）下，仅该群的会话生效（每轮自动注入上下文），并随 WebDAV 同步。
         旧版放在工作空间目录下的 AGENTS.md 仅在项目规则尚未创建时作为迁移来源：首次编辑保存后会写入数据目录，此后以数据目录为准。

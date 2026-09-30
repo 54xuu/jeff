@@ -196,10 +196,10 @@ function ProviderDetail(props: {
                 {m.outputLimit ? ` · 最大输出 ${m.outputLimit}` : ' · 输出默认'}
                 {' · 输出: 文本'}
               </div>
-              {probe && !probe.ok && probe.error && <div className="provider-sub" style={{ color: '#dc2626' }}>⚠️ {probe.error}</div>}
+              {probe && !probe.ok && probe.error && <div className="provider-sub" style={{ color: 'var(--danger)' }}>⚠️ {probe.error}</div>}
             </div>
             {probe?.ok && <span className="tag tag-green">已连接 · {probe.elapsedMs}ms</span>}
-            {probe && !probe.ok && <span className="tag" style={{ color: '#dc2626' }}>失败</span>}
+            {probe && !probe.ok && <span className="tag" style={{ color: 'var(--danger)' }}>失败</span>}
             <button
               className="text-btn"
               data-testid={`provider-probe-${m.id}`}

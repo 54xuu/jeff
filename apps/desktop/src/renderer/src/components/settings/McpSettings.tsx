@@ -71,31 +71,32 @@ export default function McpSettings(): React.JSX.Element {
         直接粘贴 MCP JSON 导入：支持 <code>{'{"mcpServers":{…}}'}</code>（Claude Desktop / Cursor 格式）或 opencode 原生 map 格式。local = 本机命令；remote = HTTP/SSE。保存后重启引擎生效。
       </p>
 
-      <div className="settings-actions" style={{ justifyContent: 'flex-start' }}>
-        <button className="btn primary" data-testid="mcp-import" onClick={() => setImportOpen(true)}>导入 JSON…</button>
-        <button className="btn" data-testid="mcp-probe" disabled={probing || names.length === 0} onClick={() => void probe()}>{probing ? '探测中…' : '重新检测状态'}</button>
-        <button className="btn" data-testid="mcp-restart" disabled={restarting} onClick={() => void restartEngine()}>{restarting ? '重启中…' : '重启引擎'}</button>
-      </div>
+      <div className="settings-card">
+        <div className="settings-actions">
+          <button className="btn primary" data-testid="mcp-import" onClick={() => setImportOpen(true)}>导入 JSON…</button>
+          <button className="btn" data-testid="mcp-probe" disabled={probing || names.length === 0} onClick={() => void probe()}>{probing ? '探测中…' : '重新检测状态'}</button>
+          <button className="btn" data-testid="mcp-restart" disabled={restarting} onClick={() => void restartEngine()}>{restarting ? '重启中…' : '重启引擎'}</button>
+        </div>
 
-      {!loaded && <p className="settings-tip">加载中…</p>}
-      {loaded && names.length === 0 && <div className="empty-card">还没有 MCP 连接器。点「导入 JSON…」粘贴 Claude Desktop / Cursor / opencode 格式配置。</div>}
+        {!loaded && <p className="settings-tip">加载中…</p>}
+        {loaded && names.length === 0 && <div className="empty-card">还没有 MCP 连接器。点「导入 JSON…」粘贴 Claude Desktop / Cursor / opencode 格式配置。</div>}
 
-      {names.map((name) => {
-        const cfg = servers[name]
-        const probe = probes[name]
-        return (
-          <div key={name} className="provider-row">
-            <div className="provider-main">
-              <div className="provider-name">
-                <span className={`pv-dot ${cfg.enabled ? 'on' : ''}`} />
-                {name}
-                <span className="tag">{cfg.type === 'local' ? 'local' : 'remote'}</span>
-                {!cfg.enabled && <span className="tag">已停用</span>}
-                {probe && cfg.enabled && probe.status === 'ok' && <span className="tag tag-green">已连接 · {probe.toolCount} 个工具</span>}
-                {probe && cfg.enabled && probe.status === 'error' && <span className="tag" style={{ color: '#dc2626' }}>连接失败</span>}
-              </div>
-              <div className="provider-sub">{cfg.type === 'local' ? (cfg.command || []).join(' ') : cfg.url}</div>
-              {probe && cfg.enabled && probe.status === 'error' && <div className="provider-sub" style={{ color: '#dc2626' }}>⚠️ {probe.error}</div>}
+        {names.map((name) => {
+          const cfg = servers[name]
+          const probe = probes[name]
+          return (
+            <div key={name} className="provider-row">
+              <div className="provider-main">
+                <div className="provider-name">
+                  <span className={`pv-dot ${cfg.enabled ? 'on' : ''}`} />
+                  {name}
+                  <span className="tag">{cfg.type === 'local' ? 'local' : 'remote'}</span>
+                  {!cfg.enabled && <span className="tag">已停用</span>}
+                  {probe && cfg.enabled && probe.status === 'ok' && <span className="tag tag-green">已连接 · {probe.toolCount} 个工具</span>}
+                  {probe && cfg.enabled && probe.status === 'error' && <span className="tag" style={{ color: 'var(--danger)' }}>连接失败</span>}
+                </div>
+                <div className="provider-sub">{cfg.type === 'local' ? (cfg.command || []).join(' ') : cfg.url}</div>
+                {probe && cfg.enabled && probe.status === 'error' && <div className="provider-sub" style={{ color: 'var(--danger)' }}>⚠️ {probe.error}</div>}
               {probe && probe.status === 'ok' && probe.tools.length > 0 && (
                 <details className="mcp-tools">
                   <summary>工具清单（{probe.toolCount}）</summary>
@@ -122,6 +123,7 @@ export default function McpSettings(): React.JSX.Element {
           </div>
         )
       })}
+      </div>
 
       {importOpen && (
         <ServerJsonDialog

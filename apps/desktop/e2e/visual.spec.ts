@@ -103,6 +103,14 @@ test('桌面端统一风格截图（亮/暗 + 私聊 + 设置）', async () => {
     await page.getByTestId('nav-settings').click()
     await expect(page.getByTestId('settings-nav-appearance')).toBeVisible()
     await page.screenshot({ path: '../../.tmp/e2e-screens/desktop-settings.png' })
+    // WebDAV 同步页（分区卡片化）+ 暗色对比度回归各一张
+    await page.getByTestId('settings-nav-sync').click()
+    await expect(page.locator('.settings-card').first()).toBeVisible()
+    await page.screenshot({ path: '../../.tmp/e2e-screens/desktop-settings-sync.png' })
+    await page.getByTestId('nav-theme-toggle').click()
+    await page.waitForTimeout(400)
+    await page.screenshot({ path: '../../.tmp/e2e-screens/desktop-settings-dark.png' })
+    await page.getByTestId('nav-theme-toggle').click()
   } finally {
     await closeJeff(app)
   }

@@ -1,15 +1,16 @@
 import { Capacitor } from '@capacitor/core'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { IPC, XIAOJIE_ID, TOOL_ACTION_LABEL, extractThinkTags, mergeReasoning, sortedPinKeys } from '@jeff/core'
-import type { AgentInfo, ChatMsg, FsDirEntry, GroupMessage, ProjectInfo } from '@jeff/core'
+import type { AgentInfo, AppInfo, ChatMsg, FileNode, FsDirEntry, GroupMessage, ProjectInfo } from '@jeff/core'
 import type { RemoteStreamFrame } from '@jeff/core/remote'
 import { consumeBack } from './backstack'
 import Mascot from './Mascot'
 import { Markdown } from './Markdown'
+import { isMarkdownPath, joinWorkspacePath, linkifyWorkspaceMarkdown } from './linkify'
 import { Native, PhoneLink, mergeStream, shrinkImage } from './session'
 
 type Tab = 'messages' | 'me'
-type Screen = 'list' | 'chat' | 'dirs'
+type Screen = 'list' | 'chat' | 'dirs' | 'files' | 'file'
 type ChatTarget =
   | { kind: 'agent'; id: string; name: string; avatar?: string }
   | { kind: 'group'; id: string; name: string; icon?: string }
@@ -58,6 +59,14 @@ function formatDaySep(ts?: number): string {
   if (d.toDateString() === yesterday.toDateString()) return '昨天'
   if (d.getFullYear() === now.getFullYear()) return `${d.getMonth() + 1}月${d.getDate()}日`
   return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日`
+}
+
+/** 文件大小：B / KB / MB（工作区文件列表用） */
+function formatFileSize(n?: number): string {
+  if (!n || n < 0) return ''
+  if (n < 1024) return `${n} B`
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
+  return `${(n / 1024 / 1024).toFixed(1)} MB`
 }
 
 /** 长按区域：450ms 长按触发，移动超过 8px 视为滚动取消；桌面端右键同样触发 */
@@ -433,6 +442,12 @@ export function App() {
   const [plus, setPlus] = useState(false)
   const [sessions, setSessions] = useState<Array<{ id: string; title: string; active?: boolean }>>([])
   const [dirs, setDirs] = useState<{ dir: string; parent?: string; entries: FsDirEntry[] } | null>(null)
+  // 工作区文件浏览：一次 fs:listFiles 拉整棵树（fs 忽略名单已滤 node_modules 等），页内用 trail 逐级下钻
+  const [filesData, setFilesData] = useState<{ root: string; exists: boolean; nodes: FileNode[] } | null>(null)
+  const [fileTrail, setFileTrail] = useState<Array<{ name: string; abs: string }>>([])
+  const [filePreview, setFilePreview] = useState<{ name: string; content: string; truncated?: boolean } | null>(null)
+  const [filesTip, setFilesTip] = useState('')
+  const dataDirRef = useRef('')
   const [computers, setComputers] = useState(phone.desktops)
   const [activeId, setActiveId] = useState('')
   const [, bump] = useState(0)
@@ -510,8 +525,16 @@ export function App() {
       setPlus(false)
       return
     }
-    if (screenRef.current === 'dirs') {
+    if (screenRef.current === 'file') {
+      setScreen('files')
+      return
+    }
+    if (screenRef.current === 'files') {
       setScreen('chat')
+      return
+    }
+    if (screenRef.current === 'dirs') {
+      setScreen('files')
       return
     }
     if (screenRef.current === 'chat') {
@@ -1001,11 +1024,87 @@ export function App() {
       leader_agent_id: project.leader_agent_id,
       workspace_dir: dir,
     })
-    setScreen('chat')
+    // 本地同步改 workspace_dir，避免「工作区文件」还按旧目录解析
+    setProjects((arr) => arr.map((p) => (p.id === project.id ? { ...p, workspace_dir: dir } : p)))
+    await loadFiles(dir)
+  }
+
+  /** 手机端 dataDir 只为解析默认工作区（与桌面端 GroupInfoDrawer 同规则），懒取一次缓存 */
+  async function ensureDataDir(): Promise<string> {
+    if (dataDirRef.current) return dataDirRef.current
+    const info = await phone.invoke<AppInfo>(IPC.appInfo)
+    dataDirRef.current = (info.dataDir || '').replace(/[\\/]+$/, '')
+    return dataDirRef.current
+  }
+
+  /** 群聊顶栏「工作空间」：打开该群工作区的文件浏览（未配置工作空间时退回默认 dataDir/workspace） */
+  async function openWorkspaceFiles() {
+    if (!target || target.kind !== 'group') return
+    const project = projects.find((p) => p.id === target.id)
+    if (!project) return
+    let dir = (project.workspace_dir || '').trim()
+    if (!dir) {
+      try {
+        const dataDir = await ensureDataDir()
+        if (dataDir) dir = `${dataDir}/workspace`
+      } catch {
+        /* 拿不到 dataDir 时按未配置处理 */
+      }
+    }
+    if (!dir) {
+      setFilesData(null)
+      setFileTrail([])
+      setFilesTip('该群还没有配置工作空间，点右上角「换目录」选择一个。')
+      setScreen('files')
+      return
+    }
+    await loadFiles(dir)
+  }
+
+  async function loadFiles(dir: string) {
+    try {
+      const r = await phone.invoke<{ dir: string; exists: boolean; nodes: FileNode[] }>(IPC.fsListFiles, { dir })
+      setFilesData({ root: dir.replace(/[\\/]+$/, ''), exists: r.exists, nodes: r.nodes || [] })
+      setFileTrail([])
+      setFilesTip('')
+      setScreen('files')
+    } catch (err) {
+      setFilesData(null)
+      setFileTrail([])
+      setFilesTip(`读取工作区文件失败：${(err as Error).message}`)
+      setScreen('files')
+    }
+  }
+
+  /** 读远端文本文件进预览：markdown 才支持，其他类型提示去电脑上看（fs:openPath 已被远程白名单替换，不能调系统程序） */
+  async function openRemoteFile(path: string, name: string) {
+    if (!isMarkdownPath(name)) {
+      setFilesTip('该文件类型暂不支持手机预览，请在电脑上查看')
+      return
+    }
+    try {
+      const r = await phone.invoke<{ content: string; truncated?: boolean }>(IPC.fsReadFile, { file: path })
+      setFilePreview({ name, content: r.content, truncated: r.truncated })
+      setScreen('file')
+    } catch (err) {
+      setFilesTip(`读取失败：${(err as Error).message}`)
+    }
   }
 
   const xiaojie = useMemo(() => agents.find((a) => a.builtin), [agents])
   const others = useMemo(() => agents.filter((a) => !a.builtin), [agents])
+
+  // 工作区文件：按 fileTrail 从整棵树里走当前目录层
+  const currentNodes = useMemo<FileNode[]>(() => {
+    if (!filesData) return []
+    let nodes = filesData.nodes
+    for (const t of fileTrail) {
+      const next = nodes.find((n) => n.dir && n.name === t.name)
+      if (!next?.children) return []
+      nodes = next.children
+    }
+    return nodes
+  }, [filesData, fileTrail])
 
   const groups = useMemo(() => {
     const map = new Map<string, AgentInfo[]>()
@@ -1420,8 +1519,8 @@ export function App() {
                   type="button"
                   className="bar-icon-btn"
                   data-testid="workspace"
-                  title="工作空间"
-                  onClick={() => void openDirs()}
+                  title="工作区文件"
+                  onClick={() => void openWorkspaceFiles()}
                 >
                   <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                     <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
@@ -1725,11 +1824,11 @@ export function App() {
       {screen === 'dirs' && dirs && (
         <section className="dirs wechat-dirs" data-testid="dir-picker">
           <header className="bar wechat-bar">
-            <button type="button" className="btn-nav-back" onClick={() => setScreen('chat')}>
+            <button type="button" className="btn-nav-back" onClick={() => setScreen('files')}>
               <span className="wechat-back-chevron">‹</span>
               <span className="wechat-back-text">返回</span>
             </button>
-            <b>选择电脑上的目录</b>
+            <b>选择工作空间目录</b>
             <span style={{ width: 48 }} />
           </header>
           <div className="wechat-dir-crumb">
@@ -1767,6 +1866,87 @@ export function App() {
             <input name="name" placeholder="新建文件夹" data-testid="mkdir-name" />
             <button type="submit">新建</button>
           </form>
+        </section>
+      )}
+
+      {screen === 'files' && (
+        <section className="dirs wechat-dirs" data-testid="workspace-files">
+          <header className="bar wechat-bar">
+            <button type="button" className="btn-nav-back" onClick={() => setScreen('chat')}>
+              <span className="wechat-back-chevron">‹</span>
+              <span className="wechat-back-text">返回</span>
+            </button>
+            <b>工作区文件</b>
+            <button type="button" className="btn-nav-action" data-testid="workspace-change-dir" onClick={() => void openDirs()}>
+              换目录
+            </button>
+          </header>
+          <div className="wechat-dir-crumb" data-testid="workspace-file-path">
+            <span>当前路径：</span>
+            <b>{filesData ? [filesData.root, ...fileTrail.map((t) => t.name)].join(' / ') : '—'}</b>
+          </div>
+          {filesTip ? (
+            <p className="err wechat-file-tip" data-testid="workspace-files-tip">{filesTip}</p>
+          ) : null}
+          {!filesData ? null : !filesData.exists ? (
+            <p className="wechat-file-empty">工作空间目录还不存在（可能还没跑过任务产出文件）。可点「换目录」指定别的目录。</p>
+          ) : (
+            <ul className="wechat-dir-list" data-testid="workspace-file-list">
+              {fileTrail.length ? (
+                <li className="wechat-dir-parent">
+                  <button type="button" onClick={() => setFileTrail(fileTrail.slice(0, -1))}>
+                    📁 .. (上级目录)
+                  </button>
+                </li>
+              ) : null}
+              {currentNodes.map((n) => (
+                <li key={n.abs} className="wechat-dir-item">
+                  <button
+                    type="button"
+                    className="wechat-dir-name"
+                    data-testid={n.dir ? `dir-${n.name}` : `file-${n.name}`}
+                    onClick={() => {
+                      if (n.dir) setFileTrail([...fileTrail, { name: n.name, abs: n.abs }])
+                      else void openRemoteFile(n.abs, n.name)
+                    }}
+                  >
+                    {n.dir ? '📁' : '📄'} {n.name}
+                  </button>
+                  {!n.dir && (
+                    <span className="wechat-file-meta">
+                      {formatFileSize(n.size)}
+                      {n.mtime ? ` · ${new Date(n.mtime).toLocaleDateString('zh-CN')}` : ''}
+                    </span>
+                  )}
+                </li>
+              ))}
+              {currentNodes.length === 0 && !fileTrail.length && <li className="wechat-file-empty">目录为空。</li>}
+            </ul>
+          )}
+          <p className="wechat-file-hint">Markdown 文件点击即可预览；其他类型请在电脑上查看</p>
+        </section>
+      )}
+
+      {screen === 'file' && filePreview && (
+        <section className="fileview wechat-fileview" data-testid="file-preview">
+          <header className="bar wechat-bar">
+            <button type="button" className="btn-nav-back" onClick={() => setScreen('files')}>
+              <span className="wechat-back-chevron">‹</span>
+              <span className="wechat-back-text">返回</span>
+            </button>
+            <b data-testid="file-preview-title">{filePreview.name}</b>
+            <span style={{ width: 48 }} />
+          </header>
+          {filePreview.truncated ? <p className="wechat-file-tip">文件过大，仅显示开头部分</p> : null}
+          <div className="wechat-file-body" data-testid="file-preview-body">
+            <Markdown
+              text={linkifyWorkspaceMarkdown(filePreview.content)}
+              onFileLink={(rel) => {
+                if (!filesData) return
+                void openRemoteFile(joinWorkspacePath(filesData.root, rel), rel.split('/').pop() || rel)
+              }}
+            />
+          </div>
         </section>
       )}
 

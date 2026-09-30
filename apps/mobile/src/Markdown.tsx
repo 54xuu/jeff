@@ -1,6 +1,7 @@
 import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { FILE_HREF_PREFIX } from './linkify'
 import { pushBack } from './backstack'
 
 const SCALE_MIN = 0.5
@@ -263,10 +264,13 @@ function MermaidBlock(props: { code: string }): React.JSX.Element {
  * 对话 Markdown：GFM（表格、任务列表、删除线）+ 代码块 + mermaid。
  * live 时 mermaid 源码往往还不完整，先按代码块展示，回合结束后再出图。
  * react-markdown 默认不渲染裸 HTML。
+ * onFileLink：传入时，#jeff-file: 站内文件链接（工作区相对路径）改为回调而不是外开浏览器。
  */
-function MarkdownInner(props: { text: string; live?: boolean }): React.JSX.Element {
+function MarkdownInner(props: { text: string; live?: boolean; onFileLink?: (rel: string) => void }): React.JSX.Element {
   const liveRef = useRef(props.live)
   liveRef.current = props.live
+  const fileLinkRef = useRef(props.onFileLink)
+  fileLinkRef.current = props.onFileLink
   const components = useMemo<React.ComponentProps<typeof ReactMarkdown>['components']>(
     () => ({
       pre: ({ children }) => {
@@ -274,7 +278,25 @@ function MarkdownInner(props: { text: string; live?: boolean }): React.JSX.Eleme
         if (block.lang?.toLowerCase() === 'mermaid' && !liveRef.current) return <MermaidBlock code={block.raw} />
         return <CodeBlock lang={block.lang} raw={block.raw} />
       },
-      a: ({ node: _node, ...aProps }) => <a {...aProps} target="_blank" rel="noreferrer" />,
+      a: ({ node: _node, href, children, ...aProps }) => {
+        if (href && href.startsWith(FILE_HREF_PREFIX) && fileLinkRef.current) {
+          const rel = decodeURIComponent(href.slice(FILE_HREF_PREFIX.length))
+          return (
+            <a
+              {...aProps}
+              href={href}
+              className="md-file-link"
+              onClick={(e) => {
+                e.preventDefault()
+                fileLinkRef.current?.(rel)
+              }}
+            >
+              {children}
+            </a>
+          )
+        }
+        return <a {...aProps} href={href} target="_blank" rel="noreferrer" />
+      },
     }),
     [],
   )

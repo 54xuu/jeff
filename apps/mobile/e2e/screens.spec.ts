@@ -56,7 +56,7 @@ async function noOverflow(page, tag) {
 test.describe('1.11 统一风格全屏回归', () => {
   test.beforeEach(async ({ page }) => {
     await page.addInitScript(
-      ({ profile, agents, projects, chat, group }) => {
+      ({ profile, agents, projects, chat, group, now }) => {
         localStorage.clear()
         localStorage.setItem('jeff-phone-profile', JSON.stringify(profile))
         let real
@@ -87,6 +87,27 @@ test.describe('1.11 统一风格全屏回归', () => {
                   return { threads: [{ id: 't1', title: '话题一', active: true }] }
                 case 'fs:listDirs':
                   return { dir: '/home/x/ws', parent: '/home/x', entries: [{ name: 'ws2', path: '/home/x/ws2' }] }
+                case 'app:info':
+                  return { version: '1.11.0', sidecarStatus: 'running', dataDir: '/home/x/.jeff', opencodeBinary: null }
+                case 'fs:listFiles':
+                  return {
+                    dir: p.dir,
+                    exists: true,
+                    nodes: [
+                      {
+                        name: '报告', rel: '报告', abs: p.dir + '/报告', dir: true, ext: '', size: 0, mtime: now,
+                        children: [{ name: '巡检结论.md', rel: '报告/巡检结论.md', abs: p.dir + '/报告/巡检结论.md', dir: false, ext: 'md', size: 1234, mtime: now }],
+                      },
+                      { name: 'notes.txt', rel: 'notes.txt', abs: p.dir + '/notes.txt', dir: false, ext: 'txt', size: 45, mtime: now },
+                      { name: '汇总.md', rel: '汇总.md', abs: p.dir + '/汇总.md', dir: false, ext: 'md', size: 2048, mtime: now },
+                    ],
+                  }
+                case 'fs:readFile': {
+                  const content = String(p.file).endsWith('汇总.md')
+                    ? '# 汇总\n\n3 床今日**平稳**，未见新发异常。\n\n明细见 报告/巡检结论.md。'
+                    : '# 巡检结论\n\n- 体温 36.7℃\n- 血压 120/80'
+                  return { file: p.file, content, size: 100, truncated: false }
+                }
                 default:
                   return { ok: true }
               }
@@ -97,7 +118,7 @@ test.describe('1.11 统一风格全屏回归', () => {
           },
         })
       },
-      { profile: PROFILE, agents: AGENTS, projects: PROJECTS, chat: { '': CHAT }, group: GROUP },
+      { profile: PROFILE, agents: AGENTS, projects: PROJECTS, chat: { '': CHAT }, group: GROUP, now },
     )
     await page.goto('/')
     await expect(page.getByTestId('msg-list')).toBeVisible()
@@ -221,5 +242,46 @@ test.describe('1.11 统一风格全屏回归', () => {
     await expect(page.getByTestId('me')).toBeVisible()
     await noOverflow(page, 'me')
     await page.screenshot({ path: '../../.tmp/e2e-screens/10-me.png' })
+  })
+
+  test('工作区文件浏览：列目录/下钻/非 md 提示', async ({ page }) => {
+    await page.getByTestId('chat-group-一个很长很长的项目群名字用来测试顶栏按钮不溢出').click()
+    await expect(page.getByTestId('bubbles')).toBeVisible()
+    await page.getByTestId('workspace').click()
+    await expect(page.getByTestId('workspace-files')).toBeVisible()
+    await expect(page.getByTestId('workspace-file-path')).toContainText('/home/x/ws')
+    // 目录与文件都在列表里，md 文件可点
+    await expect(page.getByTestId('file-汇总.md')).toBeVisible()
+    await expect(page.getByTestId('dir-报告')).toBeVisible()
+    await expect(page.getByTestId('file-notes.txt')).toBeVisible()
+    // 下钻进「报告」子目录再返回
+    await page.getByTestId('dir-报告').click()
+    await expect(page.getByTestId('file-巡检结论.md')).toBeVisible()
+    await expect(page.getByTestId('workspace-file-path')).toContainText('ws / 报告')
+    await page.screenshot({ path: '../../.tmp/e2e-screens/11-workspace-files.png' })
+    await page.getByRole('button', { name: '.. (上级目录)' }).click()
+    await expect(page.getByTestId('file-汇总.md')).toBeVisible()
+    // 非 md 文件：提示不支持
+    await page.getByTestId('file-notes.txt').click()
+    await expect(page.getByTestId('workspace-files-tip')).toContainText('暂不支持手机预览')
+    await noOverflow(page, 'workspace-files')
+  })
+
+  test('工作区 md 预览：markdown 渲染 + 站内相对路径链接跳转', async ({ page }) => {
+    await page.getByTestId('chat-group-一个很长很长的项目群名字用来测试顶栏按钮不溢出').click()
+    await expect(page.getByTestId('bubbles')).toBeVisible()
+    await page.getByTestId('workspace').click()
+    await expect(page.getByTestId('workspace-files')).toBeVisible()
+    await page.getByTestId('file-汇总.md').click()
+    await expect(page.getByTestId('file-preview')).toBeVisible()
+    await expect(page.getByTestId('file-preview-title')).toHaveText('汇总.md')
+    await expect(page.getByTestId('file-preview-body')).toContainText('3 床今日平稳')
+    // linkify 把正文里的 报告/巡检结论.md 转成站内链接，点击跳到那个文件
+    await expect(page.locator('.md-file-link')).toHaveCount(1)
+    await page.locator('.md-file-link').click()
+    await expect(page.getByTestId('file-preview-title')).toHaveText('巡检结论.md')
+    await expect(page.getByTestId('file-preview-body')).toContainText('体温 36.7℃')
+    await noOverflow(page, 'file-preview')
+    await page.screenshot({ path: '../../.tmp/e2e-screens/12-file-preview.png' })
   })
 })

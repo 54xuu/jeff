@@ -1750,6 +1750,62 @@ html[data-theme='dark'] .btn-paste-go { color: #34d399; }
 }
 html[data-theme='dark'] .wechat-dir-use { color: #34d399; }
 
+/* === 工作区文件浏览 / Markdown 预览 === */
+.wechat-file-tip {
+  padding: 8px 16px;
+  font-size: 12.5px;
+  color: var(--warn, #d97706);
+  flex-shrink: 0;
+}
+
+html[data-theme='dark'] .wechat-file-tip { color: #fbbf24; }
+
+.wechat-file-empty {
+  padding: 24px 16px;
+  font-size: 13.5px;
+  color: var(--text-3, var(--text-2));
+  line-height: 1.6;
+  text-align: center;
+}
+
+.wechat-file-meta {
+  flex-shrink: 0;
+  font-size: 11.5px;
+  color: var(--text-3, var(--text-2));
+  padding-right: 4px;
+}
+
+.wechat-file-hint {
+  flex-shrink: 0;
+  padding: 8px 16px calc(10px + 2px);
+  font-size: 11.5px;
+  color: var(--text-3, var(--text-2));
+  border-top: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+}
+
+.wechat-fileview {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--bg);
+}
+
+.wechat-file-body {
+  flex: 1;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 14px 16px 32px;
+  background: var(--card);
+  border-top: 1px solid var(--border);
+  user-select: text;
+}
+
+.wechat-file-body .md-body {
+  font-size: 15px;
+  line-height: 1.7;
+}
+
 .wechat-dir-mkdir {
   display: flex;
   gap: 8px;
