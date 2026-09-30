@@ -529,10 +529,10 @@ export class JeffCore extends EventEmitter {
     return this.groupChat.history(projectId, threadId)
   }
 
-  /** 读取当前活跃 thread 的群消息（附 threadId，供渲染层过滤跨会话流式事件） */
-  historyActive(projectId: string): { threadId: string; messages: GroupMessage[] } {
+  /** 读取当前活跃 thread 的群消息（附 threadId，供渲染层过滤跨会话流式事件）；limit 只取末尾 N 条 */
+  historyActive(projectId: string, limit?: number): { threadId: string; messages: GroupMessage[] } {
     const threadId = this.groupChat.activeThreadId(projectId)
-    return { threadId, messages: this.groupChat.history(projectId, threadId) }
+    return { threadId, messages: this.groupChat.history(projectId, threadId, limit) }
   }
 
   newGroupThread(projectId: string, title?: string): { threadId: string; title: string } {

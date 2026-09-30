@@ -332,6 +332,41 @@ class JeffSpikePlugin : Plugin() {
         call.resolve()
     }
 
+    /**
+     * 请求电池优化豁免：已授权时静默跳过（skipped=true）。
+     * 由 JS 在「已绑定电脑」后调用，替代老版冷启动无条件弹窗——
+     * 那个弹窗在每次冷启动都出现，且弹窗期间应用完全不可交互。
+     */
+    @PluginMethod
+    fun requestBattery(call: PluginCall) {
+        val ret = JSObject()
+        if (Build.VERSION.SDK_INT < 23) {
+            ret.put("ok", true)
+            ret.put("skipped", true)
+            call.resolve(ret)
+            return
+        }
+        val pm = context.getSystemService(Context.POWER_SERVICE) as? android.os.PowerManager
+        if (pm == null || pm.isIgnoringBatteryOptimizations(context.packageName)) {
+            ret.put("ok", true)
+            ret.put("skipped", true)
+            call.resolve(ret)
+            return
+        }
+        try {
+            val intent = android.content.Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
+            intent.data = android.net.Uri.parse("package:${context.packageName}")
+            intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+            context.startActivity(intent)
+            ret.put("ok", true)
+            call.resolve(ret)
+        } catch (err: Exception) {
+            ret.put("ok", false)
+            ret.put("skipped", true)
+            call.resolve(ret)
+        }
+    }
+
     @PluginMethod
     fun getPersistedProfile(call: PluginCall) {
         val prefs = context.getSharedPreferences("jeff_profile", Context.MODE_PRIVATE)

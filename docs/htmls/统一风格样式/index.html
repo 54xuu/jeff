@@ -1,0 +1,736 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Jeff 1.11 统一风格样式 Demo</title>
+<style>
+/* ====================================================================
+   Jeff 1.11 统一风格 demo —— 静态稿，纯展示用
+   token 与桌面端 styles.css 的 cue 皮肤同源：
+   light: bg #f2f5f3 / panel #fff / text #0f172a / text-2 #64748b
+          border #e2e8f0 / green #10b981 / bubble-user #d1fae5→#064e3b
+   dark : bg #101613 / panel #1a211d / text #e4eae6 / text-2 #93a29a
+          border #24302a / bubble-user #1b4a37→#e7fff3
+   ==================================================================== */
+:root, html[data-theme="light"] {
+  --bg: #f2f5f3;
+  --bg-panel: #ffffff;
+  --bg-sub: #e9eeeb;          /* 分组头 / 输入区底 */
+  --text: #0f172a;
+  --text-2: #64748b;
+  --text-3: #94a3b8;          /* 时间戳 / 弱说明 */
+  --border: #e2e8f0;
+  --green: #10b981;
+  --green-dark: #059669;
+  --green-soft: rgba(16,185,129,.10);
+  --bubble-user: #d1fae5;
+  --bubble-user-text: #064e3b;
+  --danger: #fa5151;
+  --link: #047857;
+  --press: rgba(15,23,42,.05);
+  --card-shadow: 0 1px 2px rgba(15,23,42,.04);
+  --float-shadow: 0 4px 16px rgba(15,23,42,.14);
+  --code-bg: #0f172a;         /* 代码块：亮色下用墨底 */
+  --code-text: #e2e8f0;
+}
+html[data-theme="dark"] {
+  --bg: #101613;
+  --bg-panel: #1a211d;
+  --bg-sub: #141a17;
+  --text: #e4eae6;
+  --text-2: #93a29a;
+  --text-3: #6f7d76;
+  --border: #24302a;
+  --green: #10b981;
+  --green-dark: #059652;
+  --green-soft: rgba(16,185,129,.16);
+  --bubble-user: #1b4a37;
+  --bubble-user-text: #e7fff3;
+  --danger: #fa5151;
+  --link: #34d399;
+  --press: rgba(255,255,255,.06);
+  --card-shadow: 0 1px 2px rgba(0,0,0,.3);
+  --float-shadow: 0 4px 16px rgba(0,0,0,.5);
+  --code-bg: #0b100d;
+  --code-text: #c8d4cd;
+}
+
+* { box-sizing: border-box; margin: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Segoe UI", "Noto Sans SC", "Microsoft YaHei", sans-serif;
+  background: #dde4df;
+  color: var(--text);
+  transition: background .25s;
+  -webkit-font-smoothing: antialiased;
+}
+html[data-theme="dark"] body { background: #060907; }
+
+/* ---------- demo 舞台 ---------- */
+.demo-bar {
+  position: sticky; top: 0; z-index: 50;
+  display: flex; align-items: center; gap: 16px;
+  padding: 14px 28px;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+}
+.demo-bar h1 { font-size: 16px; font-weight: 600; }
+.demo-bar .sub { font-size: 12.5px; color: var(--text-2); }
+.demo-bar .spacer { flex: 1; }
+.theme-btn {
+  border: 1px solid var(--border); background: var(--bg-panel); color: var(--text);
+  border-radius: 999px; padding: 7px 16px; font-size: 13px; cursor: pointer;
+}
+.theme-btn:hover { background: var(--press); }
+.stage {
+  display: flex; flex-wrap: wrap; gap: 40px;
+  padding: 36px 28px 64px; align-items: flex-start; justify-content: center;
+}
+.frame-col { display: flex; flex-direction: column; gap: 12px; }
+.frame-cap { font-size: 13px; font-weight: 600; color: var(--text-2); text-align: center; }
+.frame-cap b { color: var(--text); }
+
+/* ---------- 手机壳 ---------- */
+.phone {
+  width: 375px; height: 780px;
+  border-radius: 30px; overflow: hidden;
+  border: 1px solid var(--border);
+  box-shadow: 0 18px 50px rgba(15,23,42,.18);
+  display: flex; flex-direction: column;
+  background: var(--bg);
+  position: relative;
+  font-size: 15px;
+}
+.safe-top { height: 24px; background: var(--bg-sub); flex-shrink: 0; display:flex; align-items:center; justify-content:center; }
+.safe-top::after { content:''; width: 110px; height: 22px; border-radius: 12px; background: var(--bg); }
+.safe-bottom { height: 18px; background: inherit; flex-shrink: 0; display:flex; align-items:center; justify-content:center; }
+.safe-bottom::after { content:''; width: 120px; height: 4px; border-radius: 3px; background: var(--text-3); opacity:.5; }
+
+/* ---------- 图标（22×22 · stroke 1.8 · currentColor） ---------- */
+.ic { width:22px; height:22px; stroke:currentColor; fill:none; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; flex-shrink:0; }
+.ic.sm { width:16px; height:16px; }
+.ic.fill { fill:currentColor; stroke:none; }
+
+/* ---------- 顶栏 ---------- */
+.topbar {
+  height: 52px; flex-shrink: 0;
+  display: flex; align-items: center; gap: 4px;
+  padding: 0 10px;
+  background: var(--bg-sub);
+  border-bottom: 1px solid var(--border);
+}
+.topbar .side { width: 84px; display:flex; align-items:center; gap:2px; flex-shrink:0; }
+.topbar .side.right { justify-content: flex-end; }
+.topbar .title {
+  flex: 1; min-width: 0; text-align: center;
+  font-size: 16.5px; font-weight: 600;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.icon-btn {
+  border: 0; background: none; color: var(--text);
+  width: 36px; height: 36px; border-radius: 10px;
+  display: inline-flex; align-items: center; justify-content: center; cursor: pointer;
+}
+.icon-btn:active { background: var(--press); }
+.back-btn { border:0; background:none; color:var(--text); display:flex; align-items:center; gap:0; font-size:15px; cursor:pointer; padding:6px 6px 6px 0; }
+.back-btn > * { white-space: nowrap; }
+.topbar .back-btn { max-width: 100%; overflow: hidden; }
+
+/* ---------- 聊天消息流 ---------- */
+.msgs { flex: 1; overflow-y: auto; padding: 14px 16px 8px; display: flex; flex-direction: column; gap: 14px; }
+.day-sep { text-align: center; font-size: 11.5px; color: var(--text-3); margin: 4px 0; }
+.day-sep span { background: var(--green-soft); color: var(--text-2); border-radius: 999px; padding: 3px 10px; }
+
+/* 用户气泡：淡翡翠、右对齐、去小三角 */
+.msg-user { align-self: flex-end; max-width: 78%; display: flex; flex-direction: column; align-items: flex-end; gap: 3px; }
+.msg-user .bubble {
+  background: var(--bubble-user); color: var(--bubble-user-text);
+  border-radius: 16px 16px 4px 16px;
+  padding: 9px 13px; font-size: 15.5px; line-height: 1.55;
+  white-space: pre-wrap; word-break: break-word;
+}
+.msg-user .meta { font-size: 10.5px; color: var(--text-3); padding-right: 4px; display:flex; gap:6px; align-items:center; }
+.msg-user .state-fail { color: var(--danger); }
+
+/* 助手：去气泡通栏 */
+.msg-ai { display: flex; flex-direction: column; gap: 6px; }
+.ai-head { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--text-3); }
+.ai-head .ava {
+  width: 24px; height: 24px; border-radius: 8px; flex-shrink: 0;
+  background: var(--green-soft);
+  display:flex; align-items:center; justify-content:center;
+}
+.ai-head .ava svg { width:20px; height:20px; }
+.ai-head b { color: var(--text-2); font-weight: 600; font-size: 12.5px; }
+
+/* 思考 / 工具：一行弱化条（不再双层框） */
+.fold-row {
+  display: flex; align-items: center; gap: 7px;
+  width: 100%; text-align: left;
+  border: 0; border-radius: 10px; cursor: pointer;
+  background: var(--green-soft);
+  color: var(--text-2);
+  font-size: 12.5px; padding: 7px 10px;
+}
+.fold-row .lbl { font-weight: 500; }
+.fold-row .prev { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-3); }
+.fold-row .arr { color: var(--text-3); }
+.fold-row.running .lbl::after { content: ''; display:inline-block; width: 6px; height: 6px; margin-left: 6px; border-radius: 50%; background: var(--green); animation: pulse 1.2s ease-in-out infinite; vertical-align: middle; }
+.fold-row.failed { background: rgba(250,81,81,.10); color: var(--danger); }
+@keyframes pulse { 0%,100%{opacity:.4} 50%{opacity:1} }
+
+/* 助手正文 markdown 通栏 */
+.md { font-size: 15.5px; line-height: 1.65; color: var(--text); min-width: 0; }
+.md h2 { font-size: 17px; margin: 6px 0 4px; line-height:1.4; }
+.md h3 { font-size: 15.5px; margin: 6px 0 2px; }
+.md p { margin: 4px 0; overflow-wrap: break-word; }
+.md ul { padding-left: 20px; margin: 4px 0; }
+.md li { margin: 2px 0; }
+.md table { border-collapse: collapse; margin: 8px 0; font-size: 14px; width: 100%; }
+.md th, .md td { border: 1px solid var(--border); padding: 5px 10px; text-align: left; }
+.md th { background: var(--bg-sub); font-weight: 600; }
+.md code.inline { background: var(--press); border-radius: 5px; padding: 1px 5px; font-size: 13.5px; font-family: "SF Mono", Menlo, Consolas, monospace; }
+.md .codeblock { border-radius: 12px; overflow: hidden; margin: 8px 0; border: 1px solid var(--border); }
+.md .codeblock .bar { display:flex; align-items:center; justify-content:space-between; padding: 6px 12px; background: var(--bg-sub); font-size: 11.5px; color: var(--text-3); }
+.md .codeblock pre { background: var(--code-bg); color: var(--code-text); padding: 12px 14px; font-size: 13px; line-height: 1.6; overflow-x: auto; font-family: "SF Mono", Menlo, Consolas, monospace; }
+.md a { color: var(--link); }
+.md img { max-width: 100%; border-radius: 12px; border: 1px solid var(--border); }
+
+/* 流式中的助手 */
+.msg-ai.live .md > *:last-child::after {
+  content: ''; display: inline-block; width: 7px; height: 15px;
+  background: var(--green); margin-left: 3px; vertical-align: -2px;
+  border-radius: 2px; animation: pulse .9s ease-in-out infinite;
+}
+
+/* 图片消息（用户发图） */
+.msg-user .pic { width: 180px; height: 120px; border-radius: 14px 14px 4px 14px; object-fit: cover; border: 1px solid var(--border); }
+
+/* ---------- composer ---------- */
+.composer {
+  flex-shrink: 0;
+  display: flex; align-items: flex-end; gap: 8px;
+  padding: 8px 12px 10px;
+  background: var(--bg-sub);
+  border-top: 1px solid var(--border);
+}
+.composer .plus {
+  border: 0; background: none; color: var(--text);
+  width: 38px; height: 38px; border-radius: 50%;
+  display:flex; align-items:center; justify-content:center; cursor:pointer; flex-shrink:0;
+  margin-bottom: 2px;
+}
+.composer .plus:active { background: var(--press); }
+.composer .field {
+  flex: 1; min-width: 0;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  padding: 9px 14px;
+  font-size: 15.5px; line-height: 1.45;
+  color: var(--text);
+  max-height: 110px; overflow-y: auto;
+}
+.composer .field .ph { color: var(--text-3); }
+.composer .field:focus-within { border-color: var(--green); }
+.send-btn {
+  border: 0; cursor: pointer; flex-shrink: 0;
+  background: var(--green); color: #fff;
+  height: 36px; padding: 0 16px; border-radius: 18px;
+  font-size: 14.5px; font-weight: 500;
+  margin-bottom: 2px;
+}
+.send-btn.stop { background: var(--bg-panel); color: var(--danger); border: 1px solid var(--border); }
+
+/* 回到底部浮球 */
+.jump-latest {
+  position: absolute; right: 14px; bottom: 92px;
+  background: var(--bg-panel); border: 1px solid var(--border);
+  color: var(--text-2); font-size: 12px;
+  border-radius: 999px; padding: 7px 13px;
+  box-shadow: var(--float-shadow);
+  display: flex; align-items: center; gap: 5px;
+}
+
+/* 离线状态条 */
+.conn-bar {
+  flex-shrink: 0; display: flex; align-items: center; justify-content: center; gap: 6px;
+  font-size: 12px; color: #b45309;
+  background: rgba(245,158,11,.14);
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+}
+html[data-theme="dark"] .conn-bar { color: #fbbf24; }
+
+/* ---------- 会话列表 ---------- */
+.list-body { flex: 1; overflow-y: auto; background: var(--bg-panel); }
+.list-head {
+  position: sticky; top: 0; z-index: 5;
+  display:flex; align-items:center; justify-content: space-between;
+  padding: 7px 16px;
+  font-size: 11.5px; color: var(--text-3);
+  background: color-mix(in srgb, var(--bg-panel) 88%, transparent);
+  backdrop-filter: blur(6px);
+  border-bottom: 1px solid var(--border);
+}
+.row {
+  display: flex; align-items: center; gap: 12px;
+  padding: 11px 16px;
+  cursor: pointer;
+}
+.row:active { background: var(--press); }
+.row + .row { border-top: 1px solid color-mix(in srgb, var(--border) 60%, transparent); }
+.row .ava {
+  width: 46px; height: 46px; border-radius: 12px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 24px; position: relative;
+  background: var(--green-soft);
+}
+.row .ava.mascot svg { width: 38px; height: 38px; }
+.row .ava.blue { background: rgba(59,130,246,.12); }
+.row .main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.row .l1 { display: flex; align-items: center; gap: 6px; }
+.row .l1 .name { font-size: 16px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row .l1 .time { margin-left: auto; font-size: 11px; color: var(--text-3); flex-shrink: 0; }
+.row .l2 { display: flex; align-items: center; gap: 6px; }
+.row .l2 .sub { flex: 1; min-width: 0; font-size: 13px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row .l2 .unread { flex-shrink: 0; min-width: 17px; height: 17px; padding: 0 5px; border-radius: 9px; background: var(--danger); color: #fff; font-size: 10.5px; font-weight: 600; display: flex; align-items: center; justify-content: center; }
+.row .l2 .dot-only { flex-shrink: 0; width: 9px; height: 9px; border-radius: 50%; background: var(--danger); }
+.tag { font-size: 10px; font-weight: 600; border-radius: 5px; padding: 2px 5px; flex-shrink: 0; }
+.tag.pipe { background: var(--green-soft); color: var(--green-dark); }
+html[data-theme="dark"] .tag.pipe { color: #34d399; }
+.tag.sys { background: var(--press); color: var(--text-3); }
+.busy-ring { position: absolute; right: -2px; top: -2px; width: 11px; height: 11px; border-radius: 50%; background: var(--green); border: 2px solid var(--bg-panel); animation: pulse 1.6s infinite; }
+
+/* ---------- 我页 ---------- */
+.me-body { flex: 1; overflow-y: auto; padding: 14px 14px 20px; display: flex; flex-direction: column; gap: 18px; }
+.card { background: var(--bg-panel); border: 1px solid var(--border); border-radius: 16px; box-shadow: var(--card-shadow); overflow: hidden; }
+.card .cap { font-size: 12px; color: var(--text-3); padding: 0 4px 8px; font-weight: 500; }
+.profile { display: flex; align-items: center; gap: 14px; padding: 18px 16px; }
+.profile .logo { width: 58px; height: 58px; border-radius: 16px; background: var(--green-soft); display: flex; align-items: center; justify-content: center; }
+.profile .logo svg { width: 46px; height: 46px; }
+.profile .who { flex: 1; min-width: 0; }
+.profile .nm { font-size: 17px; font-weight: 700; display: flex; align-items: center; gap: 8px; }
+.pill { font-size: 11px; font-weight: 600; border-radius: 999px; padding: 2.5px 9px; display: inline-flex; align-items: center; gap: 5px; }
+.pill .d { width: 6px; height: 6px; border-radius: 50%; }
+.pill.on { background: var(--green-soft); color: var(--green-dark); } .pill.on .d { background: var(--green); }
+html[data-theme="dark"] .pill.on { color: #34d399; }
+.pill.off { background: var(--press); color: var(--text-3); } .pill.off .d { background: var(--text-3); }
+.profile .jid { margin-top: 5px; font-size: 12px; color: var(--text-3); display: flex; align-items: center; gap: 5px; }
+.cell { display: flex; align-items: center; gap: 12px; padding: 13px 16px; cursor: pointer; }
+.cell:active { background: var(--press); }
+.cell + .cell { border-top: 1px solid color-mix(in srgb, var(--border) 60%, transparent); }
+.cell .cico { width: 30px; height: 30px; border-radius: 9px; background: var(--green-soft); color: var(--green-dark); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+html[data-theme="dark"] .cell .cico { color: #34d399; }
+.cell .cico.gray { background: var(--press); color: var(--text-2); }
+.cell .cico.red { background: rgba(250,81,81,.10); color: var(--danger); }
+.cell .ctxt { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.cell .ct { font-size: 15px; font-weight: 500; }
+.cell .cd { font-size: 12px; color: var(--text-3); }
+.cell .right { font-size: 12.5px; color: var(--text-3); display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+.hint-card { display: flex; gap: 8px; font-size: 12px; color: var(--text-3); line-height: 1.6; padding: 2px 6px; }
+
+/* ---------- 加号面板（聊天页内） ---------- */
+.plus-panel { flex-shrink: 0; background: var(--bg-sub); border-top: 1px solid var(--border); padding: 16px 18px 14px; }
+.plus-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+.plus-cell { display: flex; flex-direction: column; align-items: center; gap: 7px; cursor: pointer; }
+.plus-cell .sq {
+  width: 54px; height: 54px; border-radius: 16px;
+  background: var(--bg-panel); border: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: center; color: var(--text);
+  box-shadow: var(--card-shadow);
+}
+.plus-cell span { font-size: 11.5px; color: var(--text-2); }
+.plus-cell:active .sq { background: var(--press); }
+
+/* ---------- 长按菜单 ---------- */
+.menu-mask { position: absolute; inset: 0; background: rgba(0,0,0,.40); z-index: 20; display: flex; align-items: center; justify-content: center; }
+.menu {
+  background: var(--bg-panel); border-radius: 14px; overflow: hidden;
+  min-width: 200px; box-shadow: var(--float-shadow);
+}
+.menu button { display: flex; width: 100%; align-items: center; gap: 10px; padding: 14px 18px; font-size: 15px; background: none; border: 0; color: var(--text); cursor: pointer; }
+.menu button + button { border-top: 1px solid var(--border); }
+.menu button:active { background: var(--press); }
+.menu .red { color: var(--danger); }
+
+/* ---------- 桌面端预览 ---------- */
+.desktop {
+  width: 860px; max-width: 96vw; height: 560px;
+  border-radius: 14px; overflow: hidden;
+  border: 1px solid var(--border);
+  box-shadow: 0 18px 50px rgba(15,23,42,.18);
+  display: flex; background: var(--bg);
+}
+.dt-rail { width: 200px; flex-shrink: 0; background: var(--bg-sub); border-right: 1px solid var(--border); padding: 12px 10px; display: flex; flex-direction: column; gap: 4px; }
+.dt-rail .rt { font-size: 11px; color: var(--text-3); padding: 6px 8px; font-weight: 600; }
+.dt-item { display: flex; align-items: center; gap: 9px; padding: 8px 10px; border-radius: 10px; font-size: 13.5px; color: var(--text-2); cursor: pointer; }
+.dt-item .ava { width: 30px; height: 30px; border-radius: 9px; background: var(--green-soft); display:flex; align-items:center; justify-content:center; font-size: 16px; }
+.dt-item.sel { background: var(--green-soft); color: var(--text); font-weight: 600; }
+.dt-chat { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.dt-msgs { flex: 1; overflow-y: auto; padding: 22px 30px; display: flex; flex-direction: column; gap: 16px; max-width: 720px; }
+.dt-composer { flex-shrink: 0; display: flex; gap: 10px; padding: 12px 30px 16px; border-top: 1px solid var(--border); background: var(--bg-sub); }
+.dt-composer .field { flex: 1; background: var(--bg-panel); border: 1px solid var(--border); border-radius: 12px; padding: 10px 14px; font-size: 14px; color: var(--text-3); }
+.dt-composer .send { border: 0; border-radius: 12px; background: var(--green); color: #fff; padding: 0 18px; font-size: 14px; cursor: pointer; }
+
+/* 吉祥物 */
+.mascot-svg .arch { fill: var(--green); }
+</style>
+</head>
+<body>
+
+<header class="demo-bar">
+  <h1>Jeff 1.11 统一风格样式</h1>
+  <span class="sub">静态 demo · cue 翡翠 token · 助手去气泡 / 用户淡翡翠气泡 · 供调整用，非最终像素</span>
+  <span class="spacer"></span>
+  <button class="theme-btn" onclick="const h=document.documentElement;h.dataset.theme=h.dataset.theme==='dark'?'light':'dark'">切亮 / 暗</button>
+</header>
+
+<div class="stage">
+
+  <!-- ======================= 1. 会话列表 ======================= -->
+  <div class="frame-col">
+    <div class="phone">
+      <div class="safe-top"></div>
+      <div class="topbar">
+        <div style="flex:1;min-width:0;display:flex;align-items:center;">
+          <button class="back-btn" style="font-size:15.5px;font-weight:600;max-width:100%;overflow:hidden;">
+            <i class="dot" style="width:8px;height:8px;border-radius:50%;background:var(--green);display:inline-block;margin-right:7px;flex-shrink:0;"></i><span style="overflow:hidden;text-overflow:ellipsis;">xujian 的开发机</span>
+          </button>
+        </div>
+        <div class="side right">
+          <button class="icon-btn"><svg class="ic" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></svg></button>
+        </div>
+      </div>
+      <div class="list-body">
+        <div class="list-head"><span>消息</span><span>2 台电脑 · 全部在线</span></div>
+
+        <div class="row">
+          <div class="ava mascot">
+            <svg class="mascot-svg" viewBox="0 0 128 128"><path class="arch" d="M 18,88 C 14,88 12,84 14,80 C 22,40 40,28 64,28 C 88,28 106,40 114,80 C 116,84 114,88 110,88 Z"/><circle cx="51" cy="62" r="11" fill="#fff"/><circle cx="52" cy="62" r="5.5" fill="#0F172A"/><circle cx="77" cy="62" r="11" fill="#fff"/><circle cx="78" cy="62" r="5.5" fill="#0F172A"/><path d="M 60,76 Q 64,81 69,77" fill="none" stroke="#0F172A" stroke-width="3" stroke-linecap="round"/></svg>
+            <span class="busy-ring"></span>
+          </div>
+          <div class="main">
+            <div class="l1"><span class="name">小杰</span><span class="tag pipe">管家</span><span class="time">10:24</span></div>
+            <div class="l2"><span class="sub">正在处理：整理巡检结论…</span></div>
+          </div>
+        </div>
+
+        <div class="row">
+          <div class="ava">🩺</div>
+          <div class="main">
+            <div class="l1"><span class="name">POCT+AI项目管理</span><span class="tag sys">群</span><span class="time">09:58</span></div>
+            <div class="l2"><span class="sub">项经理：3 床平稳，5 床需要复查血常规。</span><span class="unread">2</span></div>
+          </div>
+        </div>
+
+        <div class="row">
+          <div class="ava">🏥</div>
+          <div class="main">
+            <div class="l1"><span class="name">联合会诊</span><span class="tag sys">群</span><span class="time">昨天</span></div>
+            <div class="l2"><span class="sub">王教授：明早九点呼吸科病例讨论，各位准备资料。</span><span class="dot-only"></span></div>
+          </div>
+        </div>
+
+        <div class="list-head"><span>智能体 · 6</span></div>
+        <div class="row">
+          <div class="ava">🧑‍💼</div>
+          <div class="main">
+            <div class="l1"><span class="name">项经理</span><span class="time">09:40</span></div>
+            <div class="l2"><span class="sub">已发到「POCT+AI项目管理」，群主已确认。</span></div>
+          </div>
+        </div>
+        <div class="row">
+          <div class="ava">🩺</div>
+          <div class="main">
+            <div class="l1"><span class="name">医护助手</span><span class="time">08:57</span></div>
+            <div class="l2"><span class="sub">巡检结论已生成，共 12 项，无新发异常。</span></div>
+          </div>
+        </div>
+        <div class="row">
+          <div class="ava">🎬</div>
+          <div class="main">
+            <div class="l1"><span class="name">宣经理</span><span class="time">周一</span></div>
+            <div class="l2"><span class="sub">分镜脚本 v3 已产出，等你确认后开拍。</span></div>
+          </div>
+        </div>
+        <div class="row">
+          <div class="ava">📄</div>
+          <div class="main">
+            <div class="l1"><span class="name">文档小沃</span><span class="time">周一</span></div>
+            <div class="l2"><span class="sub">《季度考核表.docx》已转换完成。</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="safe-bottom"></div>
+    </div>
+    <div class="frame-cap"><b>① 会话列表</b>：头像弱底色、未读红点 / 数字、忙碌小绿点、摘要实时更新</div>
+  </div>
+
+  <!-- ======================= 2. 聊天页（含流式） ======================= -->
+  <div class="frame-col">
+    <div class="phone">
+      <div class="safe-top"></div>
+      <div class="topbar">
+        <div class="side"><button class="back-btn"><svg class="ic sm" viewBox="0 0 24 24"><path d="M14.5 5.5 8 12l6.5 6.5"/></svg>返回</button></div>
+        <div class="title">一个很长很长的智能体名字用来测试顶栏省略号</div>
+        <div class="side right">
+          <button class="icon-btn"><svg class="ic" viewBox="0 0 24 24"><path d="M21 12a8 8 0 1 1-3.1-6.3L21 4l-.9 3.4A8 8 0 0 1 21 12z"/><path d="M8.5 10.5h7M8.5 14h4.5"/></svg></button>
+        </div>
+      </div>
+      <div class="msgs">
+        <div class="day-sep"><span>今天 · 9月30日</span></div>
+
+        <div class="msg-user">
+          <div class="bubble">帮我看下今天病房的巡检结论</div>
+          <div class="meta"><span>08:57</span><span>✓ 已送达</span></div>
+        </div>
+
+        <div class="msg-ai">
+          <div class="ai-head">
+            <span class="ava"><svg class="mascot-svg" viewBox="0 0 128 128"><path class="arch" d="M 18,88 C 14,88 12,84 14,80 C 22,40 40,28 64,28 C 88,28 106,40 114,80 C 116,84 114,88 110,88 Z"/><circle cx="51" cy="62" r="11" fill="#fff"/><circle cx="52" cy="62" r="5.5" fill="#0F172A"/><circle cx="77" cy="62" r="11" fill="#fff"/><circle cx="78" cy="62" r="5.5" fill="#0F172A"/><path d="M 60,76 Q 64,81 69,77" fill="none" stroke="#0F172A" stroke-width="3" stroke-linecap="round"/></svg></span>
+            <b>医护助手</b><span>08:57</span>
+          </div>
+          <button class="fold-row">
+            <svg class="ic sm" viewBox="0 0 24 24"><path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.5 10.9c.6.5 1 1.2 1 2.1h5c0-.9.4-1.6 1-2.1A6 6 0 0 0 12 3z"/></svg>
+            <span class="lbl">思考过程</span><span class="prev">先核对今天有没有未闭环的异常项…</span><span class="arr">›</span>
+          </button>
+          <button class="fold-row">
+            <svg class="ic sm" viewBox="0 0 24 24"><path d="M14.7 6.3a4.5 4.5 0 0 0-6 6L3 18l3 3 5.7-5.7a4.5 4.5 0 0 0 6-6L14 13l-3-3 3.7-3.7z"/></svg>
+            <span class="lbl">工具调用 3</span><span class="prev">✓ 读取巡检记录 · ✓ 核对异常项 · ✓ 生成结论</span><span class="arr">›</span>
+          </button>
+          <div class="md">
+            <h2>巡检结论</h2>
+            <p>3 床今日<b>平稳</b>，未见新发异常；5 床血氧偏低，建议复查。</p>
+            <ul><li>体温 36.7℃ · 血压 120/80</li><li>已完成换药与输液巡签</li></ul>
+            <div class="codeblock">
+              <div class="bar"><span>ward_round_0930.md</span><span>复制</span></div>
+              <pre>## 3床
+- 血氧 98% ↑
+- 医嘱已同步</pre>
+            </div>
+          </div>
+        </div>
+
+        <div class="msg-user">
+          <div class="bubble">把结论发到群里</div>
+          <div class="meta"><span>10:12</span><span>✓ 已送达</span></div>
+        </div>
+
+        <div class="msg-ai">
+          <div class="ai-head">
+            <span class="ava"><svg class="mascot-svg" viewBox="0 0 128 128"><path class="arch" d="M 18,88 C 14,88 12,84 14,80 C 22,40 40,28 64,28 C 88,28 106,40 114,80 C 116,84 114,88 110,88 Z"/><circle cx="51" cy="62" r="11" fill="#fff"/><circle cx="52" cy="62" r="5.5" fill="#0F172A"/><circle cx="77" cy="62" r="11" fill="#fff"/><circle cx="78" cy="62" r="5.5" fill="#0F172A"/><path d="M 60,76 Q 64,81 69,77" fill="none" stroke="#0F172A" stroke-width="3" stroke-linecap="round"/></svg></span>
+            <b>医护助手</b><span>10:12</span>
+          </div>
+          <button class="fold-row">
+            <svg class="ic sm" viewBox="0 0 24 24"><path d="M14.7 6.3a4.5 4.5 0 0 0-6 6L3 18l3 3 5.7-5.7a4.5 4.5 0 0 0 6-6L14 13l-3-3 3.7-3.7z"/></svg>
+            <span class="lbl">工具调用 1</span><span class="prev">✓ 发送群消息</span><span class="arr">›</span>
+          </button>
+          <div class="md"><p>已发到「POCT+AI项目管理」，群主已确认收到。</p></div>
+        </div>
+
+        <div class="msg-user">
+          <div class="pic" style="background:linear-gradient(135deg,#a7f3d0,#6ee7b7 60%,#34d399);"></div>
+          <div class="meta"><span>10:30</span><span>✓ 已送达</span></div>
+        </div>
+
+        <div class="msg-ai live">
+          <div class="ai-head">
+            <span class="ava"><svg class="mascot-svg" viewBox="0 0 128 128"><path class="arch" d="M 18,88 C 14,88 12,84 14,80 C 22,40 40,28 64,28 C 88,28 106,40 114,80 C 116,84 114,88 110,88 Z"/><circle cx="51" cy="62" r="11" fill="#fff"/><circle cx="52" cy="62" r="5.5" fill="#0F172A"/><circle cx="77" cy="62" r="11" fill="#fff"/><circle cx="78" cy="62" r="5.5" fill="#0F172A"/><path d="M 60,76 Q 64,81 69,77" fill="none" stroke="#0F172A" stroke-width="3" stroke-linecap="round"/></svg></span>
+            <b>医护助手</b><span>正在回复</span>
+          </div>
+          <button class="fold-row running">
+            <svg class="ic sm" viewBox="0 0 24 24"><path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.5 10.9c.6.5 1 1.2 1 2.1h5c0-.9.4-1.6 1-2.1A6 6 0 0 0 12 3z"/></svg>
+            <span class="lbl">思考中</span><span class="prev"></span><span class="arr">›</span>
+          </button>
+          <div class="md"><p>收到，这张照片是 5 床的输液记录，我先核对批次号与医嘱是否一致，稍等…</p></div>
+        </div>
+      </div>
+      <div class="jump-latest"><svg class="ic sm" viewBox="0 0 24 24"><path d="M12 5v14M6 13l6 6 6-6"/></svg>回到底部</div>
+      <div class="composer">
+        <button class="plus"><svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9.2"/><path d="M12 8.2v7.6M8.2 12h7.6"/></svg></button>
+        <div class="field"><span class="ph">发消息，Enter 换行</span></div>
+        <button class="send-btn stop">停止</button>
+      </div>
+      <div class="safe-bottom"></div>
+    </div>
+    <div class="frame-cap"><b>② 聊天页</b>：助手去气泡通栏、工具/思考一行条、时间戳、发送状态、流式、回到底部浮球</div>
+  </div>
+
+  <!-- ======================= 3. 聊天页 · 加号面板 + 长按菜单 ======================= -->
+  <div class="frame-col">
+    <div class="phone">
+      <div class="safe-top"></div>
+      <div class="topbar">
+        <div class="side"><button class="back-btn"><svg class="ic sm" viewBox="0 0 24 24"><path d="M14.5 5.5 8 12l6.5 6.5"/></svg>返回</button></div>
+        <div class="title">POCT+AI项目管理</div>
+        <div class="side right">
+          <button class="icon-btn"><svg class="ic" viewBox="0 0 24 24"><path d="M4 6h16M4 10h16M4 14h10M4 18h7"/></svg></button>
+          <button class="icon-btn"><svg class="ic" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></button>
+        </div>
+      </div>
+      <div class="conn-bar"><svg class="ic sm" viewBox="0 0 24 24"><path d="M12 9v4M12 16.5v.5M10.3 3.9 2.6 17a2 2 0 0 0 1.7 3h15.4a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg>电脑离线 · 当前为本地只读缓存（同步于 10:24）</div>
+      <div class="msgs" style="opacity:.85;">
+        <div class="msg-user"><div class="bubble">帮我把巡检结论同步到工作空间</div><div class="meta"><span>10:31</span><span class="state-fail">⚠ 发送失败 · 点击重试</span></div></div>
+      </div>
+      <div class="plus-panel">
+        <div class="plus-grid">
+          <div class="plus-cell"><div class="sq"><svg class="ic" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></div><span>新建话题</span></div>
+          <div class="plus-cell"><div class="sq"><svg class="ic" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><circle cx="9" cy="10" r="1.6"/><path d="m5.5 18 4.5-5 3 3.2L16 13l3.5 5"/></svg></div><span>相册</span></div>
+          <div class="plus-cell"><div class="sq"><svg class="ic" viewBox="0 0 24 24"><path d="M8 9h8M8 13h5"/><path d="M21 12a8 8 0 1 1-3.1-6.3L21 4l-.9 3.4A8 8 0 0 1 21 12z"/></svg></div><span>切换话题</span></div>
+          <div class="plus-cell"><div class="sq"><svg class="ic" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></div><span>工作空间</span></div>
+        </div>
+      </div>
+      <div class="composer">
+        <button class="plus"><svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9.2"/><path d="M12 8.2v7.6M8.2 12h7.6"/></svg></button>
+        <div class="field">帮我把巡检结论同步到工作空间</div>
+        <button class="send-btn">发送</button>
+      </div>
+      <div class="safe-bottom"></div>
+      <div class="menu-mask">
+        <div class="menu">
+          <button><svg class="ic sm" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>复制</button>
+          <button><svg class="ic sm" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg>重新发送</button>
+          <button class="red"><svg class="ic sm" viewBox="0 0 24 24"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6.5 7l1 13h9l1-13"/></svg>删除本地记录</button>
+        </div>
+      </div>
+    </div>
+    <div class="frame-cap"><b>③ 面板态</b>：加号宫格、离线状态条、失败气泡重试、长按消息菜单</div>
+  </div>
+
+  <!-- ======================= 4. 我 ======================= -->
+  <div class="frame-col">
+    <div class="phone">
+      <div class="safe-top"></div>
+      <div class="topbar">
+        <div class="side"></div>
+        <div class="title">我</div>
+        <div class="side right"></div>
+      </div>
+      <div class="me-body">
+        <div class="card">
+          <div class="profile">
+            <div class="logo"><svg class="mascot-svg" viewBox="0 0 128 128"><path class="arch" d="M 18,88 C 14,88 12,84 14,80 C 22,40 40,28 64,28 C 88,28 106,40 114,80 C 116,84 114,88 110,88 Z"/><circle cx="51" cy="62" r="11" fill="#fff"/><circle cx="52" cy="62" r="5.5" fill="#0F172A"/><circle cx="77" cy="62" r="11" fill="#fff"/><circle cx="78" cy="62" r="5.5" fill="#0F172A"/><path d="M 60,76 Q 64,81 69,77" fill="none" stroke="#0F172A" stroke-width="3" stroke-linecap="round"/></svg></div>
+            <div class="who">
+              <div class="nm">我的手机 <span class="pill on"><span class="d"></span>已连接</span></div>
+              <div class="jid">Jeff ID · 2keyJYBmj… <svg class="ic sm" viewBox="0 0 24 24"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></div>
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <div class="cap">已连接电脑 · 2</div>
+          <div class="card">
+            <div class="cell">
+              <div class="cico"><svg class="ic sm" viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg></div>
+              <div class="ctxt"><span class="ct">xujian 的开发机</span><span class="cd">在线 · 当前主控</span></div>
+              <span class="right"><span class="pill on"><span class="d"></span>使用中</span></span>
+            </div>
+            <div class="cell">
+              <div class="cico gray"><svg class="ic sm" viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg></div>
+              <div class="ctxt"><span class="ct">家里的台式机</span><span class="cd">离线</span></div>
+              <span class="right">切换 ›</span>
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <div class="cap">设备连接</div>
+          <div class="card">
+            <div class="cell">
+              <div class="cico"><svg class="ic sm" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v4.5M12 16h.01"/></svg></div>
+              <div class="ctxt"><span class="ct">绑定另一台电脑</span></div>
+              <span class="right">›</span>
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <div class="cap">系统与安全</div>
+          <div class="card">
+            <div class="cell">
+              <div class="cico"><svg class="ic sm" viewBox="0 0 24 24"><rect x="2" y="7" width="16" height="10" rx="3"/><path d="M20 10.5v3M6 12h5"/></svg></div>
+              <div class="ctxt"><span class="ct">忽略电池优化</span><span class="cd">已开启 · 防止熄屏后被杀后台</span></div>
+              <span class="right">›</span>
+            </div>
+            <div class="cell">
+              <div class="cico gray"><svg class="ic sm" viewBox="0 0 24 24"><rect x="4" y="10" width="16" height="10" rx="2.5"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg></div>
+              <div class="ctxt"><span class="ct">锁屏安全保护</span><span class="cd">指纹或系统凭证解锁</span></div>
+              <span class="right">立即锁定 ›</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="cell">
+            <div class="cico red"><svg class="ic sm" viewBox="0 0 24 24"><path d="m16 8-6.4 6.4a2.5 2.5 0 0 0 3.5 3.5l5-5a4.5 4.5 0 0 0-6.4-6.4l-5 5a6.5 6.5 0 0 0 9.2 9.2"/></svg></div>
+            <div class="ctxt"><span class="ct" style="color:var(--danger);">解除当前电脑绑定</span></div>
+            <span class="right">›</span>
+          </div>
+        </div>
+
+        <div class="hint-card">
+          <svg class="ic sm" viewBox="0 0 24 24" style="margin-top:2px;"><circle cx="12" cy="12" r="9"/><path d="M12 8v4.5M12 16h.01"/></svg>
+          <span>华为 / 荣耀机型请在「设置 → 应用启动管理」中将 Jeff 设为手动管理并允许后台活动，防止熄屏后连接被系统阻断。</span>
+        </div>
+      </div>
+      <div class="safe-bottom"></div>
+    </div>
+    <div class="frame-cap"><b>④ 我</b>：cue 分组卡片、图标化 cell、状态 pill</div>
+  </div>
+
+  <!-- ======================= 5. 桌面端对齐预览 ======================= -->
+  <div class="frame-col" style="width:100%;">
+    <div class="desktop">
+      <div class="dt-rail">
+        <div class="rt">会话</div>
+        <div class="dt-item"><span class="ava" style="background:var(--green-soft);"><svg class="mascot-svg" style="width:24px;height:24px;" viewBox="0 0 128 128"><path class="arch" d="M 18,88 C 14,88 12,84 14,80 C 22,40 40,28 64,28 C 88,28 106,40 114,80 C 116,84 114,88 110,88 Z"/><circle cx="51" cy="62" r="11" fill="#fff"/><circle cx="52" cy="62" r="5.5" fill="#0F172A"/><circle cx="77" cy="62" r="11" fill="#fff"/><circle cx="78" cy="62" r="5.5" fill="#0F172A"/><path d="M 60,76 Q 64,81 69,77" fill="none" stroke="#0F172A" stroke-width="3" stroke-linecap="round"/></svg></span>小杰</div>
+        <div class="dt-item sel"><span class="ava">🩺</span>医护助手</div>
+        <div class="dt-item"><span class="ava">🧑‍💼</span>项经理</div>
+        <div class="rt">项目群</div>
+        <div class="dt-item"><span class="ava">🩺</span>POCT+AI项目管理</div>
+      </div>
+      <div class="dt-chat">
+        <div class="topbar" style="background:var(--bg-sub);">
+          <div class="side"></div>
+          <div class="title">医护助手</div>
+          <div class="side right"></div>
+        </div>
+        <div class="dt-msgs">
+          <div class="msg-user" style="max-width:60%;">
+            <div class="bubble" style="font-size:14.5px;">帮我看下今天病房的巡检结论</div>
+            <div class="meta"><span>08:57</span></div>
+          </div>
+          <div class="msg-ai">
+            <div class="ai-head"><b>医护助手</b><span>08:57</span></div>
+            <button class="fold-row" style="font-size:12px;max-width:420px;">
+              <svg class="ic sm" viewBox="0 0 24 24"><path d="M14.7 6.3a4.5 4.5 0 0 0-6 6L3 18l3 3 5.7-5.7a4.5 4.5 0 0 0 6-6L14 13l-3-3 3.7-3.7z"/></svg>
+              <span class="lbl">工具调用 3</span><span class="prev">✓ 读取巡检记录 · ✓ 核对异常项 · ✓ 生成结论</span><span class="arr">›</span>
+            </button>
+            <div class="md" style="font-size:14.5px;">
+              <h2 style="font-size:16px;">巡检结论</h2>
+              <p>3 床今日<b>平稳</b>，未见新发异常；5 床血氧偏低，建议复查。</p>
+              <ul><li>体温 36.7℃ · 血压 120/80</li><li>已完成换药与输液巡签</li></ul>
+            </div>
+          </div>
+          <div class="msg-user" style="max-width:60%;">
+            <div class="bubble" style="font-size:14.5px;">把结论发到群里</div>
+            <div class="meta"><span>10:12</span></div>
+          </div>
+          <div class="msg-ai">
+            <div class="ai-head"><b>医护助手</b><span>10:12</span></div>
+            <div class="md" style="font-size:14.5px;"><p>已发到「POCT+AI项目管理」，群主已确认收到。</p></div>
+          </div>
+        </div>
+        <div class="dt-composer">
+          <div class="field">发消息，Enter 发送…</div>
+          <button class="send">发送</button>
+        </div>
+      </div>
+    </div>
+    <div class="frame-cap"><b>⑤ 桌面端对齐</b>：同一套消息形态（助手去气泡 + 用户淡翡翠气泡），复用现有 class 只换 CSS</div>
+  </div>
+
+</div>
+</body>
+</html>

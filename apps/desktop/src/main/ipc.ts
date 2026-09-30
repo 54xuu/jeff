@@ -105,8 +105,8 @@ export function registerIpc(core: JeffCore): Record<string, Handler> {
 
     // ---------- 私聊 ----------
     [IPC.chatHistory]: async (p): Promise<unknown> => {
-      const { agentId } = p as { agentId: string }
-      return core.privateChat.history(agentId)
+      const { agentId, limit } = p as { agentId: string; limit?: number }
+      return core.privateChat.history(agentId, limit)
     },
     [IPC.chatSend]: async (p): Promise<{ ok: boolean; stopped?: boolean; cancelled?: boolean }> => {
       const { agentId, text, images, plugin } = p as { agentId: string; text: string; images?: Array<{ mime: string; dataUrl: string }>; plugin?: ChatPluginInvoke }
@@ -574,8 +574,8 @@ export function registerIpc(core: JeffCore): Record<string, Handler> {
 
     // ---------- 群聊 ----------
     [IPC.groupHistory]: async (p): Promise<unknown> => {
-      const { projectId } = p as { projectId: string }
-      return core.historyActive(projectId)
+      const { projectId, limit } = p as { projectId: string; limit?: number }
+      return core.historyActive(projectId, limit)
     },
     [IPC.groupSend]: async (p): Promise<{ routedTo: string; summaryFailed?: boolean; summaryError?: string }> => {
       const { projectId, text, images, plugin } = p as { projectId: string; text: string; images?: Array<{ mime: string; dataUrl: string }>; plugin?: ChatPluginInvoke }

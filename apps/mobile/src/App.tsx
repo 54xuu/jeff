@@ -40,8 +40,74 @@ async function cachePut(desktopId: string, key: string, json: string): Promise<v
   localStorage.setItem(`jeff-cache:${desktopId}:${key}`, json)
 }
 
-function formatWeChatTime(ts?: number): string {
+/** 消息气泡内的时间戳：固定 HH:MM */
+function formatClock(ts?: number): string {
   if (!ts) return ''
+  const d = new Date(ts)
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+
+/** 消息流里的日期分隔：今天 / 昨天 / M月D日 / YYYY年M月D日 */
+function formatDaySep(ts?: number): string {
+  if (!ts) return ''
+  const d = new Date(ts)
+  const now = new Date()
+  if (d.toDateString() === now.toDateString()) return '今天'
+  const yesterday = new Date(now)
+  yesterday.setDate(now.getDate() - 1)
+  if (d.toDateString() === yesterday.toDateString()) return '昨天'
+  if (d.getFullYear() === now.getFullYear()) return `${d.getMonth() + 1}月${d.getDate()}日`
+  return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日`
+}
+
+/** 长按区域：450ms 长按触发，移动超过 8px 视为滚动取消；桌面端右键同样触发 */
+function LongPressArea(props: { className?: string; children: React.ReactNode; onLongPress: () => void; onClick?: () => void }) {
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const startPos = useRef({ x: 0, y: 0 })
+  const moved = useRef(false)
+
+  const start = (x: number, y: number) => {
+    moved.current = false
+    startPos.current = { x, y }
+    timerRef.current = setTimeout(() => {
+      if (!moved.current) props.onLongPress()
+    }, 450)
+  }
+  const move = (x: number, y: number) => {
+    if (Math.abs(x - startPos.current.x) > 8 || Math.abs(y - startPos.current.y) > 8) {
+      moved.current = true
+      if (timerRef.current) clearTimeout(timerRef.current)
+    }
+  }
+  const end = () => {
+    if (timerRef.current) clearTimeout(timerRef.current)
+  }
+
+  return (
+    <div
+      className={props.className}
+      onClick={props.onClick}
+      onTouchStart={(e) => {
+        const t = e.touches[0]
+        if (t) start(t.clientX, t.clientY)
+      }}
+      onTouchMove={(e) => {
+        const t = e.touches[0]
+        if (t) move(t.clientX, t.clientY)
+      }}
+      onTouchEnd={end}
+      onTouchCancel={end}
+      onContextMenu={(e) => {
+        e.preventDefault()
+        props.onLongPress()
+      }}
+    >
+      {props.children}
+    </div>
+  )
+}
+
+function formatWeChatTime(ts?: number): string {  if (!ts) return ''
   const d = new Date(ts)
   const now = new Date()
   const isSameDay = d.toDateString() === now.toDateString()
@@ -131,6 +197,8 @@ export function WeChatItemRow(props: {
   isBuiltin?: boolean
   pinned?: boolean
   busy?: boolean
+  /** 未读条数（>0 显示数字，<0 只显示红点） */
+  unread?: number
   onClick: () => void
   onLongPress: () => void
 }) {
@@ -208,6 +276,13 @@ export function WeChatItemRow(props: {
           </div>
           <div className="wechat-item-bot">
             <span className="wechat-item-sub">{props.sub}</span>
+            {props.unread !== undefined && props.unread !== 0 ? (
+              props.unread > 0 ? (
+                <span className="wechat-unread-badge">{props.unread > 99 ? '99+' : props.unread}</span>
+              ) : (
+                <span className="wechat-unread-dot" />
+              )
+            ) : null}
           </div>
         </div>
       </button>
@@ -377,6 +452,29 @@ export function App() {
   } | null>(null)
   const [sessionDrawer, setSessionDrawer] = useState(false)
   const bubblesEndRef = useRef<HTMLDivElement>(null)
+  // 每个会话独立的草稿（key = kind:id），切换会话互不串
+  const [drafts, setDrafts] = useState<Record<string, string>>({})
+  // 未读：key = agent:<id> / group:<id>，值 = 未读条数
+  const [unread, setUnread] = useState<Record<string, number>>({})
+  // 乐观发送失败的本地消息 id（点击可重发）
+  const [failedLocal, setFailedLocal] = useState<string | null>(null)
+  // 长按消息菜单 / 图片查看器
+  const [msgMenu, setMsgMenu] = useState<{ msgId: string; text: string; canCopy: boolean; canResend: boolean } | null>(null)
+  const [viewer, setViewer] = useState<string | null>(null)
+  // 聊天区是否贴底（不贴底时新消息不拽滚动、显示回到底部浮球）
+  const atBottomRef = useRef(true)
+  const [showJump, setShowJump] = useState(false)
+  // 历史加载竞态守卫：只有最新一次请求能写 messages
+  const loadSeqRef = useRef(0)
+  // 本地隐藏的消息（长按删除只删本地视图，不动服务端）
+  const [hiddenIds, setHiddenIds] = useState<Record<string, true>>({})
+  const targetKey = target ? `${target.kind}:${target.id}` : ''
+  // 草稿写透：当前会话的输入同步进 drafts map，切走再回来不丢
+  const updateDraft = (v: string) => {
+    setDraft(v)
+    const cur = targetRef.current
+    if (cur) setDrafts((d) => ({ ...d, [`${cur.kind}:${cur.id}`]: v }))
+  }
 
   const screenRef = useRef<Screen>('list')
   screenRef.current = screen
@@ -392,6 +490,14 @@ export function App() {
 
   const handleBack = () => {
     if (consumeBack()) return
+    if (viewer) {
+      setViewer(null)
+      return
+    }
+    if (msgMenu) {
+      setMsgMenu(null)
+      return
+    }
     if (actionMenu) {
       setActionMenu(null)
       return
@@ -410,6 +516,8 @@ export function App() {
     }
     if (screenRef.current === 'chat') {
       setScreen('list')
+      // 离开聊天就清掉当前会话：否则推送仍把最后聊过的会话当「正在看」，列表永远不记未读
+      setTarget(null)
       return
     }
     if (tabRef.current === 'me') {
@@ -433,6 +541,33 @@ export function App() {
     bump((n) => n + 1)
   }
 
+  // 供通知跳转等异步路径读取最新列表（避免闭包拿到旧 state）
+  const agentsRef = useRef(agents)
+  agentsRef.current = agents
+  const projectsRef = useRef(projects)
+  projectsRef.current = projects
+
+  // 列表没拉过就补拉一次（幂等：已有数据时直接返回）
+  const ensureLists = async () => {
+    if (agentsRef.current.length || projectsRef.current.length) return
+    await loadLists()
+  }
+
+  // 滚动治理：贴底时才自动跟随；离底时显示「回到底部」浮球
+  const onBubblesScroll = () => {
+    const el = bubblesEndRef.current?.parentElement
+    if (!el) return
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80
+    atBottomRef.current = nearBottom
+    setShowJump(!nearBottom)
+  }
+
+  const jumpToLatest = () => {
+    atBottomRef.current = true
+    setShowJump(false)
+    bubblesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }
+
   useEffect(() => {
     const off = phone.onPush((ev) => {
       if (ev.what === 'presence' || ev.what === 'unbound') {
@@ -453,12 +588,34 @@ export function App() {
         }
         setStream((prev) => {
           const merged = mergeStream(prev || { text: '', reasoning: '' }, frame)
+          if (!merged.ok) return prev
           return { text: merged.text, reasoning: merged.reasoning, agentId: frame.agentId, tools: frame.tools }
         })
       }
       if (ev.what === 'chat-updated' || ev.what === 'group-updated') {
         const current = targetRef.current
-        if (current) void loadHistory(current)
+        const p = (ev.p || {}) as { agentId?: string; projectId?: string }
+        const key = ev.what === 'chat-updated' ? `agent:${p.agentId || ''}` : `group:${p.projectId || ''}`
+        const isCurrent = current && (ev.what === 'chat-updated' ? current.kind === 'agent' && current.id === p.agentId : current.kind === 'group' && current.id === p.projectId)
+        if (isCurrent) {
+          void loadHistory(current)
+        } else {
+          // 不是当前打开的会话：记未读 + 轻量拉最后一条做列表摘要
+          setUnread((prev) => ({ ...prev, [key]: (prev[key] || 0) + 1 }))
+          const [kind, id] = key.split(':')
+          if (id) {
+            void (kind === 'agent'
+              ? phone.invoke<ChatMsg[]>(IPC.chatHistory, { agentId: id, limit: 1 })
+              : phone.invoke<GroupMessage[]>(IPC.groupHistory, { projectId: id, limit: 1 })
+            )
+              .then((rows) => {
+                const list = Array.isArray(rows) ? rows : (rows as { messages?: GroupMessage[] })?.messages || []
+                const last = list[list.length - 1]
+                if (last) setRecentMap((prev) => ({ ...prev, [key]: { text: last.text, time: last.time } }))
+              })
+              .catch(() => {})
+          }
+        }
       }
     })
     void boot().finally(() => {
@@ -469,7 +626,15 @@ export function App() {
       const note = await phone.takeNote()
       const kind = note.kind === 'agent' || note.kind === 'group' ? note.kind : ''
       if (!note.id || !kind) return
-      void openChat({ kind, id: note.id, name: note.title || '会话' })
+      // 通知标题可能是「私聊/项目群/任务名」这类占位，进会话前用已加载列表把真实名字查出来；
+      // 查不到就先叫「会话」，进会话后顶栏会随 agents/projects 刷新
+      void ensureLists().then(() => {
+        const name =
+          kind === 'agent'
+            ? (agentsRef.current.find((a) => a.id === note.id)?.name ?? '会话')
+            : (projectsRef.current.find((pr) => pr.id === note.id)?.title ?? '会话')
+        void openChat({ kind, id: note.id, name })
+      })
     }
     const onVis = () => (document.hidden ? onHide() : onShow())
     const onShow = () => {
@@ -503,9 +668,9 @@ export function App() {
   }, [])
 
   useEffect(() => {
-    if (screen === 'chat') {
-      bubblesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-    }
+    if (screen !== 'chat') return
+    if (!atBottomRef.current) return
+    bubblesEndRef.current?.scrollIntoView({ block: 'end' })
   }, [messages, stream, screen])
 
   async function boot() {
@@ -530,6 +695,10 @@ export function App() {
     if (Capacitor.isNativePlatform()) {
       const dbg = await Native.readDebugPair().catch(() => ({ text: '' }))
       if (dbg.text) await acceptPair(dbg.text)
+      // 电池优化豁免：只在已绑定电脑时请求（替代冷启动无条件弹窗）；已授权静默跳过
+      if (phone.desktops.size > 0) {
+        void Native.requestBattery().catch(() => {})
+      }
     }
   }
 
@@ -613,33 +782,51 @@ export function App() {
     if (failed) markOffline(true)
   }
 
-  async function loadHistory(t: ChatTarget) {
+  async function loadHistory(t: ChatTarget, opts?: { limit?: number }) {
     const id = phone.activeId
     const key = `history:${t.kind}:${t.id}`
+    // 竞态守卫：慢响应不许覆盖新会话的消息
+    const seq = ++loadSeqRef.current
+    const apply = (rows: Array<ChatMsg | GroupMessage>) => {
+      if (seq !== loadSeqRef.current) return
+      setMessages(rows)
+    }
     try {
       if (t.kind === 'agent') {
-        const rows = await phone.invoke<ChatMsg[]>(IPC.chatHistory, { agentId: t.id })
-        setMessages(rows)
+        const rows = await phone.invoke<ChatMsg[]>(IPC.chatHistory, { agentId: t.id, ...(opts?.limit ? { limit: opts.limit } : {}) })
+        apply(rows)
+        if (opts?.limit) {
+          const last = rows[rows.length - 1]
+          if (last) setRecentMap((prev) => ({ ...prev, [`agent:${t.id}`]: { text: last.text, time: last.time } }))
+          return
+        }
         await cachePut(id, key, JSON.stringify(rows))
         const last = rows[rows.length - 1]
         if (last) setRecentMap((prev) => ({ ...prev, [`agent:${t.id}`]: { text: last.text, time: last.time } }))
       } else {
-        const r = await phone.invoke<{ threadId: string; messages: GroupMessage[] } | GroupMessage[]>(IPC.groupHistory, { projectId: t.id })
+        const r = await phone.invoke<{ threadId: string; messages: GroupMessage[] } | GroupMessage[]>(IPC.groupHistory, { projectId: t.id, ...(opts?.limit ? { limit: opts.limit } : {}) })
         const rows = Array.isArray(r) ? r : r?.messages || []
-        setMessages(rows)
+        apply(rows)
+        if (opts?.limit) {
+          const last = rows[rows.length - 1]
+          if (last) setRecentMap((prev) => ({ ...prev, [`group:${t.id}`]: { text: last.text, time: last.time } }))
+          return
+        }
         await cachePut(id, key, JSON.stringify(rows))
         const last = rows[rows.length - 1]
         if (last) setRecentMap((prev) => ({ ...prev, [`group:${t.id}`]: { text: last.text, time: last.time } }))
       }
+      if (seq !== loadSeqRef.current) return
       markOffline(false)
       setSyncedAt(Date.now())
     } catch {
+      if (seq !== loadSeqRef.current) return
       markOffline(true)
       const cached = await cacheGet(id, key)
       if (cached) {
         const raw = JSON.parse(cached) as ChatMsg[] | { messages?: ChatMsg[] }
         const rows = Array.isArray(raw) ? raw : raw?.messages || []
-        setMessages(rows)
+        apply(rows)
         const last = rows[rows.length - 1]
         if (last) setRecentMap((prev) => ({ ...prev, [`${t.kind}:${t.id}`]: { text: last.text, time: last.time } }))
       }
@@ -647,42 +834,69 @@ export function App() {
   }
 
   async function openChat(t: ChatTarget) {
+    const same = targetRef.current && targetRef.current.kind === t.kind && targetRef.current.id === t.id
     setTarget(t)
     setScreen('chat')
     setStream(null)
-    setMessages([])
+    setPlus(false)
+    setSessionDrawer(false)
+    setError('')
+    setFailedLocal(null)
+    setMsgMenu(null)
+    setViewer(null)
+    atBottomRef.current = true
+    setShowJump(false)
+    // 草稿按会话隔离：进来取自己的草稿，别的会话不动
+    setDraft(drafts[`${t.kind}:${t.id}`] || '')
+    if (!same) setMessages([])
+    setUnread((prev) => {
+      if (!prev[`${t.kind}:${t.id}`]) return prev
+      const next = { ...prev }
+      delete next[`${t.kind}:${t.id}`]
+      return next
+    })
     await loadHistory(t)
-    try {
-      if (t.kind === 'agent') {
-        const r = await phone.invoke<{ sessions: Array<{ id: string; active?: boolean }> }>(IPC.sessionsList, { agentId: t.id })
-        const current = r.sessions?.find((s) => s.active) || r.sessions?.[0]
-        if (current) await phone.invoke(IPC.sessionActivate, { scope: 'private', agentId: t.id, sessionId: current.id })
-      } else {
-        const r = await phone.invoke<{ threads: Array<{ id: string; active?: boolean }> }>(IPC.groupThreadsList, { projectId: t.id })
-        const current = r.threads?.find((s) => s.active) || r.threads?.[0]
-        if (current) await phone.invoke(IPC.groupThreadActivate, { projectId: t.id, threadId: current.id })
+  }
+
+  function doSendText(t: ChatTarget, text: string, images?: Array<{ mime: string; dataUrl: string }>) {
+    const now = Date.now()
+    const localId = `local-${now}`
+    // 乐观回显：不等电脑回复，自己的消息立刻上屏
+    setMessages((prev) => [...prev, { id: localId, role: 'user', text, time: now, ...(images ? { images } : {}) } as ChatMsg])
+    atBottomRef.current = true
+    setBusy(true)
+    void (async () => {
+      try {
+        if (t.kind === 'agent') await phone.invoke(IPC.chatSend, { agentId: t.id, text, ...(images ? { images } : {}) })
+        else await phone.invoke(IPC.groupSend, { projectId: t.id, text, ...(images ? { images } : {}) })
+        if (targetRef.current?.id === t.id && targetRef.current?.kind === t.kind) {
+          setFailedLocal(null)
+          await loadHistory(t)
+        }
+      } catch (err) {
+        setFailedLocal(localId)
+        setError((err as Error).message)
+      } finally {
+        setBusy(false)
       }
-    } catch {
-      // 历史已在页面上展示
-    }
+    })()
   }
 
   async function send() {
     if (!target || !draft.trim()) return
     const text = draft.trim()
-    setDraft('')
-    setBusy(true)
+    updateDraft('')
     setPlus(false)
-    try {
-      if (target.kind === 'agent') await phone.invoke(IPC.chatSend, { agentId: target.id, text })
-      else await phone.invoke(IPC.groupSend, { projectId: target.id, text })
-      await loadHistory(target)
-    } catch (err) {
-      setError((err as Error).message)
-      setDraft(text)
-    } finally {
-      setBusy(false)
-    }
+    doSendText(target, text)
+  }
+
+  async function resend(msgId: string) {
+    if (!target) return
+    const local = messages.find((m) => m.id === msgId)
+    if (!local || !local.text) return
+    setFailedLocal(null)
+    setHiddenIds((prev) => ({ ...prev, [msgId]: true }))
+    doSendText(target, local.text, local.images)
   }
 
   async function sendImage(dataUrl: string) {
@@ -690,11 +904,11 @@ export function App() {
     setBusy(true)
     try {
       const image = await shrinkImage(dataUrl)
-      const images = [image]
-      if (target.kind === 'agent') await phone.invoke(IPC.chatSend, { agentId: target.id, text: draft.trim() || '（图片）', images })
-      else await phone.invoke(IPC.groupSend, { projectId: target.id, text: draft.trim() || '（图片）', images })
-      setDraft('')
-      await loadHistory(target)
+      const text = draft.trim() || '（图片）'
+      updateDraft('')
+      setBusy(false)
+      doSendText(target, text, [image])
+      return
     } catch (err) {
       setError((err as Error).message)
     } finally {
@@ -977,6 +1191,7 @@ export function App() {
                   isBuiltin
                   pinned
                   busy={stream !== null && target?.id === xiaojie.id}
+                  unread={unread[`agent:${xiaojie.id}`] || 0}
                   onClick={() => void openChat({ kind: 'agent', id: xiaojie.id, name: xiaojie.name, avatar: xiaojie.avatar })}
                   onLongPress={() =>
                     setActionMenu({
@@ -1015,6 +1230,7 @@ export function App() {
                         isGroup
                         pinned
                         busy={stream !== null && target?.id === p.id}
+                        unread={unread[`group:${p.id}`] || 0}
                         onClick={() => void openChat({ kind: 'group', id: p.id, name: p.title, icon: p.icon })}
                         onLongPress={() =>
                           setActionMenu({
@@ -1045,6 +1261,7 @@ export function App() {
                         kind="agent"
                         pinned
                         busy={stream !== null && target?.id === a.id}
+                        unread={unread[`agent:${a.id}`] || 0}
                         onClick={() => void openChat({ kind: 'agent', id: a.id, name: a.name, avatar: a.avatar })}
                         onLongPress={() =>
                           setActionMenu({
@@ -1085,6 +1302,7 @@ export function App() {
                       kind="group"
                       isGroup
                       busy={stream !== null && target?.id === p.id}
+                      unread={unread[`group:${p.id}`] || 0}
                       onClick={() => void openChat({ kind: 'group', id: p.id, name: p.title, icon: p.icon })}
                       onLongPress={() =>
                         setActionMenu({
@@ -1149,6 +1367,7 @@ export function App() {
                               avatar={a.avatar}
                               kind="agent"
                               busy={stream !== null && target?.id === a.id}
+                              unread={unread[`agent:${a.id}`] || 0}
                               onClick={() => void openChat({ kind: 'agent', id: a.id, name: a.name, avatar: a.avatar })}
                               onLongPress={() =>
                                 setActionMenu({
@@ -1175,76 +1394,148 @@ export function App() {
       {screen === 'chat' && target && (
         <section className="chat wechat-chat" data-testid="chat">
           <header className="bar wechat-bar wechat-chat-bar">
-            <button type="button" className="btn-nav-back" data-testid="chat-back" onClick={() => setScreen('list')}>
+            <button type="button" className="btn-nav-back" data-testid="chat-back" onClick={() => { setScreen('list'); setTarget(null) }}>
               <span className="wechat-back-chevron">‹</span>
               <span className="wechat-back-text">返回</span>
             </button>
             <div className="wechat-chat-title">
-              <b>{target.name}</b>
+              <b style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{target.name}</b>
               {target.kind === 'group' ? <span className="wechat-group-tag">群聊</span> : null}
             </div>
             {target.kind === 'group' ? (
-              <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                <button type="button" className="btn-nav-action" data-testid="session-history" onClick={() => void openSessionDrawer()}>
-                  话题
+              <>
+                <button
+                  type="button"
+                  className="bar-icon-btn"
+                  data-testid="session-history"
+                  title="话题"
+                  onClick={() => void openSessionDrawer()}
+                >
+                  <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M21 12a8 8 0 1 1-3.1-6.3L21 4l-.9 3.4A8 8 0 0 1 21 12z" />
+                    <path d="M8.5 10.5h7M8.5 14h4.5" />
+                  </svg>
                 </button>
-                <button type="button" className="btn-nav-action" data-testid="workspace" onClick={() => void openDirs()}>
-                  工作空间
+                <button
+                  type="button"
+                  className="bar-icon-btn"
+                  data-testid="workspace"
+                  title="工作空间"
+                  onClick={() => void openDirs()}
+                >
+                  <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+                  </svg>
                 </button>
-              </div>
+              </>
             ) : (
-              <button type="button" className="btn-nav-action" data-testid="session-history" onClick={() => void openSessionDrawer()}>
-                会话
+              <button
+                type="button"
+                className="bar-icon-btn"
+                data-testid="session-history"
+                title="会话"
+                onClick={() => void openSessionDrawer()}
+              >
+                <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21 12a8 8 0 1 1-3.1-6.3L21 4l-.9 3.4A8 8 0 0 1 21 12z" />
+                  <path d="M8.5 10.5h7M8.5 14h4.5" />
+                </svg>
               </button>
             )}
           </header>
-          <div className="bubbles wechat-bubbles" data-testid="bubbles">
-            {messages.map((m) => {
+          {offline && bound ? (
+            <div className="banner">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z" />
+              </svg>
+              <span>电脑离线，当前为本地只读缓存{syncedAt ? ` (同步于 ${new Date(syncedAt).toLocaleTimeString()})` : ''}</span>
+            </div>
+          ) : null}
+          <div className="bubbles wechat-bubbles" data-testid="bubbles" onScroll={onBubblesScroll}>
+            {messages.filter((m) => !hiddenIds[m.id]).map((m, idx, list) => {
               const isMe = m.role === 'user'
+              if (m.role === 'system') {
+                return (
+                  <div key={m.id} className="day-sep">
+                    <span>{m.text.slice(0, 80)}</span>
+                  </div>
+                )
+              }
+              const prev = list[idx - 1]
+              const needDaySep = !prev || new Date(prev.time).toDateString() !== new Date(m.time).toDateString()
+              const senderName = target.kind === 'group' ? ('sender_name' in m && m.sender_name ? m.sender_name : target.name) : target.name
+              const senderAvatar = target.kind === 'agent' ? target.avatar : ('agentId' in m && m.agentId ? agents.find((a) => a.id === m.agentId)?.avatar : undefined) || target.icon
+              const senderAgentId = target.kind === 'agent' ? target.id : 'agentId' in m ? m.agentId : undefined
+              const isLocal = m.id.startsWith('local-')
+              const isFailed = failedLocal === m.id
+              const openMenu = () => {
+                if (typeof navigator !== 'undefined' && navigator.vibrate) {
+                  try { navigator.vibrate(35) } catch {}
+                }
+                setMsgMenu({ msgId: m.id, text: m.text, canCopy: !!m.text.trim(), canResend: isMe })
+              }
               return (
-                <div key={m.id} className={`wechat-msg-row ${isMe ? 'me' : 'other'}`}>
-                  {!isMe && (
-                    <div className="wechat-msg-avatar">
-                      <WeChatAvatar
-                        kind={target.kind === 'group' ? 'group' : 'agent'}
-                        name={'sender_name' in m && m.sender_name ? m.sender_name : target.name}
-                        agentId={target.kind === 'agent' ? target.id : 'agentId' in m ? m.agentId : undefined}
-                        emoji={
-                          target.kind === 'agent'
-                            ? target.avatar
-                            : ('agentId' in m && m.agentId ? agents.find((a) => a.id === m.agentId)?.avatar : undefined) || target.icon
-                        }
-                        size={40}
-                      />
+                <div key={m.id}>
+                  {needDaySep ? (
+                    <div className="day-sep">
+                      <span>{formatDaySep(m.time)}</span>
                     </div>
-                  )}
-                  <div className="wechat-msg-content">
-                    {!isMe && 'sender_name' in m && m.sender_name ? (
-                      <span className="wechat-sender-name">{m.sender_name}</span>
-                    ) : null}
-                    <div className={isMe ? 'bubble me' : 'bubble'}>
+                  ) : null}
+                  <div className={`wechat-msg-row ${isMe ? 'me' : 'other'}`}>
+                    {!isMe && (
+                      <div className="wechat-msg-avatar">
+                        <WeChatAvatar
+                          kind={target.kind === 'group' ? 'group' : 'agent'}
+                          name={senderName}
+                          agentId={senderAgentId}
+                          emoji={senderAvatar}
+                          size={28}
+                        />
+                      </div>
+                    )}
+                    <div className="wechat-msg-content" onContextMenu={(e) => { e.preventDefault(); openMenu() }}>
+                      {!isMe && (
+                        <div className="msg-who">
+                          <b>{senderName}</b>
+                          <span>{formatClock(m.time)}</span>
+                        </div>
+                      )}
                       {m.role === 'assistant' ? (
-                        <AssistantText text={m.text} reasoning={m.reasoning} tools={m.tools} />
+                        <div className="wechat-ai-body">
+                          <AssistantText text={m.text} reasoning={m.reasoning} tools={m.tools} />
+                        </div>
                       ) : (
                         <>
-                          {!isMe && m.reasoning && m.reasoning.length > 0 ? <ReasoningView reasoning={m.reasoning} /> : null}
-                          {!isMe && m.tools && m.tools.length > 0 ? <ToolsView tools={m.tools} /> : null}
-                          {m.text ? <p>{m.text}</p> : null}
+                          <LongPressArea className="wechat-user-bubble" onLongPress={openMenu} onClick={isFailed ? () => void resend(m.id) : undefined}>
+                            {m.images?.length ? (
+                              m.images.map((img, i) => (
+                                <img
+                                  key={i}
+                                  src={img.dataUrl}
+                                  alt=""
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    setViewer(img.dataUrl)
+                                  }}
+                                />
+                              ))
+                            ) : null}
+                            {m.text && m.text !== '（图片）' ? m.text : null}
+                          </LongPressArea>
+                          <div className="msg-meta">
+                            <span>{formatClock(m.time)}</span>
+                            {isLocal ? (
+                              isFailed ? (
+                                <span className="msg-status fail">⚠ 发送失败 · 点击重试</span>
+                              ) : (
+                                <span className="msg-status">✓ 已送达</span>
+                              )
+                            ) : null}
+                          </div>
                         </>
                       )}
-                      {m.images?.map((img, i) => (
-                        <img key={i} src={img.dataUrl} alt="" />
-                      ))}
-                      {m.role !== 'assistant' && m.tools?.length ? (
-                        <small className="tools">{m.tools.map((t) => t.tool).join(' · ')}</small>
-                      ) : null}
                     </div>
                   </div>
-                  {isMe && (
-                    <div className="wechat-msg-avatar">
-                      <WeChatAvatar kind="user" name="我" size={40} />
-                    </div>
-                  )}
                 </div>
               )
             })}
@@ -1256,12 +1547,16 @@ export function App() {
                     name={target.name}
                     agentId={target.kind === 'agent' ? target.id : stream.agentId}
                     emoji={target.kind === 'agent' ? target.avatar : target.icon}
-                    size={40}
+                    size={28}
                     busy
                   />
                 </div>
                 <div className="wechat-msg-content">
-                  <div className="bubble">
+                  <div className="msg-who">
+                    <b>{target.name}</b>
+                    <span>正在回复…</span>
+                  </div>
+                  <div className="wechat-ai-body live">
                     <AssistantText text={stream.text} reasoning={stream.reasoning} tools={stream.tools} live />
                   </div>
                 </div>
@@ -1269,6 +1564,14 @@ export function App() {
             ) : null}
             <div ref={bubblesEndRef} />
           </div>
+          {showJump ? (
+            <button type="button" className="jump-latest" data-testid="jump-latest" onClick={jumpToLatest}>
+              <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 5v14M6 13l6 6 6-6" />
+              </svg>
+              回到底部
+            </button>
+          ) : null}
           {error ? <p className="err">{error}</p> : null}
           {plus ? (
             <div className="plus wechat-plus-sheet" data-testid="plus-panel">
@@ -1381,16 +1684,30 @@ export function App() {
               data-testid="plus"
               onClick={() => (plus ? setPlus(false) : void loadSessions())}
             >
-              <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor">
-                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm5 11h-4v4h-2v-4H7v-2h4V7h2v4h4v2z" />
+              <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+                <circle cx="12" cy="12" r="9.2" />
+                <path d="M12 8.2v7.6M8.2 12h7.6" />
               </svg>
             </button>
-            <input
+            <textarea
               data-testid="chat-input"
               value={draft}
-              placeholder={offline ? '电脑离线，不能发送' : '发消息'}
+              rows={1}
+              placeholder={offline ? '电脑离线，不能发送' : '发消息，Enter 换行'}
               disabled={offline}
-              onChange={(e) => setDraft(e.target.value)}
+              onChange={(e) => {
+                updateDraft(e.target.value)
+                const el = e.target
+                el.style.height = 'auto'
+                el.style.height = `${Math.min(el.scrollHeight, 110)}px`
+              }}
+              onKeyDown={(e) => {
+                // 桌面浏览器里 Enter 发送、Shift+Enter 换行；真机软键盘自带换行键
+                if (e.key === 'Enter' && !e.shiftKey && !Capacitor.isNativePlatform()) {
+                  e.preventDefault()
+                  void send()
+                }
+              }}
             />
             {stream || busy ? (
               <button type="button" className="btn-chat-stop" data-testid="chat-stop" onClick={() => void stop()}>
@@ -1855,6 +2172,65 @@ export function App() {
           </div>
         </div>
       )}
+
+      {msgMenu && (
+        <div className="wechat-msgmenu-mask" data-testid="msg-menu" onClick={() => setMsgMenu(null)}>
+          <div className="wechat-msgmenu" onClick={(e) => e.stopPropagation()}>
+            {msgMenu.canCopy ? (
+              <button
+                type="button"
+                data-testid="menu-copy"
+                onClick={() => {
+                  void navigator.clipboard?.writeText(msgMenu.text).catch(() => {})
+                  setMsgMenu(null)
+                }}
+              >
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="8" y="8" width="12" height="12" rx="2" />
+                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                </svg>
+                复制
+              </button>
+            ) : null}
+            {msgMenu.canResend ? (
+              <button
+                type="button"
+                data-testid="menu-resend"
+                onClick={() => {
+                  setMsgMenu(null)
+                  void resend(msgMenu.msgId)
+                }}
+              >
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />
+                  <path d="M3 3v5h5" />
+                </svg>
+                重新发送
+              </button>
+            ) : null}
+            <button
+              type="button"
+              className="danger"
+              data-testid="menu-hide"
+              onClick={() => {
+                setMsgMenu(null)
+                setHiddenIds((prev) => ({ ...prev, [msgMenu.msgId]: true }))
+              }}
+            >
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6.5 7l1 13h9l1-13" />
+              </svg>
+              删除本地记录
+            </button>
+          </div>
+        </div>
+      )}
+
+      {viewer ? (
+        <div className="wechat-viewer-mask" data-testid="image-viewer" onClick={() => setViewer(null)}>
+          <img src={viewer} alt="" />
+        </div>
+      ) : null}
     </main>
   )
 }

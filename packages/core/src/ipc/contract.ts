@@ -596,7 +596,7 @@ export type InvokeMap = {
     category?: string
   }
   [IPC.agentsDelete]: { id: string }
-  [IPC.chatHistory]: { agentId: string }
+  [IPC.chatHistory]: { agentId: string; limit?: number }
   [IPC.chatSend]: { agentId: string; text: string; model?: { providerID: string; modelID: string }; variant?: string; images?: ChatImage[]; plugin?: ChatPluginInvoke }
   [IPC.chatNew]: { agentId: string }
   [IPC.chatStop]: { agentId: string }
@@ -609,7 +609,7 @@ export type InvokeMap = {
   [IPC.tasksList]: { projectId: string }
   [IPC.taskSave]: { id?: string; project_id: string; title: string; description?: string; status?: string; priority?: string; assignee_id?: string }
   [IPC.taskDelete]: { id: string }
-  [IPC.groupHistory]: { projectId: string }
+  [IPC.groupHistory]: { projectId: string; limit?: number }
   [IPC.groupSend]: { projectId: string; text: string; model?: { providerID: string; modelID: string }; variant?: string; images?: ChatImage[]; plugin?: ChatPluginInvoke }
   [IPC.groupStop]: { projectId: string }
   [IPC.providersList]: void

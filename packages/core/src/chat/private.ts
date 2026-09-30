@@ -284,10 +284,12 @@ export class PrivateChat {
   }
 
   /** 读取历史消息（映射为 UI 形状） */
-  async history(agentId: string): Promise<ChatMsg[]> {
+  async history(agentId: string, limit?: number): Promise<ChatMsg[]> {
     const sessionId = this.getSessionId(agentId)
     if (!sessionId) return []
-    return this.mapSessionMessages(sessionId)
+    const rows = await this.mapSessionMessages(sessionId)
+    // limit：只取末尾 N 条（手机列表摘要 / 分页用），缺省全量
+    return limit && limit > 0 ? rows.slice(-limit) : rows
   }
 
   async mapSessionMessages(sessionId: string): Promise<ChatMsg[]> {

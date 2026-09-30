@@ -26,6 +26,7 @@ export interface NativeBridge {
   cachePut(opts: { desktopId: string; key: string; json: string }): Promise<void>
   readDebugPair(): Promise<{ text: string }>
   openBattery(): Promise<void>
+  requestBattery(): Promise<{ ok: boolean; skipped?: boolean }>
   minimize(): Promise<void>
   getPersistedProfile(): Promise<{ profileJson: string }>
   savePersistedProfile(opts: { profileJson: string }): Promise<void>

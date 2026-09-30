@@ -822,10 +822,17 @@ body {
 }
 
 .bubble.assistant {
-  background: var(--bubble-ai);
-  border: 1px solid var(--border);
-  border-radius: 12px;
+  /* 1.11 统一风格：助手去气泡通栏（与手机端一致），内容直接落在消息流底色上 */
+  background: transparent;
+  border: none;
+  border-radius: 0;
   box-shadow: none;
+  padding: 2px 0;
+}
+
+.msg-row.left {
+  /* 助手消息不再受 78% 气泡宽度约束，长文/表格/代码通栏可读 */
+  max-width: 100%;
 }
 
 .bubble p {
@@ -2822,10 +2829,10 @@ body.composer-resizing * {
 .list-pane:empty { display: none; }
 
 /* ===== v1.3：对话体验重构 ===== */
-/* assistant 气泡：白底细边，和用户的浅绿色块拉开，不再用微信式缺角 */
+/* 1.11 统一风格：助手通栏（上面已去气泡），这里只保留原锚点防止选择器失效 */
 .bubble.assistant {
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
+  background: transparent;
+  border: none;
 }
 
 /* 气泡内折叠区（思考过程 / 工具调用） */
@@ -2836,9 +2843,10 @@ body.composer-resizing * {
   margin-bottom: 6px;
 }
 .msg-extra {
-  border: 1px solid var(--line);
-  border-radius: var(--radius-md);
-  background: color-mix(in srgb, var(--text) 3%, transparent);
+  /* 1.11 统一风格：折叠条改成一行弱化条（品牌绿软底），不再画双层框 */
+  border: none;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--green) 10%, transparent);
   font-size: 12px;
   overflow: hidden;
 }

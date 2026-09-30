@@ -4,6 +4,7 @@ import { app, powerMonitor, powerSaveBlocker } from 'electron'
 import WebSocket from 'ws'
 import type { JeffCore } from '@jeff/core'
 import { IPC, type RemotePairAsk, type RemoteStatus } from '@jeff/core'
+import { projectRepo } from '@jeff/core'
 import {
   RELAY_CERT_SHA256,
   RELAY_URL,
@@ -178,7 +179,7 @@ export class RemoteGateway {
     if (frame.done) {
       const id = frame.kind === 'group' ? frame.projectId || '' : frame.agentId
       this.push('note', {
-        title: frame.kind === 'group' ? '项目群' : '私聊',
+        title: this.peerName(frame.kind === 'group' ? 'group' : 'agent', id) || (frame.kind === 'group' ? '项目群' : '私聊'),
         body: '回复完成',
         kind: frame.kind === 'group' ? 'group' : 'agent',
         id,
@@ -190,11 +191,22 @@ export class RemoteGateway {
     if (pending && frame.messageId && !this.noted.has(frame.messageId)) {
       this.noted.add(frame.messageId)
       this.push('note', {
-        title: '需要确认',
+        title: this.peerName(frame.kind === 'group' ? 'group' : 'agent', frame.kind === 'group' ? frame.projectId || '' : frame.agentId) || '需要确认',
         body: '有一项操作正在等你确认',
         kind: frame.kind === 'group' ? 'group' : 'agent',
         id: frame.kind === 'group' ? frame.projectId || '' : frame.agentId,
       })
+    }
+  }
+
+  /** 通知标题用真实名字（智能体名 / 群名），不再推「私聊/项目群」占位——手机端拿它当会话名 */
+  private peerName(kind: 'agent' | 'group', id: string): string {
+    if (!id) return ''
+    try {
+      if (kind === 'agent') return this.host.core.agents.get(id)?.name || ''
+      return projectRepo(this.host.core.db).get(id)?.title || ''
+    } catch {
+      return ''
     }
   }
 

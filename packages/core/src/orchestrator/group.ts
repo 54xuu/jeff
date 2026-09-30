@@ -516,13 +516,13 @@ export class GroupChat {
     return { content: finalContent, stopped: false }
   }
 
-  /** 读取当前（或指定）thread 的群消息 */
-  history(projectId: string, threadId?: string): GroupMessage[] {
+  /** 读取当前（或指定）thread 的群消息；limit 只取末尾 N 条，缺省全量 */
+  history(projectId: string, threadId?: string, limit?: number): GroupMessage[] {
     const tid = threadId || this.threads.ensureActiveThread(projectId)
     const agents = agentRepo(this.db)
     const scope = groupMsgScope(projectId, tid)
     const rows = chatMessageRepo(this.db).listByScope(scope)
-    return rows.map((r: ChatMessageRow) => {
+    const mapped: GroupMessage[] = rows.map((r: ChatMessageRow) => {
       const a = r.sender_id ? agents.get(r.sender_id) : undefined
       const meta = safeJson(r.meta)
       const metaImages = Array.isArray(meta.images)
@@ -550,6 +550,8 @@ export class GroupChat {
         sender_avatar: r.sender_type === 'user' ? '🧑' : a?.avatar || '⚙️',
       }
     })
+    // limit：只取末尾 N 条（手机列表摘要用），缺省全量
+    return limit && limit > 0 ? mapped.slice(-limit) : mapped
   }
 
   /** 写群系统公告；显式传 threadId 时落指定会话（流水线内防切换漂移），缺省写当前活跃会话 */
