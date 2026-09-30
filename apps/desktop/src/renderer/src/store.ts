@@ -663,9 +663,9 @@ export function applyTheme(theme: 'system' | 'light' | 'dark' | undefined): void
   }
 }
 
-/** 主题包（皮肤）：默认 weui（绿色），亦可切换为 catppuccin */
-export function applyThemePack(pack: 'weui' | 'catppuccin' | undefined): void {
-  document.documentElement.dataset.themePack = pack || 'weui'
+/** 主题包（皮肤）：默认 cue（翡翠小杰），亦可切换为 weui / catppuccin */
+export function applyThemePack(pack: 'cue' | 'weui' | 'catppuccin' | undefined): void {
+  document.documentElement.dataset.themePack = pack || 'cue'
 }
 
 /**

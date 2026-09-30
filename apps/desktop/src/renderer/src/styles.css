@@ -1,5 +1,5 @@
 /* ===== Jeff 主题变量合同（themePack × light/dark） =====
- * data-theme-pack：皮肤，默认 weui（经典微信绿 · 护眼温润），亦支持 catppuccin（低饱和粉彩）
+ * data-theme-pack：皮肤，默认 cue（翡翠小杰 · Logo 同源），亦支持 weui（经典微信绿）与 catppuccin（低饱和粉彩）
  * data-theme：亮/暗（light / dark）
  * 组件只吃下列变量，禁止硬编码色值。
  */
@@ -82,7 +82,62 @@
   --shadow: 0 1px 3px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.35);
 }
 
-/* 3. Catppuccin Latte（亮色备选） */
+/* 3. Cue 翡翠小杰（默认皮肤；与 docs/assets/logo.svg 同源的翡翠绿 + 墨色） */
+:root[data-theme-pack='cue'],
+:root[data-theme-pack='cue'][data-theme='light'] {
+  --cue-BRAND: #10b981;
+  --bg: #f2f5f3;
+  --bg-rail: #e7ece8;
+  --bg-list: #f3f6f4;
+  --bg-panel: #ffffff;
+  --rail-text: #5c6573;
+  --rail-active: #10b981;
+  --text: #0f172a;
+  --text-2: #64748b;
+  --text-reasoning: #94a3b8;
+  --border: #e2e8f0;
+  --line: #e2e8f0;
+  --green: #10b981;
+  --green-dark: #059669;
+  --green-gradient-end: #34d399;
+  --btn-primary-text: #ffffff;
+  --bubble-user: #d1fae5;
+  --bubble-user-text: #064e3b;
+  --bubble-plugin: #059669;
+  --bubble-ai: #ffffff;
+  --danger: #fa5151;
+  --link: #047857;
+  --shadow: 0 1px 3px rgba(16, 185, 129, 0.08), 0 8px 24px rgba(15, 23, 42, 0.06);
+}
+
+/* 4. Cue 翡翠小杰（暗色：墨绿夜色） */
+:root[data-theme-pack='cue'][data-theme='dark'] {
+  --cue-BRAND: #10b981;
+  --bg: #101613;
+  --bg-rail: #0b100d;
+  --bg-list: #141a17;
+  --bg-panel: #1a211d;
+  --rail-text: #9aa8a0;
+  --rail-active: #10b981;
+  --text: #e4eae6;
+  --text-2: #93a29a;
+  --text-reasoning: #6f7d76;
+  --border: #24302a;
+  --line: #24302a;
+  --green: #10b981;
+  --green-dark: #059652;
+  --green-gradient-end: #34d399;
+  --btn-primary-text: #ffffff;
+  --bubble-user: #1b4a37;
+  --bubble-user-text: #e7fff3;
+  --bubble-plugin: #34d399;
+  --bubble-ai: #212b26;
+  --danger: #fa5151;
+  --link: #34d399;
+  --shadow: 0 1px 3px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+/* 5. Catppuccin Latte（亮色备选） */
 :root[data-theme-pack='catppuccin'],
 :root[data-theme-pack='catppuccin'][data-theme='light'] {
   --ctp-rosewater: #dc8a78;
@@ -136,7 +191,7 @@
   --shadow: 0 1px 3px rgba(30, 102, 245, 0.05), 0 8px 24px rgba(76, 79, 105, 0.06);
 }
 
-/* 4. Catppuccin Mocha（暗色备选） */
+/* 6. Catppuccin Mocha（暗色备选） */
 :root[data-theme-pack='catppuccin'][data-theme='dark'] {
   --ctp-rosewater: #f5e0dc;
   --ctp-flamingo: #f2cdcd;
@@ -456,11 +511,6 @@ body {
 .empty-logo {
   width: 72px;
   height: 72px;
-  border-radius: 18px;
-  background: linear-gradient(135deg, var(--green), var(--green-gradient-end, #4cd08d));
-  color: var(--btn-primary-text, #fff);
-  font-size: 40px;
-  font-weight: 700;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1218,6 +1268,97 @@ body.composer-resizing * {
     opacity: 0.55;
     transform: scale(0.86);
   }
+}
+
+/* ===== 小杰吉祥物（Mascot）状态动效 ===== */
+.mascot {
+  display: block;
+}
+
+.mascot .mascot-eye,
+.mascot .mascot-pupil {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+/* working：瞳孔小幅游移（专注干活）+ 嘴巴轻哼 */
+.mascot-working .mascot-pupil {
+  animation: mascot-look 1.5s ease-in-out infinite;
+}
+
+@keyframes mascot-look {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  28% {
+    transform: translateX(-2.6px);
+  }
+  62% {
+    transform: translateX(2.6px);
+  }
+}
+
+.mascot-working .mascot-mouth {
+  animation: mascot-hum 1.5s ease-in-out infinite;
+}
+
+@keyframes mascot-hum {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+
+/* done：快速双眨眼（收工满意） */
+.mascot-done .mascot-eye {
+  animation: mascot-blink 0.9s ease 0.08s 1;
+}
+
+@keyframes mascot-blink {
+  0%,
+  100% {
+    transform: scaleY(1);
+  }
+  14% {
+    transform: scaleY(0.12);
+  }
+  28% {
+    transform: scaleY(1);
+  }
+  42% {
+    transform: scaleY(0.12);
+  }
+  56% {
+    transform: scaleY(1);
+  }
+}
+
+/* error：轻摇头 + 瘪嘴（嘴形由组件换 path） */
+.mascot-error {
+  animation: mascot-sad 0.6s ease 1;
+}
+
+@keyframes mascot-sad {
+  0% {
+    transform: rotate(0deg);
+  }
+  30% {
+    transform: rotate(-5deg);
+  }
+  60% {
+    transform: rotate(4deg);
+  }
+  100% {
+    transform: rotate(0deg);
+  }
+}
+
+.mascot-error .mascot-pupil {
+  animation: none;
 }
 
 /* ===== 模态 ===== */
@@ -2119,6 +2260,14 @@ body.composer-resizing * {
   background: #07c160;
 }
 
+.appearance-preview[data-preview='cue'] {
+  background: linear-gradient(135deg, #f2f5f3 50%, #101613 50%);
+}
+
+.appearance-preview[data-preview='cue'] .appearance-preview-dot {
+  background: #10b981;
+}
+
 .appearance-preview-dot {
   width: 18px;
   height: 18px;
@@ -2167,11 +2316,6 @@ body.composer-resizing * {
 .about-logo {
   width: 56px;
   height: 56px;
-  border-radius: 14px;
-  background: linear-gradient(135deg, var(--green), var(--green-gradient-end, #4cd08d));
-  color: var(--btn-primary-text, #fff);
-  font-size: 30px;
-  font-weight: 700;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2775,9 +2919,28 @@ body.composer-resizing * {
   user-select: none;
 }
 .extra-tool > summary::-webkit-details-marker { display: none; }
-.extra-tool-name { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11px; }
+.extra-tool-name { font-size: 12px; }
+/* 中文动作名后面跟一个弱化的英文原名（映射不到的工具只显示原名，保持等宽） */
+.extra-tool-en { margin-left: 6px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 10px; color: var(--text-reasoning); }
 .extra-tool-status { margin-left: auto; font-size: 11px; color: var(--text-2); }
 .extra-tool-status.danger { color: #dc2626; }
+
+/* 进度卡步骤状态图标 */
+.step-icon { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 13px; height: 13px; }
+.step-icon.done { color: var(--green); }
+.step-icon.danger { color: #dc2626; }
+.step-icon.idle { width: 7px; height: 7px; border-radius: 50%; border: 1.5px solid var(--border); }
+.step-icon.spinner {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  border: 2px solid color-mix(in srgb, var(--green) 30%, transparent);
+  border-top-color: var(--green);
+  animation: step-spin 0.8s linear infinite;
+}
+@keyframes step-spin {
+  to { transform: rotate(360deg); }
+}
 .tool-output {
   margin: 0;
   padding: 8px 10px;

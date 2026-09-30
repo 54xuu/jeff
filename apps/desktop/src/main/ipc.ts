@@ -13,7 +13,7 @@ import type {
   AppInfo,
   FileNode,
 } from '@jeff/core'
-import { IPC, XIAOJIE_ID, agentRepo, projectRepo, projectAgentRepo, taskRepo, taskCardMessage, APP_VERSION, PrivateChatStoppedError, resolveSendText, resolveScreenshotScale, type ThinkingTier, type ChatPluginInvoke, type RemoteStatus } from '@jeff/core'
+import { IPC, XIAOJIE_ID, agentRepo, projectRepo, projectAgentRepo, taskRepo, taskCardMessage, snapshotInstructions, APP_VERSION, PrivateChatStoppedError, resolveSendText, resolveScreenshotScale, type ThinkingTier, type ChatPluginInvoke, type RemoteStatus } from '@jeff/core'
 import { listDirs, makeDir } from '../../../../packages/core/src/remote/dirs.js'
 import type { MemoryScopeInfo } from '@jeff/core'
 import type { JeffCore, TaskRow } from '@jeff/core'
@@ -75,6 +75,11 @@ export function registerIpc(core: JeffCore): Record<string, Handler> {
           category: patch.category,
         })
       } else if (d.id) {
+        // 改身份指令前先快照旧文本（与自改工具、小杰的 jeff_agent_update 共用同一份回滚历史）
+        const cur = core.agents.get(d.id)
+        if (cur && typeof d.instructions === 'string' && d.instructions !== cur.instructions) {
+          snapshotInstructions(core.paths, d.id, cur.instructions)
+        }
         row = core.agents.update(d.id, patch)
       } else {
         row = core.agents.create(patch)
@@ -227,7 +232,7 @@ export function registerIpc(core: JeffCore): Record<string, Handler> {
       const kv = core.kv()
       return {
         theme: kv.getJSON<AppSettings['theme']>('settings:theme', 'system'),
-        themePack: kv.getJSON<AppSettings['themePack']>('settings:themePack', 'weui'),
+        themePack: kv.getJSON<AppSettings['themePack']>('settings:themePack', 'cue'),
         // 提醒类开关默认全开：新装用户开箱即有提醒
         notifyDesktop: kv.getJSON<boolean>('settings:notifyDesktop', true),
         notifySound: kv.getJSON<boolean>('settings:notifySound', true),

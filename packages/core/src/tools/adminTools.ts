@@ -1,6 +1,8 @@
 import type { DB } from '../db/db.js'
 import { agentRepo } from '../db/repos.js'
 import { XIAOJIE_ID } from '../ipc/contract.js'
+import type { JeffPaths } from '../paths.js'
+import { snapshotInstructions } from './selfTools.js'
 import type { ToolBridge } from './bridge.js'
 
 /** 管理工具名（小杰独占；其他 agent 的 opencode 定义里显式禁用） */
@@ -14,6 +16,8 @@ export const ADMIN_TOOL_NAMES = [
 
 export type AdminDeps = {
   db: DB
+  /** 快照落盘用（改 instructions 前先备份旧文本） */
+  paths: JeffPaths
   /** 变更后回调（同步 md + 通知 UI） */
   onChanged: () => void
 }
@@ -73,6 +77,11 @@ export function registerAdminTools(reg: ToolBridge, deps: AdminDeps): void {
       ...(args.archived !== undefined ? { archived: args.archived ? 1 : 0 } : {}),
     })
     if (Object.keys(patch).length === 0) throw new Error('没有要修改的字段（name / avatar / description / instructions / model_* / thinking / category / archived 至少要传一个有值的）')
+    // 改身份指令前先快照旧文本（与自改工具、设置页保存共用同一份回滚历史）
+    if (patch.instructions !== undefined) {
+      const cur = agents.get(args.id)
+      if (cur && patch.instructions !== cur.instructions) snapshotInstructions(deps.paths, args.id, cur.instructions)
+    }
     const row = agents.update(args.id, patch)
     if (!row) throw new Error(`智能体不存在: ${args.id}`)
     deps.onChanged()

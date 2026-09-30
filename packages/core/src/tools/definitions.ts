@@ -1,4 +1,5 @@
 import { ADMIN_TOOL_NAMES } from './adminTools.js'
+import { SELF_TOOL_NAMES } from './selfTools.js'
 import { PROJECT_STATUSES, TASK_PRIORITIES, TASK_STATUSES } from '../db/repos.js'
 
 export interface ToolDef {
@@ -55,6 +56,19 @@ export function allToolDefs(): ToolDef[] {
       name: ADMIN_TOOL_NAMES[4], // jeff_agent_get
       description: '查询单个智能体详情。',
       args: { id: { type: 'string', description: '智能体 id' } },
+    },
+    {
+      name: SELF_TOOL_NAMES[0], // jeff_self_update
+      description:
+        '修正你自己的身份指令（用户当面指出「你的行为和你的设定不符」时用）。action=get 读取当前全文与版本；' +
+        'set 用完整新文本**整篇替换**（只放长期人格/职责；一次性的偏好和事实改写 jeff_memory，不要动指令）；' +
+        'revert 回滚到最近一次快照。set/revert 必须传 expected_version=当前版本（先 get）。' +
+        '本工具只能改你自己的指令——没有 id 参数，也改不了名字/头像/模型（那请用户去「资料」页）。每次修改前会自动快照，可 revert。',
+      args: {
+        action: { type: 'string', description: '操作', enum: ['get', 'set', 'revert'] },
+        instructions: { type: 'string', description: 'set 必传：修改后的完整身份指令全文（整篇替换，不是增量描述）' },
+        expected_version: { type: 'string', description: 'set/revert 必传：你当前看到的指令版本号（自我维护页脚里的 v<n>，如 "3"）。不确定就先 action=get' },
+      },
     },
     // M2 追加：project/task 工具
     {

@@ -37,7 +37,7 @@ function callFactory(register: (b: ToolBridge) => void) {
   }
 }
 
-const adminCall = () => callFactory((b) => registerAdminTools(b, { db, onChanged: () => (changed += 1) }))
+const adminCall = () => callFactory((b) => registerAdminTools(b, { db, paths: buildPaths(tmp), onChanged: () => (changed += 1) }))
 const projCall = () =>
   callFactory((b) =>
     registerProjectTools(b, {

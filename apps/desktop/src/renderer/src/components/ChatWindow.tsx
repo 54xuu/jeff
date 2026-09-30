@@ -3,6 +3,7 @@ import { useStore } from '../store'
 import { api } from '../api'
 import { IPC, agentDraftKey, extractThinkTags, mergeReasoning, modelDisplayLabel, type ChatMsg, type ContextPreviewInfo } from '@jeff/core'
 import Avatar from './Avatar'
+import { useDonePulse, type MascotMood } from './Mascot'
 import { Markdown } from './Markdown'
 import { fmtFullTime } from '../format'
 import { CopyButton } from './ui/CopyButton'
@@ -28,6 +29,11 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
   const msgs = messages[key] || []
   const sendingNow = !!sending[key]
   const stream = streaming[key]
+  const busyNow = sendingNow || !!stream
+  const donePulse = useDonePulse(busyNow)
+  // 流式里出现 error 工具 = 小杰正踩坑：头像短暂换委屈脸；回合正常收束后仍走眨眼
+  const streamHasError = !!stream?.tools?.some((t) => t.status === 'error')
+  const headerMood: MascotMood | undefined = streamHasError ? 'error' : !busyNow && donePulse ? 'done' : undefined
   const [draftComposer, setDraftComposer] = useState<ComposerState>(emptyComposer())
   const [profileOpen, setProfileOpen] = useState(false)
   const [contextOpen, setContextOpen] = useState(false)
@@ -132,7 +138,7 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
   return (
     <div className="chat-window" data-testid="chat-window">
       <div className="chat-header">
-        <Avatar emoji={agent.avatar} size={34} busy={sendingNow || !!stream} />
+        <Avatar emoji={agent.avatar} size={34} busy={busyNow} agentId={agent.id} mood={headerMood} />
         <div className="chat-header-title">
           <span className="chat-header-name">{agent.name}</span>
           <span className="chat-header-sub">{agent.builtin ? 'Jeff 内置管家' : agent.description || '智能体'}</span>
@@ -188,7 +194,7 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
         <div className="chat-body" ref={bodyRef}>
           {msgs.length === 0 && (
             <div className="chat-welcome">
-              <Avatar emoji={agent.avatar} size={64} />
+              <Avatar emoji={agent.avatar} size={64} agentId={agent.id} />
               <p className="chat-welcome-name">{agent.name}</p>
               <p className="chat-welcome-desc">{agent.builtin ? '我是小杰，Jeff 的管家。你想要的都能直接跟我说：创建智能体、配置模型、答疑……' : agent.description || '开始对话吧'}</p>
             </div>
@@ -199,6 +205,7 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
               msg={m}
               agentName={agent.name}
               agentAvatar={agent.avatar}
+              agentId={agent.id}
               workspaceDir={workspaceDir}
               anchorRef={bindAnchor(m.id)}
               findHit={find.hitId === m.id}
@@ -206,7 +213,7 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
           ))}
           {sendingNow && !stream && (
             <div className="msg-row left">
-              <Avatar emoji={agent.avatar} size={34} busy />
+              <Avatar emoji={agent.avatar} size={34} busy agentId={agent.id} />
               <div className="bubble assistant typing">
                 <span className="dot" />
                 <span className="dot" />
@@ -218,6 +225,7 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
             <StreamingBubble
               avatar={agent.avatar}
               name={agent.name}
+              agentId={agent.id}
               stream={stream}
               workspaceDir={workspaceDir}
               time={[...msgs].reverse().find((m) => m.role === 'user')?.time}
@@ -346,11 +354,12 @@ export function MessageBubble(props: {
   msg: ChatMsg
   agentName: string
   agentAvatar: string
+  agentId?: string
   workspaceDir?: string
   anchorRef?: (el: HTMLElement | null) => void
   findHit?: boolean
 }): React.JSX.Element {
-  const { msg, agentName, agentAvatar, workspaceDir, anchorRef, findHit } = props
+  const { msg, agentName, agentAvatar, agentId, workspaceDir, anchorRef, findHit } = props
   const mine = msg.role === 'user'
   const isMarkdown = !mine && msg.role === 'assistant'
   // 历史消息里同样剥掉 <think>：与流式气泡保持一致的清爽版面
@@ -369,7 +378,7 @@ export function MessageBubble(props: {
   }
   return (
     <div className={`msg-row ${mine ? 'right' : 'left'}${findHit ? ' find-hit' : ''}`} ref={anchorRef} data-msg-id={msg.id}>
-      {!mine && <Avatar emoji={agentAvatar} size={34} />}
+      {!mine && <Avatar emoji={agentAvatar} size={34} agentId={agentId} />}
       <div className="msg-stack">
         {!mine && (
           <div className="msg-sender">

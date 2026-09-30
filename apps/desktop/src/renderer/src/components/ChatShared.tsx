@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { extractThinkTags, mergeReasoning, isStuck, readScroll, writeScroll, IPC } from '@jeff/core'
+import { extractThinkTags, mergeReasoning, isStuck, readScroll, writeScroll, IPC, TOOL_ACTION_LABEL } from '@jeff/core'
 import type { ChatImage } from '@jeff/core'
 import Avatar from './Avatar'
 import { Markdown } from './Markdown'
@@ -17,6 +17,8 @@ const COMPOSER_DEFAULT_HEIGHT = 120
 export function StreamingBubble(props: {
   avatar: string
   name: string
+  /** 发言智能体 id：内置小杰按吉祥物渲染 */
+  agentId?: string
   stream: { text: string; reasoning?: string; tools?: Array<{ tool: string; status?: string }> }
   /** 工作空间目录：用于识别输出里的相对路径为可点击链接 */
   workspaceDir?: string
@@ -25,14 +27,14 @@ export function StreamingBubble(props: {
   /** 正在生成：头像右上角忙碌绿点 */
   busy?: boolean
 }): React.JSX.Element {
-  const { avatar, name, stream, workspaceDir, time, busy } = props
+  const { avatar, name, agentId, stream, workspaceDir, time, busy } = props
   // 有些模型把思考写在正文的 <think> 里而不是原生 reasoning 字段，这里统一剥出来给折叠区
   const parsed = useMemo(() => extractThinkTags(stream.text), [stream.text])
   const reasoning = useMemo(() => mergeReasoning(stream.reasoning, parsed.reasoning), [stream.reasoning, parsed.reasoning])
   const bodyStarted = parsed.text.trim().length > 0
   return (
     <div className="msg-row left">
-      <Avatar emoji={avatar} size={34} busy={busy} />
+      <Avatar emoji={avatar} size={34} busy={busy} agentId={agentId} />
       <div className="msg-stack">
         <div className="msg-sender">
           {name}
@@ -250,6 +252,28 @@ const TOOL_STATUS_LABEL: Record<string, string> = {
   pending: '等待',
 }
 
+/** 进度卡步骤状态图标：✓ 完成 / 旋转圈 运行中 / ✗ 出错 / 空心点 等待 */
+function StepIcon(props: { status?: string; failed?: boolean }): React.JSX.Element {
+  if (props.failed || props.status === 'error') {
+    return (
+      <svg className="step-icon danger" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round">
+        <path d="M6 6l12 12M18 6L6 18" />
+      </svg>
+    )
+  }
+  if (props.status === 'completed') {
+    return (
+      <svg className="step-icon done" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M4 12.5l5 5L20 6.5" />
+      </svg>
+    )
+  }
+  if (props.status === 'running') {
+    return <span className="step-icon spinner" />
+  }
+  return <span className="step-icon idle" />
+}
+
 const TRUNCATE_LEN = 2000
 
 /** 工具输出预览：超长截断 + 展开全文；输出里的相对路径渲染为可点击链接 */
@@ -398,6 +422,13 @@ export function AssistantExtras(props: {
   const runningTool = live ? (tools || []).find((t) => t.status === 'running') : undefined
   const failedTool = (tools || []).find((t) => t.status === 'error')
   const summaryTool = failedTool || runningTool
+  // 进度卡：用户展开时窗口内部跟随最新一步滚动（窗口本身限高，不撑爆气泡）
+  const [toolsOpen, setToolsOpen] = useState(false)
+  const toolsRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const el = toolsRef.current
+    if (el && toolsOpen && live) el.scrollTop = el.scrollHeight
+  }, [tools, toolsOpen, live])
   // 用户展开时小窗内部跟随最新一行滚动（窗口本身限高，不撑爆气泡）
   useEffect(() => {
     const el = reasonRef.current
@@ -424,24 +455,29 @@ export function AssistantExtras(props: {
         </details>
       )}
       {hasTools && (
-        <details className="msg-extra">
+        <details className="msg-extra" open={toolsOpen} onToggle={(e) => setToolsOpen(e.currentTarget.open)}>
           <summary>
             <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M14.7 6.3a4.5 4.5 0 0 0-6 6L3 18l3 3 5.7-5.7a4.5 4.5 0 0 0 6-6L14 13l-3-3 3.7-3.7z" />
             </svg>
             <span className="extra-label">工具调用 {tools!.length}</span>
-            {failedTool && <span className="extra-live danger">失败 · {failedTool.tool}</span>}
+            {failedTool && <span className="extra-live danger">失败 · {TOOL_ACTION_LABEL[failedTool.tool] || failedTool.tool}</span>}
             {!failedTool && runningTool && <span className="extra-live">运行中…</span>}
-            {!failedTool && summaryTool && <span className="extra-preview">{summaryTool.tool}</span>}
+            {!failedTool && summaryTool && <span className="extra-preview">{TOOL_ACTION_LABEL[summaryTool.tool] || summaryTool.tool}</span>}
           </summary>
-          <div className="extra-tools">
+          <div className="extra-tools" ref={toolsRef}>
             {tools!.map((t, i) => {
               const subtask = t.tool === 'jeff_spawn_subtask' && !t.error ? parseSubtaskPayload(t.output || '') : null
               const subtaskFailed = !!subtask && subtask.ok === false
+              const label = subtask?.label ? `子任务 · ${subtask.label}` : TOOL_ACTION_LABEL[t.tool] || t.tool
               return (
                 <details key={i} className="extra-tool">
                   <summary>
-                    <span className="extra-tool-name">{subtask?.label ? `子任务 · ${subtask.label}` : t.tool}</span>
+                    <StepIcon status={t.status} failed={subtaskFailed} />
+                    <span className="extra-tool-name">
+                      {label}
+                      {label !== t.tool && <span className="extra-tool-en">{t.tool}</span>}
+                    </span>
                     <span className={`extra-tool-status ${t.status === 'error' || subtaskFailed ? 'danger' : ''}`}>
                       {subtask ? (subtaskFailed ? '失败' : '完成') : TOOL_STATUS_LABEL[t.status || ''] || t.status || ''}
                     </span>

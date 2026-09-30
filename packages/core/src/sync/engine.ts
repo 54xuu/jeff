@@ -666,7 +666,7 @@ export class SyncEngine {
           this.kvSetJSON('settings:providers', d.providers ?? [])
           this.kvSetJSON('settings:defaultModel', d.defaultModel ?? null)
           this.kvSetJSON('settings:theme', d.theme ?? 'system')
-          this.kvSetJSON('settings:themePack', d.themePack ?? 'weui')
+          this.kvSetJSON('settings:themePack', d.themePack ?? 'cue')
           // 老备份里没有这三个键（undefined）：保留本机设置，不要被 null 覆盖成"关闭"
           if (typeof d.notifyDesktop === 'boolean') this.kvSetJSON('settings:notifyDesktop', d.notifyDesktop)
           if (typeof d.notifySound === 'boolean') this.kvSetJSON('settings:notifySound', d.notifySound)
@@ -702,12 +702,12 @@ export class SyncEngine {
           if (!exists) {
             this.db
               .prepare(
-                `INSERT INTO agent (id, name, avatar, description, instructions, model_provider, model_id, thinking, category, builtin, archived, created_at, updated_at, deleted_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+                `INSERT INTO agent (id, name, avatar, description, instructions, model_provider, model_id, thinking, category, instructions_version, builtin, archived, created_at, updated_at, deleted_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
               )
-              .run(id, d.name, d.avatar, d.description, d.instructions, d.model_provider, d.model_id, (d as { thinking?: string }).thinking || '', (d as { category?: string }).category || '', d.builtin, d.archived, d.created_at, rec.updatedAt, rec.deletedAt)
+              .run(id, d.name, d.avatar, d.description, d.instructions, d.model_provider, d.model_id, (d as { thinking?: string }).thinking || '', (d as { category?: string }).category || '', (d as { instructions_version?: number }).instructions_version ?? 0, d.builtin, d.archived, d.created_at, rec.updatedAt, rec.deletedAt)
           } else {
             this.db
-              .prepare(`UPDATE agent SET name=?, avatar=?, description=?, instructions=?, model_provider=?, model_id=?, thinking=?, category=?, builtin=?, archived=?, updated_at=?, deleted_at=? WHERE id=?`)
+              .prepare(`UPDATE agent SET name=?, avatar=?, description=?, instructions=?, model_provider=?, model_id=?, thinking=?, category=?, instructions_version=?, builtin=?, archived=?, updated_at=?, deleted_at=? WHERE id=?`)
               .run(
                 d.name,
                 d.avatar,
@@ -718,6 +718,9 @@ export class SyncEngine {
                 (d as { thinking?: string }).thinking || exists.thinking || '',
                 // 老备份没有 category 字段：保留本机已有分类，不要被清空
                 (d as { category?: string }).category ?? exists.category ?? '',
+                // 老备份没有版本号字段：沿用本机已有值，保证「指令被远端覆盖后版本号也跟着走」，
+                // 否则本地自改工具会拿旧版本号误判「没冲突」而静默盖掉远端改动
+                (d as { instructions_version?: number }).instructions_version ?? exists.instructions_version ?? 0,
                 d.builtin,
                 d.archived,
                 rec.updatedAt,

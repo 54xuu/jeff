@@ -278,6 +278,7 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
             <StreamingBubble
               avatar={stream.senderAvatar}
               name={stream.senderName}
+              agentId={stream.agentId}
               stream={stream}
               workspaceDir={workspaceDir}
               time={[...msgs].reverse().find((m) => m.role === 'user')?.time}
@@ -457,7 +458,7 @@ function GroupBubble(props: { msg: GroupMessage; workspaceDir?: string; anchorRe
   const mine = msg.role === 'user'
   return (
     <div className={`msg-row ${mine ? 'right' : 'left'}${findHit ? ' find-hit' : ''}`} ref={anchorRef} data-msg-id={msg.id}>
-      {!mine && <Avatar emoji={msg.sender_avatar || '🤖'} size={34} />}
+      {!mine && <Avatar emoji={msg.sender_avatar || '🤖'} size={34} agentId={msg.agentId} />}
       <div className="msg-stack">
         {!mine && (
           <div className="msg-sender">

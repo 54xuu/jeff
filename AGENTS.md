@@ -142,9 +142,9 @@ deb：`dpkg -l jeff-desktop` 版本正确 + `/opt/Jeff` 与 `linux-unpacked` 的
 ## 产品心智模型
 
 - **三栏布局** = 左「会话列表」/ 中「对话区」/ 右「内置浏览器」；左右两栏可拖拽改宽、可各自收起（hover 分栏线才浮出箭头按钮，双击分隔条恢复默认，`Ctrl/Cmd+B` 开关会话列表）。尺寸规则集中在 `apps/desktop/src/renderer/src/layout/panes.ts`：store 里存的是**用户偏好宽度**，渲染时按当前窗口夹成生效宽度——窗口临时变小只把栏挤窄，偏好值不被覆盖
-- **智能体** = 聊天好友（通讯录与聊天列表都按「分组分类」折叠归类；私聊顶栏「资料」可改）
+- **智能体** = 聊天好友（通讯录与聊天列表都按「分组分类」折叠归类；私聊顶栏「资料」可改）。对话里被用户指出「行为与设定不符」时，它可用 `jeff_self_update` 修正**自己的**身份指令（无 id 参数，物理上改不了别人；写前版本校验 `instructions_version`，改前自动快照到 `~/.jeff/backups/agent-instructions/` 可 revert，下一轮生效）。工具字段刻意**不含 name/category**——医护助手的读盘封禁按 category/name 判定，开放即解锁
 - **项目群** = 微信群（群资料抽屉可改群名/工作空间/群主/成员；任务看板同抽屉）
-- **小杰** = 内置管家，可用 `jeff_agent_*` / `jeff_project_*` / `jeff_cron_*` / `jeff_plugin_*`（含插件开发）等工具代操配置；它**没有**文件与命令工具（`bash`/`edit`/`write`/`patch`，**以及 `task`** 在它的 agent 定义里被禁用——`task` 也禁是因为子代理带全套工具，不禁就等于把前四个全绕过去），插件只能经 `jeff_plugin_*` 结构化落盘
+- **小杰** = 内置管家，可用 `jeff_agent_*` / `jeff_project_*` / `jeff_cron_*` / `jeff_plugin_*`（含插件开发）等工具代操配置；v1.10.0 起它有**全套文件与命令工具**（`bash`/`edit`/`write`/`patch`，可跑技能脚本），但改配置优先走结构化工具。`task`/`jeff_spawn_subtask`/`jeff_self_update` 在它的 agent 定义里仍被禁用（前两个控制并行与成本、批量知识类工作不是管家的活；自改禁是因为它的身份指令内置管理、每次 boot 拉回常量，写 DB 是静默空操作）。小杰的 md 里用 agent 级 `permission` 对 `jeff.db`（含 -wal/-shm/-journal）与 `auth.json` 设 read/edit **deny**（provider API Key 所在）；它的身份指令硬编码在 `registry.ts` 的 `XIAOJIE_INSTRUCTIONS`，纠正它走用户级 `~/.jeff/AGENTS.md` 或它的记忆
 - **技能（skill）** = 一份 `SKILL.md`（+ 自带脚本），模型看到的技能**只从 `~/.agents/skills` 读**（应用自带的 `jeff-usage` 也写在那儿）；`opencode.json` 的 `skills.paths` 负责挂载、sidecar 的 `OPENCODE_DISABLE_EXTERNAL_SKILLS=1` 负责挡掉 `~/.claude/skills` 等外部目录，两条缺一不可。见 `docs/skills.md`
 - **定时任务** = 到点自动向某个私聊/项目群发消息（如护士长 8 点在群里问病区动态、订阅 AI 资讯早报），**小杰对话即可创建**。每个任务一条独立会话（私聊独立 opencode session，群聊独立话题），与用户手打、与其它任务互不影响；同一任务反复触发复用自己那条。见 `docs/schedules.md`
 - **插件** = 「必须用但不通用」的能力打包（智慧病房等）：启用即自动接入其 MCP（免手工配 MCP）+ **每插件一条**英文/拼音 `/` 快捷指令（**跨插件全局唯一**，靠 prompt 描述功能分流；显示名用中文）+ 首页用内置浏览器打开（`homepage` 写在清单里）+ **按内容设计扁平 `icon.svg`**（emoji 仅退化）。**小杰对话即可开发**（建好默认停用，你确认后再启用；带本地命令的插件只能人工在插件页启用）。见 `docs/plugins.md`，样例在 `examples/plugins/`

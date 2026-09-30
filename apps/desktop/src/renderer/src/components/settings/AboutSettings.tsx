@@ -1,4 +1,5 @@
 import { useStore } from '../../store'
+import Mascot from '../Mascot'
 
 /** 设置 → 关于 */
 export default function AboutSettings(): React.JSX.Element {
@@ -7,7 +8,7 @@ export default function AboutSettings(): React.JSX.Element {
     <div className="settings-content">
       <h2 className="settings-title">关于 Jeff</h2>
       <div className="about-card">
-        <div className="about-logo">J</div>
+        <div className="about-logo"><Mascot size={44} mood="idle" /></div>
         <div>
           <p className="about-name">Jeff — 个人「开发 + 项目管理」agent 桌面应用</p>
           <p className="about-line">版本：v{appInfo?.version || '-'} · 渲染：Electron + React</p>

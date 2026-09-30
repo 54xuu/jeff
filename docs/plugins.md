@@ -81,8 +81,8 @@ local（stdio）型 MCP 服务改用 `command` 与 `environment`：
 - **新建的插件默认停用**。小杰建完会停下来说清设计要点，你确认后它再调 `jeff_plugin_enable`。
 - **带本地命令（`mcp.command`）的插件小杰无法启用**：调 enable 会被拒绝，并让你去插件页点开关。
   这是刻意的安全闸——本地命令会拉起子进程。
-- 小杰**没有文件与命令工具**（`bash` / `edit` / `write` / `patch` 在它的 agent 定义里被禁用），
-  插件只能通过 `jeff_plugin_*` 结构化落盘，不能由它直接改磁盘文件。
+- 小杰**有全套文件与命令工具**（v1.10.0 起），但插件**优先**走 `jeff_plugin_*` 结构化落盘——
+  结构化写入有校验、会进同步、不会留脏文件；直接改磁盘文件只用于结构化工具覆盖不到的场景。
 - 参数是**平铺标量**（快捷指令用 `command` / `command_prompt` / `command_description`；
   MCP 用 `mcp_url` / `mcp_command` / `mcp_headers` / `mcp_env`；附带文件用 `files` 数组）。
   这是实测调出来的形状：早期把嵌套对象塞进参数时，模型侧会把整个对象丢成空串。

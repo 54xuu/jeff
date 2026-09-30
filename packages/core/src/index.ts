@@ -11,6 +11,7 @@ import { AgentRegistry, XIAOJIE_INSTRUCTIONS, agentSlug } from './agents/registr
 import { XIAOJIE_ID } from './ipc/contract.js'
 import { ToolBridge, renderBridgePlugin } from './tools/bridge.js'
 import { registerAdminTools } from './tools/adminTools.js'
+import { registerSelfTools } from './tools/selfTools.js'
 import { registerProjectTools, taskCardMessage } from './tools/projectTools.js'
 import { registerMemoryTools, DELEGATE_TOOL, sesMetaKey, type SessionScopeCtx } from './tools/memoryTools.js'
 import { registerCronTools, CRON_TOOL_NAMES } from './tools/cronTools.js'
@@ -218,6 +219,17 @@ export class JeffCore extends EventEmitter {
     // 工具桥（先注册工具，再启动，再渲染插件文件）
     registerAdminTools(this.bridge, {
       db: this.db,
+      paths: this.paths,
+      onChanged: () => {
+        this.syncRegistry()
+        this.markRegistryDirty()
+        this.bus.emit('data-changed', 'agents')
+      },
+    })
+    registerSelfTools(this.bridge, {
+      db: this.db,
+      paths: this.paths,
+      resolveSession: (sessionId) => this.resolveSession(sessionId),
       onChanged: () => {
         this.syncRegistry()
         this.markRegistryDirty()
@@ -1681,6 +1693,7 @@ Jeff 把「开发 + 项目管理」组织成三个概念（微信心智模型）
 - 每个智能体是会话列表里的一个联系人，有自己的身份指令、默认模型、长期记忆。
 - 私聊 = 和这个智能体一对一协作（它带编码/MCP/技能工具，可以直接干活）。
 - 创建途径：\u2460 找小杰说「帮我创建一个智能体」；\u2461 「智能体」页手动新建。
+- **自修身份指令**：在对话里直接指出「你这点做得不对」，智能体可以修正自己的身份指令（自动快照可回滚，下一轮生效）；一次性的偏好让它写记忆就行。
 
 ## 2. 项目群 = 微信群
 - 一个项目就是一个群；群里有你 + 一个群主（leader）+ 若干工作者（worker）。工作者是统一角色，不做开发/UI/测试/产品等细分类。
@@ -1797,6 +1810,7 @@ export * from './chat/private.js'
 export { compactionThreshold, splitContextMessages, tokenUsage, COMPACTION_BUFFER, type ContextPreview } from './chat/context.js'
 export { XIAOJIE_SLUG, agentSlug } from './agents/registry.js'
 export { XIAOJIE_ID } from './ipc/contract.js'
+export { TOOL_ACTION_LABEL } from './tools/labels.js'
 export { SidecarManager } from './sidecar/manager.js'
 export { DebugLogger, type DebugLogFn } from './logger.js'
 export { ToolBridge } from './tools/bridge.js'
@@ -1804,6 +1818,7 @@ export { GroupChat } from './orchestrator/group.js'
 export { PrivateChatStoppedError } from './chat/private.js'
 export { Delegator } from './orchestrator/delegate.js'
 export { registerProjectTools, taskCardMessage } from './tools/projectTools.js'
+export { snapshotInstructions } from './tools/selfTools.js'
 export { MemoryStore, parseEntries, matchUnique, type MemoryScope, type MemoryOp, type MemoryResult } from './memory/store.js'
 export { SyncEngine, type WebdavConfig, type SyncReport, normalizeWebdavBasePath, formatWebdavError } from './sync/engine.js'
 export { probeMcpServer, probeMcpAll, type McpProbe } from './mcp/probe.js'

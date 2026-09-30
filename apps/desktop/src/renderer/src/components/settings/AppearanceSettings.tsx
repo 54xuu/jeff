@@ -8,8 +8,9 @@ const MODE_OPTIONS: Array<{ id: 'system' | 'light' | 'dark'; label: string; desc
   { id: 'system', label: '跟随系统', desc: '自动切换' },
 ]
 
-const PACK_OPTIONS: Array<{ id: 'weui' | 'catppuccin'; label: string; desc: string }> = [
-  { id: 'weui', label: '微信翡翠绿（推荐）', desc: '经典微信绿强调 · 护眼温润工作台' },
+const PACK_OPTIONS: Array<{ id: 'cue' | 'weui' | 'catppuccin'; label: string; desc: string }> = [
+  { id: 'cue', label: '翡翠小杰（推荐）', desc: 'Logo 同源翡翠绿 · 呆萌清爽工作台' },
+  { id: 'weui', label: '经典微信绿', desc: '经典微信绿强调 · 护眼温润工作台' },
   { id: 'catppuccin', label: 'Catppuccin 粉彩', desc: '低饱和粉彩 · 柔和极简' },
 ]
 
@@ -17,7 +18,7 @@ const PACK_OPTIONS: Array<{ id: 'weui' | 'catppuccin'; label: string; desc: stri
 export default function AppearanceSettings(): React.JSX.Element {
   const { settings, refreshSettings } = useStore()
   const current = settings?.theme ?? 'system'
-  const pack = settings?.themePack ?? 'weui'
+  const pack = settings?.themePack ?? 'cue'
   const eff = effectiveTheme(current)
 
   const setTheme = async (theme: 'system' | 'light' | 'dark') => {
@@ -26,7 +27,7 @@ export default function AppearanceSettings(): React.JSX.Element {
     void refreshSettings()
   }
 
-  const setPack = async (themePack: 'weui' | 'catppuccin') => {
+  const setPack = async (themePack: 'cue' | 'weui' | 'catppuccin') => {
     await api.invoke(IPC.settingsSet, { themePack })
     applyThemePack(themePack)
     void refreshSettings()

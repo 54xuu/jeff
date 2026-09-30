@@ -870,7 +870,7 @@ describe('plugin tools（小杰对话式开发插件）', () => {
 })
 
 describe('XIAOJIE 工具隔离', () => {
-  it('非内置 agent 的 md 里禁用全部小杰专属工具；内置小杰不受限但禁掉文件/命令工具', () => {
+  it('非内置 agent 的 md 里禁用全部小杰专属工具；内置小杰禁子代理与自改、放开文件/命令工具（v1.10.0）', () => {
     const a = agentRepo(db).create({ name: '项目开发' })
     const md = renderAgentMd(agentRepo(db).get(a.id)!)
     for (const t of XIAOJIE_ONLY_TOOLS) expect(md).toContain(`${t}: false`)
@@ -881,15 +881,16 @@ describe('XIAOJIE 工具隔离', () => {
     const xmd = renderAgentMd(agentRepo(db).get(x.id)!)
     expect(xmd).not.toContain('jeff_plugin_create: false')
     expect(xmd).toContain('jeff_plugin_create')
-    // 小杰自己不能用文件/命令工具（指令里也这么说）
-    for (const t of XIAOJIE_DISABLED_TOOLS) expect(xmd).toContain(`${t}: false`)
-    expect(xmd).toContain('edit: false')
-    // task 也必须禁：子代理带全套工具，不禁就等于把 bash/edit/write 全绕过去（live14 R6 实测）
+    // 小杰有全套文件/命令工具（v1.10.0 起不再禁 bash/edit/write/patch）
+    for (const t of ['bash', 'edit', 'write', 'patch']) expect(xmd).not.toContain(`${t}: false`)
+    // task 仍禁：控制并行与成本，批量知识类工作不是管家的职责
     expect(XIAOJIE_DISABLED_TOOLS).toContain('task')
     expect(xmd).toContain('task: false')
-    // jeff_spawn_subtask 按调用者身份原样继承工具集，小杰用它等于把上面几个绕出去，同样要禁
+    // jeff_spawn_subtask 同禁；jeff_self_update 也禁（小杰身份指令内置管理，写 DB 是静默空操作）
     expect(XIAOJIE_DISABLED_TOOLS).toContain('jeff_spawn_subtask')
     expect(xmd).toContain('jeff_spawn_subtask: false')
+    expect(XIAOJIE_DISABLED_TOOLS).toContain('jeff_self_update')
+    expect(xmd).toContain('jeff_self_update: false')
   })
 })
 

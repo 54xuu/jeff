@@ -113,7 +113,7 @@ export default function AgentsPage(): React.JSX.Element {
                       setCreating(false)
                     }}
                   >
-                    <Avatar emoji={a.avatar} />
+                    <Avatar emoji={a.avatar} agentId={a.id} />
                     <div className="contact-body">
                       <div className="contact-name">
                         {a.name} {a.builtin && <span className="tag tag-green">内置</span>}

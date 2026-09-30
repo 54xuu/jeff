@@ -203,7 +203,7 @@ export default function GroupInfoDrawer(props: { project: ProjectInfo; busy?: bo
               const isLeader = m.agent_id === (leaderId || project.leader_agent_id)
               return (
                 <div key={m.agent_id} className="member-row">
-                  <Avatar emoji={m.avatar} size={30} />
+                  <Avatar emoji={m.avatar} size={30} agentId={m.agent_id} />
                   <span className="member-name">{m.name}</span>
                   <span className={`tag ${isLeader ? 'tag-green' : ''}`}>{projectRoleLabel(isLeader ? 'leader' : m.role)}</span>
                   {!isLeader && (

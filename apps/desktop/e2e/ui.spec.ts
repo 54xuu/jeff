@@ -97,6 +97,8 @@ test.describe('Jeff UI 封闭清单', () => {
       await page.getByTestId('nav-settings').click()
       await page.getByTestId('settings-nav-appearance').click()
       await expect(page.getByTestId('appearance-settings')).toBeVisible()
+      await page.getByTestId('theme-pack-cue').click()
+      await expect.poll(async () => page.evaluate(() => document.documentElement.dataset.themePack)).toBe('cue')
       await page.getByTestId('theme-pack-catppuccin').click()
       await expect.poll(async () => page.evaluate(() => document.documentElement.dataset.themePack)).toBe('catppuccin')
       await page.getByTestId('theme-pack-weui').click()

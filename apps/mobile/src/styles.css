@@ -9,8 +9,8 @@
   --text: #191919;                      /* 微信主标题字色 */
   --sub: #888888;                       /* 微信次要文本字色 */
   --time: #b2b2b2;                      /* 微信时间字色 */
-  --brand: #07c160;                     /* 微信经典生机翡翠绿 */
-  --brand-hover: #06ad56;               /* 微信绿按压加深色 */
+  --brand: #10b981;                     /* Jeff logo 同源翡翠绿 */
+  --brand-hover: #059669;               /* 翡翠绿按压加深（文字级对比安全） */
   --brand-text: #ffffff;                /* 主按钮文字纯白 */
   --bubble-other: #ffffff;              /* 微信对方/智能体纯白气泡 */
   --me: #95ec69;                        /* 微信用户专属清新绿气泡 */
@@ -36,8 +36,8 @@
     --text: #dfdfdf;                    /* 微信深色主文字 */
     --sub: #7f7f7f;                     /* 微信深色次要说明字色 */
     --time: #5a5a5a;                    /* 微信深色时间字色 */
-    --brand: #07c160;                   /* 翡翠绿强调色 */
-    --brand-hover: #06ad56;             /* 绿色按压加深 */
+    --brand: #10b981;                   /* Jeff logo 同源翡翠绿 */
+    --brand-hover: #059652;             /* 绿色按压加深 */
     --brand-text: #ffffff;              /* 绿色按钮白字 */
     --bubble-other: #262626;            /* 微信深色对方深灰气泡 */
     --me: #2b5a3e;                      /* 微信深色用户典雅墨绿气泡 */
@@ -2205,4 +2205,139 @@ button, input, textarea {
   font-size: 12px;
   color: #d8d8d8;
   pointer-events: none;
+}
+
+
+/* ===== 小杰吉祥物（Mascot）状态动效（与桌面端一致） ===== */
+.mascot {
+  display: block;
+}
+
+.mascot .mascot-eye,
+.mascot .mascot-pupil {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.mascot-working .mascot-pupil {
+  animation: mascot-look 1.5s ease-in-out infinite;
+}
+
+@keyframes mascot-look {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  28% {
+    transform: translateX(-2.6px);
+  }
+  62% {
+    transform: translateX(2.6px);
+  }
+}
+
+.mascot-working .mascot-mouth {
+  animation: mascot-hum 1.5s ease-in-out infinite;
+}
+
+@keyframes mascot-hum {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+
+.mascot-done .mascot-eye {
+  animation: mascot-blink 0.9s ease 0.08s 1;
+}
+
+@keyframes mascot-blink {
+  0%,
+  100% {
+    transform: scaleY(1);
+  }
+  14% {
+    transform: scaleY(0.12);
+  }
+  28% {
+    transform: scaleY(1);
+  }
+  42% {
+    transform: scaleY(0.12);
+  }
+  56% {
+    transform: scaleY(1);
+  }
+}
+
+.mascot-error {
+  animation: mascot-sad 0.6s ease 1;
+}
+
+@keyframes mascot-sad {
+  0% {
+    transform: rotate(0deg);
+  }
+  30% {
+    transform: rotate(-5deg);
+  }
+  60% {
+    transform: rotate(4deg);
+  }
+  100% {
+    transform: rotate(0deg);
+  }
+}
+
+.mascot-error .mascot-pupil {
+  animation: none;
+}
+
+/* ===== 工具进度卡步骤图标 ===== */
+.step-icon {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  height: 12px;
+}
+.step-icon.done {
+  color: var(--brand);
+}
+.step-icon.danger {
+  color: var(--danger);
+}
+.step-icon.idle {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  border: 1.5px solid var(--line-strong);
+}
+.step-icon.spinner {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 2px solid color-mix(in srgb, var(--brand) 30%, transparent);
+  border-top-color: var(--brand);
+  animation: step-spin 0.8s linear infinite;
+}
+@keyframes step-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.wechat-tool-name {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  min-width: 0;
+}
+.wechat-tool-en {
+  font-size: 10px;
+  color: var(--time);
+  font-family: ui-monospace, Menlo, Consolas, monospace;
 }

@@ -126,7 +126,7 @@ export default function AgentEditor(props: {
   return (
     <div className="agents-editor" data-testid="agent-editor">
       <div className="agents-editor-head">
-        <Avatar emoji={locked ? a.avatar || '🧑‍💻' : avatar} size={44} />
+        <Avatar emoji={locked ? a.avatar || '🧑‍💻' : avatar} size={44} agentId={locked ? a.id : undefined} />
         <div>
           <div className="contact-name big">{a.isNew ? '新建智能体' : `${a.name} ${locked ? '（内置 · 名称与指令锁定）' : ''}`}</div>
           <div className="contact-desc">{a.isNew ? '创建后可在聊天列表直接对话' : a.description || '（无简介）'}</div>

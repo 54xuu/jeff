@@ -16,6 +16,8 @@ export interface AgentRow {
   thinking: string
   /** 分组分类（如：项目管理/医疗场景/项目开发；空=默认分组） */
   category: string
+  /** 身份指令版本号：仅 instructions 实际变更时 +1（jeff_self_update 写前校验用） */
+  instructions_version: number
   builtin: number
   archived: number
   created_at: number
@@ -161,6 +163,7 @@ export const agentRepo = (db: DB) => ({
       model_id: data.model_id || '',
       thinking: data.thinking || '',
       category: data.category || '',
+      instructions_version: 0,
       builtin: data.builtin || 0,
       archived: 0,
       created_at: now(),
@@ -168,18 +171,22 @@ export const agentRepo = (db: DB) => ({
       deleted_at: null,
     }
     db.prepare(
-      `INSERT INTO agent (id, name, avatar, description, instructions, model_provider, model_id, thinking, category, builtin, archived, created_at, updated_at, deleted_at)
-       VALUES (@id, @name, @avatar, @description, @instructions, @model_provider, @model_id, @thinking, @category, @builtin, @archived, @created_at, @updated_at, @deleted_at)`,
+      `INSERT INTO agent (id, name, avatar, description, instructions, model_provider, model_id, thinking, category, instructions_version, builtin, archived, created_at, updated_at, deleted_at)
+       VALUES (@id, @name, @avatar, @description, @instructions, @model_provider, @model_id, @thinking, @category, @instructions_version, @builtin, @archived, @created_at, @updated_at, @deleted_at)`,
     ).run(row as unknown as Record<string, never>)
     return row
   },
   update(id: string, patch: Partial<Pick<AgentRow, 'name' | 'avatar' | 'description' | 'instructions' | 'model_provider' | 'model_id' | 'thinking' | 'category' | 'archived'>>): AgentRow | undefined {
     const cur = this.get(id)
     if (!cur) return undefined
-    const next = { ...cur, ...patch, updated_at: now() }
+    // 版本号只在 instructions 真的变了时 +1（改模型/头像等不应让自改工具的写前校验误报）
+    const instructionsVersion =
+      patch.instructions !== undefined && patch.instructions !== cur.instructions ? (cur.instructions_version || 0) + 1 : cur.instructions_version || 0
+    const next = { ...cur, ...patch, instructions_version: instructionsVersion, updated_at: now() }
     db.prepare(
       `UPDATE agent SET name=@name, avatar=@avatar, description=@description, instructions=@instructions,
-       model_provider=@model_provider, model_id=@model_id, thinking=@thinking, category=@category, archived=@archived, updated_at=@updated_at WHERE id=@id`,
+       model_provider=@model_provider, model_id=@model_id, thinking=@thinking, category=@category,
+       instructions_version=@instructions_version, archived=@archived, updated_at=@updated_at WHERE id=@id`,
     ).run({
       name: next.name,
       avatar: next.avatar,
@@ -189,6 +196,7 @@ export const agentRepo = (db: DB) => ({
       model_id: next.model_id,
       thinking: next.thinking,
       category: next.category || '',
+      instructions_version: next.instructions_version,
       archived: next.archived,
       updated_at: next.updated_at,
       id: next.id,

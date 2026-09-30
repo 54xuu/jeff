@@ -1,9 +1,10 @@
 import { Capacitor } from '@capacitor/core'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { IPC, extractThinkTags, mergeReasoning, sortedPinKeys } from '@jeff/core'
+import { IPC, XIAOJIE_ID, TOOL_ACTION_LABEL, extractThinkTags, mergeReasoning, sortedPinKeys } from '@jeff/core'
 import type { AgentInfo, ChatMsg, FsDirEntry, GroupMessage, ProjectInfo } from '@jeff/core'
 import type { RemoteStreamFrame } from '@jeff/core/remote'
 import { consumeBack } from './backstack'
+import Mascot from './Mascot'
 import { Markdown } from './Markdown'
 import { Native, PhoneLink, mergeStream, shrinkImage } from './session'
 
@@ -69,17 +70,29 @@ export function WeChatAvatar({
   emoji,
   size = 48,
   busy = false,
+  agentId,
 }: {
   kind: 'user' | 'agent' | 'group'
   name: string
   emoji?: string
   size?: number
   busy?: boolean
+  /** 内置小杰按吉祥物渲染（DB avatar 不动，纯渲染层特判） */
+  agentId?: string
 }) {
   const initial = (name || '').trim().slice(0, 1).toUpperCase() || 'J'
   const isGroup = kind === 'group'
   const isUser = kind === 'user'
   const trimmedEmoji = (emoji || '').trim()
+  const isXiaojie = agentId === XIAOJIE_ID
+
+  if (isXiaojie) {
+    return (
+      <div className="wechat-avatar emoji-avatar" style={{ width: size, height: size, minWidth: size, minHeight: size }}>
+        <Mascot size={size * 0.94} mood={busy ? 'working' : 'idle'} />
+      </div>
+    )
+  }
 
   return (
     <div
@@ -111,6 +124,8 @@ export function WeChatItemRow(props: {
   sub: string
   time?: number
   avatar?: string
+  /** 私聊对方的智能体 id：内置小杰按吉祥物渲染 */
+  agentId?: string
   kind: 'agent' | 'group'
   isGroup?: boolean
   isBuiltin?: boolean
@@ -180,6 +195,7 @@ export function WeChatItemRow(props: {
             emoji={props.avatar}
             size={48}
             busy={props.busy}
+            agentId={props.agentId}
           />
         </span>
         <div className="wechat-item-main">
@@ -244,13 +260,36 @@ function AssistantText(props: { text: string; reasoning?: string | string[]; too
   )
 }
 
+function StepIcon({ status, failed }: { status?: string; failed?: boolean }): React.JSX.Element {
+  if (failed || status === 'error') {
+    return (
+      <svg className="step-icon danger" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round">
+        <path d="M6 6l12 12M18 6L6 18" />
+      </svg>
+    )
+  }
+  if (status === 'completed') {
+    return (
+      <svg className="step-icon done" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M4 12.5l5 5L20 6.5" />
+      </svg>
+    )
+  }
+  if (status === 'running') return <span className="step-icon spinner" />
+  return <span className="step-icon idle" />
+}
+
 function ToolsView({ tools }: { tools?: ToolItem[] }) {
   const [open, setOpen] = useState(false)
   if (!tools || tools.length === 0) return null
 
   const running = tools.find((t) => t.status === 'running')
   const failed = tools.find((t) => t.status === 'error' || t.error)
-  const statusLabel = running ? '运行中…' : failed ? '执行失败' : '完成'
+  const statusLabel = running
+    ? `运行中… ${TOOL_ACTION_LABEL[running.tool] || running.tool}`
+    : failed
+      ? `执行失败 · ${TOOL_ACTION_LABEL[failed.tool] || failed.tool}`
+      : '完成'
   const statusClass = running ? 'running' : failed ? 'failed' : 'done'
 
   return (
@@ -267,18 +306,26 @@ function ToolsView({ tools }: { tools?: ToolItem[] }) {
       </button>
       {open ? (
         <div className="wechat-tools-body">
-          {tools.map((t, idx) => (
-            <div key={idx} className="wechat-tool-row">
-              <div className="wechat-tool-head">
-                <span className="wechat-tool-name">{t.tool}</span>
-                <span className={`wechat-tool-tag ${t.status || ''}`}>
-                  {t.status === 'running' ? '运行中' : t.status === 'error' ? '失败' : '完成'}
-                </span>
+          {tools.map((t, idx) => {
+            const failedRow = t.status === 'error' || !!t.error
+            const label = TOOL_ACTION_LABEL[t.tool] || t.tool
+            return (
+              <div key={idx} className="wechat-tool-row">
+                <div className="wechat-tool-head">
+                  <StepIcon status={t.status} failed={failedRow} />
+                  <span className="wechat-tool-name">
+                    {label}
+                    {label !== t.tool ? <span className="wechat-tool-en">{t.tool}</span> : null}
+                  </span>
+                  <span className={`wechat-tool-tag ${t.status || ''}`}>
+                    {t.status === 'running' ? '运行中' : failedRow ? '失败' : '完成'}
+                  </span>
+                </div>
+                {t.error ? <pre className="wechat-tool-err">{t.error}</pre> : null}
+                {t.output ? <pre className="wechat-tool-out">{t.output.length > 240 ? t.output.slice(0, 240) + '…' : t.output}</pre> : null}
               </div>
-              {t.error ? <pre className="wechat-tool-err">{t.error}</pre> : null}
-              {t.output ? <pre className="wechat-tool-out">{t.output.length > 240 ? t.output.slice(0, 240) + '…' : t.output}</pre> : null}
-            </div>
-          ))}
+            )
+          })}
         </div>
       ) : null}
     </div>
@@ -299,7 +346,7 @@ export function App() {
   targetRef.current = target
   const [messages, setMessages] = useState<Array<ChatMsg | GroupMessage>>([])
   const [draft, setDraft] = useState('')
-  const [stream, setStream] = useState<{ text: string; reasoning: string; tools?: Array<{ tool: string; status?: string }> } | null>(null)
+  const [stream, setStream] = useState<{ text: string; reasoning: string; agentId?: string; tools?: Array<{ tool: string; status?: string }> } | null>(null)
   const [busy, setBusy] = useState(false)
   const [offline, setOffline] = useState(false)
   const offlineRef = useRef(false)
@@ -322,6 +369,8 @@ export function App() {
     key: string
     title: string
     avatar?: string
+    /** 智能体 id：内置小杰按吉祥物渲染 */
+    agentId?: string
     isPinned: boolean
     isBuiltin?: boolean
     target: ChatTarget
@@ -404,7 +453,7 @@ export function App() {
         }
         setStream((prev) => {
           const merged = mergeStream(prev || { text: '', reasoning: '' }, frame)
-          return { text: merged.text, reasoning: merged.reasoning, tools: frame.tools }
+          return { text: merged.text, reasoning: merged.reasoning, agentId: frame.agentId, tools: frame.tools }
         })
       }
       if (ev.what === 'chat-updated' || ev.what === 'group-updated') {
@@ -806,9 +855,7 @@ export function App() {
       <main className="lock">
         <div className="wechat-lock-card">
           <div className="wechat-lock-logo">
-            <svg viewBox="0 0 24 24" width="48" height="48" fill="#07c160">
-              <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z" />
-            </svg>
+            <Mascot size={56} mood="idle" />
           </div>
           <h1>Jeff 手机遥控</h1>
           <p>已启用安全锁，请验证指纹或锁屏密码</p>
@@ -864,9 +911,7 @@ export function App() {
             <section className="pair wechat-pair-panel" data-testid="pair-panel">
               <div className="pair-hero">
                 <div className="pair-logo-wrap">
-                  <svg viewBox="0 0 24 24" width="48" height="48" fill="#07c160">
-                    <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z" />
-                  </svg>
+                  <Mascot size={56} mood="idle" />
                 </div>
                 <h2>绑定电脑</h2>
                 <p className="hint">在电脑 Jeff 的「设置 → 远程控制」里点击绑定手机，使用下方方式一键绑定。</p>
@@ -918,6 +963,7 @@ export function App() {
               {xiaojie && (
                 <WeChatItemRow
                   title={xiaojie.name}
+                  agentId={xiaojie.id}
                   sub={
                     recentMap[`agent:${xiaojie.id}`]?.text
                       ? (recentMap[`agent:${xiaojie.id}`].text.length > 40
@@ -936,6 +982,7 @@ export function App() {
                     setActionMenu({
                       key: `agent:${xiaojie.id}`,
                       title: xiaojie.name,
+                      agentId: xiaojie.id,
                       avatar: xiaojie.avatar || '🤖',
                       isPinned: true,
                       isBuiltin: true,
@@ -987,6 +1034,7 @@ export function App() {
                       <WeChatItemRow
                         key={`pin:a:${a.id}`}
                         title={a.name}
+                        agentId={a.id}
                         sub={
                           rec?.text
                             ? (rec.text.length > 40 ? rec.text.slice(0, 40) + '…' : rec.text)
@@ -1003,6 +1051,7 @@ export function App() {
                             key: `agent:${a.id}`,
                             title: a.name,
                             avatar: a.avatar,
+                            agentId: a.id,
                             isPinned: true,
                             target: { kind: 'agent', id: a.id, name: a.name, avatar: a.avatar },
                           })
@@ -1090,6 +1139,7 @@ export function App() {
                             <WeChatItemRow
                               key={`a:${a.id}`}
                               title={a.name}
+                              agentId={a.id}
                               sub={
                                 rec?.text
                                   ? (rec.text.length > 40 ? rec.text.slice(0, 40) + '…' : rec.text)
@@ -1105,6 +1155,7 @@ export function App() {
                                   key: `agent:${a.id}`,
                                   title: a.name,
                                   avatar: a.avatar,
+                                  agentId: a.id,
                                   isPinned: false,
                                   target: { kind: 'agent', id: a.id, name: a.name, avatar: a.avatar },
                                 })
@@ -1157,10 +1208,11 @@ export function App() {
                       <WeChatAvatar
                         kind={target.kind === 'group' ? 'group' : 'agent'}
                         name={'sender_name' in m && m.sender_name ? m.sender_name : target.name}
+                        agentId={target.kind === 'agent' ? target.id : 'agentId' in m ? m.agentId : undefined}
                         emoji={
                           target.kind === 'agent'
                             ? target.avatar
-                            : ('agent_id' in m && m.agent_id ? agents.find((a) => a.id === m.agent_id)?.avatar : undefined) || target.icon
+                            : ('agentId' in m && m.agentId ? agents.find((a) => a.id === m.agentId)?.avatar : undefined) || target.icon
                         }
                         size={40}
                       />
@@ -1202,6 +1254,7 @@ export function App() {
                   <WeChatAvatar
                     kind={target.kind === 'group' ? 'group' : 'agent'}
                     name={target.name}
+                    agentId={target.kind === 'agent' ? target.id : stream.agentId}
                     emoji={target.kind === 'agent' ? target.avatar : target.icon}
                     size={40}
                     busy
@@ -1723,6 +1776,7 @@ export function App() {
                 name={actionMenu.title}
                 emoji={actionMenu.avatar}
                 size={38}
+                agentId={actionMenu.agentId}
               />
               <div style={{ minWidth: 0, flex: 1 }}>
                 <div className="wechat-sheet-title">{actionMenu.title}</div>

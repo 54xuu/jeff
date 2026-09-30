@@ -249,8 +249,8 @@ export interface GroupThreadBrief {
 
 export interface AppSettings {
   theme: 'system' | 'light' | 'dark'
-  /** 主题包（视觉皮肤）；当前支持 weui（默认绿色）与 catppuccin */
-  themePack: 'weui' | 'catppuccin'
+  /** 主题包（视觉皮肤）；cue（翡翠小杰，默认）/ weui（经典微信绿）/ catppuccin */
+  themePack: 'cue' | 'weui' | 'catppuccin'
   /** AI 回复完成时弹系统桌面通知（文本提醒） */
   notifyDesktop: boolean
   /** AI 回复完成时播放提示音（声音提醒） */

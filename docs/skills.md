@@ -80,6 +80,7 @@ EOF
    或者直接看日志里的 `skill path not found` 警告（挂载的目录不存在时会打）。
 2. **模型到底调了什么**：`<数据目录>/logs/debug-<日期>.log` 里的 `tool-pending` / `tool-start` / `tool-done`
    三行带完整 `args` 与 `output`——一眼能看出它是在调 `skill`，还是绕路去 `bash`/`read` 猜路径。
-3. **智能体有没有权限**：`skill` 权限在 `opencode.json` 的 `permission` 里是 `allow`；小杰（内置管家）
-   刻意没有 `bash`/`edit`/`write`/`patch`——它**能加载**技能但**不能执行**技能里的脚本，
-   这种情况下它应当如实说明，而不是编内容。
+3. **智能体有没有权限**：`skill` 权限在 `opencode.json` 的 `permission` 里是 `allow`。v1.10.0 起
+   小杰（内置管家）有全套文件工具，可以加载并执行技能里的脚本；但数据目录里的 `jeff.db` 与 `auth.json`
+   对它 read/edit deny（agent 级 permission，见 `packages/core/src/agents/registry.ts`）。
+   技能目录人人可改——改前先备份原文件（技能无版本历史，备份是唯一回滚手段）。

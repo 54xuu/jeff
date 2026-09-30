@@ -3,6 +3,7 @@ import { useStore, applyTheme } from './store'
 import { api } from './api'
 import { IPC, type BrowserConsoleEntry, type BrowserRequest } from '@jeff/core'
 import NavRail from './components/NavRail'
+import Mascot from './components/Mascot'
 import ChatList from './components/ChatList'
 import ChatWindow from './components/ChatWindow'
 import GroupWindow from './components/GroupWindow'
@@ -208,7 +209,7 @@ function SchedulesListPane(): React.JSX.Element {
 function EmptyHint(props: { hasAgents: boolean; hasProjects: boolean }): React.JSX.Element {
   return (
     <div className="empty-hint">
-      <div className="empty-logo">J</div>
+      <div className="empty-logo"><Mascot size={60} mood="idle" /></div>
       <p>选择一个会话开始聊天</p>
       <p className="sub">
         {!props.hasAgents && !props.hasProjects

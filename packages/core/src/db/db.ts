@@ -125,6 +125,7 @@ CREATE INDEX IF NOT EXISTS idx_cron_run_task ON cron_run(task_id, started_at);
   // 增量列迁移（CREATE TABLE IF NOT EXISTS 不会给旧库加列）
   addColumn(db, 'agent', 'thinking', "TEXT NOT NULL DEFAULT ''", "默认思考档位：'' /none/low/high/max（''=跟随模型配置）")
   addColumn(db, 'agent', 'category', "TEXT NOT NULL DEFAULT ''", "分组分类（如：项目管理/医疗场景/项目开发；空=默认分组）")
+  addColumn(db, 'agent', 'instructions_version', 'INTEGER NOT NULL DEFAULT 0', '身份指令版本号：仅 instructions 实际变更时 +1（jeff_self_update 写前校验用，随同步携带）')
   addColumn(db, 'project', 'workspace_dir', "TEXT NOT NULL DEFAULT ''", '工作空间目录（空=全局 workspace，输出文件默认落这里）')
   addColumn(db, 'cron_task', 'run_at', 'INTEGER', '一次性任务的绝对触发时间（ms，本机时区）；NULL=按 cron 重复')
 

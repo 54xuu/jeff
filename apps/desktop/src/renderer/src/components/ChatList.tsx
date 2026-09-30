@@ -105,6 +105,7 @@ export default function ChatList(): React.JSX.Element {
       {xiaojie && (
         <ChatItem
           avatar={xiaojie.avatar}
+          agentId={xiaojie.id}
           name={xiaojie.name}
           desc="Jeff 内置管家 · 问我什么都能办"
           pinned
@@ -137,6 +138,7 @@ export default function ChatList(): React.JSX.Element {
             <ChatItem
               key={a.id}
               avatar={a.avatar}
+              agentId={a.id}
               name={a.name}
               desc={a.description || '（无简介）'}
               pinned
@@ -189,6 +191,7 @@ export default function ChatList(): React.JSX.Element {
                 <ChatItem
                   key={a.id}
                   avatar={a.avatar}
+                  agentId={a.id}
                   name={a.name}
                   desc={a.description || '（无简介）'}
                   unread={unread.includes(`agent:${a.id}`)}
@@ -234,6 +237,8 @@ export default function ChatList(): React.JSX.Element {
 
 function ChatItem(props: {
   avatar: string
+  /** 私聊对方的智能体 id：内置小杰按吉祥物渲染 */
+  agentId?: string
   name: string
   desc: string
   pinned?: boolean
@@ -253,7 +258,7 @@ function ChatItem(props: {
     >
       <span className="chat-item-lead">
         {props.unread && <span className="chat-unread" data-testid="chat-unread" />}
-        <Avatar emoji={props.avatar} busy={props.busy} />
+        <Avatar emoji={props.avatar} busy={props.busy} agentId={props.agentId} />
       </span>
       <div className="chat-item-body">
         <div className="chat-item-top">
