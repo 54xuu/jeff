@@ -9,14 +9,16 @@ import { DEFAULT_SEND_TIMEOUT_MS } from '../oc/client.js'
 export const SUBTASK_TOOL = 'jeff_spawn_subtask'
 
 /**
- * 用户用中文声明「这些材料要分开处理」时，追加到本轮 system 的硬指令。
+ * 独立子任务硬指令。**固定拼接在非内置智能体的 system 末尾**，不随单轮文本有无触发词来回增删——
+ * 动态增删会击穿供应商 Prompt Caching 的前缀命中（触发轮整段历史无缓存重发，长对话反而多花几十倍 token）。
+ * 文案因此写成中性条件式：用户没提独立处理时本节自然不生效。
  * 只给模型看，不写进用户气泡。子任务会话本身不走这条（它直接调 oc.sendMessage）。
  */
 export const SUBTASK_STEER = [
-  '【独立子任务】用户已经用中文说明：这些材料彼此独立，要分开处理。',
-  '你必须对每一个独立文件单独调用 jeff_spawn_subtask（串行，等上一个结果回来再发下一个），由子任务自己读取原文并写盘。',
-  '当前对话里禁止用 read 读取这些原始文件的正文。',
-  '同一条消息里如果还有合并、总结、汇总：等各子任务完成、提取文件已经落盘之后，再在当前对话里只读那些提取结果来合并；不要把合并本身交给子任务，也不要回头读原始文件。',
+  '【独立子任务规范】当用户在消息里用中文明确要求把多份材料「独立/分开/逐个处理」时：',
+  '- 必须对每一份材料单独调用 jeff_spawn_subtask（串行，等上一个结果回来再发下一个），由子任务自己读取原文并写盘；此时禁止在当前对话里用 read 直接读取这些原始文件的正文。',
+  '- 同一条消息里如果还要求合并、总结、汇总：等各子任务完成、提取文件已经落盘之后，再在当前对话里只读那些提取结果来合并；不要把合并本身交给子任务，也不要回头读原始文件。',
+  '- 用户没有提出上述要求时，忽略本节，正常处理即可。',
 ].join('\n')
 
 const INDEPENDENCE_RE = /独立处理|各自单独|各自独立|分开处理|分别处理|互不相关|彼此独立|逐个处理|逐份处理|单独处理/
@@ -31,9 +33,9 @@ export function wantsIndependentSubtasks(text: string): boolean {
   return INDEPENDENCE_RE.test(t) && BATCH_RE.test(t)
 }
 
-/** 命中中文触发时把硬指令接到本轮 system 后面；小杰没有该工具，不注入。 */
-export function withSubtaskSteer(system: string | undefined, text: string, opts?: { builtin?: boolean }): string | undefined {
-  if (opts?.builtin || !wantsIndependentSubtasks(text)) return system
+/** 非内置智能体的 system 末尾固定拼接子任务规范（前缀稳定，保 KV-Cache）；小杰没有该工具，不注入。 */
+export function withSubtaskSteer(system: string | undefined, opts?: { builtin?: boolean }): string | undefined {
+  if (opts?.builtin) return system
   return system ? `${system}\n\n${SUBTASK_STEER}` : SUBTASK_STEER
 }
 

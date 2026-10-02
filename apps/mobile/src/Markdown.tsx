@@ -1,8 +1,13 @@
 import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import rehypeHighlight from 'rehype-highlight'
 import { FILE_HREF_PREFIX } from './linkify'
 import { pushBack } from './backstack'
+
+/** 代码高亮（U-2）：与桌面端同款 rehype-highlight；仅非流式挂载（流式每 token 重高亮会卡） */
+type RehypePlugins = React.ComponentProps<typeof ReactMarkdown>['rehypePlugins']
+const REHYPE: RehypePlugins = [[rehypeHighlight, { detect: true, ignoreMissing: true }]]
 
 const SCALE_MIN = 0.5
 const SCALE_MAX = 6
@@ -58,16 +63,16 @@ function CopyText(props: { text: string }): React.JSX.Element {
   )
 }
 
-function CodeBlock(props: { lang?: string; raw: string }): React.JSX.Element {
+function CodeBlock(props: { lang?: string; raw: string; children?: ReactNode }): React.JSX.Element {
   return (
     <div className="md-code">
       <div className="md-code-bar">
         <span>{props.lang || '代码'}</span>
         <CopyText text={props.raw} />
       </div>
-      <pre>
-        <code>{props.raw}</code>
-      </pre>
+      {/* children 本身就是 react-markdown 给的 <code> 元素（有高亮时带 hljs span），原样渲染；
+          无 children 的兜底才自己包一层 code */}
+      <pre>{props.children ?? <code>{props.raw}</code>}</pre>
     </div>
   )
 }
@@ -276,7 +281,7 @@ function MarkdownInner(props: { text: string; live?: boolean; onFileLink?: (rel:
       pre: ({ children }) => {
         const block = extractCode(children)
         if (block.lang?.toLowerCase() === 'mermaid' && !liveRef.current) return <MermaidBlock code={block.raw} />
-        return <CodeBlock lang={block.lang} raw={block.raw} />
+        return <CodeBlock lang={block.lang} raw={block.raw}>{children}</CodeBlock>
       },
       a: ({ node: _node, href, children, ...aProps }) => {
         if (href && href.startsWith(FILE_HREF_PREFIX) && fileLinkRef.current) {
@@ -302,7 +307,7 @@ function MarkdownInner(props: { text: string; live?: boolean; onFileLink?: (rel:
   )
   return (
     <div className="md-body" data-testid="md-body">
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
+      <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={props.live ? undefined : REHYPE} components={components}>
         {props.text}
       </ReactMarkdown>
     </div>

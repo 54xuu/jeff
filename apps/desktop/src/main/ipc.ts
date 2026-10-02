@@ -161,6 +161,7 @@ export function registerIpc(core: JeffCore): Record<string, Handler> {
           providerID: o.providerID,
           modelID: o.modelID,
           label: o.label,
+          ...(o.contextLimit ? { contextLimit: o.contextLimit } : {}),
           thinkingTiers: o.thinkingTiers as Array<'none' | 'low' | 'high' | 'max'>,
         })
       }

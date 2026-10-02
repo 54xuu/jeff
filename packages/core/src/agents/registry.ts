@@ -98,6 +98,16 @@ function xiaojieSecretDenyPatterns(): string[] {
   return ['*jeff.db', '*jeff.db-wal', '*jeff.db-shm', '*jeff.db-journal', '*auth.json']
 }
 
+/** agent 的工具禁用集（renderAgentMd 写进 opencode 定义，能力判定等处也要用同一份事实） */
+export function agentDeniedTools(agent: AgentRow): Set<string> {
+  const denied = new Set<string>(agent.builtin ? XIAOJIE_DISABLED_TOOLS : XIAOJIE_ONLY_TOOLS)
+  // 智慧病房医护助手：必须走插件 MCP，禁止 bash/curl/读盘绕过（实测会抠 jeff.db 里的 token）
+  if (!agent.builtin && (agent.category === '智慧病房' || agent.name === '医护助手')) {
+    for (const t of ['bash', 'edit', 'write', 'patch', 'task', 'read'] as const) denied.add(t)
+  }
+  return denied
+}
+
 /** 生成单个 agent 的 opencode 定义文件 */
 export function renderAgentMd(agent: AgentRow, defaultModel?: { providerID: string; modelID: string }, paths?: JeffPaths): string {
   const lines: string[] = ['---']
@@ -106,11 +116,7 @@ export function renderAgentMd(agent: AgentRow, defaultModel?: { providerID: stri
   const model = agent.model_provider && agent.model_id ? `${agent.model_provider}/${agent.model_id}` : agent.builtin && defaultModel ? `${defaultModel.providerID}/${defaultModel.modelID}` : ''
   if (model) lines.push(`model: ${model}`)
   // 工具面：非内置 agent 禁用管理工具（智能体/项目/任务/定时任务/插件开发）；内置小杰禁掉子代理与自改
-  const denied = new Set<string>(agent.builtin ? XIAOJIE_DISABLED_TOOLS : XIAOJIE_ONLY_TOOLS)
-  // 智慧病房医护助手：必须走插件 MCP，禁止 bash/curl/读盘绕过（实测会抠 jeff.db 里的 token）
-  if (!agent.builtin && (agent.category === '智慧病房' || agent.name === '医护助手')) {
-    for (const t of ['bash', 'edit', 'write', 'patch', 'task', 'read'] as const) denied.add(t)
-  }
+  const denied = agentDeniedTools(agent)
   lines.push('tools:')
   for (const t of denied) lines.push(`  ${t}: false`)
   // 小杰拿到了全套文件工具，用 agent 级 permission 把密钥文件摘出去（全局是全放行，agent 级规则优先生效）。

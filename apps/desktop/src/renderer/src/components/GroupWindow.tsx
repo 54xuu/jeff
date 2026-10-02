@@ -7,7 +7,7 @@ import GroupInfoDrawer from './GroupInfoDrawer'
 import { Markdown } from './Markdown'
 import { fmtFullTime } from '../format'
 import { CopyButton } from './ui/CopyButton'
-import { useImages, ImagePreviews, MsgImages, AssistantExtras, StreamingBubble, useAutoScroll, useComposerResize } from './ChatShared'
+import { useImages, ImagePreviews, MsgImages, AssistantExtras, StreamingBubble, useAutoScroll, useComposerResize, readDroppedTextFile } from './ChatShared'
 import { IconCompress, IconNewSession, IconGroupProfile } from './ui/Icons'
 import ContextDrawer, { ContextUsageBar, fetchContextPreview } from './ContextDrawer'
 import { useSlashMenu } from './useSlash'
@@ -161,6 +161,19 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
     }
   }
 
+  const handleMentionMember = (name: string) => {
+    if (!name || name === '系统' || name === '我') return
+    const mentionText = `@${name} `
+    setDraftComposer((c) => {
+      if (c.after.includes(mentionText)) return c
+      return {
+        ...c,
+        after: `${c.after ? `${c.after} ` : ''}${mentionText}`,
+      }
+    })
+    inputRef.current?.focus()
+  }
+
   const pickMention = (name: string) => {
     if (!mention) return
     const cur = draftComposer
@@ -262,7 +275,14 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
             </div>
           )}
           {msgs.map((m) => (
-            <GroupBubble key={m.id} msg={m} workspaceDir={workspaceDir} anchorRef={bindAnchor(m.id)} findHit={find.hitId === m.id} />
+            <GroupBubble
+              key={m.id}
+              msg={m}
+              workspaceDir={workspaceDir}
+              anchorRef={bindAnchor(m.id)}
+              findHit={find.hitId === m.id}
+              onMentionMember={handleMentionMember}
+            />
           ))}
           {busy && !stream && (
             <div className="msg-row left">
@@ -315,10 +335,22 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
             setDragOver(true)
           }}
           onDragLeave={() => setDragOver(false)}
-          onDrop={(e) => {
+          onDrop={async (e) => {
             e.preventDefault()
             setDragOver(false)
-            void attachments.addFiles(e.dataTransfer.files)
+            const files = Array.from(e.dataTransfer.files)
+            const imgFiles = files.filter((f) => f.type.startsWith('image/'))
+            if (imgFiles.length > 0) void attachments.addFiles(imgFiles)
+            const txtFiles = files.filter((f) => !f.type.startsWith('image/'))
+            for (const f of txtFiles) {
+              const textData = await readDroppedTextFile(f)
+              if (textData) {
+                setDraftComposer((c) => ({
+                  ...c,
+                  after: `${c.after ? `${c.after}\n\n` : ''}\`\`\`\n// 文件: ${textData.name}\n${textData.content}\n\`\`\``,
+                }))
+              }
+            }
           }}
         >
           {mentionCandidates.length > 0 && (
@@ -439,8 +471,14 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
   )
 }
 
-function GroupBubble(props: { msg: GroupMessage; workspaceDir?: string; anchorRef?: (el: HTMLElement | null) => void; findHit?: boolean }): React.JSX.Element {
-  const { msg, workspaceDir, anchorRef, findHit } = props
+function GroupBubble(props: {
+  msg: GroupMessage
+  workspaceDir?: string
+  anchorRef?: (el: HTMLElement | null) => void
+  findHit?: boolean
+  onMentionMember?: (name: string) => void
+}): React.JSX.Element {
+  const { msg, workspaceDir, anchorRef, findHit, onMentionMember } = props
   const isAssistant = msg.role === 'assistant'
   // 历史消息里同样剥掉 <think>：与流式气泡保持一致的清爽版面
   const parsed = useMemo(() => (isAssistant ? extractThinkTags(msg.text) : null), [isAssistant, msg.text])
@@ -458,10 +496,23 @@ function GroupBubble(props: { msg: GroupMessage; workspaceDir?: string; anchorRe
   const mine = msg.role === 'user'
   return (
     <div className={`msg-row ${mine ? 'right' : 'left'}${findHit ? ' find-hit' : ''}`} ref={anchorRef} data-msg-id={msg.id}>
-      {!mine && <Avatar emoji={msg.sender_avatar || '🤖'} size={34} agentId={msg.agentId} />}
+      {!mine && (
+        <div
+          style={{ cursor: msg.sender_name ? 'pointer' : 'default' }}
+          title={msg.sender_name ? `点击 @ ${msg.sender_name}` : undefined}
+          onClick={() => msg.sender_name && onMentionMember?.(msg.sender_name)}
+        >
+          <Avatar emoji={msg.sender_avatar || '🤖'} size={34} agentId={msg.agentId} />
+        </div>
+      )}
       <div className="msg-stack">
         {!mine && (
-          <div className="msg-sender">
+          <div
+            className="msg-sender"
+            style={{ cursor: msg.sender_name ? 'pointer' : 'default' }}
+            title={msg.sender_name ? `点击 @ ${msg.sender_name}` : undefined}
+            onClick={() => msg.sender_name && onMentionMember?.(msg.sender_name)}
+          >
             {msg.sender_name}
             <span className="msg-time">{fmtFullTime(msg.time)}</span>
           </div>

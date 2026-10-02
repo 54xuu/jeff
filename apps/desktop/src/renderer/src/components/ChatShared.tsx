@@ -171,15 +171,65 @@ export function useAutoScroll(
 }
 
 
-/** 读取 File 为 dataURL（图片附件用） */
-export function fileToDataUrl(file: File): Promise<ChatImage | null> {
+/** 图片智能下采样与轻量压缩（对齐移动端 shrinkImage，限制长边 1600px，JPEG 0.82 质量，节省 70%+ Vision Token） */
+export async function shrinkImage(dataUrl: string, max = 1600, quality = 0.82): Promise<{ mime: string; dataUrl: string }> {
   return new Promise((resolve) => {
-    if (!file.type.startsWith('image/')) return resolve(null)
+    const img = new Image()
+    img.onload = () => {
+      const scale = Math.min(1, max / Math.max(img.width, img.height))
+      // 如果尺寸已经在 1600px 内且是 jpeg 格式，直接返回
+      if (scale >= 1 && (dataUrl.startsWith('data:image/jpeg') || dataUrl.startsWith('data:image/webp')) && dataUrl.length < 400_000) {
+        return resolve({ mime: dataUrl.split(';')[0].replace('data:', '') || 'image/jpeg', dataUrl })
+      }
+      const canvas = document.createElement('canvas')
+      canvas.width = Math.max(1, Math.round(img.width * scale))
+      canvas.height = Math.max(1, Math.round(img.height * scale))
+      const ctx = canvas.getContext('2d')
+      if (!ctx) return resolve({ mime: 'image/jpeg', dataUrl })
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
+      resolve({ mime: 'image/jpeg', dataUrl: canvas.toDataURL('image/jpeg', quality) })
+    }
+    img.onerror = () => resolve({ mime: 'image/jpeg', dataUrl })
+    img.src = dataUrl
+  })
+}
+
+/** 判断是否为常见纯文本文件 */
+export function isTextFile(file: File): boolean {
+  if (file.type.startsWith('text/')) return true
+  return /\.(txt|md|markdown|json|js|ts|tsx|jsx|py|html|css|yaml|yml|xml|sql|sh|bash|csv|log)$/i.test(file.name)
+}
+
+/** 读取拖拽的非图片纯文本文件内容（单文件限 64KB 防爆） */
+export async function readDroppedTextFile(file: File, maxChars = 64_000): Promise<{ name: string; content: string } | null> {
+  if (!isTextFile(file)) return null
+  return new Promise((resolve) => {
     const reader = new FileReader()
-    reader.onload = () => resolve({ mime: file.type, dataUrl: String(reader.result) })
+    reader.onload = () => {
+      const raw = String(reader.result || '')
+      const content = raw.length > maxChars ? `${raw.slice(0, maxChars)}\n… [截断超出部分]` : raw
+      resolve({ name: file.name, content })
+    }
+    reader.onerror = () => resolve(null)
+    reader.readAsText(file)
+  })
+}
+
+/** 读取 File 为 dataURL（图片附件用，自动做 1600px 下采样压缩） */
+export async function fileToDataUrl(file: File): Promise<ChatImage | null> {
+  if (!file.type.startsWith('image/')) return null
+  const rawUrl = await new Promise<string | null>((resolve) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result))
     reader.onerror = () => resolve(null)
     reader.readAsDataURL(file)
   })
+  if (!rawUrl) return null
+  try {
+    return await shrinkImage(rawUrl)
+  } catch {
+    return { mime: file.type, dataUrl: rawUrl }
+  }
 }
 
 /** composer 的图片附件状态：选择/粘贴/拖拽 → dataURL 预览 → 随消息发送 */

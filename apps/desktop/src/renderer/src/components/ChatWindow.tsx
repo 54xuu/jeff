@@ -7,7 +7,7 @@ import { useDonePulse, type MascotMood } from './Mascot'
 import { Markdown } from './Markdown'
 import { fmtFullTime } from '../format'
 import { CopyButton } from './ui/CopyButton'
-import { useImages, ImagePreviews, MsgImages, AssistantExtras, StreamingBubble, useAutoScroll, useComposerResize } from './ChatShared'
+import { useImages, ImagePreviews, MsgImages, AssistantExtras, StreamingBubble, useAutoScroll, useComposerResize, readDroppedTextFile } from './ChatShared'
 import ContextDrawer, { ContextUsageBar, fetchContextPreview } from './ContextDrawer'
 import AgentProfileDrawer from './AgentProfileDrawer'
 import { IconCompress, IconNewSession, IconProfile } from './ui/Icons'
@@ -271,10 +271,22 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
             setDragOver(true)
           }}
           onDragLeave={() => setDragOver(false)}
-          onDrop={(e) => {
+          onDrop={async (e) => {
             e.preventDefault()
             setDragOver(false)
-            void attachments.addFiles(e.dataTransfer.files)
+            const files = Array.from(e.dataTransfer.files)
+            const imgFiles = files.filter((f) => f.type.startsWith('image/'))
+            if (imgFiles.length > 0) void attachments.addFiles(imgFiles)
+            const txtFiles = files.filter((f) => !f.type.startsWith('image/'))
+            for (const f of txtFiles) {
+              const textData = await readDroppedTextFile(f)
+              if (textData) {
+                setDraftComposer((c) => ({
+                  ...c,
+                  after: `${c.after ? `${c.after}\n\n` : ''}\`\`\`\n// 文件: ${textData.name}\n${textData.content}\n\`\`\``,
+                }))
+              }
+            }
           }}
         >
           {slash.open && (

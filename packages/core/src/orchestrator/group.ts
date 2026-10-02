@@ -366,6 +366,12 @@ export class GroupChat {
     let routedTo = firstTargetId
     if (first.stopped) return { routedTo }
 
+    // 记录各执行成员的汇报成果摘要（闭环透传给 leader 验收总结，避免 leader 盲猜或重复查文件浪费 token）
+    const workerReports: Array<{ agentName: string; content: string }> = []
+    if (firstTargetId !== leaderId) {
+      workerReports.push({ agentName: firstTarget.name, content: first.content })
+    }
+
     // 串行流水线：解析第一回合回复中的 @ 派发队列
     // （用户直连 worker 时，其回复里的 @leader 是「汇报」，进总结分支而非派发队列）
     // 队列携带「指派来源文本」：worker 二级转派时，下游拿到的是转派者的实际任务说明，而非回退到最初用户输入
@@ -389,6 +395,7 @@ export class GroupChat {
       const prompt = `【${from}】${taskText || text}\n请执行上述任务；完成后在群里以「@我 汇报：<结果>」公开汇报（「我」指发起任务的用户）。`
       const turn = await this.runTurn({ projectId, threadId, agentId: workerId, text: prompt, runState, callbackMention: true })
       if (turn.stopped) return { routedTo }
+      workerReports.push({ agentName: worker.name, content: turn.content })
       // worker 回复里继续 @ 的人：leader 代表汇报到位；其他 worker 续入队列串行执行（来源文本 = 该 worker 的回复）
       for (const nm of this.parseAllMentions(turn.content, memberInfos)) {
         if (nm.agent_id === workerId) continue
@@ -406,9 +413,18 @@ export class GroupChat {
     let summaryError: string | undefined
     if (dispatchedAny || firstTargetId !== leaderId) {
       routedTo = leaderId
+      const reportSnippets = workerReports
+        .map((r) => {
+          const m = r.content.match(/汇报[：:]\s*([\s\S]+)/)
+          const raw = m ? m[1].trim() : r.content.trim()
+          const snippet = raw.length > 350 ? `${raw.slice(0, 350)}…` : raw
+          return `- @${r.agentName} 汇报：${snippet}`
+        })
+        .join('\n')
+      const reportsBlock = reportSnippets ? `\n\n【各成员汇报成果摘要】：\n${reportSnippets}\n` : ''
       const summaryPrompt = dispatchedAny
-        ? '【系统通知】你派发的任务已全部由成员执行完毕并回群汇报。请对照各成员的汇报验收成果，直接向用户给出清晰、完整的最终总结答复（无需再派发新任务）。'
-        : `【系统通知】${firstTarget.name} 已在群里向你汇报。请验收其结果，直接向用户给出最终答复。`
+        ? `【系统通知】你派发的任务已全部由成员执行完毕并回群汇报。${reportsBlock}\n请对照各成员的汇报验收成果，直接向用户给出清晰、完整的最终总结答复（无需再派发新任务）。`
+        : `【系统通知】${firstTarget.name} 已在群里向你汇报。${reportsBlock}\n请验收其结果，直接向用户给出最终答复。`
       try {
         await this.runTurn({ projectId, threadId, agentId: leaderId, text: summaryPrompt, runState })
       } catch (err) {
@@ -458,7 +474,7 @@ export class GroupChat {
     const memoryBlock = this.hooks?.buildMemory?.(agentId, projectId)
     const systemBase = memoryBlock ? `${this.buildBriefing(projectId, agentId)}\n\n${memoryBlock}` : this.buildBriefing(projectId, agentId)
     const builtin = !!target.builtin
-    const system = withSubtaskSteer(systemBase, text, { builtin })
+    const system = withSubtaskSteer(systemBase, { builtin })
     if (!builtin && wantsIndependentSubtasks(text)) this.hooks?.onDebugLog?.('subtask-steer', { projectId, threadId, agentId, sessionId })
     const opts = agentPromptOpts(target, this.hooks?.defaultModel?.() ?? null)
     // 用户已点停止：不再发起本回合，直接按已停止收敛（流水线后续回合也会被取消标记拦下）

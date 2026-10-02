@@ -1,7 +1,7 @@
 import { Capacitor } from '@capacitor/core'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { IPC, XIAOJIE_ID, TOOL_ACTION_LABEL, extractThinkTags, mergeReasoning, sortedPinKeys } from '@jeff/core'
-import type { AgentInfo, AppInfo, ChatMsg, FileNode, FsDirEntry, GroupMessage, ProjectInfo } from '@jeff/core'
+import { IPC, XIAOJIE_ID, TOOL_ACTION_LABEL, extractThinkTags, mergeReasoning, sortedPinKeys, decodePluginUserMessage } from '@jeff/core'
+import type { AgentInfo, AppInfo, ChatMsg, FileNode, FsDirEntry, GroupMessage, ProjectInfo, ContextPreviewInfo, PluginCommand, PluginInfo } from '@jeff/core'
 import type { RemoteStreamFrame } from '@jeff/core/remote'
 import { consumeBack } from './backstack'
 import Mascot from './Mascot'
@@ -67,6 +67,12 @@ function formatFileSize(n?: number): string {
   if (n < 1024) return `${n} B`
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
   return `${(n / 1024 / 1024).toFixed(1)} MB`
+}
+
+/** 上下文 token 数短格式：980 → 980，12340 → 12k（F-1 顶栏徽标用，对齐桌面 fmtTokens） */
+function fmtTokensShort(n: number): string {
+  if (n >= 1000) return `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k`
+  return String(n)
 }
 
 /** 长按区域：450ms 长按触发，移动超过 8px 视为滚动取消；桌面端右键同样触发 */
@@ -299,7 +305,7 @@ export function WeChatItemRow(props: {
   )
 }
 
-function ReasoningView({ reasoning, live }: { reasoning?: string | string[]; live?: boolean }) {
+function ReasoningView({ reasoning, live, elapsedMs }: { reasoning?: string | string[]; live?: boolean; elapsedMs?: number }) {
   const [open, setOpen] = useState(false)
   const text = Array.isArray(reasoning) ? reasoning.join('\n\n') : reasoning || ''
   if (!text || !text.trim()) return null
@@ -318,12 +324,13 @@ function ReasoningView({ reasoning, live }: { reasoning?: string | string[]; liv
         </span>
         <span className="wechat-reasoning-title">{live ? '思考中' : '思考过程'}</span>
         {live && <span className="wechat-live-pulse" />}
+        {!!elapsedMs && elapsedMs > 0 ? <span className="wechat-reasoning-time">{elapsedMs >= 60_000 ? `${Math.floor(elapsedMs / 60_000)}分${Math.round((elapsedMs % 60_000) / 1000)}秒` : `${(elapsedMs / 1000).toFixed(1)}s`}</span> : null}
         {!open && preview ? <span className="wechat-reasoning-preview">{preview}</span> : null}
         <span className={`wechat-arrow ${open ? 'down' : ''}`}>›</span>
       </button>
       {open ? (
         <div className="wechat-reasoning-content">
-          <pre>{text}</pre>
+          <Markdown text={text} />
         </div>
       ) : null}
     </div>
@@ -332,12 +339,12 @@ function ReasoningView({ reasoning, live }: { reasoning?: string | string[]; liv
 
 type ToolItem = { tool: string; status?: string; output?: string; error?: string }
 
-function AssistantText(props: { text: string; reasoning?: string | string[]; tools?: ToolItem[]; live?: boolean }): React.JSX.Element {
+function AssistantText(props: { text: string; reasoning?: string | string[]; tools?: ToolItem[]; live?: boolean; reasonMs?: number }): React.JSX.Element {
   const parsed = useMemo(() => extractThinkTags(props.text), [props.text])
   const reasoning = useMemo(() => mergeReasoning(props.reasoning, parsed.reasoning), [props.reasoning, parsed])
   return (
     <>
-      {reasoning ? <ReasoningView reasoning={reasoning} live={props.live} /> : null}
+      {reasoning ? <ReasoningView reasoning={reasoning} live={props.live} elapsedMs={props.reasonMs} /> : null}
       {props.tools && props.tools.length > 0 ? <ToolsView tools={props.tools} /> : null}
       {parsed.text ? <Markdown text={parsed.text} live={props.live} /> : props.live && !reasoning ? <p>…</p> : null}
     </>
@@ -389,7 +396,7 @@ function ToolsView({ tools }: { tools?: ToolItem[] }) {
         <span className={`wechat-arrow ${open ? 'down' : ''}`}>›</span>
       </button>
       {open ? (
-        <div className="wechat-tools-body">
+        <div className="wechat-tools-body wechat-timeline">
           {tools.map((t, idx) => {
             const failedRow = t.status === 'error' || !!t.error
             const label = TOOL_ACTION_LABEL[t.tool] || t.tool
@@ -430,7 +437,7 @@ export function App() {
   targetRef.current = target
   const [messages, setMessages] = useState<Array<ChatMsg | GroupMessage>>([])
   const [draft, setDraft] = useState('')
-  const [stream, setStream] = useState<{ text: string; reasoning: string; agentId?: string; tools?: Array<{ tool: string; status?: string }> } | null>(null)
+  const [stream, setStream] = useState<{ text: string; reasoning: string; agentId?: string; tools?: Array<{ tool: string; status?: string }>; reasonMs?: number } | null>(null)
   const [busy, setBusy] = useState(false)
   const [offline, setOffline] = useState(false)
   const offlineRef = useRef(false)
@@ -476,6 +483,22 @@ export function App() {
   // 长按消息菜单 / 图片查看器
   const [msgMenu, setMsgMenu] = useState<{ msgId: string; text: string; canCopy: boolean; canResend: boolean } | null>(null)
   const [viewer, setViewer] = useState<string | null>(null)
+  // F-1 上下文用量（对齐桌面 ContextUsageBar）：进会话 / 每回合结束刷新，支持一键压缩
+  const [ctx, setCtx] = useState<ContextPreviewInfo | null>(null)
+  const [ctxOpen, setCtxOpen] = useState(false)
+  const [ctxBusy, setCtxBusy] = useState(false)
+  // F-2 `/` 快捷指令：已启用插件的指令 + 固定动作；选中后挂筹码随消息发送
+  const [plugins, setPlugins] = useState<PluginInfo[]>([])
+  const [chip, setChip] = useState<{ id: string; name: string; command: string } | null>(null)
+  // F-4 对话内查找
+  const [findOpen, setFindOpen] = useState(false)
+  const [findQuery, setFindQuery] = useState('')
+  const [findIdx, setFindIdx] = useState(0)
+  // F-5 下拉刷新：列表与聊天共用一套手势状态
+  const [pullPx, setPullPx] = useState(0)
+  const pullRef = useRef<{ y: number; on: boolean } | null>(null)
+  // U-1 思考耗时：首条 reasoning 起表、首条正文停表（仅流式气泡显示）
+  const reasonTimerRef = useRef<{ start: number; end?: number } | null>(null)
   // 聊天区是否贴底（不贴底时新消息不拽滚动、显示回到底部浮球）
   const atBottomRef = useRef(true)
   const [showJump, setShowJump] = useState(false)
@@ -489,6 +512,84 @@ export function App() {
     setDraft(v)
     const cur = targetRef.current
     if (cur) setDrafts((d) => ({ ...d, [`${cur.kind}:${cur.id}`]: v }))
+  }
+
+  // X-3 触感反馈：发送 / 切换会话 / 选中指令等轻操作给轻微震动（长按菜单已有 35ms）
+  const haptic = (ms = 15) => {
+    if (typeof navigator !== 'undefined' && navigator.vibrate) {
+      try { navigator.vibrate(ms) } catch {}
+    }
+  }
+
+  // ---------- F-1 上下文用量与一键压缩 ----------
+  /** 群聊看群主的会话（流水线汇报都经群主），私聊看本人；拿不到成员就不显示 */
+  function ctxAgentIdFor(t: ChatTarget): string | null {
+    if (t.kind === 'agent') return t.id
+    const p = projectsRef.current.find((pr) => pr.id === t.id)
+    return p?.leader_agent_id || null
+  }
+
+  const isCurrentTarget = (t: ChatTarget) => !!targetRef.current && targetRef.current.kind === t.kind && targetRef.current.id === t.id
+
+  async function refreshCtx(t: ChatTarget) {
+    if (offlineRef.current) return
+    const agentId = ctxAgentIdFor(t)
+    if (!agentId) {
+      setCtx(null)
+      return
+    }
+    try {
+      const p = await phone.invoke<ContextPreviewInfo>(IPC.contextPreview, { agentId, ...(t.kind === 'group' ? { projectId: t.id } : {}) })
+      if (isCurrentTarget(t)) setCtx(p)
+    } catch {
+      if (isCurrentTarget(t)) setCtx(null)
+    }
+  }
+
+  async function compressCtx() {
+    const t = targetRef.current
+    if (!t || ctxBusy) return
+    const agentId = ctxAgentIdFor(t)
+    if (!agentId) {
+      setError('该项目群还没有可用成员，无法压缩上下文')
+      return
+    }
+    setCtxBusy(true)
+    try {
+      const p = await phone.invoke<ContextPreviewInfo>(IPC.contextCompress, { agentId, ...(t.kind === 'group' ? { projectId: t.id } : {}) })
+      setCtx(p)
+      setCtxOpen(true)
+      await loadHistory(t)
+    } catch (err) {
+      setError((err as Error).message)
+    } finally {
+      setCtxBusy(false)
+    }
+  }
+
+  // ---------- F-5 下拉刷新 ----------
+  const onPullStart = (e: React.TouchEvent) => {
+    const el = e.currentTarget as HTMLElement
+    pullRef.current = { y: e.touches[0]?.clientY ?? 0, on: el.scrollTop <= 0 }
+  }
+  const onPullMove = (e: React.TouchEvent) => {
+    const pr = pullRef.current
+    if (!pr?.on) return
+    const dy = (e.touches[0]?.clientY ?? 0) - pr.y
+    setPullPx(dy > 0 ? Math.min(72, Math.round(dy * 0.5)) : 0)
+  }
+  const onPullEnd = () => {
+    const go = pullPx >= 28
+    pullRef.current = null
+    setPullPx(0)
+    if (!go) return
+    haptic(12)
+    if (screenRef.current === 'chat' && targetRef.current) {
+      void loadHistory(targetRef.current)
+      void refreshCtx(targetRef.current)
+    } else {
+      void loadLists()
+    }
   }
 
   const screenRef = useRef<Screen>('list')
@@ -606,13 +707,23 @@ export function App() {
         if (!mine) return
         if (frame.done) {
           setStream(null)
+          reasonTimerRef.current = null
           void loadHistory(current)
+          void refreshCtx(current)
           return
         }
         setStream((prev) => {
           const merged = mergeStream(prev || { text: '', reasoning: '' }, frame)
           if (!merged.ok) return prev
-          return { text: merged.text, reasoning: merged.reasoning, agentId: frame.agentId, tools: frame.tools }
+          // U-1 思考耗时：首条 reasoning 起表，正文出现停表；流式期间实时走秒
+          if (merged.reasoning && !merged.text) {
+            if (!reasonTimerRef.current) reasonTimerRef.current = { start: Date.now() }
+          } else if (merged.text && reasonTimerRef.current && !reasonTimerRef.current.end) {
+            reasonTimerRef.current = { ...reasonTimerRef.current, end: Date.now() }
+          }
+          const rt = reasonTimerRef.current
+          const reasonMs = rt ? (rt.end ?? Date.now()) - rt.start : undefined
+          return { text: merged.text, reasoning: merged.reasoning, agentId: frame.agentId, tools: frame.tools, ...(reasonMs ? { reasonMs } : {}) }
         })
       }
       if (ev.what === 'chat-updated' || ev.what === 'group-updated') {
@@ -772,6 +883,10 @@ export function App() {
       setSyncedAt(Date.now())
       await cachePut(id, 'agents', JSON.stringify(a))
       await cachePut(id, 'projects', JSON.stringify(p))
+      // F-2：插件指令菜单的数据源（失败不打扰主流程，菜单回退成只有固定动作）
+      void phone.invoke<PluginInfo[]>(IPC.pluginsList)
+        .then((list) => setPlugins(Array.isArray(list) ? list : []))
+        .catch(() => setPlugins([]))
 
       // 预读各个会话的最新消息，提供微信般的摘要预览
       for (const ag of a) {
@@ -842,6 +957,8 @@ export function App() {
       if (seq !== loadSeqRef.current) return
       markOffline(false)
       setSyncedAt(Date.now())
+      // F-1：历史刷新即刷新上下文用量（进会话、每回合结束、压缩后都会走到这里）
+      if (!opts?.limit) void refreshCtx(t)
     } catch {
       if (seq !== loadSeqRef.current) return
       markOffline(true)
@@ -867,6 +984,13 @@ export function App() {
     setFailedLocal(null)
     setMsgMenu(null)
     setViewer(null)
+    setCtx(null)
+    setCtxOpen(false)
+    setFindOpen(false)
+    setFindQuery('')
+    setChip(null)
+    reasonTimerRef.current = null
+    haptic(10)
     atBottomRef.current = true
     setShowJump(false)
     // 草稿按会话隔离：进来取自己的草稿，别的会话不动
@@ -881,7 +1005,7 @@ export function App() {
     await loadHistory(t)
   }
 
-  function doSendText(t: ChatTarget, text: string, images?: Array<{ mime: string; dataUrl: string }>) {
+  function doSendText(t: ChatTarget, text: string, images?: Array<{ mime: string; dataUrl: string }>, plugin?: { id: string; name: string; command: string; at: number }) {
     const now = Date.now()
     const localId = `local-${now}`
     // 乐观回显：不等电脑回复，自己的消息立刻上屏
@@ -890,8 +1014,8 @@ export function App() {
     setBusy(true)
     void (async () => {
       try {
-        if (t.kind === 'agent') await phone.invoke(IPC.chatSend, { agentId: t.id, text, ...(images ? { images } : {}) })
-        else await phone.invoke(IPC.groupSend, { projectId: t.id, text, ...(images ? { images } : {}) })
+        if (t.kind === 'agent') await phone.invoke(IPC.chatSend, { agentId: t.id, text, ...(images ? { images } : {}), ...(plugin ? { plugin } : {}) })
+        else await phone.invoke(IPC.groupSend, { projectId: t.id, text, ...(images ? { images } : {}), ...(plugin ? { plugin } : {}) })
         if (targetRef.current?.id === t.id && targetRef.current?.kind === t.kind) {
           setFailedLocal(null)
           await loadHistory(t)
@@ -908,9 +1032,12 @@ export function App() {
   async function send() {
     if (!target || !draft.trim()) return
     const text = draft.trim()
+    const chipNow = chip
     updateDraft('')
+    setChip(null)
     setPlus(false)
-    doSendText(target, text)
+    haptic(18)
+    doSendText(target, text, undefined, chipNow ? { id: chipNow.id, name: chipNow.name, command: chipNow.command, at: 0 } : undefined)
   }
 
   async function resend(msgId: string) {
@@ -1144,6 +1271,59 @@ export function App() {
   const peer = computers.get(activeId)
   const bound = computers.size > 0
 
+  // ---------- F-2 `/` 快捷指令 ----------
+  const slashCmds = useMemo(() => {
+    const out: Array<{ cmd: PluginCommand; pluginId: string; pluginName: string }> = []
+    for (const p of plugins) {
+      if (!p.enabled || p.error) continue
+      for (const c of p.commands) out.push({ cmd: c, pluginId: p.id, pluginName: p.name })
+    }
+    return out
+  }, [plugins])
+  const slashOpen = draft.trimStart().startsWith('/')
+  const slashQuery = slashOpen ? draft.trim().slice(1).trim().toLowerCase() : ''
+  const slashMatches = useMemo(
+    () => (slashQuery ? slashCmds.filter((s) => s.cmd.name.toLowerCase().includes(slashQuery)) : slashCmds),
+    [slashCmds, slashQuery]
+  )
+
+  const pickSlash = (entry: { cmd: PluginCommand; pluginId: string; pluginName: string }) => {
+    haptic(12)
+    setChip({ id: entry.pluginId, name: entry.pluginName, command: entry.cmd.name })
+    updateDraft('')
+  }
+
+  const runQuickAction = (action: 'compress' | 'clear') => {
+    haptic(12)
+    updateDraft('')
+    if (action === 'compress') void compressCtx()
+    else void newSession()
+  }
+
+  // ---------- F-4 对话内查找（对齐桌面 useConversationFind：命中跳转 + 上下循环） ----------
+  const findHits = useMemo(() => {
+    const q = findQuery.trim().toLowerCase()
+    if (!q) return []
+    return messages.filter((m) => !hiddenIds[m.id] && (m.text || '').toLowerCase().includes(q)).map((m) => m.id)
+  }, [messages, findQuery, hiddenIds])
+  useEffect(() => {
+    setFindIdx(0)
+  }, [findQuery])
+  useEffect(() => {
+    const id = findHits[findIdx]
+    if (!findOpen || !id) return
+    document.querySelector(`[data-msg-id="${CSS.escape(id)}"]`)?.scrollIntoView({ block: 'center' })
+  }, [findOpen, findHits, findIdx])
+  const findNext = () => setFindIdx((i) => (findHits.length ? (i + 1) % findHits.length : 0))
+  const findPrev = () => setFindIdx((i) => (findHits.length ? (i - 1 + findHits.length) % findHits.length : 0))
+
+  // ---------- X-2 群聊点击头像/名字快速 @成员 ----------
+  const mentionSender = (senderName: string) => {
+    if (!targetRef.current || targetRef.current.kind !== 'group' || !senderName) return
+    haptic(10)
+    updateDraft(draft ? `${draft} @${senderName} ` : `@${senderName} `)
+  }
+
   const [authenticating, setAuthenticating] = useState(false)
   const [unlockError, setUnlockError] = useState('')
 
@@ -1213,12 +1393,20 @@ export function App() {
             </div>
           </header>
           {offline && bound ? (
-            <div className="banner wechat-offline-banner">
+            <button
+              type="button"
+              className="banner wechat-offline-banner"
+              data-testid="reconnect"
+              onClick={() => {
+                haptic(12)
+                void loadLists()
+              }}
+            >
               <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
                 <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z" />
               </svg>
-              <span>电脑离线，当前为本地只读缓存{syncedAt ? ` (同步于 ${new Date(syncedAt).toLocaleTimeString()})` : ''}</span>
-            </div>
+              <span>电脑离线，当前为本地只读缓存{syncedAt ? ` (同步于 ${new Date(syncedAt).toLocaleTimeString()})` : ''} · 点击重新连接</span>
+            </button>
           ) : null}
           {!bound ? (
             <section className="pair wechat-pair-panel" data-testid="pair-panel">
@@ -1272,7 +1460,19 @@ export function App() {
               {error ? <p className="err">{error}</p> : null}
             </section>
           ) : (
-            <ul className="msgs wechat-list" data-testid="msg-list">
+            <ul
+              className="msgs wechat-list"
+              data-testid="msg-list"
+              onTouchStart={onPullStart}
+              onTouchMove={onPullMove}
+              onTouchEnd={onPullEnd}
+              onTouchCancel={onPullEnd}
+            >
+              {pullPx > 0 ? (
+                <li className="wechat-pull-tip" style={{ opacity: Math.min(1, pullPx / 40) }}>
+                  {pullPx >= 28 ? '松开刷新' : '下拉刷新…'}
+                </li>
+              ) : null}
               {xiaojie && (
                 <WeChatItemRow
                   title={xiaojie.name}
@@ -1500,7 +1700,33 @@ export function App() {
             <div className="wechat-chat-title">
               <b style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{target.name}</b>
               {target.kind === 'group' ? <span className="wechat-group-tag">群聊</span> : null}
+              {ctx?.contextLimit ? (
+                <button
+                  type="button"
+                  className={`wechat-ctx-badge ${ctx.threshold != null && ctx.usedTokens >= ctx.threshold ? 'danger' : ctx.threshold != null && ctx.usedTokens >= ctx.threshold * 0.85 ? 'warn' : ''}`}
+                  data-testid="ctx-badge"
+                  onClick={() => setCtxOpen((v) => !v)}
+                >
+                  {fmtTokensShort(ctx.usedTokens)}/{fmtTokensShort(ctx.contextLimit)}
+                </button>
+              ) : null}
             </div>
+            <button
+              type="button"
+              className="bar-icon-btn"
+              data-testid="chat-find"
+              title="查找聊天内容"
+              onClick={() => {
+                haptic(10)
+                setFindOpen((v) => !v)
+                if (findOpen) setFindQuery('')
+              }}
+            >
+              <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="11" cy="11" r="7" />
+                <path d="M21 21l-4.35-4.35" />
+              </svg>
+            </button>
             {target.kind === 'group' ? (
               <>
                 <button
@@ -1543,16 +1769,97 @@ export function App() {
             )}
           </header>
           {offline && bound ? (
-            <div className="banner">
+            <button
+              type="button"
+              className="banner"
+              data-testid="chat-reconnect"
+              onClick={() => {
+                haptic(12)
+                void loadHistory(target)
+                void refreshCtx(target)
+              }}
+            >
               <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
                 <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z" />
               </svg>
-              <span>电脑离线，当前为本地只读缓存{syncedAt ? ` (同步于 ${new Date(syncedAt).toLocaleTimeString()})` : ''}</span>
+              <span>电脑离线，当前为本地只读缓存{syncedAt ? ` (同步于 ${new Date(syncedAt).toLocaleTimeString()})` : ''} · 点击重新连接</span>
+            </button>
+          ) : null}
+          {findOpen ? (
+            <div className="wechat-search-bar" data-testid="chat-find-bar">
+              <input
+                autoFocus
+                value={findQuery}
+                placeholder="查找聊天内容"
+                onChange={(e) => setFindQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault()
+                    if (e.shiftKey) findPrev()
+                    else findNext()
+                  }
+                  if (e.key === 'Escape') {
+                    e.preventDefault()
+                    setFindOpen(false)
+                    setFindQuery('')
+                  }
+                }}
+              />
+              <span className="wechat-search-count">{findQuery.trim() ? `${findHits.length ? Math.min(findIdx + 1, findHits.length) : 0}/${findHits.length}` : ''}</span>
+              <button type="button" onClick={findPrev}>↑</button>
+              <button type="button" onClick={findNext}>↓</button>
+              <button
+                type="button"
+                onClick={() => {
+                  setFindOpen(false)
+                  setFindQuery('')
+                }}
+              >
+                关闭
+              </button>
             </div>
           ) : null}
-          <div className="bubbles wechat-bubbles" data-testid="bubbles" onScroll={onBubblesScroll}>
+          {ctxOpen ? (
+            <div className="wechat-ctx-box" data-testid="ctx-panel">
+              <div className="wechat-ctx-header">
+                <span>
+                  上下文占用 {fmtTokensShort(ctx?.usedTokens ?? 0)}
+                  {ctx?.contextLimit ? ` / ${fmtTokensShort(ctx.contextLimit)}` : ' · 未配置窗口'}
+                </span>
+                <button type="button" className="wechat-btn-compress" data-testid="ctx-compress" disabled={ctxBusy || !ctx?.sessionId} onClick={() => void compressCtx()}>
+                  {ctxBusy ? '压缩中…' : '一键压缩'}
+                </button>
+              </div>
+              {ctx?.contextLimit ? (
+                <div className="wechat-ctx-track">
+                  <div
+                    className="wechat-ctx-fill"
+                    style={{
+                      width: `${Math.min(100, Math.round((ctx.usedTokens / ctx.contextLimit) * 100))}%`,
+                      background: ctx.threshold != null && ctx.usedTokens >= ctx.threshold ? '#e64340' : undefined,
+                    }}
+                  />
+                </div>
+              ) : null}
+              <div className="wechat-ctx-actions">
+                <span className="wechat-ctx-sub">
+                  {ctx
+                    ? ctx.threshold != null
+                      ? `自动压缩线 ${fmtTokensShort(ctx.threshold)}${ctx.compactedCount > 0 ? ` · 已压缩隐藏 ${ctx.compactedCount} 条` : ''}`
+                      : '未配置上下文窗口，自动压缩未启用'
+                    : '打开会话后显示占用'}
+                </span>
+                <button type="button" className="wechat-ctx-sub" onClick={() => setCtxOpen(false)}>
+                  收起
+                </button>
+              </div>
+            </div>
+          ) : null}
+          <div className="bubbles wechat-bubbles" data-testid="bubbles" onScroll={onBubblesScroll} onTouchStart={onPullStart} onTouchMove={onPullMove} onTouchEnd={onPullEnd} onTouchCancel={onPullEnd}>
             {messages.filter((m) => !hiddenIds[m.id]).map((m, idx, list) => {
               const isMe = m.role === 'user'
+              // F-2：桌面端用插件指令发的消息带 <!--jeff-plugin:...--> 头，手机端解出原话与筹码展示
+              const decodedUser = m.role === 'user' ? decodePluginUserMessage(m.text) : null
               if (m.role === 'system') {
                 return (
                   <div key={m.id} className="day-sep">
@@ -1567,6 +1874,7 @@ export function App() {
               const senderAgentId = target.kind === 'agent' ? target.id : 'agentId' in m ? m.agentId : undefined
               const isLocal = m.id.startsWith('local-')
               const isFailed = failedLocal === m.id
+              const findHitNow = findOpen && findHits[findIdx] === m.id
               const openMenu = () => {
                 if (typeof navigator !== 'undefined' && navigator.vibrate) {
                   try { navigator.vibrate(35) } catch {}
@@ -1580,9 +1888,14 @@ export function App() {
                       <span>{formatDaySep(m.time)}</span>
                     </div>
                   ) : null}
-                  <div className={`wechat-msg-row ${isMe ? 'me' : 'other'}`}>
+                  <div className={`wechat-msg-row ${isMe ? 'me' : 'other'}${findHitNow ? ' search-hit' : ''}`} data-msg-id={m.id}>
                     {!isMe && (
-                      <div className="wechat-msg-avatar">
+                      <div
+                        className="wechat-msg-avatar"
+                        style={target.kind === 'group' ? { cursor: 'pointer' } : undefined}
+                        title={target.kind === 'group' ? `@ ${senderName}` : undefined}
+                        onClick={() => target.kind === 'group' && mentionSender(senderName)}
+                      >
                         <WeChatAvatar
                           kind={target.kind === 'group' ? 'group' : 'agent'}
                           name={senderName}
@@ -1595,7 +1908,12 @@ export function App() {
                     <div className="wechat-msg-content" onContextMenu={(e) => { e.preventDefault(); openMenu() }}>
                       {!isMe && (
                         <div className="msg-who">
-                          <b>{senderName}</b>
+                          <b
+                            style={target.kind === 'group' ? { cursor: 'pointer' } : undefined}
+                            onClick={() => target.kind === 'group' && mentionSender(senderName)}
+                          >
+                            {senderName}
+                          </b>
                           <span>{formatClock(m.time)}</span>
                         </div>
                       )}
@@ -1605,6 +1923,7 @@ export function App() {
                         </div>
                       ) : (
                         <>
+                          {decodedUser?.invoke ? <span className="wechat-msg-chip">{decodedUser.invoke.command} · {decodedUser.invoke.name}</span> : null}
                           <LongPressArea className="wechat-user-bubble" onLongPress={openMenu} onClick={isFailed ? () => void resend(m.id) : undefined}>
                             {m.images?.length ? (
                               m.images.map((img, i) => (
@@ -1619,7 +1938,7 @@ export function App() {
                                 />
                               ))
                             ) : null}
-                            {m.text && m.text !== '（图片）' ? m.text : null}
+                            {decodedUser && decodedUser.displayText && decodedUser.displayText !== '（图片）' ? decodedUser.displayText : null}
                           </LongPressArea>
                           <div className="msg-meta">
                             <span>{formatClock(m.time)}</span>
@@ -1656,7 +1975,7 @@ export function App() {
                     <span>正在回复…</span>
                   </div>
                   <div className="wechat-ai-body live">
-                    <AssistantText text={stream.text} reasoning={stream.reasoning} tools={stream.tools} live />
+                    <AssistantText text={stream.text} reasoning={stream.reasoning} tools={stream.tools} live reasonMs={stream.reasonMs} />
                   </div>
                 </div>
               </div>
@@ -1687,6 +2006,40 @@ export function App() {
                     </svg>
                   </div>
                   <span>新建会话</span>
+                </button>
+                <button
+                  type="button"
+                  className="wechat-plus-cell"
+                  data-testid="plus-find"
+                  onClick={() => {
+                    setPlus(false)
+                    setFindOpen(true)
+                  }}
+                >
+                  <div className="wechat-plus-icon">
+                    <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                      <circle cx="11" cy="11" r="7" />
+                      <path d="M21 21l-4.35-4.35" />
+                    </svg>
+                  </div>
+                  <span>查找聊天内容</span>
+                </button>
+                <button
+                  type="button"
+                  className="wechat-plus-cell"
+                  data-testid="plus-compress"
+                  disabled={ctxBusy || !ctx?.sessionId}
+                  onClick={() => {
+                    setPlus(false)
+                    void compressCtx()
+                  }}
+                >
+                  <div className="wechat-plus-icon">
+                    <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M4 5h16M4 19h16M8 9h8M8 15h8" />
+                    </svg>
+                  </div>
+                  <span>压缩上下文</span>
                 </button>
                 {Capacitor.isNativePlatform() ? (
                   <button
@@ -1770,6 +2123,21 @@ export function App() {
               ) : null}
             </div>
           ) : null}
+          {slashOpen ? (
+            <div className="wechat-slash-pills" data-testid="slash-pills">
+              {slashMatches.map((s) => (
+                <button key={`${s.pluginId}:${s.cmd.name}`} type="button" className="wechat-slash-pill" data-testid={`slash-${s.cmd.name}`} onClick={() => pickSlash(s)}>
+                  {s.cmd.name} · {s.pluginName}
+                </button>
+              ))}
+              <button type="button" className="wechat-slash-pill" data-testid="slash-action-compress" onClick={() => runQuickAction('compress')}>
+                /压缩上下文
+              </button>
+              <button type="button" className="wechat-slash-pill" data-testid="slash-action-new" onClick={() => runQuickAction('clear')}>
+                /新会话
+              </button>
+            </div>
+          ) : null}
           <form
             className="composer wechat-composer"
             onSubmit={(e) => {
@@ -1777,6 +2145,16 @@ export function App() {
               void send()
             }}
           >
+            {chip ? (
+              <div className="wechat-chip-row" data-testid="composer-chip">
+                <span className="wechat-msg-chip">
+                  {chip.command} · {chip.name}
+                  <button type="button" aria-label="移除插件指令" onClick={() => setChip(null)}>
+                    ×
+                  </button>
+                </span>
+              </div>
+            ) : null}
             <button
               type="button"
               className="wechat-composer-plus"

@@ -116,6 +116,11 @@ export default function ModelPickerCombo(props: {
                     }}
                   >
                     {m.label}
+                    {m.contextLimit ? (
+                      <span className="ctx-tag" title="上下文窗口">
+                        {Math.round(m.contextLimit / 1000)}k
+                      </span>
+                    ) : null}
                     {m.thinkingTiers?.length ? <span className="tag">{m.thinkingTiers.length} 档思考</span> : null}
                   </button>
                 )

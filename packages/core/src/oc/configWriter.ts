@@ -80,6 +80,17 @@ export function firstEnabledModel(providers: ProviderSetting[]): { providerID: s
   return null
 }
 
+/** 常见模型默认上下文窗口（未显式配置时的安全 fallback，供自动压缩阈值与 opencode.json） */
+export function inferDefaultContextLimit(modelId: string): number {
+  const m = (modelId || '').toLowerCase()
+  if (m.includes('claude')) return 200_000
+  if (m.includes('gemini')) return 1_000_000
+  if (m.includes('deepseek')) return 64_000
+  if (m.includes('gpt-4') || m.includes('o1') || m.includes('o3') || m.includes('gpt-5')) return 128_000
+  if (m.includes('qwen') || m.includes('glm') || m.includes('llama') || m.includes('kimi') || m.includes('baichuan') || m.includes('minimax') || m.includes('step')) return 128_000
+  return 128_000
+}
+
 /** UI 侧模型选项（聊天 composer / 智能体表单共用） */
 export interface ConfiguredModelOption {
   providerID: string
@@ -99,13 +110,14 @@ export function configuredModelOptions(providers: ProviderSetting[]): Configured
   for (const p of providers) {
     if (!p.enabled) continue
     for (const m of p.models) {
+      const ctxLimit = m.contextLimit || inferDefaultContextLimit(m.id)
       out.push({
         providerID: p.id,
         modelID: m.id,
         label: `${p.name || p.id} / ${m.id}`,
         providerName: p.name || p.id,
         ...(m.attachment ? { attachment: true } : {}),
-        ...(m.contextLimit ? { contextLimit: m.contextLimit } : {}),
+        contextLimit: ctxLimit,
         ...(m.outputLimit ? { outputLimit: m.outputLimit } : {}),
         thinkingTiers: m.thinkingTiers ?? [],
       })
@@ -137,9 +149,8 @@ export function thinkingVariant(apiFormat: ApiFormat, tier: ThinkingTier): Recor
 function modelEntry(apiFormat: ApiFormat, m: ProviderModelCfg): Record<string, unknown> {
   const entry: Record<string, unknown> = {}
   if (m.name) entry.name = m.name
-  if (m.contextLimit || m.outputLimit) {
-    entry.limit = { ...(m.contextLimit ? { context: m.contextLimit } : {}), ...(m.outputLimit ? { output: m.outputLimit } : {}) }
-  }
+  const ctxLimit = m.contextLimit || inferDefaultContextLimit(m.id)
+  entry.limit = { context: ctxLimit, ...(m.outputLimit ? { output: m.outputLimit } : {}) }
   // 不声明 attachment/modalities 时 opencode 视为不支持图片输入，会把图片替换成错误文本
   if (m.attachment) {
     entry.attachment = true

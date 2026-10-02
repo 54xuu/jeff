@@ -207,21 +207,21 @@ describe('中文触发：用户不必说出工具名', () => {
     expect(wantsIndependentSubtasks('不要独立处理目录下所有文件，它们是同一份标书的不同章节')).toBe(false)
   })
 
-  it('命中时把硬指令接到本轮 system 后面，用户原文不变', () => {
-    const system = withSubtaskSteer('已有记忆', userPrompt)
+  it('非内置智能体固定拼接硬指令，用户原文不变', () => {
+    const system = withSubtaskSteer('已有记忆')
     expect(system?.startsWith('已有记忆')).toBe(true)
     expect(system).toContain(SUBTASK_STEER)
     expect(system).toContain('jeff_spawn_subtask')
-    expect(system).not.toContain(userPrompt)
   })
 
   it('小杰不注入（它没有这个工具）', () => {
-    expect(withSubtaskSteer('管家规则', userPrompt, { builtin: true })).toBe('管家规则')
+    expect(withSubtaskSteer('管家规则', { builtin: true })).toBe('管家规则')
   })
 
-  it('未命中时 system 原样返回', () => {
-    expect(withSubtaskSteer('已有记忆', '今天天气怎么样')).toBe('已有记忆')
-    expect(withSubtaskSteer(undefined, '今天天气怎么样')).toBeUndefined()
+  it('前缀稳定性：不随单轮文本有无触发词增删（KV-Cache 命中的前提）', () => {
+    expect(withSubtaskSteer('已有记忆', { builtin: false })).toBe(withSubtaskSteer('已有记忆'))
+    expect(withSubtaskSteer('已有记忆')).toBe(`已有记忆\n\n${SUBTASK_STEER}`)
+    expect(withSubtaskSteer(undefined)).toBe(SUBTASK_STEER)
   })
 })
 

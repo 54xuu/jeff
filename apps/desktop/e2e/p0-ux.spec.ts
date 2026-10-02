@@ -232,6 +232,25 @@ test('P0：草稿 / 斜杠 / 试一下 / 回底 / 查找 / 定时状态 / 浏览
     await expect(page.getByTestId('cron-last-cron_p0_skip')).toContainText('上次已跳过')
     await expect(page.getByTestId('cron-last-cron_p0_none')).toHaveText('尚未运行')
 
+    // ---------- Ctrl+K 指令盘：检索智能体/设置并跳转 ----------
+    await page.keyboard.press('Control+k')
+    await expect(page.getByTestId('command-palette')).toBeVisible()
+    await page.locator('.palette-input').fill('探路')
+    await page.keyboard.press('Enter')
+    await expect(page.getByTestId('command-palette')).toHaveCount(0)
+    await expect(page.getByTestId('chat-window')).toBeVisible({ timeout: 15_000 })
+    await expect(page.locator('.chat-window')).toContainText('E2E探路者')
+    await page.keyboard.press('Control+k')
+    await expect(page.getByTestId('command-palette')).toBeVisible()
+    await page.locator('.palette-input').fill('模型供应商')
+    await page.keyboard.press('Enter')
+    await expect(page.getByTestId('settings-nav-providers')).toBeVisible({ timeout: 15_000 })
+    // Esc 也能关；关掉后不再拦按键
+    await page.keyboard.press('Control+k')
+    await expect(page.getByTestId('command-palette')).toBeVisible()
+    await page.keyboard.press('Escape')
+    await expect(page.getByTestId('command-palette')).toHaveCount(0)
+
     // ---------- 浏览器被操作时顶栏提示 ----------
     await page.evaluate(() => localStorage.setItem('jeff-browser-last-url', 'http://127.0.0.1:1/should-not-load'))
     const bridge = readBridge(HOME)

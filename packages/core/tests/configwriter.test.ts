@@ -178,3 +178,44 @@ describe('writeSidecarConfig（v1.2 三格式 + variants）', () => {
     expect(Object.values(perm).some((v) => v === 'ask')).toBe(false)
   })
 })
+
+describe('模型窗口默认值兜底（2.4 省 Token）', () => {
+  it('常见模型按 ID 推断默认窗口', async () => {
+    const { inferDefaultContextLimit } = await import('../src/oc/configWriter.js')
+    expect(inferDefaultContextLimit('deepseek-ai/DeepSeek-V3.2')).toBe(64_000)
+    expect(inferDefaultContextLimit('claude-3-5-sonnet')).toBe(200_000)
+    expect(inferDefaultContextLimit('gemini-1.5-pro')).toBe(1_000_000)
+    expect(inferDefaultContextLimit('gpt-4o')).toBe(128_000)
+    expect(inferDefaultContextLimit('qwen3-max')).toBe(128_000)
+    expect(inferDefaultContextLimit('完全未知的小众模型')).toBe(128_000)
+    expect(inferDefaultContextLimit('')).toBe(128_000)
+  })
+
+  it('未配置 contextLimit 的模型在 UI 选项与 opencode.json 里都能拿到兜底窗口', async () => {
+    const { configuredModelOptions } = await import('../src/oc/configWriter.js')
+    const providers = [
+      {
+        id: 'p1',
+        name: '测试供应商',
+        enabled: true,
+        baseUrl: '',
+        apiKey: 'k',
+        models: [{ id: 'some-unknown-model', name: '小众模型' }],
+      } as never,
+    ]
+    const opts = configuredModelOptions(providers)
+    expect(opts[0]?.contextLimit).toBe(128_000)
+
+    // opencode.json 路径：writeSidecarConfig 写出的模型条目带兜底 limit
+    const p = buildPaths(tmp)
+    fs.mkdirSync(p.ocConfigDir, { recursive: true })
+    const configFile = path.join(p.ocConfigDir, 'opencode.json')
+    fs.writeFileSync(configFile, '{}')
+    writeSidecarConfig(p, providers)
+    const written = JSON.parse(fs.readFileSync(configFile, 'utf8')) as {
+      provider?: Record<string, { models?: Record<string, { limit?: { context?: number } }> }>
+    }
+    const entry = written.provider?.p1?.models?.['some-unknown-model']
+    expect(entry?.limit?.context, '未配置窗口的模型应写进默认 128k').toBe(128_000)
+  })
+})

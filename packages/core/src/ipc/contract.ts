@@ -213,6 +213,8 @@ export interface ModelOption {
   providerID: string
   modelID: string
   label: string
+  /** 上下文窗口（未配置时用常见模型默认值兜底，供 ModelPicker 展示规格） */
+  contextLimit?: number
   /** 该模型支持的思考档位（来自供应商配置；空 = 无思考下拉） */
   thinkingTiers?: ThinkingTier[]
 }

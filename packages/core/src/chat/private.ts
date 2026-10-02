@@ -261,7 +261,7 @@ export class PrivateChat {
         text,
         ...(images && images.length ? { images } : {}),
         agent: agentSlug(agentId),
-        system: withSubtaskSteer(this.hooks?.buildSystem?.(agentId), text, { builtin }),
+        system: withSubtaskSteer(this.hooks?.buildSystem?.(agentId), { builtin }),
         timeoutMs: DEFAULT_SEND_TIMEOUT_MS,
         ...opts,
       })

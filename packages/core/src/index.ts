@@ -6,8 +6,8 @@ import { openDb, type DB } from './db/db.js'
 import { agentRepo, kvRepo, chatMessageRepo, projectRepo, projectAgentRepo, cronTaskRepo, cronRunRepo, type AgentRow, type CronTaskRow } from './db/repos.js'
 import { SidecarManager } from './sidecar/manager.js'
 import { OcClient } from './oc/client.js'
-import { writeSidecarConfig, migrateProviders, firstEnabledModel, configuredModelOptions, type ProviderSetting } from './oc/configWriter.js'
-import { AgentRegistry, XIAOJIE_INSTRUCTIONS, agentSlug } from './agents/registry.js'
+import { writeSidecarConfig, migrateProviders, firstEnabledModel, configuredModelOptions, inferDefaultContextLimit, type ProviderSetting } from './oc/configWriter.js'
+import { AgentRegistry, XIAOJIE_INSTRUCTIONS, agentSlug, agentDeniedTools } from './agents/registry.js'
 import { XIAOJIE_ID } from './ipc/contract.js'
 import { ToolBridge, renderBridgePlugin } from './tools/bridge.js'
 import { registerAdminTools } from './tools/adminTools.js'
@@ -42,6 +42,7 @@ export { APP_VERSION } from './version.js'
 export type { McpServerCfg } from './mcp/parse.js'
 export { buildPaths, ensureDirs, jeffRoot } from './paths.js'
 export { openDb } from './db/db.js'
+export { inferDefaultContextLimit } from './oc/configWriter.js'
 
 const NUDGE_INTERVAL = 10 // 每 N 个用户触发一次后台记忆自省
 const NUDGE_REVIEW_MAX_CHARS = 6000
@@ -99,14 +100,33 @@ function mimeOf(name: string): string {
 }
 
 /**
- * 联网搜索指引（每轮注入）：opencode 内置 websearch 工具依赖搜索服务密钥（Exa 等），
- * Jeff 未配置该密钥，直接调用会报错；本机已装 byted-web-search 技能（火山引擎豆包搜索，
+ * 联网搜索指引（按能力条件注入）：opencode 内置 websearch 工具依赖搜索服务密钥（Exa 等），
+ * Jeff 未配置该密钥，直接调用会报错；已装 byted-web-search 技能（火山引擎豆包搜索，
  * 依赖环境变量 WEB_SEARCH_API_KEY），缺凭证时引导用户去控制台获取。
  */
 export const WEB_SEARCH_GUIDE = [
   '【联网搜索（Jeff）】需要联网搜索/查询时效性信息时，优先使用 byted-web-search 技能（skill 工具，火山引擎豆包搜索）。',
   '不要使用内置 websearch 工具（Jeff 未配置其搜索服务密钥，调用会失败）。若 byted-web-search 返回「未找到凭证/invalid_api_key/10403」，向用户说明：需要配置环境变量 WEB_SEARCH_API_KEY（从火山引擎豆包搜索控制台获取）后重启 Jeff。',
 ].join('\n')
+
+/** 指南指向的联网技能目录名：没装它，注入指南就是每轮白烧 100+ token 的无效指令 */
+export const WEB_SEARCH_SKILL_NAME = 'byted-web-search'
+
+/**
+ * 该智能体是否具备联网搜索能力（决定 WEB_SEARCH_GUIDE 是否注入）：
+ * - skill 工具被禁用 → 模型没有任何触达技能的路径；
+ * - 联网技能未安装 → 指南没有指向的对象；
+ * 无联网能力的专用 agent（子任务提取、纯代码 agent 等）不再每轮喂入该指南。
+ */
+export function agentWebSearchCapable(agent: AgentRow | null | undefined, skillsDir?: string): boolean {
+  if (agent && agentDeniedTools(agent).has('skill')) return false
+  const dir = skillsDir || userSkillsDir()
+  try {
+    return fs.existsSync(path.join(dir, WEB_SEARCH_SKILL_NAME, 'SKILL.md'))
+  } catch {
+    return false
+  }
+}
 
 /**
  * AGENTS.md 注入块组装：用户级 + 项目级（仅一个来源，导出以便单测）。
@@ -203,7 +223,7 @@ export class JeffCore extends EventEmitter {
     this.delegator.onDebugLog = this.debugLog.fn()
     this.delegator.onIdle = () => this.flushPendingRegistryRestart()
     this.subtaskRunner = new SubtaskRunner(this.db, () => this.oc)
-    this.subtaskRunner.buildSystem = (agentId, projectId) => this.buildMemorySystem(agentId, projectId)
+    this.subtaskRunner.buildSystem = (agentId, projectId) => this.buildMemorySystem(agentId, projectId, { isSubtask: true })
     this.subtaskRunner.defaultModel = () => this.defaultModel()
     this.subtaskRunner.onDebugLog = this.debugLog.fn()
     // 子任务会话标 isSubtask：resolveSession 据此拦下嵌套调用；同时不进 session:private/group 指针，
@@ -465,9 +485,13 @@ export class JeffCore extends EventEmitter {
     }
   }
 
-  /** 记忆注入：agent 记忆 + 项目记忆（群聊）+ 全局用户画像 + AGENTS.md（用户级/项目级） */
-  buildMemorySystem(agentId: string, projectId?: string): string | undefined {
-    const blocks: string[] = [WEB_SEARCH_GUIDE]
+  /** 记忆注入：联网指南（仅具备联网能力的 agent）+ agent 记忆 + 项目记忆（群聊）+ 全局用户画像 + AGENTS.md（用户级/项目级） */
+  buildMemorySystem(agentId: string, projectId?: string, opts?: { isSubtask?: boolean }): string | undefined {
+    const blocks: string[] = []
+    // 联网指南只在 agent 真能联网时注入：skill 工具被禁或联网技能未安装的专用 agent，每轮省下无效的 100+ token
+    if (!opts?.isSubtask && agentWebSearchCapable(agentRepo(this.db).get(agentId))) {
+      blocks.push(WEB_SEARCH_GUIDE)
+    }
     for (const md of this.agentsMdBlocks(projectId)) blocks.push(md)
     const agentBlock = this.memory.renderBlock({ kind: 'agent', agentId })
     if (agentBlock) blocks.push(agentBlock)
@@ -632,8 +656,9 @@ export class JeffCore extends EventEmitter {
   private modelLimits(model: { providerID: string; modelID: string } | null): { contextLimit: number | null; outputLimit: number | null } {
     if (!model) return { contextLimit: null, outputLimit: null }
     const opt = this.configuredModels().find((m) => m.providerID === model.providerID && m.modelID === model.modelID)
+    const ctx = opt?.contextLimit ?? inferDefaultContextLimit(model.modelID)
     return {
-      contextLimit: opt?.contextLimit ?? null,
+      contextLimit: ctx ?? null,
       outputLimit: opt?.outputLimit ?? null,
     }
   }
