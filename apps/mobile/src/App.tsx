@@ -464,6 +464,7 @@ export function App() {
   const [editingCampaignId, setEditingCampaignId] = useState('')
   const [campaignFeedback, setCampaignFeedback] = useState<Record<string, string>>({})
   const [campaignPaths, setCampaignPaths] = useState<Record<string, string>>({})
+  const [campaignAssetChoices, setCampaignAssetChoices] = useState<Record<string, string>>({})
   const [assetDraft, setAssetDraft] = useState<{ title: string; path: string; feature: string; kind: 'image' | 'video' | 'document' | 'demo_url'; source: 'user_provided' | 'authorized_screenshot' | 'generated_illustration' | 'demo_material'; sourceNote: string; isReal: boolean }>({ title: '', path: '', feature: '', kind: 'image', source: 'user_provided', sourceNote: '', isReal: false })
   const dataDirRef = useRef('')
   const [computers, setComputers] = useState(phone.desktops)
@@ -1332,6 +1333,16 @@ export function App() {
       setProjects((items) => items.map((item) => item.id === updated.id ? updated : item))
       setWorkspaceDraft(parseProjectWorkspaceState(updated.workspace_state))
     } catch (err) { setWorkspaceSaved(`无法确认素材：${String((err as Error).message)}`) }
+  }
+
+  async function resolveCampaignMaterialOnPhone(campaign: CampaignProposal, need: string) {
+    try {
+      if (!target || target.kind !== 'group') return
+      const updated = await phone.invoke<ProjectInfo>(IPC.projectCampaign, { projectId: target.id, action: 'resolve_material', campaignId: campaign.id, need, assetId: campaignAssetChoices[`${campaign.id}:${need}`] || '' })
+      setProjects((items) => items.map((item) => item.id === updated.id ? updated : item))
+      setWorkspaceDraft(parseProjectWorkspaceState(updated.workspace_state))
+      setWorkspaceSaved('已使用确认素材补齐选题缺口')
+    } catch (err) { setWorkspaceSaved(`无法补齐素材缺口：${String((err as Error).message)}`) }
   }
 
   async function loadFiles(dir: string) {
@@ -2512,6 +2523,7 @@ export function App() {
                 <p>功能：{campaign.feature || '完整系统'}；场景：{campaign.story || '未填写'}</p>
                 <p>核心卖点：{campaign.sellingPoints.join('；')}</p>
                 <p>{campaign.materialsNeeded.length ? `待补素材：${campaign.materialsNeeded.join('、')}` : '素材缺口已清零'}</p>
+                {campaign.materialsNeeded.map((need) => <div className="campaign-mobile-actions" key={need} data-testid={`mobile-campaign-material-${campaign.id}`}><span>补齐：{need}</span><select aria-label={`${need} 匹配素材`} data-testid={`mobile-campaign-asset-select-${campaign.id}`} value={campaignAssetChoices[`${campaign.id}:${need}`] || ''} onChange={(e) => setCampaignAssetChoices((choices) => ({ ...choices, [`${campaign.id}:${need}`]: e.target.value }))}><option value="">选择已确认素材</option>{workspaceDraft.assets.filter((asset) => asset.confirmed && (!asset.feature || !campaign.feature || asset.feature === campaign.feature)).map((asset) => <option key={asset.id} value={asset.id}>{asset.title} · {asset.source === 'generated_illustration' ? '示意图' : asset.isReal ? '真实素材' : '素材'}</option>)}</select><button type="button" disabled={!campaignAssetChoices[`${campaign.id}:${need}`] || workspaceSaving} data-testid={`mobile-campaign-material-resolve-${campaign.id}`} onClick={() => void resolveCampaignMaterialOnPhone(campaign, need)}>使用该素材</button></div>)}
                 {campaign.directionFeedback ? <p>方向意见：{campaign.directionFeedback}</p> : null}
                 <button type="button" data-testid={`mobile-campaign-edit-${campaign.id}`} onClick={() => editCampaignOnPhone(campaign)}>编辑并提交新版本</button>
                 {campaign.approvedRevision !== campaign.revision ? <>

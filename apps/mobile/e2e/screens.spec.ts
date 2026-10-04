@@ -98,15 +98,20 @@ test.describe('1.11 统一风格全屏回归', () => {
                     state.campaigns.unshift({
                       id: 'cmp_mobile_e2e', kind: p.kind, title: p.title, feature: p.feature, story: p.story,
                       channels: p.channels, sellingPoints: p.sellingPoints, materialsNeeded: p.materialsNeeded,
-                      revision: 1, approvedRevision: null, directionFeedback: '', directionReviews: [],
+                      assetIds: [], revision: 1, approvedRevision: null, directionFeedback: '', directionReviews: [],
                       productionTaskId: '', updatedAt: Date.now(), deliveries: [],
                     })
                   } else {
                     const campaign = state.campaigns.find((x: any) => x.id === p.campaignId)
                     if (p.action === 'register_asset') state.assets.unshift({ id: 'asset_mobile_e2e', ...p, confirmed: false, createdAt: Date.now() })
                     else if (p.action === 'review_asset') Object.assign(state.assets.find((asset: any) => asset.id === p.assetId), { confirmed: p.confirmed })
+                    else if (p.action === 'resolve_material') {
+                      const campaign = state.campaigns.find((x: any) => x.id === p.campaignId)
+                      campaign.materialsNeeded = campaign.materialsNeeded.filter((need: string) => need !== p.need)
+                      campaign.assetIds.push(p.assetId)
+                    }
                     else if (p.action === 'update') {
-                      Object.assign(campaign, p, { revision: campaign.revision + 1, approvedRevision: null, directionFeedback: '', productionTaskId: '' })
+                      Object.assign(campaign, p, { assetIds: [], revision: campaign.revision + 1, approvedRevision: null, directionFeedback: '', productionTaskId: '' })
                     } else if (p.action === 'review_direction') {
                       campaign.approvedRevision = p.decision === 'approve' ? campaign.revision : null
                       campaign.directionFeedback = p.feedback || ''
@@ -382,5 +387,18 @@ test.describe('1.11 统一风格全屏回归', () => {
     await expect(page.getByTestId('mobile-asset-asset_mobile_e2e')).toContainText('待确认')
     await page.getByRole('button', { name: '确认可用' }).click()
     await expect(page.getByTestId('mobile-asset-asset_mobile_e2e')).toContainText('已确认')
+    await page.getByTestId('mobile-campaign-title').fill('护士接收病房呼叫')
+    await page.getByTestId('mobile-campaign-feature').fill('病房呼叫')
+    await page.getByTestId('mobile-campaign-points').fill('及时接收呼叫')
+    await page.getByTestId('mobile-campaign-materials').fill('腕表实拍')
+    await page.getByTestId('mobile-campaign-create').click()
+    const card = page.getByTestId('mobile-campaign-cmp_mobile_e2e')
+    await expect(card).toContainText('待补素材：腕表实拍')
+    await page.getByTestId('mobile-campaign-approve-cmp_mobile_e2e').click()
+    const task = page.getByTestId('mobile-campaign-task-cmp_mobile_e2e')
+    await expect(task).toBeDisabled()
+    await page.getByTestId('mobile-campaign-asset-select-cmp_mobile_e2e').selectOption('asset_mobile_e2e')
+    await page.getByTestId('mobile-campaign-material-resolve-cmp_mobile_e2e').click()
+    await expect(task).toBeEnabled()
   })
 })

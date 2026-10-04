@@ -4,6 +4,7 @@ import {
   createCampaignProposal, reviewCampaignDirection, canStartCampaignProduction, attachCampaignProductionTask,
   submitCampaignDelivery, reviewCampaignDelivery, updateCampaignProposal,
   registerProjectAsset, reviewProjectAsset,
+  resolveCampaignMaterial,
 } from '../src/project/workspace.js'
 
 describe('project workspace profile', () => {
@@ -84,6 +85,24 @@ describe('project workspace profile', () => {
     expect(() => submitCampaignDelivery(state, campaign.id, '宣传/腕表病房呼叫/v2.mp4')).toThrow(/旧版本/)
     const serialized = serializeProjectWorkspaceState(state)
     expect(parseProjectWorkspaceState(serialized).campaigns[0]!.productionTaskId).toBe('task_1')
+  })
+
+  it('only a confirmed compatible asset can resolve a campaign material gap', () => {
+    let state = registerProjectAsset(EMPTY_PROJECT_WORKSPACE, {
+      title: '腕表照片', kind: 'image', feature: '病房呼叫', path: 'assets/watch.png', source: 'user_provided', sourceNote: '', isReal: true,
+    })
+    const asset = state.assets[0]!
+    state = createCampaignProposal(state, {
+      kind: 'feature_video', title: '护士接收病房呼叫', feature: '病房呼叫', story: '', channels: [], sellingPoints: ['快速响应'], materialsNeeded: ['腕表实拍'],
+    })
+    const campaign = state.campaigns[0]!
+    expect(() => resolveCampaignMaterial(state, campaign.id, '腕表实拍', asset.id)).toThrow(/已确认可用/)
+    state = reviewProjectAsset(state, asset.id, true)
+    state = resolveCampaignMaterial(state, campaign.id, '腕表实拍', asset.id)
+    expect(state.campaigns[0]).toMatchObject({ materialsNeeded: [], assetIds: [asset.id] })
+    expect(canStartCampaignProduction(state.campaigns[0]!)).toBe(false)
+    state = reviewCampaignDirection(state, campaign.id, 'approve')
+    expect(canStartCampaignProduction(state.campaigns[0]!)).toBe(true)
   })
 
   it('rejects malformed, non-object, empty, and oversized JSON', () => {

@@ -251,6 +251,7 @@ test.describe('Jeff UI 封闭清单', () => {
       await page.getByTestId('asset-register').click()
       const assetCard = page.locator('[data-testid^="asset-asset_"]').first()
       await expect(assetCard).toContainText('腕表实拍')
+      const assetId = (await assetCard.getAttribute('data-testid'))!.slice('asset-'.length)
       await assetCard.getByRole('button', { name: '确认可用' }).click()
       await expect(assetCard).toContainText('已确认')
 
@@ -272,12 +273,15 @@ test.describe('Jeff UI 封闭清单', () => {
       await expect(taskButton).toBeVisible()
       await expect(taskButton).toBeDisabled()
       await page.getByTestId(`campaign-edit-${campaignId}`).click()
-      await page.getByTestId('campaign-materials').fill('')
       await page.getByTestId('campaign-create').click()
       await expect(campaignCard).toContainText('方向 v2 · 待确认')
       await expect(taskButton).toHaveCount(0)
       await page.getByTestId(`campaign-approve-${campaignId}`).click()
-      await expect(page.getByTestId(`campaign-task-${campaignId}`)).toBeEnabled()
+      const taskV2Button = page.getByTestId(`campaign-task-${campaignId}`)
+      await expect(taskV2Button).toBeDisabled()
+      await page.getByTestId(`campaign-asset-select-${campaignId}`).selectOption(assetId)
+      await page.getByTestId(`campaign-material-resolve-${campaignId}`).click()
+      await expect(taskV2Button).toBeEnabled()
       const directionAfterTamper = await page.evaluate(async (projectId) => {
         const jeff = (window as unknown as { jeff: { invoke: (channel: string, payload?: unknown) => Promise<any> } }).jeff
         const project = (await jeff.invoke('projects:list')).find((item: any) => item.id === projectId)
@@ -290,7 +294,7 @@ test.describe('Jeff UI 封闭清单', () => {
         const saved = JSON.parse(updated.workspace_state)
         return { campaign: saved.campaigns[0], asset: saved.assets[0] }
       }, campaignProjectId)
-      expect(directionAfterTamper.campaign).toMatchObject({ approvedRevision: 2, productionTaskId: '', deliveries: [] })
+      expect(directionAfterTamper.campaign).toMatchObject({ approvedRevision: 2, productionTaskId: '', deliveries: [], materialsNeeded: [], assetIds: [assetId] })
       expect(directionAfterTamper.asset).toMatchObject({ confirmed: true, isReal: true, source: 'user_provided' })
       await page.getByTestId(`campaign-task-${campaignId}`).click()
       await expect(page.getByTestId(`campaign-task-linked-${campaignId}`)).toContainText('已关联制作任务')

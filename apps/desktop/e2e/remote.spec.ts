@@ -134,7 +134,7 @@ test('假手机经本地中转站绑定，并让桌面切到新项目群', async
 
     fs.writeFileSync(path.join(dir, 'watch.png'), Buffer.from('e2e image placeholder'))
     const assetRegistered = await phone.link.request(qr.desktopId, 'project:campaign', {
-      projectId: project.id, action: 'register_asset', title: '腕表正面照片', kind: 'image', feature: '病房呼叫',
+      projectId: project.id, action: 'register_asset', title: '腕表正面照片', kind: 'image', feature: '腕表病房呼叫',
       path: 'watch.png', source: 'user_provided', sourceNote: '手机登记', isReal: true,
     }) as { workspace_state: string }
     const asset = parseProjectWorkspaceState(assetRegistered.workspace_state).assets[0]!
@@ -148,7 +148,7 @@ test('假手机经本地中转站绑定，并让桌面切到新项目群', async
     const created = await phone.link.request(qr.desktopId, 'project:campaign', {
       projectId: project.id, action: 'create', kind: 'feature_video', title: '腕表病房呼叫',
       feature: '腕表病房呼叫', story: '护士通过腕表接收病房呼叫', channels: ['渠道群'],
-      sellingPoints: ['减少漏接'], materialsNeeded: [],
+      sellingPoints: ['减少漏接'], materialsNeeded: ['腕表实拍'],
     }) as { workspace_state: string }
     const campaign = parseProjectWorkspaceState(created.workspace_state).campaigns[0]!
     expect(campaign.approvedRevision).toBeNull()
@@ -156,6 +156,13 @@ test('假手机经本地中转站绑定，并让桌面切到新项目群', async
       projectId: project.id, action: 'review_direction', campaignId: campaign.id, decision: 'approve',
     }) as { workspace_state: string }
     expect(parseProjectWorkspaceState(approved.workspace_state).campaigns[0]).toMatchObject({ approvedRevision: 1, directionReviews: [{ decision: 'approve', revision: 1 }] })
+    await expect(phone.link.request(qr.desktopId, 'project:campaign', {
+      projectId: project.id, action: 'create_task', campaignId: campaign.id,
+    })).rejects.toThrow(/待补素材/)
+    const gapResolved = await phone.link.request(qr.desktopId, 'project:campaign', {
+      projectId: project.id, action: 'resolve_material', campaignId: campaign.id, need: '腕表实拍', assetId: asset.id,
+    }) as { workspace_state: string }
+    expect(parseProjectWorkspaceState(gapResolved.workspace_state).campaigns[0]).toMatchObject({ materialsNeeded: [], assetIds: [asset.id] })
     const taskLinked = await phone.link.request(qr.desktopId, 'project:campaign', {
       projectId: project.id, action: 'create_task', campaignId: campaign.id,
     }) as { workspace_state: string }

@@ -46,6 +46,7 @@ export default function GroupInfoDrawer(props: { project: ProjectInfo; busy?: bo
   const [assetSourceNote, setAssetSourceNote] = useState('')
   const [assetSource, setAssetSource] = useState<'user_provided' | 'authorized_screenshot' | 'generated_illustration' | 'demo_material'>('user_provided')
   const [assetReal, setAssetReal] = useState(false)
+  const [campaignAssetChoice, setCampaignAssetChoice] = useState<Record<string, string>>({})
   const [deliveryPaths, setDeliveryPaths] = useState<Record<string, string>>({})
   const [leaderId, setLeaderId] = useState(project.leader_agent_id || '')
   const [saving, setSaving] = useState(false)
@@ -190,6 +191,12 @@ export default function GroupInfoDrawer(props: { project: ProjectInfo; busy?: bo
       setWorkspaceState(parseProjectWorkspaceState(updated.workspace_state))
     } catch (error) { setSaveMsg(error instanceof Error ? error.message : String(error)) }
   }
+  const resolveMaterial = async (campaign: CampaignProposal, need: string) => {
+    try {
+      const updated = await api.invoke<ProjectInfo>(IPC.projectCampaign, { projectId: project.id, action: 'resolve_material', campaignId: campaign.id, need, assetId: campaignAssetChoice[`${campaign.id}:${need}`] || '' })
+      setWorkspaceState(parseProjectWorkspaceState(updated.workspace_state))
+    } catch (error) { setSaveMsg(error instanceof Error ? error.message : String(error)) }
+  }
 
   const pickDir = async () => {
     const dir = await api.invoke<string | null>(IPC.dialogPickDir, { title: '选择工作空间目录', defaultPath: workspaceDir || undefined })
@@ -302,6 +309,7 @@ export default function GroupInfoDrawer(props: { project: ProjectInfo; busy?: bo
                 <p>功能：{campaign.feature || '完整系统'}；场景：{campaign.story || '未填写'}</p>
                 <p>核心卖点：{campaign.sellingPoints.join('；')}</p>
                 <p>渠道：{campaign.channels.join('、') || '待配置'}{campaign.materialsNeeded.length ? ` · 待补素材：${campaign.materialsNeeded.join('、')}` : ' · 素材缺口已清零'}</p>
+                {campaign.materialsNeeded.map((need) => <div className="campaign-actions" key={need} data-testid={`campaign-material-${campaign.id}`}><span>补齐：{need}</span><select aria-label={`${need} 匹配素材`} data-testid={`campaign-asset-select-${campaign.id}`} value={campaignAssetChoice[`${campaign.id}:${need}`] || ''} onChange={(event) => setCampaignAssetChoice((choices) => ({ ...choices, [`${campaign.id}:${need}`]: event.target.value }))}><option value="">选择已确认素材</option>{workspaceState.assets.filter((asset) => asset.confirmed && (!asset.feature || !campaign.feature || asset.feature === campaign.feature)).map((asset) => <option key={asset.id} value={asset.id}>{asset.title} · {asset.source === 'generated_illustration' ? '示意图' : asset.isReal ? '真实素材' : '素材'}</option>)}</select><button className="btn" disabled={!campaignAssetChoice[`${campaign.id}:${need}`] || saving} data-testid={`campaign-material-resolve-${campaign.id}`} onClick={() => void resolveMaterial(campaign, need)}>使用该素材</button></div>)}
                 {campaign.directionFeedback ? <p className="campaign-feedback">方向意见：{campaign.directionFeedback}</p> : null}
                 <button className="btn" data-testid={`campaign-edit-${campaign.id}`} onClick={() => editCampaign(campaign)}>编辑并提交新版本</button>
                 {campaign.approvedRevision !== campaign.revision ? <div className="campaign-actions">

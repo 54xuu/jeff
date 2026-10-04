@@ -18,7 +18,7 @@ import {
   IPC, XIAOJIE_ID, agentRepo, projectRepo, projectAgentRepo, taskRepo, taskCardMessage, snapshotInstructions, APP_VERSION,
   PrivateChatStoppedError, resolveSendText, resolveScreenshotScale, parseProjectWorkspaceState,
   serializeProjectWorkspaceState, validateProjectWorkspaceJson, createCampaignProposal, updateCampaignProposal, reviewCampaignDirection,
-  attachCampaignProductionTask, submitCampaignDelivery, reviewCampaignDelivery, registerProjectAsset, reviewProjectAsset,
+  attachCampaignProductionTask, submitCampaignDelivery, reviewCampaignDelivery, registerProjectAsset, reviewProjectAsset, resolveCampaignMaterial,
   type ThinkingTier, type ChatPluginInvoke, type RemoteStatus,
 } from '@jeff/core'
 import { listDirs, makeDir } from '../../../../packages/core/src/remote/dirs.js'
@@ -562,6 +562,9 @@ export function registerIpc(core: JeffCore): Record<string, Handler> {
           }
           case 'review_asset':
             state = reviewProjectAsset(state, d.assetId, d.confirmed)
+            break
+          case 'resolve_material':
+            state = resolveCampaignMaterial(state, d.campaignId, d.need, d.assetId)
             break
           case 'create':
             state = createCampaignProposal(state, {

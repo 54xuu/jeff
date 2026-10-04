@@ -49,6 +49,7 @@ export interface CampaignProposal {
   channels: string[]
   sellingPoints: string[]
   materialsNeeded: string[]
+  assetIds: string[]
   revision: number
   approvedRevision: number | null
   directionFeedback: string
@@ -136,6 +137,21 @@ export function reviewProjectAsset(state: ProjectWorkspaceState, id: string, con
   const asset = state.assets.find((item) => item.id === id)
   if (!asset) throw new Error('找不到该素材')
   return { ...state, assets: state.assets.map((item) => item.id === id ? { ...item, confirmed } : item) }
+}
+
+export function resolveCampaignMaterial(state: ProjectWorkspaceState, campaignId: string, need: string, assetId: string): ProjectWorkspaceState {
+  const campaign = requireCampaign(state, campaignId)
+  const normalizedNeed = need.trim()
+  const asset = state.assets.find((item) => item.id === assetId)
+  if (!normalizedNeed || !campaign.materialsNeeded.includes(normalizedNeed)) throw new Error('该选题没有此待补素材项')
+  if (!asset || !asset.confirmed) throw new Error('只能使用已确认可用的项目素材')
+  if (asset.feature && campaign.feature && asset.feature !== campaign.feature) throw new Error('素材所属功能与选题功能不一致')
+  return replaceCampaign(state, campaignId, {
+    ...campaign,
+    materialsNeeded: campaign.materialsNeeded.filter((item) => item !== normalizedNeed),
+    assetIds: [...new Set([...campaign.assetIds, asset.id])],
+    updatedAt: Date.now(),
+  })
 }
 
 export function validateProjectWorkspaceJson(raw: string): string {
@@ -291,6 +307,7 @@ function normalizeCampaign(value: Record<string, unknown> | CampaignProposal): C
     channels: stringList(value.channels),
     sellingPoints: stringList(value.sellingPoints),
     materialsNeeded: stringList(value.materialsNeeded),
+    assetIds: stringList(value.assetIds),
     revision,
     approvedRevision: typeof value.approvedRevision === 'number' && value.approvedRevision === revision ? revision : null,
     directionFeedback: typeof value.directionFeedback === 'string' ? value.directionFeedback : '',
@@ -311,6 +328,7 @@ function normalizeProposalInput(input: CampaignProposalInput): Omit<CampaignProp
     channels: cleanLines(input.channels),
     sellingPoints: cleanLines(input.sellingPoints),
     materialsNeeded: cleanLines(input.materialsNeeded),
+    assetIds: [],
   }
 }
 
