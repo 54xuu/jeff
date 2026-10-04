@@ -63,6 +63,7 @@ test.describe('1.11 统一风格全屏回归', () => {
       ({ profile, agents, projects, chat, group, now }) => {
         localStorage.clear()
         localStorage.setItem('jeff-phone-profile', JSON.stringify(profile))
+        const taskRows: any[] = []
         let real: MockPhone
         Object.defineProperty(window, '__phone', {
           configurable: true,
@@ -81,12 +82,25 @@ test.describe('1.11 统一风格全屏回归', () => {
                   return agents
                 case 'projects:list':
                   return projects
+                case 'tasks:list':
+                  return taskRows.filter((task) => task.project_id === p.projectId)
+                case 'task:save': {
+                  let task = p.id ? taskRows.find((item) => item.id === p.id) : undefined
+                  if (!task) {
+                    task = { id: `task_mobile_${taskRows.length + 1}`, project_id: p.project_id, number: taskRows.length + 1, key: `JEF-${taskRows.length + 1}`, status: 'todo', priority: 'medium', assignee_type: 'none', assignee_id: '', parent_task_id: null, depends_on: [], evidence_paths: [], acceptance_criteria: '', due_at: null }
+                    taskRows.push(task)
+                  }
+                  Object.assign(task, p, { depends_on: p.depends_on ?? task.depends_on, due_at: p.due_at ?? task.due_at })
+                  return task
+                }
                 case 'project:save':
                   {
                     const project = projects.find((x: MockProject) => x.id === p.id)
                     if (project) Object.assign(project, p)
                     return { ...project, ...p, updated_at: Date.now(), memberCount: 3 }
                   }
+                case 'project:document':
+                  return { kind: p.kind, path: `/home/e2e/workspace/项目文档/${p.kind}.md`, content: '# 草稿', missing: [] }
                 case 'project:campaign': {
                   const project = projects.find((x: MockProject) => x.id === p.projectId)
                   if (!project) throw new Error('project missing')
@@ -240,10 +254,24 @@ test.describe('1.11 统一风格全屏回归', () => {
     await page.getByTestId('mobile-workspace-outline').fill('系统方案\n病房呼叫\n门诊叫号')
     await page.getByTestId('mobile-workspace-save').click()
     await expect(page.getByTestId('mobile-workspace-result')).toHaveText('已保存到项目资料')
+    await page.getByTestId('mobile-project-document-weekly').click()
+    await expect(page.getByTestId('mobile-workspace-result')).toContainText('项目文档/weekly_report.md')
     await page.locator('.project-workspace-screen .btn-nav-back').click()
     await page.getByTestId('project-workspace').click()
     await expect(page.getByTestId('mobile-workspace-goal')).toHaveValue('完成无声智慧病房系统介绍')
     await expect(page.getByTestId('mobile-workspace-outline')).toHaveValue('系统方案\n病房呼叫\n门诊叫号')
+    await page.getByTestId('mobile-project-task-title').fill('先完成接口联调')
+    await page.getByTestId('mobile-project-task-create').click()
+    await expect(page.getByTestId('mobile-project-task-task_mobile_1')).toContainText('先完成接口联调')
+    await page.getByTestId('mobile-project-task-title').fill('再做现场验收')
+    await page.getByTestId('mobile-project-task-dependencies').selectOption('task_mobile_1')
+    await page.getByTestId('mobile-project-task-criteria').fill('护士站现场呼叫通过')
+    await page.getByTestId('mobile-project-task-create').click()
+    const mobileSecondTask = page.getByTestId('mobile-project-task-task_mobile_2')
+    await expect(mobileSecondTask).toContainText('等待前置任务')
+    await expect(mobileSecondTask.getByRole('combobox')).toBeDisabled()
+    await page.getByTestId('mobile-project-task-task_mobile_1').getByRole('combobox').selectOption('done')
+    await expect(mobileSecondTask.getByRole('combobox')).toBeEnabled()
     await page.getByTestId('mobile-campaign-title').fill('腕表让护士不错过病房呼叫')
     await page.getByTestId('mobile-campaign-feature').fill('腕表病房呼叫')
     await page.getByTestId('mobile-campaign-story').fill('护士忙碌时通过腕表接收呼叫')

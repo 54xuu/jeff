@@ -130,6 +130,10 @@ CREATE INDEX IF NOT EXISTS idx_cron_run_task ON cron_run(task_id, started_at);
   addColumn(db, 'project', 'workspace_dir', "TEXT NOT NULL DEFAULT ''", '工作空间目录（空=全局 workspace，输出文件默认落这里）')
   addColumn(db, 'project', 'workspace_state', "TEXT NOT NULL DEFAULT '{}'", '工作台结构化资料（目标、大纲、内容规划；随项目同步）')
   addColumn(db, 'cron_task', 'run_at', 'INTEGER', '一次性任务的绝对触发时间（ms，本机时区）；NULL=按 cron 重复')
+  addColumn(db, 'task', 'due_at', 'INTEGER', '任务截止时间（ms；null=未设）')
+  addColumn(db, 'task', 'depends_on', "TEXT NOT NULL DEFAULT '[]'", '依赖任务 id 数组 JSON')
+  addColumn(db, 'task', 'acceptance_criteria', "TEXT NOT NULL DEFAULT ''", '任务验收标准')
+  addColumn(db, 'task', 'evidence_paths', "TEXT NOT NULL DEFAULT '[]'", '任务验收证据的工作区相对路径数组 JSON')
 
   // 角色归一：历史 member / 开发 / ui / 测试 / 产品 … → worker；再按 project.leader_agent_id 校正群主
   db.exec(`UPDATE project_agent SET role = 'worker' WHERE role IS NULL OR trim(role) = '' OR lower(role) != 'leader'`)

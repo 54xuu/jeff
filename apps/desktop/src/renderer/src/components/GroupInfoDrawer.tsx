@@ -4,16 +4,17 @@ import { api } from '../api'
 import {
   IPC, projectRoleLabel, parseProjectWorkspaceState, serializeProjectWorkspaceState,
   canStartCampaignProduction,
-  type CampaignProposal, type CampaignKind, type ProjectWorkspaceState, type GroupMessage, type GroupThreadBrief, type ProjectInfo,
+  type CampaignProposal, type CampaignKind, type ProjectWorkspaceState, type GroupMessage, type GroupThreadBrief, type ProjectInfo, type ProjectDocumentInfo,
 } from '@jeff/core'
 import Avatar from './Avatar'
 import { EmojiPickerButton } from './ui/EmojiPicker'
 import { useDirtyClose } from './ui/useDirtyClose'
 import WorkspaceFileTree from './WorkspaceFileTree'
 import SessionHistoryPanel from './SessionHistoryPanel'
+import ProjectTaskBoard from './ProjectTaskBoard'
 import { IconClose } from './ui/Icons'
 
-type GroupDrawerTab = 'settings' | 'workspace' | 'members' | 'history' | 'files'
+type GroupDrawerTab = 'settings' | 'workspace' | 'tasks' | 'members' | 'history' | 'files'
 
 /** 群资料抽屉：横向 Tabs（群设置 / 群成员 / 会话记录 / 工作区文件）。busy（生成中）时禁用切换/新建/删除会话，防消息串线 */
 export default function GroupInfoDrawer(props: { project: ProjectInfo; busy?: boolean; onClose: () => void }): React.JSX.Element {
@@ -56,6 +57,7 @@ export default function GroupInfoDrawer(props: { project: ProjectInfo; busy?: bo
   const [leaderId, setLeaderId] = useState(project.leader_agent_id || '')
   const [saving, setSaving] = useState(false)
   const [saveMsg, setSaveMsg] = useState<string | null>(null)
+  const [documentMsg, setDocumentMsg] = useState('')
 
 
   useEffect(() => {
@@ -120,6 +122,12 @@ export default function GroupInfoDrawer(props: { project: ProjectInfo; busy?: bo
   }
 
   const saveSettings = async () => { await persistWorkspace(workspaceState) }
+  const generateProjectDocument = async (kind: 'charter' | 'weekly_report' | 'closeout') => {
+    try {
+      const result = await api.invoke<ProjectDocumentInfo>(IPC.projectDocument, { projectId: project.id, kind })
+      setDocumentMsg(`已生成草稿：${result.path}${result.missing.length ? `；待补：${result.missing.join('、')}` : ''}`)
+    } catch (error) { setDocumentMsg(`生成失败：${error instanceof Error ? error.message : String(error)}`) }
+  }
 
   const createCampaign = async () => {
     try {
@@ -255,6 +263,9 @@ export default function GroupInfoDrawer(props: { project: ProjectInfo; busy?: bo
           <button className={`drawer-tab ${tab === 'workspace' ? 'active' : ''}`} data-testid="group-tab-workspace" onClick={() => setTab('workspace')}>
             项目工作台
           </button>
+          <button className={`drawer-tab ${tab === 'tasks' ? 'active' : ''}`} data-testid="group-tab-tasks" onClick={() => setTab('tasks')}>
+            项目管理
+          </button>
           <button className={`drawer-tab ${tab === 'members' ? 'active' : ''}`} data-testid="group-tab-members" onClick={() => setTab('members')}>
             群成员（{members.length}）
           </button>
@@ -267,6 +278,7 @@ export default function GroupInfoDrawer(props: { project: ProjectInfo; busy?: bo
         </div>
 
         {/* 项目工作台资料：纯事实与计划，素材文件仍放在工作区目录 */}
+        <div style={{ display: tab === 'tasks' ? undefined : 'none' }} data-testid="project-tasks-form"><ProjectTaskBoard projectId={project.id} /></div>
         <div style={{ display: tab === 'workspace' ? undefined : 'none' }} data-testid="project-workspace-form">
           <div className="drawer-sec">目标与内容框架</div>
           <div className="group-settings">
@@ -300,6 +312,12 @@ export default function GroupInfoDrawer(props: { project: ProjectInfo; busy?: bo
               </button>
               {saveMsg && <span className="settings-tip" data-testid="project-workspace-save-result">{saveMsg}</span>}
             </div>
+            <div className="settings-actions" style={{ justifyContent: 'flex-start', marginTop: 8 }}>
+              <button className="btn" data-testid="project-document-charter" onClick={() => void generateProjectDocument('charter')}>生成立项文档草稿</button>
+              <button className="btn" data-testid="project-document-weekly" onClick={() => void generateProjectDocument('weekly_report')}>生成项目周报草稿</button>
+              <button className="btn" data-testid="project-document-closeout" onClick={() => void generateProjectDocument('closeout')}>生成结项核查草稿</button>
+            </div>
+            {documentMsg && <p className="settings-tip" role="status" data-testid="project-document-result">{documentMsg}</p>}
           </div>
           <div className="drawer-sec">宣传选题与成品</div>
           <div className="group-settings campaign-workspace" data-testid="campaign-workspace">

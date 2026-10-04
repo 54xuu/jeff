@@ -90,6 +90,10 @@ export interface TaskRow {
   assignee_type: string
   assignee_id: string
   parent_task_id: string | null
+  due_at: number | null
+  depends_on: string
+  acceptance_criteria: string
+  evidence_paths: string
   position: number
   created_at: number
   updated_at: number
@@ -342,7 +346,12 @@ export const taskRepo = (db: DB) => ({
     const row = db.prepare('SELECT MAX(number) AS m FROM task WHERE project_id = ?').get(projectId) as { m: number | null }
     return (row.m ?? 0) + 1
   },
-  create(data: { project_id: string; title: string; description?: string; status?: string; priority?: string; assignee_type?: string; assignee_id?: string; parent_task_id?: string | null }): TaskRow {
+  create(data: { project_id: string; title: string; description?: string; status?: string; priority?: string; assignee_type?: string; assignee_id?: string; parent_task_id?: string | null; due_at?: number | null; depends_on?: string[]; acceptance_criteria?: string; evidence_paths?: string[] }): TaskRow {
+    const dependencies = [...new Set(data.depends_on ?? [])]
+    if (dependencies.some((id) => {
+      const dependency = this.get(id)
+      return !dependency || dependency.deleted_at != null || dependency.project_id !== data.project_id
+    })) throw new Error('依赖任务必须存在且属于同一项目')
     const row: TaskRow = {
       id: genId('task'),
       project_id: data.project_id,
@@ -354,26 +363,55 @@ export const taskRepo = (db: DB) => ({
       assignee_type: data.assignee_type || 'none',
       assignee_id: data.assignee_id || '',
       parent_task_id: data.parent_task_id ?? null,
+      due_at: data.due_at ?? null,
+      depends_on: JSON.stringify(dependencies),
+      acceptance_criteria: data.acceptance_criteria || '',
+      evidence_paths: JSON.stringify(data.evidence_paths ?? []),
       position: 0,
       created_at: now(),
       updated_at: now(),
       deleted_at: null,
     }
     db.prepare(
-      `INSERT INTO task (id, project_id, number, title, description, status, priority, assignee_type, assignee_id, parent_task_id, position, created_at, updated_at, deleted_at)
-       VALUES (@id, @project_id, @number, @title, @description, @status, @priority, @assignee_type, @assignee_id, @parent_task_id, @position, @created_at, @updated_at, @deleted_at)`,
+      `INSERT INTO task (id, project_id, number, title, description, status, priority, assignee_type, assignee_id, parent_task_id, due_at, depends_on, acceptance_criteria, evidence_paths, position, created_at, updated_at, deleted_at)
+       VALUES (@id, @project_id, @number, @title, @description, @status, @priority, @assignee_type, @assignee_id, @parent_task_id, @due_at, @depends_on, @acceptance_criteria, @evidence_paths, @position, @created_at, @updated_at, @deleted_at)`,
     ).run(row as unknown as Record<string, never>)
     return row
   },
-  update(id: string, patch: Partial<Pick<TaskRow, 'title' | 'description' | 'status' | 'priority' | 'assignee_type' | 'assignee_id' | 'parent_task_id' | 'position'>>): TaskRow | undefined {
+  update(id: string, patch: Partial<Pick<TaskRow, 'title' | 'description' | 'status' | 'priority' | 'assignee_type' | 'assignee_id' | 'parent_task_id' | 'position' | 'due_at' | 'depends_on' | 'acceptance_criteria' | 'evidence_paths'>>): TaskRow | undefined {
     const cur = this.get(id)
     if (!cur) return undefined
     if (patch.status && !(TASK_STATUSES as readonly string[]).includes(patch.status)) return undefined
     if (patch.priority && !(TASK_PRIORITIES as readonly string[]).includes(patch.priority)) return undefined
+    if (patch.depends_on !== undefined) {
+      const dependencies = [...new Set(JSON.parse(patch.depends_on) as string[])]
+      if (dependencies.includes(id) || dependencies.some((depId) => {
+        const dependency = this.get(depId)
+        return !dependency || dependency.deleted_at != null || dependency.project_id !== cur.project_id
+      })) throw new Error('依赖任务必须是同一项目中的其他任务')
+      const reachesCurrent = (depId: string, seen = new Set<string>()): boolean => {
+        if (depId === id) return true
+        if (seen.has(depId)) return false
+        seen.add(depId)
+        const task = this.get(depId)
+        if (!task) return false
+        let parents: string[] = []
+        try { parents = JSON.parse(task.depends_on || '[]') as string[] } catch { /* legacy/corrupt value */ }
+        return parents.some((parent) => reachesCurrent(parent, seen))
+      }
+      if (dependencies.some((depId) => reachesCurrent(depId))) throw new Error('任务依赖不能形成循环')
+      patch = { ...patch, depends_on: JSON.stringify(dependencies) }
+    }
+    if (patch.status === 'done') {
+      let dependencies: string[] = []
+      try { dependencies = JSON.parse(patch.depends_on ?? cur.depends_on ?? '[]') as string[] } catch { /* ignore */ }
+      if (dependencies.some((depId) => this.get(depId)?.status !== 'done')) throw new Error('依赖任务尚未完成，不能将此任务标记为完成')
+    }
     const next = { ...cur, ...patch, updated_at: now() }
     db.prepare(
       `UPDATE task SET title=@title, description=@description, status=@status, priority=@priority, assignee_type=@assignee_type,
-       assignee_id=@assignee_id, parent_task_id=@parent_task_id, position=@position, updated_at=@updated_at WHERE id=@id`,
+       assignee_id=@assignee_id, parent_task_id=@parent_task_id, position=@position, due_at=@due_at, depends_on=@depends_on,
+       acceptance_criteria=@acceptance_criteria, evidence_paths=@evidence_paths, updated_at=@updated_at WHERE id=@id`,
     ).run({
       title: next.title,
       description: next.description,
@@ -383,6 +421,10 @@ export const taskRepo = (db: DB) => ({
       assignee_id: next.assignee_id,
       parent_task_id: next.parent_task_id,
       position: next.position,
+      due_at: next.due_at,
+      depends_on: next.depends_on,
+      acceptance_criteria: next.acceptance_criteria,
+      evidence_paths: next.evidence_paths,
       updated_at: next.updated_at,
       id: next.id,
     })

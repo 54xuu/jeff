@@ -50,6 +50,7 @@ export const IPC = {
   projectsList: 'projects:list',
   projectSave: 'project:save',
   projectCampaign: 'project:campaign',
+  projectDocument: 'project:document',
   projectDelete: 'project:delete',
   projectMembers: 'project:members',
   projectAddMember: 'project:addMember',
@@ -199,6 +200,8 @@ export type ProjectCampaignCommand =
   | { projectId: string; action: 'submit_delivery'; campaignId: string; path: string }
   | { projectId: string; action: 'review_delivery'; campaignId: string; deliveryId: string; decision: 'accepted' | 'changes_requested'; feedback?: string }
 
+export interface ProjectDocumentInfo { kind: 'charter' | 'weekly_report' | 'closeout'; path: string; content: string; missing: string[] }
+
 export interface ProjectMember {
   agent_id: string
   role: string
@@ -218,6 +221,10 @@ export interface TaskInfo {
   assignee_type: string
   assignee_id: string
   parent_task_id: string | null
+  due_at: number | null
+  depends_on: string[]
+  acceptance_criteria: string
+  evidence_paths: string[]
 }
 
 export interface GroupMessage extends ChatMsg {
@@ -621,12 +628,13 @@ export type InvokeMap = {
   [IPC.projectsList]: void
   [IPC.projectSave]: { id?: string; title: string; description?: string; icon?: string; leader_agent_id?: string | null; memberAgentIds?: string[]; workspace_dir?: string; workspace_state?: string }
   [IPC.projectCampaign]: ProjectCampaignCommand
+  [IPC.projectDocument]: { projectId: string; kind: 'charter' | 'weekly_report' | 'closeout' }
   [IPC.projectDelete]: { id: string }
   [IPC.projectMembers]: { projectId: string }
   [IPC.projectAddMember]: { projectId: string; agentId: string; role?: string }
   [IPC.projectRemoveMember]: { projectId: string; agentId: string }
   [IPC.tasksList]: { projectId: string }
-  [IPC.taskSave]: { id?: string; project_id: string; title: string; description?: string; status?: string; priority?: string; assignee_id?: string }
+  [IPC.taskSave]: { id?: string; project_id: string; title: string; description?: string; status?: string; priority?: string; assignee_id?: string; due_at?: number | null; depends_on?: string[]; acceptance_criteria?: string; evidence_paths?: string[] }
   [IPC.taskDelete]: { id: string }
   [IPC.groupHistory]: { projectId: string; limit?: number }
   [IPC.groupSend]: { projectId: string; text: string; model?: { providerID: string; modelID: string }; variant?: string; images?: ChatImage[]; plugin?: ChatPluginInvoke }

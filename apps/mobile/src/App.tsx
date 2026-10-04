@@ -4,7 +4,7 @@ import {
   IPC, XIAOJIE_ID, TOOL_ACTION_LABEL, extractThinkTags, mergeReasoning, sortedPinKeys, decodePluginUserMessage,
   parseProjectWorkspaceState, serializeProjectWorkspaceState, canStartCampaignProduction,
 } from '@jeff/core'
-import type { AgentInfo, AppInfo, ChatMsg, FileNode, FsDirEntry, GroupMessage, ProjectInfo, ContextPreviewInfo, PluginCommand, PluginInfo, CampaignKind, CampaignProposalInput, CampaignProposal } from '@jeff/core'
+import type { AgentInfo, AppInfo, ChatMsg, FileNode, FsDirEntry, GroupMessage, ProjectInfo, ContextPreviewInfo, PluginCommand, PluginInfo, CampaignKind, CampaignProposalInput, CampaignProposal, TaskInfo, ProjectDocumentInfo } from '@jeff/core'
 import type { RemoteStreamFrame } from '@jeff/core/remote'
 import { consumeBack } from './backstack'
 import Mascot from './Mascot'
@@ -460,6 +460,11 @@ export function App() {
   const [workspaceDraft, setWorkspaceDraft] = useState(() => parseProjectWorkspaceState('{}'))
   const [workspaceSaving, setWorkspaceSaving] = useState(false)
   const [workspaceSaved, setWorkspaceSaved] = useState('')
+  const [projectTasks, setProjectTasks] = useState<TaskInfo[]>([])
+  const [newTaskTitle, setNewTaskTitle] = useState('')
+  const [newTaskDue, setNewTaskDue] = useState('')
+  const [newTaskCriteria, setNewTaskCriteria] = useState('')
+  const [newTaskDepends, setNewTaskDepends] = useState<string[]>([])
   const [campaignDraft, setCampaignDraft] = useState<CampaignProposalInput>({ kind: 'feature_video', title: '', feature: '', story: '', channels: [], sellingPoints: [], materialsNeeded: [] })
   const [editingCampaignId, setEditingCampaignId] = useState('')
   const [campaignFeedback, setCampaignFeedback] = useState<Record<string, string>>({})
@@ -1217,7 +1222,33 @@ export function App() {
     setCampaignFeedback({})
     setCampaignPaths({})
     setWorkspaceSaved('')
+    setNewTaskTitle(''); setNewTaskDue(''); setNewTaskCriteria(''); setNewTaskDepends([])
+    void phone.invoke<TaskInfo[]>(IPC.tasksList, { projectId: target.id }).then(setProjectTasks).catch((error) => setWorkspaceSaved(`无法加载项目任务：${error instanceof Error ? error.message : String(error)}`))
     setScreen('project')
+  }
+
+  async function saveProjectTask(task?: TaskInfo, status?: string) {
+    if (!target || target.kind !== 'group') return
+    setWorkspaceSaving(true)
+    try {
+      const payload = task
+        ? { id: task.id, project_id: target.id, title: task.title, description: task.description, status: status ?? task.status, priority: task.priority, assignee_id: task.assignee_id, due_at: task.due_at, depends_on: task.depends_on, acceptance_criteria: task.acceptance_criteria, evidence_paths: task.evidence_paths }
+        : { project_id: target.id, title: newTaskTitle.trim(), due_at: newTaskDue ? new Date(`${newTaskDue}T23:59:59`).getTime() : null, depends_on: newTaskDepends, acceptance_criteria: newTaskCriteria.trim() }
+      await phone.invoke<TaskInfo>(IPC.taskSave, payload)
+      setProjectTasks(await phone.invoke<TaskInfo[]>(IPC.tasksList, { projectId: target.id }))
+      setNewTaskTitle(''); setNewTaskDue(''); setNewTaskCriteria(''); setNewTaskDepends([]); setWorkspaceSaved('项目任务已保存')
+    } catch (error) { setWorkspaceSaved(`任务保存失败：${error instanceof Error ? error.message : String(error)}`) }
+    finally { setWorkspaceSaving(false) }
+  }
+
+  async function generateProjectDocument(kind: 'charter' | 'weekly_report' | 'closeout') {
+    if (!target || target.kind !== 'group') return
+    setWorkspaceSaving(true)
+    try {
+      const result = await phone.invoke<ProjectDocumentInfo>(IPC.projectDocument, { projectId: target.id, kind })
+      setWorkspaceSaved(`已生成草稿：${result.path}${result.missing.length ? `；待补：${result.missing.join('、')}` : ''}`)
+    } catch (error) { setWorkspaceSaved(`生成失败：${error instanceof Error ? error.message : String(error)}`) }
+    finally { setWorkspaceSaving(false) }
   }
 
   async function persistProjectWorkspace(state: ReturnType<typeof parseProjectWorkspaceState>): Promise<boolean> {
@@ -2524,6 +2555,24 @@ export function App() {
             <label><span>每周推进节奏</span><textarea rows={2} data-testid="mobile-workspace-cadence" value={workspaceDraft.weeklyCadence} onChange={(e) => setWorkspaceDraft((s) => ({ ...s, weeklyCadence: e.target.value }))} placeholder="每周提交一批选题与素材缺口" /></label>
             <button type="button" className="btn-primary" data-testid="mobile-workspace-save" disabled={workspaceSaving} onClick={() => void saveProjectWorkspace()}>{workspaceSaving ? '保存中…' : '保存项目资料'}</button>
             {workspaceSaved ? <p className="project-workspace-result" data-testid="mobile-workspace-result">{workspaceSaved}</p> : null}
+            <h3 className="campaign-mobile-title">项目文档</h3>
+            <p className="project-workspace-result">生成的均为待复核 Markdown 草稿，保存在电脑的项目工作区。</p>
+            <div className="campaign-mobile-actions">
+              <button type="button" disabled={workspaceSaving} data-testid="mobile-project-document-charter" onClick={() => void generateProjectDocument('charter')}>生成立项文档草稿</button>
+              <button type="button" disabled={workspaceSaving} data-testid="mobile-project-document-weekly" onClick={() => void generateProjectDocument('weekly_report')}>生成项目周报草稿</button>
+              <button type="button" disabled={workspaceSaving} data-testid="mobile-project-document-closeout" onClick={() => void generateProjectDocument('closeout')}>生成结项核查草稿</button>
+            </div>
+            <h3 className="campaign-mobile-title">项目管理 · 任务</h3>
+            <p className="project-workspace-result">设置期限、前置任务和验收标准；依赖未完成的任务不能标记完成。</p>
+            <label><span>任务标题</span><input data-testid="mobile-project-task-title" value={newTaskTitle} onChange={(e) => setNewTaskTitle(e.target.value)} placeholder="例如：完成腕表呼叫联调" /></label>
+            <label><span>截止日期</span><input data-testid="mobile-project-task-due" type="date" value={newTaskDue} onChange={(e) => setNewTaskDue(e.target.value)} /></label>
+            <label><span>前置任务（可多选）</span><select multiple data-testid="mobile-project-task-dependencies" value={newTaskDepends} onChange={(e) => setNewTaskDepends(Array.from(e.currentTarget.selectedOptions, (option) => option.value))}>{projectTasks.map((task) => <option key={task.id} value={task.id}>{task.key} · {task.title}</option>)}</select></label>
+            <label><span>验收标准</span><textarea rows={2} data-testid="mobile-project-task-criteria" value={newTaskCriteria} onChange={(e) => setNewTaskCriteria(e.target.value)} placeholder="完成条件与可核对结果" /></label>
+            <button type="button" className="btn-primary" data-testid="mobile-project-task-create" disabled={workspaceSaving || !newTaskTitle.trim()} onClick={() => void saveProjectTask()}>创建项目任务</button>
+            {projectTasks.map((task) => {
+              const blocked = task.depends_on.some((id) => projectTasks.find((candidate) => candidate.id === id)?.status !== 'done')
+              return <div className="campaign-mobile-delivery" key={task.id} data-testid={`mobile-project-task-${task.id}`}><span><strong>{task.key} · {task.title}</strong><br />{task.due_at ? `截止 ${new Date(task.due_at).toLocaleDateString('zh-CN')}` : '未设期限'} · {blocked ? '等待前置任务' : task.status}{task.acceptance_criteria ? ` · 验收：${task.acceptance_criteria}` : ''}</span><select aria-label={`${task.key} 状态`} value={task.status} disabled={workspaceSaving || (blocked && task.status !== 'done')} onChange={(e) => void saveProjectTask(task, e.target.value)}><option value="todo">待办</option><option value="in_progress">进行中</option><option value="in_review">待验收</option><option value="done">已完成</option><option value="cancelled">已取消</option></select></div>
+            })}
             <h3 className="campaign-mobile-title">宣传选题与成品</h3>
             <h4>项目素材库</h4>
             <p className="project-workspace-result">真实素材、授权截图与生成示意图分别标记；文件需先放入项目工作区，截图先脱敏。</p>

@@ -143,6 +143,9 @@ export function registerProjectTools(reg: ToolBridge, deps: ProjectToolDeps): vo
     priority?: string
     assignee_agent_id?: string
     parent_task_id?: string
+    due_at?: number
+    depends_on?: string[]
+    acceptance_criteria?: string
   }) => {
     if (!args.project_id) throw new Error('project_id 必填')
     const title = (args.title || '').trim()
@@ -158,6 +161,9 @@ export function registerProjectTools(reg: ToolBridge, deps: ProjectToolDeps): vo
       assignee_type: assigneeType,
       assignee_id: args.assignee_agent_id || '',
       parent_task_id: args.parent_task_id || null,
+      due_at: args.due_at,
+      depends_on: args.depends_on,
+      acceptance_criteria: args.acceptance_criteria || '',
     })
     deps.onTaskChanged(args.project_id, t.id)
     return { id: t.id, key: `JEF-${t.number}`, title: t.title, status: t.status }
@@ -170,6 +176,9 @@ export function registerProjectTools(reg: ToolBridge, deps: ProjectToolDeps): vo
     status?: string
     priority?: string
     assignee_agent_id?: string
+    due_at?: number
+    depends_on?: string[]
+    acceptance_criteria?: string
   }) => {
     if (!args.id) throw new Error('id 必填')
     const cur = tasks.get(args.id)
@@ -182,12 +191,15 @@ export function registerProjectTools(reg: ToolBridge, deps: ProjectToolDeps): vo
       description: nonBlank(args.description),
       status: nonBlank(args.status),
       priority: nonBlank(args.priority),
+      ...(args.due_at !== undefined && Number.isFinite(args.due_at) ? { due_at: args.due_at } : {}),
+      ...(args.depends_on !== undefined ? { depends_on: JSON.stringify(args.depends_on) } : {}),
+      acceptance_criteria: nonBlank(args.acceptance_criteria),
       // 例外：指派明确支持「传空串 = 取消指派」（工具说明里写明了）
       ...(args.assignee_agent_id !== undefined
         ? { assignee_type: args.assignee_agent_id ? 'agent' : 'none', assignee_id: args.assignee_agent_id }
         : {}),
     })
-    if (Object.keys(patch).length === 0) throw new Error('没有要修改的字段（title / description / status / priority / assignee_agent_id 至少要传一个有值的）')
+    if (Object.keys(patch).length === 0) throw new Error('没有要修改的字段（title / description / status / priority / assignee_agent_id / due_at / depends_on / acceptance_criteria 至少要传一个有值的）')
     // 非法枚举值必须在调用 repo 前拦住：repo 对非法值返回 undefined，直接读 row.id 会抛
     // 「Cannot read properties of undefined」这种内部错误，模型看不懂也不知道该怎么改
     if (patch.status && !(TASK_STATUSES as readonly string[]).includes(String(patch.status))) {

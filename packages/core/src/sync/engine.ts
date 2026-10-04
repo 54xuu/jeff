@@ -767,15 +767,15 @@ export class SyncEngine {
           if (!exists) {
             this.db
               .prepare(
-                `INSERT INTO task (id, project_id, number, title, description, status, priority, assignee_type, assignee_id, parent_task_id, position, created_at, updated_at, deleted_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+                `INSERT INTO task (id, project_id, number, title, description, status, priority, assignee_type, assignee_id, parent_task_id, due_at, depends_on, acceptance_criteria, evidence_paths, position, created_at, updated_at, deleted_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
               )
-              .run(id, d.project_id, d.number, d.title, d.description, d.status, d.priority, d.assignee_type, d.assignee_id, d.parent_task_id, d.position, d.created_at, rec.updatedAt, rec.deletedAt)
+              .run(id, d.project_id, d.number, d.title, d.description, d.status, d.priority, d.assignee_type, d.assignee_id, d.parent_task_id, d.due_at ?? null, d.depends_on || '[]', d.acceptance_criteria || '', d.evidence_paths || '[]', d.position, d.created_at, rec.updatedAt, rec.deletedAt)
           } else {
             this.db
               .prepare(
-                `UPDATE task SET project_id=?, number=?, title=?, description=?, status=?, priority=?, assignee_type=?, assignee_id=?, parent_task_id=?, position=?, updated_at=?, deleted_at=? WHERE id=?`,
+                `UPDATE task SET project_id=?, number=?, title=?, description=?, status=?, priority=?, assignee_type=?, assignee_id=?, parent_task_id=?, due_at=?, depends_on=?, acceptance_criteria=?, evidence_paths=?, position=?, updated_at=?, deleted_at=? WHERE id=?`,
               )
-              .run(d.project_id, d.number, d.title, d.description, d.status, d.priority, d.assignee_type, d.assignee_id, d.parent_task_id, d.position, rec.updatedAt, rec.deletedAt, id)
+              .run(d.project_id, d.number, d.title, d.description, d.status, d.priority, d.assignee_type, d.assignee_id, d.parent_task_id, d.due_at ?? null, d.depends_on || '[]', d.acceptance_criteria || '', d.evidence_paths || '[]', d.position, rec.updatedAt, rec.deletedAt, id)
           }
           n += 1
         }

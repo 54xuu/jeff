@@ -78,6 +78,20 @@ describe('taskRepo', () => {
     const t2 = tasks.create({ project_id: p.id, title: 'b' })
     expect(t2.number).toBe(2)
   })
+
+  it('任务依赖限定在同项目、禁止循环，并阻止前置未完成时结项', () => {
+    const projects = projectRepo(db)
+    const tasks = taskRepo(db)
+    const p = projects.create({ title: '依赖项目' })
+    const other = projects.create({ title: '其他项目' })
+    const first = tasks.create({ project_id: p.id, title: '先行任务' })
+    const second = tasks.create({ project_id: p.id, title: '后续任务', depends_on: [first.id], acceptance_criteria: '现场验证通过' })
+    expect(() => tasks.update(second.id, { status: 'done' })).toThrow('依赖任务尚未完成')
+    expect(() => tasks.update(first.id, { depends_on: JSON.stringify([second.id]) })).toThrow('不能形成循环')
+    expect(() => tasks.create({ project_id: p.id, title: '跨项目依赖', depends_on: [tasks.create({ project_id: other.id, title: '异项目' }).id] })).toThrow('属于同一项目')
+    tasks.update(first.id, { status: 'done' })
+    expect(tasks.update(second.id, { status: 'done' })?.status).toBe('done')
+  })
 })
 
 describe('projectAgentRepo', () => {

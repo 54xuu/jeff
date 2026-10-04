@@ -127,7 +127,7 @@ export function allToolDefs(): ToolDef[] {
     },
     {
       name: 'jeff_task_create',
-      description: '在项目里创建任务（编号自动生成 JEF-n）。可指定指派对象（智能体）、优先级。',
+      description: '在项目里创建任务（编号自动生成 JEF-n）。可指定指派、截止时间毫秒时间戳、同项目依赖任务 id 数组和验收标准；依赖未完成时任务不能标记完成。',
       args: {
         project_id: { type: 'string', description: '项目 id' },
         title: { type: 'string', description: '标题' },
@@ -135,11 +135,14 @@ export function allToolDefs(): ToolDef[] {
         priority: { type: 'string', description: '优先级', enum: [...TASK_PRIORITIES] },
         assignee_agent_id: { type: 'string', description: '指派的智能体 id（可选）' },
         parent_task_id: { type: 'string', description: '父任务 id（可选，子任务拆分）' },
+        due_at: { type: 'number', description: '截止时间 Unix 毫秒时间戳（可选）' },
+        depends_on: { type: 'array', items: { type: 'string' }, description: '依赖任务 id 数组（可选，只能依赖同项目任务）' },
+        acceptance_criteria: { type: 'string', description: '验收标准（可选）' },
       },
     },
     {
       name: 'jeff_task_update',
-      description: '修改任务（标题/描述/状态/优先级/指派/排序）。没传或传空串的字段保持不变（指派例外：明确传空串 = 取消指派）。',
+      description: '修改任务（标题/描述/状态/优先级/指派/截止时间/依赖/验收标准）。没传或传空串的字段保持不变（指派例外：明确传空串 = 取消指派）；依赖未完成时不能标记完成。',
       args: {
         id: { type: 'string', description: '任务 id' },
         title: { type: 'string', description: '新标题（可选）' },
@@ -147,6 +150,9 @@ export function allToolDefs(): ToolDef[] {
         status: { type: 'string', description: '新状态', enum: [...TASK_STATUSES] },
         priority: { type: 'string', description: '新优先级', enum: [...TASK_PRIORITIES] },
         assignee_agent_id: { type: 'string', description: '改指派（传空串清除）' },
+        due_at: { type: 'number', description: '新截止时间 Unix 毫秒时间戳（可选）' },
+        depends_on: { type: 'array', items: { type: 'string' }, description: '完整替换依赖任务 id 数组（可选）' },
+        acceptance_criteria: { type: 'string', description: '验收标准（可选）' },
       },
     },
     {

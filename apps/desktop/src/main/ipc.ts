@@ -13,6 +13,7 @@ import type {
   AppInfo,
   FileNode,
   ProjectCampaignCommand,
+  ProjectDocumentInfo,
 } from '@jeff/core'
 import {
   IPC, XIAOJIE_ID, agentRepo, projectRepo, projectAgentRepo, taskRepo, taskCardMessage, snapshotInstructions, APP_VERSION,
@@ -20,6 +21,7 @@ import {
   serializeProjectWorkspaceState, validateProjectWorkspaceJson, createCampaignProposal, updateCampaignProposal, reviewCampaignDirection,
   attachCampaignProductionTask, submitCampaignDelivery, reviewCampaignDelivery, registerProjectAsset, reviewProjectAsset, resolveCampaignMaterial,
   type ThinkingTier, type ChatPluginInvoke, type RemoteStatus,
+  buildProjectDocument,
 } from '@jeff/core'
 import { listDirs, makeDir } from '../../../../packages/core/src/remote/dirs.js'
 import type { MemoryScopeInfo } from '@jeff/core'
@@ -736,6 +738,21 @@ export function registerIpc(core: JeffCore): Record<string, Handler> {
         throw err
       }
     },
+    [IPC.projectDocument]: async (p): Promise<ProjectDocumentInfo> => {
+      const { projectId, kind } = p as { projectId: string; kind: 'charter' | 'weekly_report' | 'closeout' }
+      if (!['charter', 'weekly_report', 'closeout'].includes(kind)) throw new Error('不支持的项目文档类型')
+      const project = projectRepo(core.db).get(projectId)
+      if (!project || project.deleted_at) throw new Error('项目不存在')
+      const output = buildProjectDocument(project, taskRepo(core.db).listByProject(projectId), kind)
+      const folder = kind === 'charter' ? '立项' : kind === 'weekly_report' ? '周报' : '结项'
+      const dir = path.resolve(project.workspace_dir || core.paths.workspaceDir, '项目文档', folder)
+      fs.mkdirSync(dir, { recursive: true })
+      const stem = output.filename.replace(/\.md$/i, '')
+      let target = path.join(dir, output.filename)
+      for (let suffix = 1; fs.existsSync(target); suffix++) target = path.join(dir, `${stem}-${suffix}.md`)
+      fs.writeFileSync(target, output.content, { flag: 'wx' })
+      return { kind, path: target, content: output.content, missing: output.missing }
+    },
     [IPC.projectDelete]: async (p): Promise<{ ok: boolean }> => {
       const { id } = p as { id: string }
       const ok = projectRepo(core.db).softDelete(id)
@@ -777,7 +794,7 @@ export function registerIpc(core: JeffCore): Record<string, Handler> {
       return taskRepo(core.db).listByProject(projectId).map(toTaskInfo)
     },
     [IPC.taskSave]: async (p): Promise<TaskInfo> => {
-      const d = p as { id?: string; project_id: string; title: string; description?: string; status?: string; priority?: string; assignee_id?: string }
+      const d = p as { id?: string; project_id: string; title: string; description?: string; status?: string; priority?: string; assignee_id?: string; due_at?: number | null; depends_on?: string[]; acceptance_criteria?: string; evidence_paths?: string[] }
       let row
       if (d.id) {
         row = taskRepo(core.db).update(d.id, {
@@ -785,6 +802,10 @@ export function registerIpc(core: JeffCore): Record<string, Handler> {
           description: d.description,
           status: d.status,
           priority: d.priority,
+          ...(d.due_at !== undefined ? { due_at: d.due_at } : {}),
+          ...(d.depends_on !== undefined ? { depends_on: JSON.stringify(d.depends_on) } : {}),
+          ...(d.acceptance_criteria !== undefined ? { acceptance_criteria: d.acceptance_criteria } : {}),
+          ...(d.evidence_paths !== undefined ? { evidence_paths: JSON.stringify(d.evidence_paths) } : {}),
           ...(d.assignee_id !== undefined ? { assignee_type: d.assignee_id ? 'agent' : 'none', assignee_id: d.assignee_id } : {}),
         })
       } else {
@@ -794,6 +815,10 @@ export function registerIpc(core: JeffCore): Record<string, Handler> {
           description: d.description,
           status: d.status,
           priority: d.priority,
+          due_at: d.due_at,
+          depends_on: d.depends_on,
+          acceptance_criteria: d.acceptance_criteria,
+          evidence_paths: d.evidence_paths,
           assignee_type: d.assignee_id ? 'agent' : 'none',
           assignee_id: d.assignee_id || '',
         })
@@ -1033,7 +1058,15 @@ function toTaskInfo(row: TaskRow): TaskInfo {
     assignee_type: row.assignee_type,
     assignee_id: row.assignee_id,
     parent_task_id: row.parent_task_id,
+    due_at: row.due_at ?? null,
+    depends_on: parseJsonStringArray(row.depends_on),
+    acceptance_criteria: row.acceptance_criteria || '',
+    evidence_paths: parseJsonStringArray(row.evidence_paths),
   }
+}
+
+function parseJsonStringArray(value: string | undefined): string[] {
+  try { const parsed: unknown = JSON.parse(value || '[]'); return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === 'string') : [] } catch { return [] }
 }
 
 // ---------- 工作空间文件浏览 ----------

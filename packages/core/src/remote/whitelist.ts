@@ -42,7 +42,7 @@ const PUSH = new Set<string>([
 ])
 
 // 宣传审批状态迁移由桌面主进程执行，App 只经现有加密链路调用该契约。
-const ALLOW = new Set<string>([IPC.projectCampaign])
+const ALLOW = new Set<string>([IPC.projectCampaign, IPC.projectDocument, IPC.tasksList, IPC.taskSave, IPC.taskDelete])
 
 function build(): Record<string, RemoteRule> {
   const out: Record<string, RemoteRule> = {}
