@@ -549,12 +549,47 @@ export function registerIpc(core: JeffCore): Record<string, Handler> {
     [IPC.projectCampaign]: async (p): Promise<ProjectInfo> => {
       const d = p as ProjectCampaignCommand
       let taskToAnnounce: TaskRow | undefined
+      let screenshotAsset: { title: string; kind: 'image'; feature: string; path: string; source: 'authorized_screenshot'; sourceNote: string; isReal: boolean } | undefined
+      // Capture before opening the SQLite write transaction: the browser request crosses renderer IPC.
+      if (d.action === 'capture_browser_screenshot') {
+        if (!d.redactionConfirmed) throw new Error('请先确认这是获授权的演示页面，且已检查患者信息脱敏')
+        if (!d.title.trim()) throw new Error('请填写截图场景名称')
+        const project = projectRepo(core.db).get(d.projectId)
+        if (!project || project.deleted_at) throw new Error('项目不存在')
+        if (!core.browser.available()) throw new Error('请先打开内置浏览器，并进入获授权的演示页面')
+        const shot = await core.browser.request('screenshot', { full_page: d.fullPage }) as { dataUrl?: string; title?: string; url?: string; width?: number; height?: number; truncated?: boolean }
+        if (!shot?.dataUrl || !/^data:image\/png;base64,/i.test(shot.dataUrl)) throw new Error('浏览器没有返回有效 PNG 截图')
+        const bytes = Buffer.from(shot.dataUrl.replace(/^data:image\/png;base64,/i, ''), 'base64')
+        if (bytes.byteLength > 25 * 1024 * 1024) throw new Error('截图超过 25 MB，请调低视口或改为可视区截图')
+        const root = path.resolve(project.workspace_dir || core.paths.workspaceDir)
+        fs.mkdirSync(root, { recursive: true })
+        const dir = path.join(root, '素材', '浏览器截图')
+        fs.mkdirSync(dir, { recursive: true })
+        const rootReal = fs.realpathSync(root)
+        const dirReal = fs.realpathSync(dir)
+        const dirRelative = path.relative(rootReal, dirReal)
+        if (dirRelative === '..' || dirRelative.startsWith(`..${path.sep}`) || path.isAbsolute(dirRelative)) throw new Error('截图目录必须位于项目工作区内')
+        const safeName = d.title.trim().replace(/[^\p{L}\p{N}_-]+/gu, '-').replace(/^-+|-+$/g, '').slice(0, 64) || '页面截图'
+        const file = path.join(dirReal, `${safeName}-${Date.now()}.png`)
+        fs.writeFileSync(file, bytes, { flag: 'wx' })
+        screenshotAsset = {
+          title: d.title.trim(), kind: 'image', feature: d.feature.trim(),
+          path: resolveCampaignDeliveryPath(core, project.workspace_dir, file),
+          source: 'authorized_screenshot',
+          sourceNote: `页面：${shot.url || '未知'}；标题：${shot.title || '无标题'}；操作人确认授权与脱敏${shot.truncated ? '；长页截图已截断' : ''}`,
+          isReal: true,
+        }
+      }
       core.db.exec('BEGIN IMMEDIATE')
       try {
         const project = projectRepo(core.db).get(d.projectId)
         if (!project || project.deleted_at) throw new Error('项目不存在')
         let state = parseProjectWorkspaceState(project.workspace_state)
         switch (d.action) {
+          case 'capture_browser_screenshot':
+            if (!screenshotAsset) throw new Error('没有可登记的截图')
+            state = registerProjectAsset(state, screenshotAsset)
+            break
           case 'register_asset': {
             const assetPath = d.kind === 'demo_url' ? validateDemoUrl(d.path) : resolveCampaignDeliveryPath(core, project.workspace_dir, d.path)
             state = registerProjectAsset(state, { title: d.title, kind: d.kind, feature: d.feature, path: assetPath, source: d.source, sourceNote: d.sourceNote, isReal: d.isReal })

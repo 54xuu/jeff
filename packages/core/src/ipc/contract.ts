@@ -187,6 +187,7 @@ export interface ProjectInfo {
 }
 
 export type ProjectCampaignCommand =
+  | { projectId: string; action: 'capture_browser_screenshot'; title: string; feature: string; fullPage: boolean; redactionConfirmed: boolean }
   | { projectId: string; action: 'register_asset'; title: string; kind: 'image' | 'video' | 'document' | 'demo_url'; feature: string; path: string; source: 'user_provided' | 'authorized_screenshot' | 'generated_illustration' | 'demo_material'; sourceNote: string; isReal: boolean }
   | { projectId: string; action: 'review_asset'; assetId: string; confirmed: boolean }
   | { projectId: string; action: 'resolve_material'; campaignId: string; need: string; assetId: string }

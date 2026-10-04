@@ -44,6 +44,10 @@ export default function GroupInfoDrawer(props: { project: ProjectInfo; busy?: bo
   const [assetFeature, setAssetFeature] = useState('')
   const [assetKind, setAssetKind] = useState<'image' | 'video' | 'document' | 'demo_url'>('image')
   const [assetSourceNote, setAssetSourceNote] = useState('')
+  const [captureTitle, setCaptureTitle] = useState('')
+  const [captureFeature, setCaptureFeature] = useState('')
+  const [captureFullPage, setCaptureFullPage] = useState(false)
+  const [captureRedactionConfirmed, setCaptureRedactionConfirmed] = useState(false)
   const [assetSource, setAssetSource] = useState<'user_provided' | 'authorized_screenshot' | 'generated_illustration' | 'demo_material'>('user_provided')
   const [assetReal, setAssetReal] = useState(false)
   const [campaignAssetChoice, setCampaignAssetChoice] = useState<Record<string, string>>({})
@@ -197,6 +201,16 @@ export default function GroupInfoDrawer(props: { project: ProjectInfo; busy?: bo
       setWorkspaceState(parseProjectWorkspaceState(updated.workspace_state))
     } catch (error) { setSaveMsg(error instanceof Error ? error.message : String(error)) }
   }
+  const captureBrowserScreenshot = async () => {
+    setSaving(true)
+    try {
+      const updated = await api.invoke<ProjectInfo>(IPC.projectCampaign, { projectId: project.id, action: 'capture_browser_screenshot', title: captureTitle, feature: captureFeature, fullPage: captureFullPage, redactionConfirmed: captureRedactionConfirmed })
+      setWorkspaceState(parseProjectWorkspaceState(updated.workspace_state))
+      setCaptureTitle(''); setCaptureFeature(''); setCaptureRedactionConfirmed(false)
+      setSaveMsg('截图已保存到项目素材库，待确认可用性')
+    } catch (error) { setSaveMsg(error instanceof Error ? error.message : String(error)) }
+    finally { setSaving(false) }
+  }
 
   const pickDir = async () => {
     const dir = await api.invoke<string | null>(IPC.dialogPickDir, { title: '选择工作空间目录', defaultPath: workspaceDir || undefined })
@@ -279,6 +293,11 @@ export default function GroupInfoDrawer(props: { project: ProjectInfo; busy?: bo
             <section className="campaign-assets" data-testid="project-assets">
               <strong>项目素材库</strong>
               <p className="settings-tip">真实产品素材和生成示意图分开标记；文件需在项目工作区内，截图需来自授权演示环境且先脱敏。</p>
+              <label className="field"><span>当前页面截图场景</span><input data-testid="asset-capture-title" value={captureTitle} onChange={(e) => setCaptureTitle(e.target.value)} placeholder="护士在治疗中接收腕表呼叫" /></label>
+              <label className="field"><span>所属功能</span><input data-testid="asset-capture-feature" value={captureFeature} onChange={(e) => setCaptureFeature(e.target.value)} placeholder="腕表病房呼叫" /></label>
+              <label><input type="checkbox" data-testid="asset-capture-full-page" checked={captureFullPage} onChange={(e) => setCaptureFullPage(e.target.checked)} />截取完整页面</label>
+              <label><input type="checkbox" data-testid="asset-capture-consent" checked={captureRedactionConfirmed} onChange={(e) => setCaptureRedactionConfirmed(e.target.checked)} />我确认当前是获授权的演示页面，已检查并遮挡患者信息</label>
+              <button className="btn" data-testid="asset-capture" disabled={saving || !captureTitle.trim() || !captureRedactionConfirmed} onClick={() => void captureBrowserScreenshot()}>截取当前内置浏览器页面</button>
               <label className="field"><span>素材名称</span><input data-testid="asset-title" value={assetTitle} onChange={(e) => setAssetTitle(e.target.value)} /></label>
               <label className="field"><span>工作区相对路径</span><input data-testid="asset-path" value={assetPath} onChange={(e) => setAssetPath(e.target.value)} placeholder="产品资料/腕表正面.png" /></label>
               <label className="field"><span>所属功能</span><input data-testid="asset-feature" value={assetFeature} onChange={(e) => setAssetFeature(e.target.value)} placeholder="腕表病房呼叫" /></label>
@@ -287,7 +306,7 @@ export default function GroupInfoDrawer(props: { project: ProjectInfo; busy?: bo
               <label className="field"><span>来源说明</span><input data-testid="asset-source-note" value={assetSourceNote} onChange={(e) => setAssetSourceNote(e.target.value)} placeholder="授权环境、生成工具或资料来源" /></label>
               <label><input type="checkbox" data-testid="asset-real" checked={assetReal} onChange={(e) => setAssetReal(e.target.checked)} />真实产品素材（非示意图）</label>
               <button className="btn" data-testid="asset-register" disabled={saving || !assetTitle.trim() || !assetPath.trim()} onClick={() => void registerAsset()}>登记为待确认素材</button>
-              {workspaceState.assets.map((asset) => <div className="campaign-asset-row" key={asset.id} data-testid={`asset-${asset.id}`}><span><strong>{asset.title}</strong> · {{ image: '图片', video: '视频', document: '文档', demo_url: '演示地址' }[asset.kind]} · {asset.feature || '通用'} · {asset.source === 'generated_illustration' ? '生成示意图' : asset.isReal ? '真实素材' : '素材'} · {asset.path}{asset.sourceNote ? ` · 来源：${asset.sourceNote}` : ''}</span><span>{asset.confirmed ? '已确认' : <><button className="btn" onClick={() => void reviewAsset(asset.id, true)}>确认可用</button><button className="btn" onClick={() => void reviewAsset(asset.id, false)}>撤销确认</button></>}</span></div>)}
+              {workspaceState.assets.map((asset) => <div className="campaign-asset-row" key={asset.id} data-testid={`asset-${asset.id}`}><span><strong>{asset.title}</strong> · {{ image: '图片', video: '视频', document: '文档', demo_url: '演示地址' }[asset.kind]} · {asset.feature || '通用'} · {asset.source === 'generated_illustration' ? '生成示意图' : asset.source === 'authorized_screenshot' ? '授权截图' : asset.isReal ? '真实素材' : '素材'} · {asset.path}{asset.sourceNote ? ` · 来源：${asset.sourceNote}` : ''}</span><span>{asset.confirmed ? '已确认' : <><button className="btn" onClick={() => void reviewAsset(asset.id, true)}>确认可用</button><button className="btn" onClick={() => void reviewAsset(asset.id, false)}>撤销确认</button></>}</span></div>)}
             </section>
             <p className="settings-tip">每个版本单独确认方向；只有当前选题已确认且素材缺口清零后才能创建制作任务。成品按新路径登记版本，审核记录与路径会随项目同步。</p>
             <label className="field"><span>成果线</span>
