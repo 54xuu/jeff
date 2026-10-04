@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS project (
   icon            TEXT NOT NULL DEFAULT '👥',    -- 群图标
   status          TEXT NOT NULL DEFAULT 'in_progress', -- 状态：planned/in_progress/paused/completed/cancelled
   leader_agent_id TEXT,                          -- 群主（leader）agent id，统筹一切
+  workspace_state TEXT NOT NULL DEFAULT '{}',    -- 工作台结构化资料（目标、大纲、内容规划；随项目同步）
   created_at      INTEGER NOT NULL,              -- 创建时间（ms）
   updated_at      INTEGER NOT NULL,              -- 更新时间（ms）
   deleted_at      INTEGER                        -- 软删除时间（ms）
@@ -127,6 +128,7 @@ CREATE INDEX IF NOT EXISTS idx_cron_run_task ON cron_run(task_id, started_at);
   addColumn(db, 'agent', 'category', "TEXT NOT NULL DEFAULT ''", "分组分类（如：项目管理/医疗场景/项目开发；空=默认分组）")
   addColumn(db, 'agent', 'instructions_version', 'INTEGER NOT NULL DEFAULT 0', '身份指令版本号：仅 instructions 实际变更时 +1（jeff_self_update 写前校验用，随同步携带）')
   addColumn(db, 'project', 'workspace_dir', "TEXT NOT NULL DEFAULT ''", '工作空间目录（空=全局 workspace，输出文件默认落这里）')
+  addColumn(db, 'project', 'workspace_state', "TEXT NOT NULL DEFAULT '{}'", '工作台结构化资料（目标、大纲、内容规划；随项目同步）')
   addColumn(db, 'cron_task', 'run_at', 'INTEGER', '一次性任务的绝对触发时间（ms，本机时区）；NULL=按 cron 重复')
 
   // 角色归一：历史 member / 开发 / ui / 测试 / 产品 … → worker；再按 project.leader_agent_id 校正群主

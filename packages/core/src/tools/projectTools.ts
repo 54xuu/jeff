@@ -1,6 +1,7 @@
 import type { ToolBridge } from './bridge.js'
 import type { DB } from '../db/db.js'
 import { PROJECT_STATUSES, TASK_PRIORITIES, TASK_STATUSES, agentRepo, projectAgentRepo, projectRepo, taskRepo } from '../db/repos.js'
+import { validateProjectWorkspaceJson } from '../project/workspace.js'
 
 export interface ProjectToolDeps {
   db: DB
@@ -63,7 +64,7 @@ export function registerProjectTools(reg: ToolBridge, deps: ProjectToolDeps): vo
     return { id: p.id, title: p.title, leader_agent_id: p.leader_agent_id, workspace_dir: p.workspace_dir || '' }
   })
 
-  reg.register('jeff_project_update', async (args: { id?: string; title?: string; description?: string; icon?: string; status?: string; leader_agent_id?: string; workspace_dir?: string }) => {
+  reg.register('jeff_project_update', async (args: { id?: string; title?: string; description?: string; icon?: string; status?: string; leader_agent_id?: string; workspace_dir?: string; workspace_state?: string }) => {
     if (!args.id) throw new Error('id 不能为空')
     const patch = onlyProvided({
       title: nonBlank(args.title),
@@ -71,10 +72,11 @@ export function registerProjectTools(reg: ToolBridge, deps: ProjectToolDeps): vo
       icon: nonBlank(args.icon),
       status: nonBlank(args.status),
       leader_agent_id: nonBlank(args.leader_agent_id),
+      ...(args.workspace_state !== undefined ? { workspace_state: validateProjectWorkspaceJson(args.workspace_state) } : {}),
       // 例外：工作空间目录明确支持「传空串 = 清除为默认工作区」（工具说明里写明了）
       ...(args.workspace_dir !== undefined ? { workspace_dir: String(args.workspace_dir).trim() } : {}),
     })
-    if (Object.keys(patch).length === 0) throw new Error('没有要修改的字段（title / description / icon / status / leader_agent_id / workspace_dir 至少要传一个有值的）')
+    if (Object.keys(patch).length === 0) throw new Error('没有要修改的字段（title / description / icon / status / leader_agent_id / workspace_dir / workspace_state 至少要传一个有值的）')
     if (patch.status && !(PROJECT_STATUSES as readonly string[]).includes(String(patch.status))) {
       throw new Error(`status 非法：${String(patch.status)}（可用：${PROJECT_STATUSES.join('/')}）`)
     }

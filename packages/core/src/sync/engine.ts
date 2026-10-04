@@ -746,12 +746,12 @@ export class SyncEngine {
           const workspaceDir = exists ? exists.workspace_dir || '' : ''
           if (!exists) {
             this.db
-              .prepare(`INSERT INTO project (id, title, description, icon, status, leader_agent_id, workspace_dir, created_at, updated_at, deleted_at) VALUES (?,?,?,?,?,?,?,?,?,?)`)
-              .run(id, d.project.title, d.project.description, d.project.icon, d.project.status, d.project.leader_agent_id, workspaceDir, d.project.created_at, rec.updatedAt, rec.deletedAt)
+              .prepare(`INSERT INTO project (id, title, description, icon, status, leader_agent_id, workspace_dir, workspace_state, created_at, updated_at, deleted_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)`)
+              .run(id, d.project.title, d.project.description, d.project.icon, d.project.status, d.project.leader_agent_id, workspaceDir, d.project.workspace_state || '{}', d.project.created_at, rec.updatedAt, rec.deletedAt)
           } else {
             this.db
-              .prepare(`UPDATE project SET title=?, description=?, icon=?, status=?, leader_agent_id=?, updated_at=?, deleted_at=? WHERE id=?`)
-              .run(d.project.title, d.project.description, d.project.icon, d.project.status, d.project.leader_agent_id, rec.updatedAt, rec.deletedAt, id)
+              .prepare(`UPDATE project SET title=?, description=?, icon=?, status=?, leader_agent_id=?, workspace_state=?, updated_at=?, deleted_at=? WHERE id=?`)
+              .run(d.project.title, d.project.description, d.project.icon, d.project.status, d.project.leader_agent_id, d.project.workspace_state || '{}', rec.updatedAt, rec.deletedAt, id)
           }
           this.db.prepare('DELETE FROM project_agent WHERE project_id = ?').run(id)
           for (const m of d.members) {

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useStore } from '../store'
 import { api } from '../api'
-import { IPC, projectRoleLabel, type GroupMessage, type GroupThreadBrief, type ProjectInfo } from '@jeff/core'
+import { IPC, projectRoleLabel, parseProjectWorkspaceState, serializeProjectWorkspaceState, type ProjectWorkspaceState, type GroupMessage, type GroupThreadBrief, type ProjectInfo } from '@jeff/core'
 import Avatar from './Avatar'
 import { EmojiPickerButton } from './ui/EmojiPicker'
 import { useDirtyClose } from './ui/useDirtyClose'
@@ -9,7 +9,7 @@ import WorkspaceFileTree from './WorkspaceFileTree'
 import SessionHistoryPanel from './SessionHistoryPanel'
 import { IconClose } from './ui/Icons'
 
-type GroupDrawerTab = 'settings' | 'members' | 'history' | 'files'
+type GroupDrawerTab = 'settings' | 'workspace' | 'members' | 'history' | 'files'
 
 /** 群资料抽屉：横向 Tabs（群设置 / 群成员 / 会话记录 / 工作区文件）。busy（生成中）时禁用切换/新建/删除会话，防消息串线 */
 export default function GroupInfoDrawer(props: { project: ProjectInfo; busy?: boolean; onClose: () => void }): React.JSX.Element {
@@ -25,6 +25,7 @@ export default function GroupInfoDrawer(props: { project: ProjectInfo; busy?: bo
   const [icon, setIcon] = useState(project.icon || '👥')
   const [description, setDescription] = useState(project.description || '')
   const [workspaceDir, setWorkspaceDir] = useState(project.workspace_dir || '')
+  const [workspaceState, setWorkspaceState] = useState<ProjectWorkspaceState>(() => parseProjectWorkspaceState(project.workspace_state))
   const [leaderId, setLeaderId] = useState(project.leader_agent_id || '')
   const [saving, setSaving] = useState(false)
   const [saveMsg, setSaveMsg] = useState<string | null>(null)
@@ -35,8 +36,9 @@ export default function GroupInfoDrawer(props: { project: ProjectInfo; busy?: bo
     setIcon(project.icon || '👥')
     setDescription(project.description || '')
     setWorkspaceDir(project.workspace_dir || '')
+    setWorkspaceState(parseProjectWorkspaceState(project.workspace_state))
     setLeaderId(project.leader_agent_id || '')
-  }, [project.id, project.title, project.icon, project.description, project.workspace_dir, project.leader_agent_id])
+  }, [project.id, project.title, project.icon, project.description, project.workspace_dir, project.workspace_state, project.leader_agent_id])
 
   const refreshMembers = async () => {
     const list = await api.invoke<Array<{ agent_id: string; role: string; name: string; avatar: string }>>(IPC.projectMembers, { projectId: project.id })
@@ -58,7 +60,8 @@ export default function GroupInfoDrawer(props: { project: ProjectInfo; busy?: bo
     icon !== (project.icon || '👥') ||
     description !== (project.description || '') ||
     workspaceDir !== (project.workspace_dir || '') ||
-    leaderId !== (project.leader_agent_id || '')
+    leaderId !== (project.leader_agent_id || '') ||
+    serializeProjectWorkspaceState(workspaceState) !== serializeProjectWorkspaceState(parseProjectWorkspaceState(project.workspace_state))
   const { requestClose, guard } = useDirtyClose({ dirty: formDirty, onClose, disabled: addingMember })
 
   const saveSettings = async () => {
@@ -73,6 +76,7 @@ export default function GroupInfoDrawer(props: { project: ProjectInfo; busy?: bo
         description: description.trim(),
         leader_agent_id: leaderId,
         workspace_dir: workspaceDir.trim(),
+        workspace_state: serializeProjectWorkspaceState(workspaceState),
         memberAgentIds: members.map((m) => m.agent_id),
       })
       await refreshProjects()
@@ -112,6 +116,9 @@ export default function GroupInfoDrawer(props: { project: ProjectInfo; busy?: bo
           <button className={`drawer-tab ${tab === 'settings' ? 'active' : ''}`} data-testid="group-tab-settings" onClick={() => setTab('settings')}>
             群设置
           </button>
+          <button className={`drawer-tab ${tab === 'workspace' ? 'active' : ''}`} data-testid="group-tab-workspace" onClick={() => setTab('workspace')}>
+            项目工作台
+          </button>
           <button className={`drawer-tab ${tab === 'members' ? 'active' : ''}`} data-testid="group-tab-members" onClick={() => setTab('members')}>
             群成员（{members.length}）
           </button>
@@ -121,6 +128,43 @@ export default function GroupInfoDrawer(props: { project: ProjectInfo; busy?: bo
           <button className={`drawer-tab ${tab === 'files' ? 'active' : ''}`} data-testid="group-tab-files" onClick={() => setTab('files')}>
             工作区文件
           </button>
+        </div>
+
+        {/* 项目工作台资料：纯事实与计划，素材文件仍放在工作区目录 */}
+        <div style={{ display: tab === 'workspace' ? undefined : 'none' }} data-testid="project-workspace-form">
+          <div className="drawer-sec">目标与内容框架</div>
+          <div className="group-settings">
+            <label className="field">
+              <span>阶段目标</span>
+              <textarea rows={3} value={workspaceState.goal} data-testid="project-workspace-goal" onChange={(e) => setWorkspaceState((s) => ({ ...s, goal: e.target.value }))} placeholder="这个项目当前要达成什么结果？" />
+            </label>
+            <label className="field">
+              <span>销售对象</span>
+              <input value={workspaceState.salesAudience} data-testid="project-workspace-sales-audience" onChange={(e) => setWorkspaceState((s) => ({ ...s, salesAudience: e.target.value }))} placeholder="例如：渠道商与集成商" />
+            </label>
+            <label className="field">
+              <span>内容呈现对象</span>
+              <input value={workspaceState.storyAudience} data-testid="project-workspace-story-audience" onChange={(e) => setWorkspaceState((s) => ({ ...s, storyAudience: e.target.value }))} placeholder="例如：一线医护人员" />
+            </label>
+            <label className="field">
+              <span>传播渠道（每行一个）</span>
+              <textarea rows={2} value={workspaceState.channels.join('\n')} data-testid="project-workspace-channels" onChange={(e) => setWorkspaceState((s) => ({ ...s, channels: e.target.value.split('\n') }))} placeholder="微信私聊\n渠道群转发\n客户现场讲解" />
+            </label>
+            <label className="field">
+              <span>系统介绍大纲（每行一章，作为完整 PPT 的内容框架）</span>
+              <textarea rows={7} value={workspaceState.systemOutline.join('\n')} data-testid="project-workspace-outline" onChange={(e) => setWorkspaceState((s) => ({ ...s, systemOutline: e.target.value.split('\n') }))} placeholder="系统解决的问题\n整体方案\n功能与医护使用场景\n对接与部署" />
+            </label>
+            <label className="field">
+              <span>每周推进节奏</span>
+              <textarea rows={2} value={workspaceState.weeklyCadence} data-testid="project-workspace-cadence" onChange={(e) => setWorkspaceState((s) => ({ ...s, weeklyCadence: e.target.value }))} placeholder="例如：每周提交一批选题与素材缺口；时间可后续设置" />
+            </label>
+            <div className="settings-actions" style={{ justifyContent: 'flex-start', marginTop: 4 }}>
+              <button className="btn primary" data-testid="project-workspace-save" disabled={saving || !title.trim() || !leaderId} onClick={() => void saveSettings()}>
+                {saving ? '保存中…' : '保存项目资料'}
+              </button>
+              {saveMsg && <span className="settings-tip" data-testid="project-workspace-save-result">{saveMsg}</span>}
+            </div>
+          </div>
         </div>
 
         {/* 群设置 Tab（切 Tab 不卸载，避免表单草稿丢失） */}

@@ -1,6 +1,6 @@
 import { Capacitor } from '@capacitor/core'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { IPC, XIAOJIE_ID, TOOL_ACTION_LABEL, extractThinkTags, mergeReasoning, sortedPinKeys, decodePluginUserMessage } from '@jeff/core'
+import { IPC, XIAOJIE_ID, TOOL_ACTION_LABEL, extractThinkTags, mergeReasoning, sortedPinKeys, decodePluginUserMessage, parseProjectWorkspaceState, serializeProjectWorkspaceState } from '@jeff/core'
 import type { AgentInfo, AppInfo, ChatMsg, FileNode, FsDirEntry, GroupMessage, ProjectInfo, ContextPreviewInfo, PluginCommand, PluginInfo } from '@jeff/core'
 import type { RemoteStreamFrame } from '@jeff/core/remote'
 import { consumeBack } from './backstack'
@@ -10,7 +10,7 @@ import { isMarkdownPath, joinWorkspacePath, linkifyWorkspaceMarkdown } from './l
 import { Native, PhoneLink, mergeStream, shrinkImage } from './session'
 
 type Tab = 'messages' | 'me'
-type Screen = 'list' | 'chat' | 'dirs' | 'files' | 'file'
+type Screen = 'list' | 'chat' | 'dirs' | 'files' | 'file' | 'project'
 type ChatTarget =
   | { kind: 'agent'; id: string; name: string; avatar?: string }
   | { kind: 'group'; id: string; name: string; icon?: string }
@@ -454,6 +454,9 @@ export function App() {
   const [fileTrail, setFileTrail] = useState<Array<{ name: string; abs: string }>>([])
   const [filePreview, setFilePreview] = useState<{ name: string; content: string; truncated?: boolean } | null>(null)
   const [filesTip, setFilesTip] = useState('')
+  const [workspaceDraft, setWorkspaceDraft] = useState(() => parseProjectWorkspaceState('{}'))
+  const [workspaceSaving, setWorkspaceSaving] = useState(false)
+  const [workspaceSaved, setWorkspaceSaved] = useState('')
   const dataDirRef = useRef('')
   const [computers, setComputers] = useState(phone.desktops)
   const [activeId, setActiveId] = useState('')
@@ -628,6 +631,10 @@ export function App() {
     }
     if (screenRef.current === 'file') {
       setScreen('files')
+      return
+    }
+    if (screenRef.current === 'project') {
+      setScreen('chat')
       return
     }
     if (screenRef.current === 'files') {
@@ -1188,6 +1195,40 @@ export function App() {
     await loadFiles(dir)
   }
 
+  function openProjectWorkspace() {
+    if (!target || target.kind !== 'group') return
+    const project = projects.find((p) => p.id === target.id)
+    if (!project) return
+    setWorkspaceDraft(parseProjectWorkspaceState(project.workspace_state))
+    setWorkspaceSaved('')
+    setScreen('project')
+  }
+
+  async function saveProjectWorkspace() {
+    if (!target || target.kind !== 'group') return
+    const project = projects.find((p) => p.id === target.id)
+    if (!project) return
+    setWorkspaceSaving(true)
+    setWorkspaceSaved('')
+    try {
+      const updated = await phone.invoke<ProjectInfo>(IPC.projectSave, {
+        id: project.id,
+        title: project.title,
+        description: project.description,
+        icon: project.icon,
+        leader_agent_id: project.leader_agent_id,
+        workspace_dir: project.workspace_dir,
+        workspace_state: serializeProjectWorkspaceState(workspaceDraft),
+      })
+      setProjects((items) => items.map((item) => item.id === project.id ? updated : item))
+      setWorkspaceSaved('已保存到项目资料')
+    } catch (err) {
+      setWorkspaceSaved(`保存失败：${String((err as Error).message).slice(0, 100)}`)
+    } finally {
+      setWorkspaceSaving(false)
+    }
+  }
+
   async function loadFiles(dir: string) {
     try {
       const r = await phone.invoke<{ dir: string; exists: boolean; nodes: FileNode[] }>(IPC.fsListFiles, { dir })
@@ -1739,6 +1780,18 @@ export function App() {
                   <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                     <path d="M21 12a8 8 0 1 1-3.1-6.3L21 4l-.9 3.4A8 8 0 0 1 21 12z" />
                     <path d="M8.5 10.5h7M8.5 14h4.5" />
+                  </svg>
+                </button>
+                <button
+                  type="button"
+                  className="bar-icon-btn"
+                  data-testid="project-workspace"
+                  title="项目资料与内容大纲"
+                  onClick={openProjectWorkspace}
+                >
+                  <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H19v16H5.5A1.5 1.5 0 0 1 4 18.5z" />
+                    <path d="M8 8h7M8 12h7M8 16h4" />
                   </svg>
                 </button>
                 <button
@@ -2302,6 +2355,30 @@ export function App() {
             </ul>
           )}
           <p className="wechat-file-hint">Markdown 文件点击即可预览；其他类型请在电脑上查看</p>
+        </section>
+      )}
+
+      {screen === 'project' && target?.kind === 'group' && (
+        <section className="dirs wechat-dirs project-workspace-screen" data-testid="project-workspace-screen">
+          <header className="bar wechat-bar">
+            <button type="button" className="btn-nav-back" onClick={() => setScreen('chat')}>
+              <span className="wechat-back-chevron">‹</span>
+              <span className="wechat-back-text">返回</span>
+            </button>
+            <b>项目资料</b>
+            <span style={{ width: 48 }} />
+          </header>
+          <p className="wechat-file-hint">保存项目目标、受众、传播渠道与系统大纲，桌面端和手机共用。</p>
+          <div className="project-workspace-form">
+            <label><span>阶段目标</span><textarea rows={3} data-testid="mobile-workspace-goal" value={workspaceDraft.goal} onChange={(e) => setWorkspaceDraft((s) => ({ ...s, goal: e.target.value }))} placeholder="这个项目当前要达成什么结果？" /></label>
+            <label><span>销售对象</span><input data-testid="mobile-workspace-sales-audience" value={workspaceDraft.salesAudience} onChange={(e) => setWorkspaceDraft((s) => ({ ...s, salesAudience: e.target.value }))} placeholder="例如：渠道商与集成商" /></label>
+            <label><span>内容呈现对象</span><input data-testid="mobile-workspace-story-audience" value={workspaceDraft.storyAudience} onChange={(e) => setWorkspaceDraft((s) => ({ ...s, storyAudience: e.target.value }))} placeholder="例如：一线医护人员" /></label>
+            <label><span>传播渠道（每行一个）</span><textarea rows={2} data-testid="mobile-workspace-channels" value={workspaceDraft.channels.join('\n')} onChange={(e) => setWorkspaceDraft((s) => ({ ...s, channels: e.target.value.split('\n') }))} placeholder="微信私聊\n渠道群转发\n现场讲解" /></label>
+            <label><span>系统介绍大纲（每行一章）</span><textarea rows={7} data-testid="mobile-workspace-outline" value={workspaceDraft.systemOutline.join('\n')} onChange={(e) => setWorkspaceDraft((s) => ({ ...s, systemOutline: e.target.value.split('\n') }))} placeholder="整体方案\n功能与医护使用场景\n对接与部署" /></label>
+            <label><span>每周推进节奏</span><textarea rows={2} data-testid="mobile-workspace-cadence" value={workspaceDraft.weeklyCadence} onChange={(e) => setWorkspaceDraft((s) => ({ ...s, weeklyCadence: e.target.value }))} placeholder="每周提交一批选题与素材缺口" /></label>
+            <button type="button" className="btn-primary" data-testid="mobile-workspace-save" disabled={workspaceSaving} onClick={() => void saveProjectWorkspace()}>{workspaceSaving ? '保存中…' : '保存项目资料'}</button>
+            {workspaceSaved ? <p className="project-workspace-result" data-testid="mobile-workspace-result">{workspaceSaved}</p> : null}
+          </div>
         </section>
       )}
 

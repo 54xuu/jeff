@@ -14,6 +14,7 @@ import type {
   FileNode,
 } from '@jeff/core'
 import { IPC, XIAOJIE_ID, agentRepo, projectRepo, projectAgentRepo, taskRepo, taskCardMessage, snapshotInstructions, APP_VERSION, PrivateChatStoppedError, resolveSendText, resolveScreenshotScale, type ThinkingTier, type ChatPluginInvoke, type RemoteStatus } from '@jeff/core'
+import { validateProjectWorkspaceJson } from '@jeff/core'
 import { listDirs, makeDir } from '../../../../packages/core/src/remote/dirs.js'
 import type { MemoryScopeInfo } from '@jeff/core'
 import type { JeffCore, TaskRow } from '@jeff/core'
@@ -473,7 +474,7 @@ export function registerIpc(core: JeffCore): Record<string, Handler> {
       return projects.map((p) => toProjectInfo(core, p))
     },
     [IPC.projectSave]: async (p): Promise<ProjectInfo> => {
-      const d = p as { id?: string; title: string; description?: string; icon?: string; leader_agent_id?: string | null; memberAgentIds?: string[]; workspace_dir?: string }
+      const d = p as { id?: string; title: string; description?: string; icon?: string; leader_agent_id?: string | null; memberAgentIds?: string[]; workspace_dir?: string; workspace_state?: string }
       if (!d.leader_agent_id) throw new Error('必须选择群主（leader）')
       // 成员快照语义：memberAgentIds 是完整集合，群主自动并入
       const memberIds = Array.from(new Set([...(d.memberAgentIds || []), d.leader_agent_id]))
@@ -483,10 +484,10 @@ export function registerIpc(core: JeffCore): Record<string, Handler> {
       }
       let row
       if (d.id) {
-        row = projectRepo(core.db).update(d.id, { title: d.title, description: d.description, icon: d.icon, leader_agent_id: d.leader_agent_id, ...(d.workspace_dir !== undefined ? { workspace_dir: d.workspace_dir } : {}) })
+        row = projectRepo(core.db).update(d.id, { title: d.title, description: d.description, icon: d.icon, leader_agent_id: d.leader_agent_id, ...(d.workspace_dir !== undefined ? { workspace_dir: d.workspace_dir } : {}), ...(d.workspace_state !== undefined ? { workspace_state: validateProjectWorkspaceJson(d.workspace_state) } : {}) })
         if (!row) throw new Error('项目不存在')
       } else {
-        row = projectRepo(core.db).create({ title: d.title, description: d.description, icon: d.icon, leader_agent_id: d.leader_agent_id, workspace_dir: d.workspace_dir || '' })
+        row = projectRepo(core.db).create({ title: d.title, description: d.description, icon: d.icon, leader_agent_id: d.leader_agent_id, workspace_dir: d.workspace_dir || '', workspace_state: d.workspace_state === undefined ? '{}' : validateProjectWorkspaceJson(d.workspace_state) })
       }
       // 事务化成员快照：差集删除 + 群主唯一（直接用 create/update 返回的 row，不按可重复的 title 回查）
       projectAgentRepo(core.db).replaceMembers(row.id, d.leader_agent_id, memberIds)
@@ -771,6 +772,7 @@ function toProjectInfo(core: JeffCore, row: import('@jeff/core').ProjectRow): Pr
     status: row.status,
     leader_agent_id: row.leader_agent_id,
     workspace_dir: row.workspace_dir || '',
+    workspace_state: row.workspace_state || '{}',
     updated_at: row.updated_at,
     memberCount: projectAgentRepo(core.db).listByProject(row.id).length,
   }

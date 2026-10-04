@@ -49,6 +49,7 @@ function seed(side: Side): void {
     title: '同步测试群',
     leader_agent_id: leader.id,
     workspace_dir: '/home/linux/project-a',
+    workspace_state: JSON.stringify({ goal: '项目级宣传计划', systemOutline: ['整体方案', '腕表呼叫'] }),
   })
   projectAgentRepo(side.db).add(p.id, leader.id, 'leader')
   projectAgentRepo(side.db).add(p.id, dev.id, 'worker')
@@ -98,6 +99,7 @@ describe('SyncEngine（实体级双向合并）', () => {
     expect(projects).toHaveLength(1)
     // 新建项目：workspace_dir 按设备留空，不拷贝 Linux 路径
     expect(projects[0].workspace_dir).toBe('')
+    expect(JSON.parse(projects[0].workspace_state)).toEqual({ goal: '项目级宣传计划', systemOutline: ['整体方案', '腕表呼叫'] })
     expect(projectAgentRepo(B.db).listByProject(projects[0].id)).toHaveLength(2)
     expect(taskRepo(B.db).listByProject(projects[0].id)).toHaveLength(1)
     expect(B.memory.list({ kind: 'user' })).toContain('称呼：Jeff 老师们')

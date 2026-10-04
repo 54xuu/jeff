@@ -77,6 +77,8 @@ test.describe('1.11 统一风格全屏回归', () => {
                   return agents
                 case 'projects:list':
                   return projects
+                case 'project:save':
+                  return { ...projects.find((x) => x.id === p.id), ...p, updated_at: Date.now(), memberCount: 3 }
                 case 'chat:history':
                   return chat[''] || []
                 case 'group:history':
@@ -178,6 +180,23 @@ test.describe('1.11 统一风格全屏回归', () => {
     await expect(page.locator('.msg-who').filter({ hasText: '小杰' })).toBeVisible()
     await noOverflow(page, 'chat-group')
     await page.screenshot({ path: '../../.tmp/e2e-screens/04-chat-group.png' })
+  })
+
+  test('项目资料：手机修改后可重新打开读取', async ({ page }) => {
+    await page.getByTestId('chat-group-一个很长很长的项目群名字用来测试顶栏按钮不溢出').click()
+    await page.getByTestId('project-workspace').click()
+    await expect(page.getByTestId('project-workspace-screen')).toBeVisible()
+    await page.getByTestId('mobile-workspace-goal').fill('完成无声智慧病房系统介绍')
+    await page.getByTestId('mobile-workspace-sales-audience').fill('渠道商与集成商')
+    await page.getByTestId('mobile-workspace-story-audience').fill('一线医护人员')
+    await page.getByTestId('mobile-workspace-outline').fill('系统方案\n病房呼叫\n门诊叫号')
+    await page.getByTestId('mobile-workspace-save').click()
+    await expect(page.getByTestId('mobile-workspace-result')).toHaveText('已保存到项目资料')
+    await page.locator('.project-workspace-screen .btn-nav-back').click()
+    await page.getByTestId('project-workspace').click()
+    await expect(page.getByTestId('mobile-workspace-goal')).toHaveValue('完成无声智慧病房系统介绍')
+    await expect(page.getByTestId('mobile-workspace-outline')).toHaveValue('系统方案\n病房呼叫\n门诊叫号')
+    await noOverflow(page, 'project-workspace')
   })
 
   test('流式回复：思考中折叠条与停止按钮，无溢出', async ({ page }) => {

@@ -57,6 +57,11 @@ describe('工具定义与实现的一致性', () => {
     }
   })
 
+  it('项目工作台结构化配置必须在项目更新工具参数中声明', () => {
+    const d = allToolDefs().find((x) => x.name === 'jeff_project_update')
+    expect(d?.args.workspace_state?.type).toBe('string')
+  })
+
   it('会改数据的工具都要声明 id/必填参数说明（防止「模型看不到字段」这类漂移）', () => {
     for (const d of allToolDefs()) {
       if (!/(_update|_delete|_enable)$/.test(d.name)) continue
@@ -91,6 +96,16 @@ describe('小杰改智能体：空值不抹字段', () => {
 })
 
 describe('小杰改项目群 / 任务：空值不抹字段', () => {
+  it('项目工作台只接受完整的对象 JSON，非法配置不改变已保存资料', async () => {
+    const call = projCall()
+    const leader = agentRepo(db).create({ name: '项目统筹' })
+    const project = projectRepo(db).create({ title: '宣传项目', leader_agent_id: leader.id, workspace_state: '{"goal":"旧目标"}' })
+    await expect(call('jeff_project_update', { id: project.id, workspace_state: '{' })).rejects.toThrow(/合法 JSON/)
+    expect(projectRepo(db).get(project.id)?.workspace_state).toBe('{"goal":"旧目标"}')
+    await call('jeff_project_update', { id: project.id, workspace_state: '{"goal":"新目标"}' })
+    expect(JSON.parse(projectRepo(db).get(project.id)!.workspace_state)).toEqual({ goal: '新目标' })
+  })
+
   it('改群名时空串字段不覆盖已有值；工作空间目录传空串才是「清除」', async () => {
     const call = projCall()
     const leader = agentRepo(db).create({ name: '护士长' })

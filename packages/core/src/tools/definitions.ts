@@ -90,7 +90,7 @@ export function allToolDefs(): ToolDef[] {
     },
     {
       name: 'jeff_project_update',
-      description: '修改项目群（名称/简介/图标/状态/群主/工作空间目录）。没传或传空串的字段保持不变（工作空间目录例外：明确传空串 = 清除为默认工作区）。',
+      description: '修改项目群（名称/简介/图标/状态/群主/工作空间目录/工作台 JSON 配置）。没传或传空串的字段保持不变（工作空间目录例外：明确传空串 = 清除为默认工作区）。workspace_state 是完整 JSON 字符串，只保存结构化项目事实和大纲，不放素材正文或密钥。',
       args: {
         id: { type: 'string', description: '项目 id' },
         title: { type: 'string', description: '新群名（可选）' },
@@ -99,6 +99,7 @@ export function allToolDefs(): ToolDef[] {
         status: { type: 'string', description: '状态', enum: [...PROJECT_STATUSES] },
         leader_agent_id: { type: 'string', description: '新群主 id（可选）' },
         workspace_dir: { type: 'string', description: '工作空间目录（可选；传空串清除为默认工作区）' },
+        workspace_state: { type: 'string', description: '完整 JSON 对象字符串：目标、系统大纲、宣传受众/渠道等项目工作台信息（可选；更新时传完整新对象）' },
       },
     },
     {

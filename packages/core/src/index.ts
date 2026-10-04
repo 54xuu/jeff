@@ -1828,6 +1828,7 @@ Jeff 把「开发 + 项目管理」组织成三个概念（微信心智模型）
 
 export { sesMetaKey } from './tools/memoryTools.js'
 export * from './ipc/contract.js'
+export * from './project/workspace.js'
 export * from './db/repos.js'
 export * from './oc/client.js'
 export * from './oc/configWriter.js'

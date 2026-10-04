@@ -3,6 +3,7 @@
  * electron-vite 把 `@jeff/core` 指到这里，避免把 better-sqlite3 等卷进浏览器 bundle。
  */
 export * from './ipc/contract.js'
+export { parseProjectWorkspaceState, serializeProjectWorkspaceState, validateProjectWorkspaceJson, type ProjectWorkspaceState } from './project/workspace.js'
 export { formatModelKey, parseModelKey, modelDisplayLabel } from './util/modelKey.js'
 export { normalizeProjectRole, projectRoleLabel, PROJECT_ROLES, type ProjectRole } from './util/projectRole.js'
 export { extractThinkTags, mergeReasoning, type ThinkExtractResult } from './util/thinkTag.js'

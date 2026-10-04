@@ -1783,6 +1783,42 @@ html[data-theme='dark'] .wechat-file-tip { color: #fbbf24; }
   border-top: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
 }
 
+.project-workspace-screen { overflow-y: auto; }
+.project-workspace-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 14px 16px 28px;
+}
+.project-workspace-form label { display: flex; flex-direction: column; gap: 6px; color: var(--text-2); font-size: 12px; }
+.project-workspace-form input,
+.project-workspace-form textarea {
+  box-sizing: border-box;
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card);
+  color: var(--text);
+  padding: 10px 12px;
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.5;
+}
+.project-workspace-form textarea { resize: vertical; }
+.project-workspace-form button {
+  border: 0;
+  border-radius: 10px;
+  background: var(--brand);
+  color: #fff;
+  padding: 12px;
+  font: inherit;
+  font-weight: 600;
+}
+.project-workspace-form button:disabled { opacity: .6; }
+.project-workspace-result { margin: 0; color: var(--text-2); font-size: 12px; }
+
 .wechat-fileview {
   flex: 1;
   display: flex;

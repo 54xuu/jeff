@@ -179,6 +179,8 @@ export interface ProjectInfo {
   leader_agent_id: string | null
   /** 工作空间目录（空 = 全局 workspace；未指定输出目录时文件都保存到工作空间） */
   workspace_dir: string
+  /** 项目工作台的结构化配置 JSON（不含本机绝对路径） */
+  workspace_state: string
   updated_at: number
   memberCount: number
 }
@@ -603,7 +605,7 @@ export type InvokeMap = {
   [IPC.chatNew]: { agentId: string }
   [IPC.chatStop]: { agentId: string }
   [IPC.projectsList]: void
-  [IPC.projectSave]: { id?: string; title: string; description?: string; icon?: string; leader_agent_id?: string | null; memberAgentIds?: string[]; workspace_dir?: string }
+  [IPC.projectSave]: { id?: string; title: string; description?: string; icon?: string; leader_agent_id?: string | null; memberAgentIds?: string[]; workspace_dir?: string; workspace_state?: string }
   [IPC.projectDelete]: { id: string }
   [IPC.projectMembers]: { projectId: string }
   [IPC.projectAddMember]: { projectId: string; agentId: string; role?: string }
