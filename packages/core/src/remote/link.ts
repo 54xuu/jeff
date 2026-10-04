@@ -2,6 +2,7 @@ import { b64ToBytes, bytesToB64 } from './bytes.js'
 import { bootCipher, ed25519PublicKey, handshake, randomBytes, randomX25519, signAuth, x25519PublicKey, RemoteCipher } from './crypto.js'
 import { openPlain, sealPlain, type E2ePlain } from './e2e.js'
 import { REMOTE_PROTOCOL, decodeServerFrame, encodeFrame, type BindingView, type ClientFrame, type ClientRole, type ServerFrame } from './protocol.js'
+import { IPC } from '../ipc/contract.js'
 
 export type LinkEvent =
   | { t: 'ready'; bindings: BindingView[] }
@@ -203,8 +204,7 @@ export class RelayLink {
     const peer = this.peers.get(peerId)
     if (!peer?.session) return Promise.reject(new Error('加密通道还没建立'))
     const id = bytesToB64(randomBytes(9)).replace(/=+$/, '')
-    const slow = channel === 'chat:send' || channel === 'group:send'
-    const timeout = this.opts.requestTimeoutMs ?? (slow ? 95 * 60 * 1000 : 30_000)
+    const timeout = remoteRequestTimeout(channel, payload, this.opts.requestTimeoutMs)
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id)
@@ -383,4 +383,12 @@ export class RelayLink {
     }
     this.opts.onEvent({ t: 'secure', peerId: from })
   }
+}
+
+/** Long model-backed project report generation needs the same remote budget as chat turns. */
+export function remoteRequestTimeout(channel: string, payload?: unknown, configuredTimeout?: number): number {
+  if (configuredTimeout != null) return configuredTimeout
+  const action = payload && typeof payload === 'object' ? (payload as { action?: unknown }).action : undefined
+  const slow = channel === IPC.chatSend || channel === IPC.groupSend || (channel === IPC.projectReport && action === 'generate')
+  return slow ? 95 * 60 * 1000 : 30_000
 }

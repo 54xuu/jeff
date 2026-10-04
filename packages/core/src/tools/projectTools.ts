@@ -78,6 +78,8 @@ export function registerProjectTools(reg: ToolBridge, deps: ProjectToolDeps): vo
           // 自治 agent 可以维护项目事实，但不能伪造用户的选题确认、制作关联或成品验收。
           campaigns: parseProjectWorkspaceState(projects.get(args.id)?.workspace_state).campaigns,
           assets: parseProjectWorkspaceState(projects.get(args.id)?.workspace_state).assets,
+          reportTemplates: parseProjectWorkspaceState(projects.get(args.id)?.workspace_state).reportTemplates,
+          reportSources: parseProjectWorkspaceState(projects.get(args.id)?.workspace_state).reportSources,
         }),
       } : {}),
       // 例外：工作空间目录明确支持「传空串 = 清除为默认工作区」（工具说明里写明了）

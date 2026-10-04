@@ -7,7 +7,7 @@ export { applyRemoteStream, createChatStreamGate, createStreamCoalescer, streamD
 export type { RemoteStreamFrame, RemoteStreamIn, StreamFlush } from './stream.js'
 export { openPlain, sealPlain } from './e2e.js'
 export type { E2ePlain } from './e2e.js'
-export { RelayLink } from './link.js'
+export { RelayLink, remoteRequestTimeout } from './link.js'
 export type { LinkEvent, RelayLinkOptions } from './link.js'
 export {
   FIXTURE_PRIV,

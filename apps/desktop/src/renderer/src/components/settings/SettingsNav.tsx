@@ -54,6 +54,17 @@ const SECTIONS: Array<{ id: SettingsSection; label: string; desc: string; icon: 
     ),
   },
   {
+    id: 'siyuan',
+    label: '思源知识库',
+    desc: '日报搜索与报告来源',
+    icon: (
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H20v16H5.5A1.5 1.5 0 0 1 4 18.5z" />
+        <path d="M8 8h8M8 12h8M8 16h5" />
+      </svg>
+    ),
+  },
+  {
     id: 'notification',
     label: '通知与提醒',
     desc: '桌面通知 / 提示音',

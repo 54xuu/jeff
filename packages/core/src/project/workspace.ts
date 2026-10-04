@@ -1,6 +1,6 @@
 /** Project-level facts shared by the desktop, phone, agent tools, and WebDAV sync. */
 export interface ProjectWorkspaceState {
-  schemaVersion: 3
+  schemaVersion: 4
   goal: string
   salesAudience: string
   storyAudience: string
@@ -9,6 +9,65 @@ export interface ProjectWorkspaceState {
   weeklyCadence: string
   campaigns: CampaignProposal[]
   assets: ProjectAsset[]
+  reportTemplates: ReportTemplate[]
+  reportSources: ReportSourceRef[]
+}
+
+/** User-authored reporting outline; periodType remains open for future report cadences. */
+export interface ReportTemplate {
+  id: string
+  name: string
+  periodType: string
+  sections: string[]
+  outputFormat: 'markdown'
+  updatedAt: number
+}
+
+/** A SiYuan document only becomes an approved report source after explicit user selection. */
+export interface ReportSourceRef {
+  docId: string
+  title: string
+  path: string
+  /** Report date may differ from SiYuan's creation timestamp for late-entered daily notes. */
+  reportDate: string
+  confirmedAt: number
+}
+
+export type ReportTemplateInput = Omit<ReportTemplate, 'id' | 'updatedAt'>
+export type ReportSourceCandidate = Pick<ReportSourceRef, 'docId' | 'title' | 'path' | 'reportDate'>
+
+export function saveReportTemplate(state: ProjectWorkspaceState, input: ReportTemplateInput, id?: string, at = Date.now()): ProjectWorkspaceState {
+  const template = normalizeReportTemplate({ ...input, id: id || newId('rpt'), updatedAt: at })
+  if (!template.name || !template.periodType || !template.sections.length) throw new Error('模板名称、周期类型和至少一个栏目必填')
+  const exists = state.reportTemplates.some((item) => item.id === template.id)
+  if (id && !exists) throw new Error('报告模板不存在')
+  if (state.reportTemplates.some((item) => item.id !== template.id && item.name === template.name)) throw new Error('模板名称已存在')
+  const reportTemplates = exists ? state.reportTemplates.map((item) => item.id === template.id ? template : item) : [template, ...state.reportTemplates]
+  return { ...state, schemaVersion: 4, reportTemplates }
+}
+
+export function deleteReportTemplate(state: ProjectWorkspaceState, id: string): ProjectWorkspaceState {
+  if (!state.reportTemplates.some((item) => item.id === id)) throw new Error('报告模板不存在')
+  return { ...state, schemaVersion: 4, reportTemplates: state.reportTemplates.filter((item) => item.id !== id) }
+}
+
+/** Persist only sources the user selected from current SiYuan search results. */
+export function confirmReportSources(state: ProjectWorkspaceState, candidates: ReportSourceCandidate[], at = Date.now()): ProjectWorkspaceState {
+  const known = new Map(state.reportSources.map((source) => [source.docId, source]))
+  for (const candidate of candidates) {
+    if (!/^\d{14}-[0-9a-z]{7}$/.test(candidate.docId)) throw new Error(`思源文档 ID 格式无效：${candidate.docId}`)
+    const title = candidate.title.trim()
+    const path = candidate.path.trim()
+    if (!title || !path) throw new Error('来源标题与路径不能为空')
+    if (!isISODate(candidate.reportDate)) throw new Error(`日报日期无效：${candidate.reportDate}`)
+    known.set(candidate.docId, { docId: candidate.docId, title, path, reportDate: candidate.reportDate, confirmedAt: at })
+  }
+  if (!candidates.length) throw new Error('至少选择一篇日报来源')
+  return { ...state, schemaVersion: 4, reportSources: [...known.values()].sort((a, b) => b.confirmedAt - a.confirmedAt) }
+}
+
+export function removeReportSource(state: ProjectWorkspaceState, docId: string): ProjectWorkspaceState {
+  return { ...state, schemaVersion: 4, reportSources: state.reportSources.filter((source) => source.docId !== docId) }
 }
 
 export type ProjectAssetKind = 'image' | 'video' | 'document' | 'demo_url'
@@ -78,7 +137,7 @@ export interface CampaignDirectionReview {
 }
 
 export const EMPTY_PROJECT_WORKSPACE: ProjectWorkspaceState = {
-  schemaVersion: 3,
+  schemaVersion: 4,
   goal: '',
   salesAudience: '',
   storyAudience: '',
@@ -87,6 +146,8 @@ export const EMPTY_PROJECT_WORKSPACE: ProjectWorkspaceState = {
   weeklyCadence: '',
   campaigns: [],
   assets: [],
+  reportTemplates: [],
+  reportSources: [],
 }
 
 /** Older projects (and older remote backups) have no workspace state. */
@@ -96,7 +157,7 @@ export function parseProjectWorkspaceState(raw: string | null | undefined): Proj
     const value = JSON.parse(raw) as Record<string, unknown>
     if (!value || typeof value !== 'object' || Array.isArray(value)) return { ...EMPTY_PROJECT_WORKSPACE }
     return {
-      schemaVersion: 3,
+      schemaVersion: 4,
       goal: typeof value.goal === 'string' ? value.goal.trim() : '',
       salesAudience: typeof value.salesAudience === 'string' ? value.salesAudience.trim() : '',
       storyAudience: typeof value.storyAudience === 'string' ? value.storyAudience.trim() : '',
@@ -105,6 +166,8 @@ export function parseProjectWorkspaceState(raw: string | null | undefined): Proj
       weeklyCadence: typeof value.weeklyCadence === 'string' ? value.weeklyCadence.trim() : '',
       campaigns: campaignList(value.campaigns),
       assets: assetList(value.assets),
+      reportTemplates: reportTemplateList(value.reportTemplates),
+      reportSources: reportSourceList(value.reportSources),
     }
   } catch {
     return { ...EMPTY_PROJECT_WORKSPACE }
@@ -113,7 +176,7 @@ export function parseProjectWorkspaceState(raw: string | null | undefined): Proj
 
 export function serializeProjectWorkspaceState(state: ProjectWorkspaceState): string {
   return JSON.stringify({
-    schemaVersion: 3,
+    schemaVersion: 4,
     goal: state.goal.trim(),
     salesAudience: state.salesAudience.trim(),
     storyAudience: state.storyAudience.trim(),
@@ -122,6 +185,8 @@ export function serializeProjectWorkspaceState(state: ProjectWorkspaceState): st
     weeklyCadence: state.weeklyCadence.trim(),
     campaigns: state.campaigns.map(normalizeCampaign),
     assets: state.assets.map(normalizeAsset),
+    reportTemplates: state.reportTemplates.map(normalizeReportTemplate),
+    reportSources: state.reportSources.map(normalizeReportSource),
   })
 }
 
@@ -130,7 +195,7 @@ export function registerProjectAsset(state: ProjectWorkspaceState, input: Omit<P
   if (!asset.title) throw new Error('素材名称不能为空')
   if (!asset.path) throw new Error('请填写工作区内的文件路径或演示地址')
   if (asset.source === 'generated_illustration' && asset.isReal) throw new Error('生成示意图不能标记为真实产品素材')
-  return { ...state, schemaVersion: 3, assets: [{ ...asset, id: newId('asset'), createdAt: at }, ...state.assets] }
+  return { ...state, schemaVersion: 4, assets: [{ ...asset, id: newId('asset'), createdAt: at }, ...state.assets] }
 }
 
 export function reviewProjectAsset(state: ProjectWorkspaceState, id: string, confirmed: boolean): ProjectWorkspaceState {
@@ -172,7 +237,7 @@ export function createCampaignProposal(state: ProjectWorkspaceState, input: Camp
   if (!proposal.title) throw new Error('选题标题不能为空')
   if (proposal.kind === 'feature_video' && !proposal.feature) throw new Error('单功能视频必须填写具体功能')
   if (proposal.sellingPoints.length === 0) throw new Error('至少填写一个核心卖点')
-  return { ...state, schemaVersion: 3, campaigns: [{ ...proposal, id: newId('cmp'), revision: 1, approvedRevision: null, directionFeedback: '', directionReviews: [], productionTaskId: '', updatedAt: at, deliveries: [] }, ...state.campaigns] }
+  return { ...state, schemaVersion: 4, campaigns: [{ ...proposal, id: newId('cmp'), revision: 1, approvedRevision: null, directionFeedback: '', directionReviews: [], productionTaskId: '', updatedAt: at, deliveries: [] }, ...state.campaigns] }
 }
 
 export function updateCampaignProposal(state: ProjectWorkspaceState, id: string, input: CampaignProposalInput, at = Date.now()): ProjectWorkspaceState {
@@ -261,6 +326,46 @@ function campaignList(value: unknown): CampaignProposal[] {
 function assetList(value: unknown): ProjectAsset[] {
   if (!Array.isArray(value)) return []
   return value.filter(isRecord).map(normalizeAsset).filter((item) => Boolean(item.id && item.title && item.path))
+}
+
+function reportTemplateList(value: unknown): ReportTemplate[] {
+  if (!Array.isArray(value)) return []
+  return value.filter(isRecord).map(normalizeReportTemplate).filter((item) => Boolean(item.id && item.name && item.periodType && item.sections.length))
+}
+
+function reportSourceList(value: unknown): ReportSourceRef[] {
+  if (!Array.isArray(value)) return []
+  return value.filter(isRecord).map(normalizeReportSource).filter((item) => /^\d{14}-[0-9a-z]{7}$/.test(item.docId) && item.title && item.path && isISODate(item.reportDate))
+}
+
+function normalizeReportTemplate(value: Record<string, unknown> | ReportTemplate): ReportTemplate {
+  return {
+    id: typeof value.id === 'string' ? value.id : '',
+    name: typeof value.name === 'string' ? value.name.trim() : '',
+    periodType: typeof value.periodType === 'string' ? value.periodType.trim() : '',
+    sections: stringList(value.sections),
+    outputFormat: 'markdown',
+    updatedAt: finiteNumber(value.updatedAt, 0),
+  }
+}
+
+function normalizeReportSource(value: Record<string, unknown> | ReportSourceRef): ReportSourceRef {
+  const docId = typeof value.docId === 'string' ? value.docId.trim() : ''
+  const fallbackDate = /^\d{14}-[0-9a-z]{7}$/.test(docId) ? `${docId.slice(0, 4)}-${docId.slice(4, 6)}-${docId.slice(6, 8)}` : ''
+  const candidateDate = typeof value.reportDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value.reportDate) ? value.reportDate : fallbackDate
+  return {
+    docId,
+    title: typeof value.title === 'string' ? value.title.trim() : '',
+    path: typeof value.path === 'string' ? value.path.trim() : '',
+    reportDate: isISODate(candidateDate) ? candidateDate : '',
+    confirmedAt: finiteNumber(value.confirmedAt, 0),
+  }
+}
+
+export function isISODate(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false
+  const date = new Date(`${value}T00:00:00.000Z`)
+  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value
 }
 
 function normalizeAsset(value: Record<string, unknown> | ProjectAsset): ProjectAsset {

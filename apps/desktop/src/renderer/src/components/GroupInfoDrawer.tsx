@@ -12,6 +12,7 @@ import { useDirtyClose } from './ui/useDirtyClose'
 import WorkspaceFileTree from './WorkspaceFileTree'
 import SessionHistoryPanel from './SessionHistoryPanel'
 import ProjectTaskBoard from './ProjectTaskBoard'
+import ProjectReportsPanel from './ProjectReportsPanel'
 import { IconClose } from './ui/Icons'
 
 type GroupDrawerTab = 'settings' | 'workspace' | 'tasks' | 'members' | 'history' | 'files'
@@ -319,6 +320,7 @@ export default function GroupInfoDrawer(props: { project: ProjectInfo; busy?: bo
             </div>
             {documentMsg && <p className="settings-tip" role="status" data-testid="project-document-result">{documentMsg}</p>}
           </div>
+          <ProjectReportsPanel project={project} state={workspaceState} onState={setWorkspaceState} />
           <div className="drawer-sec">宣传选题与成品</div>
           <div className="group-settings campaign-workspace" data-testid="campaign-workspace">
             <section className="campaign-assets" data-testid="project-assets">

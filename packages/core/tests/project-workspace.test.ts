@@ -5,6 +5,7 @@ import {
   submitCampaignDelivery, reviewCampaignDelivery, updateCampaignProposal,
   registerProjectAsset, reviewProjectAsset,
   resolveCampaignMaterial,
+  saveReportTemplate, confirmReportSources, removeReportSource,
 } from '../src/project/workspace.js'
 
 describe('project workspace profile', () => {
@@ -31,7 +32,7 @@ describe('project workspace profile', () => {
 
   it('trims editable lists and migrates old profile data to the current schema', () => {
     const raw = serializeProjectWorkspaceState({
-      schemaVersion: 3,
+      schemaVersion: 4,
       goal: ' 宣传腕表方案 ',
       salesAudience: ' 渠道商 ',
       storyAudience: ' 一线医护 ',
@@ -40,11 +41,13 @@ describe('project workspace profile', () => {
       weeklyCadence: '每周一批',
       campaigns: [],
       assets: [],
+      reportTemplates: [],
+      reportSources: [],
     })
     const legacy = parseProjectWorkspaceState(JSON.stringify({ schemaVersion: 1, goal: ' 宣传腕表方案 ', channels: [' 微信 '] }))
-    expect(legacy).toMatchObject({ schemaVersion: 3, goal: '宣传腕表方案', channels: ['微信'], campaigns: [], assets: [] })
+    expect(legacy).toMatchObject({ schemaVersion: 4, goal: '宣传腕表方案', channels: ['微信'], campaigns: [], assets: [], reportTemplates: [], reportSources: [] })
     expect(parseProjectWorkspaceState(raw)).toEqual({
-      schemaVersion: 3,
+      schemaVersion: 4,
       goal: '宣传腕表方案',
       salesAudience: '渠道商',
       storyAudience: '一线医护',
@@ -53,7 +56,23 @@ describe('project workspace profile', () => {
       weeklyCadence: '每周一批',
       campaigns: [],
       assets: [],
+      reportTemplates: [],
+      reportSources: [],
     })
+  })
+
+  it('支持开放周期类型报告模板，并且只登记经过格式校验的思源文档来源', () => {
+    let state = saveReportTemplate(EMPTY_PROJECT_WORKSPACE, { name: '研发月报', periodType: '月报', sections: ['完成事项', '风险'], outputFormat: 'markdown' }, undefined, 100)
+    const template = state.reportTemplates[0]!
+    expect(template).toMatchObject({ name: '研发月报', periodType: '月报', sections: ['完成事项', '风险'], updatedAt: 100 })
+    state = saveReportTemplate(state, { name: '年度技术总结', periodType: '年度复盘', sections: ['成果'], outputFormat: 'markdown' }, undefined, 101)
+    expect(state.reportTemplates).toHaveLength(2)
+    state = confirmReportSources(state, [{ docId: '20261005123456-abc1234', title: '10 月 5 日日报', path: '/日报/2026/10/05', reportDate: '2026-10-04' }], 102)
+    expect(state.reportSources[0]).toMatchObject({ docId: '20261005123456-abc1234', reportDate: '2026-10-04', confirmedAt: 102 })
+    expect(() => confirmReportSources(state, [{ docId: 'not-a-siyuan-id', title: 'bad', path: '/bad', reportDate: '2026-10-05' }])).toThrow('格式无效')
+    expect(() => confirmReportSources(state, [{ docId: '20261005123456-abc1234', title: '日报', path: '/', reportDate: '2026-13-40' }])).toThrow('日报日期无效')
+    expect(removeReportSource(state, '20261005123456-abc1234').reportSources).toEqual([])
+    expect(parseProjectWorkspaceState(serializeProjectWorkspaceState(state))).toEqual(state)
   })
 
   it('holds production until direction and materials are approved, and records output review by version', () => {

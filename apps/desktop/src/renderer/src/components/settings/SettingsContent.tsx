@@ -8,6 +8,7 @@ import NotificationSettings from './NotificationSettings'
 import AppearanceSettings from './AppearanceSettings'
 import AboutSettings from './AboutSettings'
 import RemoteSettings from './RemoteSettings'
+import SiyuanSettings from './SiyuanSettings'
 
 /** 设置页右侧内容区：按左侧导航选中的分组渲染 */
 export default function SettingsContent(): React.JSX.Element {
@@ -19,6 +20,7 @@ export default function SettingsContent(): React.JSX.Element {
       {settingsSection === 'memory' && <MemorySettings />}
       {settingsSection === 'engine' && <EngineSettings />}
       {settingsSection === 'sync' && <SyncSettings />}
+      {settingsSection === 'siyuan' && <SiyuanSettings />}
       {settingsSection === 'notification' && <NotificationSettings />}
       {settingsSection === 'appearance' && <AppearanceSettings />}
       {settingsSection === 'remote' && <RemoteSettings />}

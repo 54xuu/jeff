@@ -51,6 +51,11 @@ export const IPC = {
   projectSave: 'project:save',
   projectCampaign: 'project:campaign',
   projectDocument: 'project:document',
+  siyuanConfigGet: 'siyuan:configGet',
+  siyuanConfigSave: 'siyuan:configSave',
+  siyuanSearch: 'siyuan:search',
+  siyuanExport: 'siyuan:export',
+  projectReport: 'project:report',
   projectDelete: 'project:delete',
   projectMembers: 'project:members',
   projectAddMember: 'project:addMember',
@@ -201,6 +206,15 @@ export type ProjectCampaignCommand =
   | { projectId: string; action: 'review_delivery'; campaignId: string; deliveryId: string; decision: 'accepted' | 'changes_requested'; feedback?: string }
 
 export interface ProjectDocumentInfo { kind: 'charter' | 'weekly_report' | 'closeout'; path: string; content: string; missing: string[] }
+export interface SiYuanConfigInfo { baseUrl: string; tokenConfigured: boolean }
+export interface SiYuanSearchResult { docId: string; title: string; path: string; snippet: string }
+export interface ProjectReportInfo { path: string; content: string; templateId: string; sourceDocIds: string[] }
+export type ProjectReportCommand =
+  | { projectId: string; action: 'confirm_sources'; query: string; sources: Array<{ docId: string; title: string; path: string; reportDate: string }> }
+  | { projectId: string; action: 'remove_source'; docId: string }
+  | { projectId: string; action: 'save_template'; template: { id?: string; name: string; periodType: string; sections: string[]; outputFormat: 'markdown' } }
+  | { projectId: string; action: 'delete_template'; templateId: string }
+  | { projectId: string; action: 'generate'; templateId: string; startDate: string; endDate: string }
 
 export interface ProjectMember {
   agent_id: string
@@ -629,6 +643,11 @@ export type InvokeMap = {
   [IPC.projectSave]: { id?: string; title: string; description?: string; icon?: string; leader_agent_id?: string | null; memberAgentIds?: string[]; workspace_dir?: string; workspace_state?: string }
   [IPC.projectCampaign]: ProjectCampaignCommand
   [IPC.projectDocument]: { projectId: string; kind: 'charter' | 'weekly_report' | 'closeout' }
+  [IPC.siyuanConfigGet]: void
+  [IPC.siyuanConfigSave]: { baseUrl: string; token?: string }
+  [IPC.siyuanSearch]: { keyword: string }
+  [IPC.siyuanExport]: { docId: string }
+  [IPC.projectReport]: ProjectReportCommand
   [IPC.projectDelete]: { id: string }
   [IPC.projectMembers]: { projectId: string }
   [IPC.projectAddMember]: { projectId: string; agentId: string; role?: string }

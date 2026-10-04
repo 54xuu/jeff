@@ -4,7 +4,7 @@ import {
   IPC, XIAOJIE_ID, TOOL_ACTION_LABEL, extractThinkTags, mergeReasoning, sortedPinKeys, decodePluginUserMessage,
   parseProjectWorkspaceState, serializeProjectWorkspaceState, canStartCampaignProduction,
 } from '@jeff/core'
-import type { AgentInfo, AppInfo, ChatMsg, FileNode, FsDirEntry, GroupMessage, ProjectInfo, ContextPreviewInfo, PluginCommand, PluginInfo, CampaignKind, CampaignProposalInput, CampaignProposal, TaskInfo, ProjectDocumentInfo } from '@jeff/core'
+import type { AgentInfo, AppInfo, ChatMsg, FileNode, FsDirEntry, GroupMessage, ProjectInfo, ContextPreviewInfo, PluginCommand, PluginInfo, CampaignKind, CampaignProposalInput, CampaignProposal, TaskInfo, ProjectDocumentInfo, ProjectReportInfo, SiYuanSearchResult } from '@jeff/core'
 import type { RemoteStreamFrame } from '@jeff/core/remote'
 import { consumeBack } from './backstack'
 import Mascot from './Mascot'
@@ -465,6 +465,19 @@ export function App() {
   const [newTaskDue, setNewTaskDue] = useState('')
   const [newTaskCriteria, setNewTaskCriteria] = useState('')
   const [newTaskDepends, setNewTaskDepends] = useState<string[]>([])
+  const [reportQuery, setReportQuery] = useState('')
+  const [reportHits, setReportHits] = useState<SiYuanSearchResult[]>([])
+  const [reportSelected, setReportSelected] = useState<string[]>([])
+  const [reportDates, setReportDates] = useState<Record<string, string>>({})
+  const [reportTemplateId, setReportTemplateId] = useState('')
+  const [reportTemplateName, setReportTemplateName] = useState('')
+  const [reportPeriodType, setReportPeriodType] = useState('季度')
+  const [reportSections, setReportSections] = useState('工作重点\n主要进展\n量化成果\n风险与下一步')
+  const [reportStartDate, setReportStartDate] = useState(`${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-01`)
+  const [reportEndDate, setReportEndDate] = useState(new Date().toISOString().slice(0, 10))
+  const [reportBusy, setReportBusy] = useState(false)
+  const [reportMessage, setReportMessage] = useState('')
+  const [reportResult, setReportResult] = useState<ProjectReportInfo | null>(null)
   const [campaignDraft, setCampaignDraft] = useState<CampaignProposalInput>({ kind: 'feature_video', title: '', feature: '', story: '', channels: [], sellingPoints: [], materialsNeeded: [] })
   const [editingCampaignId, setEditingCampaignId] = useState('')
   const [campaignFeedback, setCampaignFeedback] = useState<Record<string, string>>({})
@@ -1217,6 +1230,12 @@ export function App() {
     if (!project) return
     const state = parseProjectWorkspaceState(project.workspace_state)
     setWorkspaceDraft(state)
+    setReportQuery(''); setReportHits([]); setReportSelected([]); setReportResult(null); setReportMessage('')
+    const firstTemplate = state.reportTemplates[0]
+    setReportTemplateId(firstTemplate?.id || '')
+    setReportTemplateName(firstTemplate?.name || '')
+    setReportPeriodType(firstTemplate?.periodType || '季度')
+    setReportSections(firstTemplate?.sections.join('\n') || '工作重点\n主要进展\n量化成果\n风险与下一步')
     setCampaignDraft({ kind: 'feature_video', title: '', feature: '', story: '', channels: state.channels, sellingPoints: [], materialsNeeded: [] })
     setEditingCampaignId('')
     setCampaignFeedback({})
@@ -1249,6 +1268,61 @@ export function App() {
       setWorkspaceSaved(`已生成草稿：${result.path}${result.missing.length ? `；待补：${result.missing.join('、')}` : ''}`)
     } catch (error) { setWorkspaceSaved(`生成失败：${error instanceof Error ? error.message : String(error)}`) }
     finally { setWorkspaceSaving(false) }
+  }
+
+  async function searchReportSources() {
+    setReportBusy(true); setReportMessage('正在搜索思源日报…')
+    try {
+      const found = await phone.invoke<SiYuanSearchResult[]>(IPC.siyuanSearch, { keyword: reportQuery })
+      setReportHits(found); setReportSelected([])
+      setReportDates(Object.fromEntries(found.map((item) => [item.docId, `${item.docId.slice(0, 4)}-${item.docId.slice(4, 6)}-${item.docId.slice(6, 8)}`])))
+      setReportMessage('请核对每篇日报日期后选择来源')
+    }
+    catch (error) { setReportHits([]); setReportMessage(`搜索失败：${error instanceof Error ? error.message : String(error)}`) }
+    finally { setReportBusy(false) }
+  }
+
+  async function confirmReportSourcesOnPhone() {
+    if (!target || target.kind !== 'group') return
+    setReportBusy(true)
+    try {
+      const sources = reportHits.filter((item) => reportSelected.includes(item.docId)).map(({ docId, title, path }) => ({ docId, title, path, reportDate: reportDates[docId] || '' }))
+      const info = await phone.invoke<ProjectInfo>(IPC.projectReport, { projectId: target.id, action: 'confirm_sources', query: reportQuery, sources })
+      setWorkspaceDraft(parseProjectWorkspaceState(info.workspace_state)); setProjects((items) => items.map((item) => item.id === info.id ? info : item)); setReportSelected([]); setReportMessage(`已确认 ${sources.length} 篇来源`)
+    } catch (error) { setReportMessage(`确认失败：${error instanceof Error ? error.message : String(error)}`) }
+    finally { setReportBusy(false) }
+  }
+
+  async function saveReportTemplateOnPhone() {
+    if (!target || target.kind !== 'group') return
+    setReportBusy(true)
+    try {
+      const info = await phone.invoke<ProjectInfo>(IPC.projectReport, { projectId: target.id, action: 'save_template', template: { ...(reportTemplateId ? { id: reportTemplateId } : {}), name: reportTemplateName, periodType: reportPeriodType, sections: reportSections.split('\n'), outputFormat: 'markdown' } })
+      const next = parseProjectWorkspaceState(info.workspace_state)
+      setWorkspaceDraft(next); setProjects((items) => items.map((item) => item.id === info.id ? info : item))
+      const saved = next.reportTemplates.find((item) => item.name === reportTemplateName.trim())
+      if (saved) setReportTemplateId(saved.id)
+      setReportMessage('报告模板已保存并同步到项目')
+    } catch (error) { setReportMessage(`模板保存失败：${error instanceof Error ? error.message : String(error)}`) }
+    finally { setReportBusy(false) }
+  }
+
+  async function generateProjectReportOnPhone() {
+    if (!target || target.kind !== 'group') return
+    setReportBusy(true); setReportResult(null); setReportMessage('正在读取日报并生成报告草稿…')
+    try {
+      const result = await phone.invoke<ProjectReportInfo>(IPC.projectReport, { projectId: target.id, action: 'generate', templateId: reportTemplateId, startDate: reportStartDate, endDate: reportEndDate })
+      setReportResult(result); setReportMessage(`已生成报告草稿，引用 ${result.sourceDocIds.length} 篇日报`)
+    } catch (error) { setReportMessage(`报告生成失败：${error instanceof Error ? error.message : String(error)}`) }
+    finally { setReportBusy(false) }
+  }
+
+  async function removeReportSourceOnPhone(docId: string) {
+    if (!target || target.kind !== 'group') return
+    try {
+      const info = await phone.invoke<ProjectInfo>(IPC.projectReport, { projectId: target.id, action: 'remove_source', docId })
+      setWorkspaceDraft(parseProjectWorkspaceState(info.workspace_state)); setProjects((items) => items.map((item) => item.id === info.id ? info : item))
+    } catch (error) { setReportMessage(`移除来源失败：${error instanceof Error ? error.message : String(error)}`) }
   }
 
   async function persistProjectWorkspace(state: ReturnType<typeof parseProjectWorkspaceState>): Promise<boolean> {
@@ -2562,6 +2636,22 @@ export function App() {
               <button type="button" disabled={workspaceSaving} data-testid="mobile-project-document-weekly" onClick={() => void generateProjectDocument('weekly_report')}>生成项目周报草稿</button>
               <button type="button" disabled={workspaceSaving} data-testid="mobile-project-document-closeout" onClick={() => void generateProjectDocument('closeout')}>生成结项核查草稿</button>
             </div>
+            <h3 className="campaign-mobile-title">思源日报与报告模板</h3>
+            <p className="project-workspace-result">思源连接需先在桌面「设置 → 思源知识库」配置。请核对每篇日报日期，思源文档创建时间可能不同于日报日期。生成时正文会发送给项目群主所用模型，并在独立报告话题留痕；搜索结果只有经你确认后才会进入项目来源。</p>
+            <label><span>搜索日报</span><input data-testid="mobile-report-query" value={reportQuery} onChange={(e) => setReportQuery(e.target.value)} placeholder="标题或内容关键词" /></label>
+            <button type="button" data-testid="mobile-report-search" disabled={reportBusy || reportQuery.trim().length < 2} onClick={() => void searchReportSources()}>搜索思源日报</button>
+            {reportHits.map((hit) => <div className="campaign-mobile-delivery" key={hit.docId}><span><strong>{hit.title}</strong><br />{hit.path}<br />{hit.snippet}<br /><label>日报日期 <input type="date" aria-label={`${hit.title} 的日报日期`} value={reportDates[hit.docId] || ''} onChange={(e) => setReportDates((dates) => ({ ...dates, [hit.docId]: e.target.value }))} /></label></span><input type="checkbox" aria-label={`选择 ${hit.title}`} checked={reportSelected.includes(hit.docId)} onChange={(e) => setReportSelected((ids) => e.target.checked ? [...ids, hit.docId] : ids.filter((id) => id !== hit.docId))} /></div>)}
+            {reportHits.length > 0 ? <button type="button" data-testid="mobile-report-confirm-sources" disabled={reportBusy || reportSelected.length === 0} onClick={() => void confirmReportSourcesOnPhone()}>确认所选日报来源</button> : null}
+            {workspaceDraft.reportSources.map((source) => <div className="campaign-mobile-delivery" key={source.docId}><span>{source.reportDate} · {source.title} · {source.path}</span><button type="button" onClick={() => void removeReportSourceOnPhone(source.docId)}>移除</button></div>)}
+            <label><span>模板</span><select data-testid="mobile-report-template-select" value={reportTemplateId} onChange={(e) => { const item = workspaceDraft.reportTemplates.find((template) => template.id === e.target.value); setReportTemplateId(item?.id || ''); setReportTemplateName(item?.name || ''); setReportPeriodType(item?.periodType || '季度'); setReportSections(item?.sections.join('\n') || '工作重点\n主要进展\n量化成果\n风险与下一步') }}><option value="">新模板</option>{workspaceDraft.reportTemplates.map((template) => <option key={template.id} value={template.id}>{template.name} · {template.periodType}</option>)}</select></label>
+            <label><span>模板名称</span><input data-testid="mobile-report-template-name" value={reportTemplateName} onChange={(e) => setReportTemplateName(e.target.value)} placeholder="员工工作总结" /></label>
+            <label><span>周期类型（可扩展）</span><input data-testid="mobile-report-period" value={reportPeriodType} onChange={(e) => setReportPeriodType(e.target.value)} placeholder="月报 / 季报 / 年报" /></label>
+            <label><span>栏目（每行一个）</span><textarea data-testid="mobile-report-sections" rows={4} value={reportSections} onChange={(e) => setReportSections(e.target.value)} /></label>
+            <button type="button" data-testid="mobile-report-template-save" disabled={reportBusy || !reportTemplateName.trim() || !reportPeriodType.trim() || !reportSections.trim()} onClick={() => void saveReportTemplateOnPhone()}>保存报告模板</button>
+            <div className="project-workspace-form"><label><span>统计开始日期</span><input data-testid="mobile-report-start" type="date" value={reportStartDate} onChange={(e) => setReportStartDate(e.target.value)} /></label><label><span>统计结束日期</span><input data-testid="mobile-report-end" type="date" value={reportEndDate} onChange={(e) => setReportEndDate(e.target.value)} /></label></div>
+            <button type="button" className="btn-primary" data-testid="mobile-report-generate" disabled={reportBusy || !reportTemplateId || workspaceDraft.reportSources.length === 0 || reportStartDate > reportEndDate} onClick={() => void generateProjectReportOnPhone()}>{reportBusy ? '生成中…' : '生成报告草稿'}</button>
+            {reportMessage ? <p className="project-workspace-result" role="status" data-testid="mobile-report-message">{reportMessage}</p> : null}
+            {reportResult ? <details data-testid="mobile-report-result"><summary>{reportResult.path}</summary><pre>{reportResult.content}</pre></details> : null}
             <h3 className="campaign-mobile-title">项目管理 · 任务</h3>
             <p className="project-workspace-result">设置期限、前置任务和验收标准；依赖未完成的任务不能标记完成。</p>
             <label><span>任务标题</span><input data-testid="mobile-project-task-title" value={newTaskTitle} onChange={(e) => setNewTaskTitle(e.target.value)} placeholder="例如：完成腕表呼叫联调" /></label>
@@ -2571,7 +2661,9 @@ export function App() {
             <button type="button" className="btn-primary" data-testid="mobile-project-task-create" disabled={workspaceSaving || !newTaskTitle.trim()} onClick={() => void saveProjectTask()}>创建项目任务</button>
             {projectTasks.map((task) => {
               const blocked = task.depends_on.some((id) => projectTasks.find((candidate) => candidate.id === id)?.status !== 'done')
-              return <div className="campaign-mobile-delivery" key={task.id} data-testid={`mobile-project-task-${task.id}`}><span><strong>{task.key} · {task.title}</strong><br />{task.due_at ? `截止 ${new Date(task.due_at).toLocaleDateString('zh-CN')}` : '未设期限'} · {blocked ? '等待前置任务' : task.status}{task.acceptance_criteria ? ` · 验收：${task.acceptance_criteria}` : ''}</span><select aria-label={`${task.key} 状态`} value={task.status} disabled={workspaceSaving || (blocked && task.status !== 'done')} onChange={(e) => void saveProjectTask(task, e.target.value)}><option value="todo">待办</option><option value="in_progress">进行中</option><option value="in_review">待验收</option><option value="done">已完成</option><option value="cancelled">已取消</option></select></div>
+              const daysLeft = task.due_at == null ? null : Math.ceil((new Date(task.due_at).setHours(0, 0, 0, 0) - new Date().setHours(0, 0, 0, 0)) / 86_400_000)
+              const risk = task.status === 'done' || task.status === 'cancelled' ? '' : blocked ? '风险：等待前置任务' : daysLeft !== null && daysLeft < 0 ? `风险：已逾期 ${-daysLeft} 天` : daysLeft !== null && daysLeft <= 3 ? `风险：${daysLeft === 0 ? '今天到期' : `${daysLeft} 天内到期`}` : ''
+              return <div className="campaign-mobile-delivery" key={task.id} data-testid={`mobile-project-task-${task.id}`}><span><strong>{task.key} · {task.title}</strong><br />{task.due_at ? `截止 ${new Date(task.due_at).toLocaleDateString('zh-CN')}` : '未设期限'} · {blocked ? '等待前置任务' : task.status}{risk ? <><br /><strong data-testid={`mobile-project-task-risk-${task.id}`}>{risk}</strong></> : null}{task.acceptance_criteria ? ` · 验收：${task.acceptance_criteria}` : ''}</span><select aria-label={`${task.key} 状态`} value={task.status} disabled={workspaceSaving || (blocked && task.status !== 'done')} onChange={(e) => void saveProjectTask(task, e.target.value)}><option value="todo">待办</option><option value="in_progress">进行中</option><option value="in_review">待验收</option><option value="done">已完成</option><option value="cancelled">已取消</option></select></div>
             })}
             <h3 className="campaign-mobile-title">宣传选题与成品</h3>
             <h4>项目素材库</h4>

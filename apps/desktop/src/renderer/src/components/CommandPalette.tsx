@@ -15,6 +15,7 @@ const SETTINGS_SECTIONS: Array<[SettingsSection, string]> = [
   ['memory', '记忆'],
   ['engine', '引擎服务'],
   ['sync', '同步与备份'],
+  ['siyuan', '思源知识库'],
   ['notification', '通知'],
   ['appearance', '外观'],
   ['remote', '远程控制'],

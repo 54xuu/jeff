@@ -22,6 +22,8 @@ const DENY: Record<string, string> = {
   [IPC.remoteUnbind]: '这条是电脑设置页用的，手机解绑走中转站自己的帧',
   [IPC.remoteSettings]: '开机自启和防睡眠只在电脑上改',
   [IPC.remoteFocus]: '桌面端把当前会话推给手机，不接受手机回调这一条',
+  [IPC.siyuanConfigGet]: '思源 API 配置与令牌只在桌面端设置页管理',
+  [IPC.siyuanConfigSave]: '思源 API 令牌只允许在桌面端本地保存',
   [IPC.remoteReconnect]: '重新连接中转站只在电脑上操作',
 }
 
@@ -42,7 +44,7 @@ const PUSH = new Set<string>([
 ])
 
 // 宣传审批状态迁移由桌面主进程执行，App 只经现有加密链路调用该契约。
-const ALLOW = new Set<string>([IPC.projectCampaign, IPC.projectDocument, IPC.tasksList, IPC.taskSave, IPC.taskDelete])
+const ALLOW = new Set<string>([IPC.projectCampaign, IPC.projectDocument, IPC.projectReport, IPC.siyuanSearch, IPC.siyuanExport, IPC.tasksList, IPC.taskSave, IPC.taskDelete])
 
 function build(): Record<string, RemoteRule> {
   const out: Record<string, RemoteRule> = {}

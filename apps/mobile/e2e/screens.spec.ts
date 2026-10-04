@@ -101,6 +101,21 @@ test.describe('1.11 统一风格全屏回归', () => {
                   }
                 case 'project:document':
                   return { kind: p.kind, path: `/home/e2e/workspace/项目文档/${p.kind}.md`, content: '# 草稿', missing: [] }
+                case 'siyuan:search':
+                  return [{ docId: '20261005123456-abc1234', title: '测试日报 2026-10-05', path: '/日报/2026/10/05', snippet: '完成接口联调' }]
+                case 'project:report': {
+                  const project = projects.find((x: MockProject) => x.id === p.projectId)
+                  if (!project) throw new Error('project missing')
+                  const state = JSON.parse(project.workspace_state || '{}')
+                  state.reportSources ||= []
+                  state.reportTemplates ||= []
+                  if (p.action === 'confirm_sources') state.reportSources.push({ ...p.sources[0], confirmedAt: Date.now() })
+                  else if (p.action === 'remove_source') state.reportSources = state.reportSources.filter((source: any) => source.docId !== p.docId)
+                  else if (p.action === 'save_template') state.reportTemplates.unshift({ id: p.template.id || 'rpt_mobile_e2e', ...p.template, updatedAt: Date.now() })
+                  else if (p.action === 'generate') return { path: '/home/e2e/workspace/项目文档/报告/测试报告.md', content: '# 测试报告', templateId: p.templateId, sourceDocIds: state.reportSources.map((source: any) => source.docId) }
+                  project.workspace_state = JSON.stringify(state)
+                  return { ...project, updated_at: Date.now(), memberCount: 3 }
+                }
                 case 'project:campaign': {
                   const project = projects.find((x: MockProject) => x.id === p.projectId)
                   if (!project) throw new Error('project missing')
@@ -260,6 +275,18 @@ test.describe('1.11 统一风格全屏回归', () => {
     await page.getByTestId('project-workspace').click()
     await expect(page.getByTestId('mobile-workspace-goal')).toHaveValue('完成无声智慧病房系统介绍')
     await expect(page.getByTestId('mobile-workspace-outline')).toHaveValue('系统方案\n病房呼叫\n门诊叫号')
+    await page.getByTestId('mobile-report-query').fill('接口联调')
+    await page.getByTestId('mobile-report-search').click()
+    await page.getByLabel('选择 测试日报 2026-10-05').check()
+    await page.getByTestId('mobile-report-confirm-sources').click()
+    await expect(page.getByTestId('mobile-report-message')).toContainText('已确认 1 篇来源')
+    await page.getByTestId('mobile-report-template-name').fill('测试季报')
+    await page.getByTestId('mobile-report-period').fill('季报')
+    await page.getByTestId('mobile-report-sections').fill('主要进展\n风险与下一步')
+    await page.getByTestId('mobile-report-template-save').click()
+    await expect(page.getByTestId('mobile-report-message')).toContainText('模板已保存')
+    await page.getByTestId('mobile-report-generate').click()
+    await expect(page.getByTestId('mobile-report-result')).toContainText('测试报告')
     await page.getByTestId('mobile-project-task-title').fill('先完成接口联调')
     await page.getByTestId('mobile-project-task-create').click()
     await expect(page.getByTestId('mobile-project-task-task_mobile_1')).toContainText('先完成接口联调')

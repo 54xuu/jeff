@@ -6,6 +6,16 @@
 
 项目工作台可按已保存项目资料和任务快照输出立项文档、项目周报与结项核查草稿，落入各自的 `项目文档` 子目录。立项稿列出目标、受众、范围、渠道与任务基线。周报明确只反映生成时的任务快照；由于当前没有任务状态历史，它不会谎称某任务在本周完成。结项稿列出未完成任务、缺少验收条件与缺少证据的项目。
 
-验证：`npm test`（core 389 passed /17 skipped，relay 11 passed）、`npm run typecheck`、core `project-documents.test.ts` 与 `repos.test.ts`；桌面 UI E2E 2/2、v18 4/4、cron 11/11、remote 3/3；App E2E 17/17；core 与 desktop、mobile build 均通过。v18 曾与 cron 并行时在运行记录断言失败，串行重跑 4/4 通过。一次桌面 E2E 断言把 `charter` 文件名前缀误写为中文，修正后全套通过。
+## 思源日报与扩展周期报告
 
-仍待完成：任务变更历史与业务负责人字段、用户确认的日报导入及去重、周报真实日期归属、公司模板、完整结项归档、报告模板管理与季报/年报输出。此切片不 bump 版本、不打安装包；整体方案完成时按仓库收尾约定统一处理。
+新增桌面「设置 → 思源知识库」连接配置，使用 Kernel API 搜索文档并导出 Markdown。Token 只保存在本机 kv，不出现在设置回读、WebDAV 同步数据或 App；App 通过已放行的端到端加密通道搜索和读取，Token 配置通道明确拒绝远程调用。
+
+项目资料页可逐条核对搜索结果、手动指定日报日期并确认/移除来源。单独保存的模板由用户定义名称、栏目与周期类型，周期类型开放输入，可扩展到月报、季报、年报或其它周期。生成时按人工确认的日报日期筛选；迟录文档不再误按思源创建时间归期。项目群主模型在独立话题中总结，正文及模板、统计区间、来源日期和文档 ID 一并写入项目工作区 Markdown。资料发送给项目群主所用模型的说明已放在双端生成入口；来源被视为不可信数据，提示模型只汇总事实、不执行来源中的指令。数量与正文大小均有限制，格式不符、来源失效、日期错误和模型无正文都会给出明确错误。
+
+App 的长时间报告生成使用与聊天相同的远程请求时限，避免默认 30 秒导致手机等待失败；其它思源配置仍是桌面本地操作。
+
+验证：`npm run typecheck`；`npm test`（core 394 passed /17 skipped，relay 11 passed）、mobile 单测 12/12；桌面 UI E2E 2/2、v18 4/4、cron 11/11、remote 3/3；App E2E 17/17；真实模型报告端到端 1/1（模拟 Kernel API、真实硅基流动模型、核对落盘 Markdown 与来源引用）。core、desktop 与 mobile 均成功构建。真实报告耗时约 59 秒；其加密远程调用长超时策略有单测覆盖。
+
+版本 `1.11.3`（PATCH）。产物：`apps/desktop/release/jeff-desktop_1.11.3_amd64.deb`、`apps/desktop/release/Jeff-1.11.3.AppImage`、`apps/desktop/release/jeff-Setup-1.11.3.exe`、`apps/mobile/android/app/build/outputs/apk/debug/app-debug.apk`。deb 元数据版本为 1.11.3；Windows exe 为 PE32 Nullsoft Installer，asar 包含思源 IPC 功能串且内置 Windows opencode 在位；APK 的 `versionName=1.11.3`、`versionCode=11103`。Windows 按仓库要求完成产物级校验，不使用本机 Wine 弹窗作为验收门。
+
+仍待补齐的项目管理深度：任务状态变更时间线，以及公司专属的立项/周报/结项和统计报表模板。现有周报明确是生成当时的任务快照，并不声称拥有尚未记录的周内历史；现有季/月/年报输出 Markdown，待获得公司模板后再按真实版式扩展。

@@ -10,6 +10,7 @@ import {
   RELAY_CERT_SHA256,
   RELAY_URL,
   REMOTE_POLICY,
+  remoteRequestTimeout,
   RemoteCipher,
   decodePairingQr,
   encodePairingQr,
@@ -113,6 +114,9 @@ describe('配对码', () => {
 describe('远程白名单', () => {
   it('宣传选题状态机允许手机经加密 IPC 调用', () => {
     expect(REMOTE_POLICY[IPC.projectCampaign]).toEqual({ policy: 'allow' })
+    expect(REMOTE_POLICY[IPC.projectReport]).toEqual({ policy: 'allow' })
+    expect(REMOTE_POLICY[IPC.siyuanSearch]).toEqual({ policy: 'allow' })
+    expect(REMOTE_POLICY[IPC.siyuanExport]).toEqual({ policy: 'allow' })
   })
   it('每个 IPC 通道恰好一条规则', () => {
     const channels = Object.values(IPC)
@@ -140,11 +144,22 @@ describe('远程白名单', () => {
         'remote:settings',
         'remote:status',
         'remote:unbind',
+        'siyuan:configGet',
+        'siyuan:configSave',
         'smoke:done',
         'smoke:shot',
       ].sort(),
     )
     expect(of('replace')).toEqual(['dialog:pickDir', 'fs:openPath', 'plugin:import'].sort())
+  })
+})
+
+describe('手机远程调用超时', () => {
+  it('报告模型生成走长任务时限，配置保存仍使用普通请求时限', () => {
+    expect(remoteRequestTimeout(IPC.projectReport, { action: 'generate' })).toBe(95 * 60 * 1000)
+    expect(remoteRequestTimeout(IPC.projectReport, { action: 'save_template' })).toBe(30_000)
+    expect(remoteRequestTimeout(IPC.groupSend, {})).toBe(95 * 60 * 1000)
+    expect(remoteRequestTimeout(IPC.projectReport, { action: 'generate' }, 5_000)).toBe(5_000)
   })
 })
 

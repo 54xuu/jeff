@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test'
 import path from 'node:path'
 import fs from 'node:fs'
+import { createServer, type Server } from 'node:http'
 import { DatabaseSync } from 'node:sqlite'
 import { closeJeff, launchJeff, loadE2eEnv, REPO_ROOT } from './helpers/launch.js'
 
@@ -50,6 +51,7 @@ test.describe('Jeff UI 封闭清单', () => {
         apiKey: process.env.SILICONFLOW_API_KEY || env.SILICONFLOW_API_KEY || '',
       },
     })
+    let siyuanServer: Server | undefined
 
     try {
       // ---- 导航轨 ----
@@ -58,6 +60,10 @@ test.describe('Jeff UI 封闭清单', () => {
       await expect(page.getByTestId('agents-page')).toBeVisible()
       await page.getByTestId('nav-settings').click()
       await expect(page.getByTestId('settings-nav-providers')).toBeVisible()
+      await page.getByTestId('settings-nav-siyuan').click()
+      await expect(page.getByTestId('siyuan-settings')).toBeVisible()
+      await expect(page.getByTestId('siyuan-base-url')).toBeVisible()
+      await expect(page.getByTestId('siyuan-token')).toHaveAttribute('type', 'password')
       await page.getByTestId('nav-chats').click()
 
       // ---- 主题快捷切换 ----
@@ -250,6 +256,54 @@ test.describe('Jeff UI 封闭清单', () => {
       await page.getByTestId('project-workspace-outline').fill('整体方案\n病房呼叫\n门诊叫号')
       await page.getByTestId('project-workspace-save').click()
       await expect(page.getByTestId('project-workspace-save-result')).toHaveText('已保存', { timeout: 10000 })
+      siyuanServer = createServer((req, res) => {
+        const chunks: Buffer[] = []
+        req.on('data', (chunk: Buffer) => chunks.push(Buffer.from(chunk)))
+        req.on('end', () => {
+          const body = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}') as { stmt?: string; id?: string }
+          expect(req.headers.authorization).toBe('Token ui-e2e-siyuan-token')
+          res.setHeader('content-type', 'application/json')
+          if (req.url === '/api/sqlite/flushTransaction') res.end(JSON.stringify({ code: 0, data: null }))
+          else if (req.url === '/api/query/sql') {
+            expect(body.stmt).toContain('d.id = b.root_id')
+            res.end(JSON.stringify({ code: 0, data: [{ docId: '20261005123456-abc1234', title: '测试日报 2026-10-05', path: '/日报/2026/10/05', snippet: '完成接口联调' }] }))
+          } else if (req.url === '/api/export/exportMdContent') {
+            res.end(JSON.stringify({ code: 0, data: { hPath: '/日报/2026/10/05', content: '# 测试日报\n完成接口联调。' } }))
+          } else res.end(JSON.stringify({ code: 1, msg: 'unknown route', data: null }))
+        })
+      })
+      await new Promise<void>((resolve) => siyuanServer!.listen(0, '127.0.0.1', resolve))
+      const siyuanPort = (siyuanServer.address() as import('node:net').AddressInfo).port
+      const siyuanResult = await page.evaluate(async ({ port, projectId }) => {
+        const jeff = (window as unknown as { jeff: { invoke: (channel: string, payload?: unknown) => Promise<any> } }).jeff
+        const saved = await jeff.invoke('siyuan:configSave', { baseUrl: `http://127.0.0.1:${port}`, token: 'ui-e2e-siyuan-token' })
+        const readBack = await jeff.invoke('siyuan:configGet')
+        const found = await jeff.invoke('siyuan:search', { keyword: '接口联调' })
+        const exported = await jeff.invoke('siyuan:export', { docId: found[0].docId })
+        const updated = await jeff.invoke('project:report', { projectId, action: 'confirm_sources', query: '接口联调', sources: found.map(({ docId, title, path }: any) => ({ docId, title, path, reportDate: '2026-10-05' })) })
+        const templated = await jeff.invoke('project:report', { projectId, action: 'save_template', template: { name: 'E2E 季报', periodType: '季报', sections: ['主要进展', '风险'], outputFormat: 'markdown' } })
+        const appSettings = await jeff.invoke('settings:get')
+        return { saved, readBack, found, exported, state: JSON.parse(templated.workspace_state), leaked: JSON.stringify(appSettings).includes('ui-e2e-siyuan-token'), projectState: JSON.parse(updated.workspace_state) }
+      }, { port: siyuanPort, projectId: String((dbQuery(`SELECT id FROM project WHERE title=? AND deleted_at IS NULL`, 'E2E测试群')[0] as { id?: string } | undefined)?.id || '') })
+      expect(siyuanResult.saved).toMatchObject({ tokenConfigured: true })
+      expect(JSON.stringify(siyuanResult.readBack)).not.toContain('ui-e2e-siyuan-token')
+      expect(siyuanResult.found[0]).toMatchObject({ docId: '20261005123456-abc1234', title: '测试日报 2026-10-05' })
+      expect(siyuanResult.exported.markdown).toContain('完成接口联调')
+      expect(siyuanResult.projectState.reportSources).toMatchObject([{ docId: '20261005123456-abc1234', title: '测试日报 2026-10-05', reportDate: '2026-10-05' }])
+      expect(siyuanResult.state.reportTemplates).toMatchObject([{ name: 'E2E 季报', periodType: '季报', sections: ['主要进展', '风险'] }])
+      expect(siyuanResult.leaked).toBe(false)
+      // The generic project profile save path cannot forge confirmed sources or replace reporting templates.
+      await page.evaluate(async (projectId) => {
+        const jeff = (window as unknown as { jeff: { invoke: (channel: string, payload?: unknown) => Promise<any> } }).jeff
+        const project = (await jeff.invoke('projects:list')).find((item: any) => item.id === projectId)
+        const forged = JSON.parse(project.workspace_state)
+        forged.reportSources = []
+        forged.reportTemplates = []
+        await jeff.invoke('project:save', { ...project, memberAgentIds: [project.leader_agent_id], workspace_state: JSON.stringify(forged) })
+      }, String((dbQuery(`SELECT id FROM project WHERE title=? AND deleted_at IS NULL`, 'E2E测试群')[0] as { id?: string } | undefined)?.id || ''))
+      const persistedReportState = JSON.parse((dbQuery('SELECT workspace_state FROM project WHERE title=? AND deleted_at IS NULL', 'E2E测试群')[0] as { workspace_state: string }).workspace_state)
+      expect(persistedReportState.reportSources).toHaveLength(1)
+      expect(persistedReportState.reportTemplates).toHaveLength(1)
       await page.getByTestId('project-document-charter').click()
       await expect(page.getByTestId('project-document-result')).toContainText('/项目文档/立项/charter-')
       const charterPath = (await page.getByTestId('project-document-result').innerText()).replace(/^已生成草稿：/, '').split('；')[0]
@@ -522,6 +576,7 @@ test.describe('Jeff UI 封闭清单', () => {
       await page.mouse.click(15, 15)
       await expect(lightbox).toHaveCount(0)
     } finally {
+      if (siyuanServer?.listening) await new Promise<void>((resolve) => siyuanServer!.close(() => resolve()))
       await closeJeff(app)
     }
   })
