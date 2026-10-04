@@ -1,4 +1,8 @@
-import { expect, test } from '@playwright/test'
+import { expect, test, type Page } from '@playwright/test'
+
+type MockProject = { id: string; title: string; description: string; icon: string; status: string; leader_agent_id: string; workspace_dir: string; workspace_state?: string; updated_at: number; memberCount: number }
+type MockPhone = { desktops: Map<string, unknown>; activeId: string; listeners: ((event: unknown) => void)[]; init: () => Promise<void>; invoke: (channel: string, payload?: Record<string, unknown>) => Promise<any> }
+declare global { interface Window { __phone: MockPhone; __push: (event: unknown) => void } }
 
 /**
  * 1.11 统一风格回归：列表 / 聊天 / 流式 / 加号面板 / 我页
@@ -17,7 +21,7 @@ const AGENTS = [
   { id: 'agt_xiaojie', name: '小杰', avatar: '🧑‍💻', description: 'Jeff 内置管家', instructions: '', model_provider: 'p', model_id: 'm', thinking: '', category: '', builtin: true, archived: false },
   { id: 'a1', name: '一个名字特别特别长的智能体用来测试顶栏省略号显示', avatar: '🔧', description: '验证长名字', instructions: '', model_provider: 'p', model_id: 'm', thinking: '', category: '开发工具', builtin: false, archived: false },
 ]
-const PROJECTS = [
+const PROJECTS: MockProject[] = [
   { id: 'p1', title: '一个很长很长的项目群名字用来测试顶栏按钮不溢出', description: '', icon: '🎬', status: 'active', leader_agent_id: 'a1', workspace_dir: '/home/x/ws', updated_at: Date.now() - 60000, memberCount: 3 },
 ]
 const now = Date.now()
@@ -33,9 +37,9 @@ const GROUP = [
   { id: 'g2', role: 'assistant', text: '收到，项经理汇总一下。', time: now - 5300000, sender_name: '小杰', sender_avatar: '🤖', agentId: 'agt_xiaojie' },
 ]
 
-async function noOverflow(page, tag) {
+async function noOverflow(page: Page, tag: string) {
   const r = await page.evaluate(() => {
-    const out = { docW: document.documentElement.scrollWidth, innerW: window.innerWidth, offenders: [] }
+    const out: { docW: number; innerW: number; offenders: { sel: string; text: string }[] } = { docW: document.documentElement.scrollWidth, innerW: window.innerWidth, offenders: [] }
     for (const el of document.querySelectorAll('*')) {
       const box = el.getBoundingClientRect()
       if (box.width === 0 && box.height === 0) continue
@@ -59,7 +63,7 @@ test.describe('1.11 统一风格全屏回归', () => {
       ({ profile, agents, projects, chat, group, now }) => {
         localStorage.clear()
         localStorage.setItem('jeff-phone-profile', JSON.stringify(profile))
-        let real
+        let real: MockPhone
         Object.defineProperty(window, '__phone', {
           configurable: true,
           get() {
@@ -67,10 +71,10 @@ test.describe('1.11 统一风格全屏回归', () => {
           },
           set(v) {
             real = v
-            v.desktops = new Map(profile.desktops.map((d) => [d.id, { ...d }]))
+            v.desktops = new Map(profile.desktops.map((d: { id: string }) => [d.id, { ...d }]))
             v.activeId = profile.activeId
             v.init = async () => {}
-            v.invoke = async (channel, payload) => {
+            v.invoke = async (channel: string, payload?: Record<string, any>) => {
               const p = payload || {}
               switch (channel) {
                 case 'agents:list':
@@ -78,7 +82,38 @@ test.describe('1.11 统一风格全屏回归', () => {
                 case 'projects:list':
                   return projects
                 case 'project:save':
-                  return { ...projects.find((x) => x.id === p.id), ...p, updated_at: Date.now(), memberCount: 3 }
+                  {
+                    const project = projects.find((x: MockProject) => x.id === p.id)
+                    if (project) Object.assign(project, p)
+                    return { ...project, ...p, updated_at: Date.now(), memberCount: 3 }
+                  }
+                case 'project:campaign': {
+                  const project = projects.find((x: MockProject) => x.id === p.projectId)
+                  if (!project) throw new Error('project missing')
+                  const state = JSON.parse(project.workspace_state || '{}')
+                  state.schemaVersion = 2
+                  state.campaigns ||= []
+                  if (p.action === 'create') {
+                    state.campaigns.unshift({
+                      id: 'cmp_mobile_e2e', kind: p.kind, title: p.title, feature: p.feature, story: p.story,
+                      channels: p.channels, sellingPoints: p.sellingPoints, materialsNeeded: p.materialsNeeded,
+                      revision: 1, approvedRevision: null, directionFeedback: '', directionReviews: [],
+                      productionTaskId: '', updatedAt: Date.now(), deliveries: [],
+                    })
+                  } else {
+                    const campaign = state.campaigns.find((x: any) => x.id === p.campaignId)
+                    if (p.action === 'update') {
+                      Object.assign(campaign, p, { revision: campaign.revision + 1, approvedRevision: null, directionFeedback: '', productionTaskId: '' })
+                    } else if (p.action === 'review_direction') {
+                      campaign.approvedRevision = p.decision === 'approve' ? campaign.revision : null
+                      campaign.directionFeedback = p.feedback || ''
+                    } else if (p.action === 'create_task') campaign.productionTaskId = 'task_mobile_e2e'
+                    else if (p.action === 'submit_delivery') campaign.deliveries.unshift({ id: 'out_mobile_e2e', revision: 1, path: p.path, status: 'in_review', submittedAt: Date.now(), reviewedAt: null, feedback: '' })
+                    else if (p.action === 'review_delivery') Object.assign(campaign.deliveries.find((d: any) => d.id === p.deliveryId), { status: p.decision, feedback: p.feedback || '', reviewedAt: Date.now() })
+                  }
+                  project.workspace_state = JSON.stringify(state)
+                  return { ...project, updated_at: Date.now(), memberCount: 3 }
+                }
                 case 'chat:history':
                   return chat[''] || []
                 case 'group:history':
@@ -196,6 +231,34 @@ test.describe('1.11 统一风格全屏回归', () => {
     await page.getByTestId('project-workspace').click()
     await expect(page.getByTestId('mobile-workspace-goal')).toHaveValue('完成无声智慧病房系统介绍')
     await expect(page.getByTestId('mobile-workspace-outline')).toHaveValue('系统方案\n病房呼叫\n门诊叫号')
+    await page.getByTestId('mobile-campaign-title').fill('腕表让护士不错过病房呼叫')
+    await page.getByTestId('mobile-campaign-feature').fill('腕表病房呼叫')
+    await page.getByTestId('mobile-campaign-story').fill('护士忙碌时通过腕表接收呼叫')
+    await page.getByTestId('mobile-campaign-points').fill('腕表接收病房呼叫')
+    await page.getByTestId('mobile-campaign-create').click()
+    await expect(page.getByTestId('mobile-campaign-cmp_mobile_e2e')).toBeVisible()
+    await page.getByTestId('mobile-campaign-approve-cmp_mobile_e2e').click()
+    await expect(page.getByTestId('mobile-campaign-task-cmp_mobile_e2e')).toBeVisible()
+    await page.getByTestId('mobile-campaign-edit-cmp_mobile_e2e').click()
+    await page.getByTestId('mobile-campaign-materials').fill('腕表实拍')
+    await page.getByTestId('mobile-campaign-create').click()
+    await expect(page.getByTestId('mobile-campaign-cmp_mobile_e2e')).toContainText('方向 v2 · 待确认')
+    await page.getByTestId('mobile-campaign-approve-cmp_mobile_e2e').click()
+    await expect(page.getByTestId('mobile-campaign-task-cmp_mobile_e2e')).toBeDisabled()
+    await page.getByTestId('mobile-campaign-edit-cmp_mobile_e2e').click()
+    await page.getByTestId('mobile-campaign-materials').fill('')
+    await page.getByTestId('mobile-campaign-create').click()
+    await expect(page.getByTestId('mobile-campaign-cmp_mobile_e2e')).toContainText('方向 v3 · 待确认')
+    await page.getByTestId('mobile-campaign-approve-cmp_mobile_e2e').click()
+    await expect(page.getByTestId('mobile-campaign-task-cmp_mobile_e2e')).toBeEnabled()
+    await page.getByTestId('mobile-campaign-task-cmp_mobile_e2e').click()
+    await expect(page.getByTestId('mobile-campaign-cmp_mobile_e2e')).toContainText('已关联任务 task_mobile_e2e')
+    await page.getByTestId('mobile-campaign-path-cmp_mobile_e2e').fill('宣传/腕表呼叫/v1.mp4')
+    await page.getByTestId('mobile-campaign-submit-cmp_mobile_e2e').click()
+    await expect(page.getByTestId('mobile-campaign-delivery-out_mobile_e2e')).toContainText('待验收')
+    await page.getByTestId('mobile-delivery-feedback-out_mobile_e2e').fill('字幕调整')
+    await page.getByTestId('mobile-campaign-delivery-out_mobile_e2e').getByRole('button', { name: '要求修改' }).click()
+    await expect(page.getByTestId('mobile-campaign-delivery-out_mobile_e2e')).toContainText('要求修改')
     await noOverflow(page, 'project-workspace')
   })
 

@@ -85,7 +85,7 @@ export async function launchJeff(opts: {
     seedJeffHomeSync({ home, apiKey: fileEnv.SILICONFLOW_API_KEY || '' })
   }
 
-  const env = {
+  const env: Record<string, string> = {
     ...process.env,
     ...fileEnv,
     JEFF_HOME: home,

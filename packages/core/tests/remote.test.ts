@@ -111,6 +111,9 @@ describe('配对码', () => {
 })
 
 describe('远程白名单', () => {
+  it('宣传选题状态机允许手机经加密 IPC 调用', () => {
+    expect(REMOTE_POLICY[IPC.projectCampaign]).toEqual({ policy: 'allow' })
+  })
   it('每个 IPC 通道恰好一条规则', () => {
     const channels = Object.values(IPC)
     expect(new Set(channels).size).toBe(channels.length)

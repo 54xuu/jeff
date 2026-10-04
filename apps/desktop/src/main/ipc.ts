@@ -12,9 +12,15 @@ import type {
   AppSettings,
   AppInfo,
   FileNode,
+  ProjectCampaignCommand,
 } from '@jeff/core'
-import { IPC, XIAOJIE_ID, agentRepo, projectRepo, projectAgentRepo, taskRepo, taskCardMessage, snapshotInstructions, APP_VERSION, PrivateChatStoppedError, resolveSendText, resolveScreenshotScale, type ThinkingTier, type ChatPluginInvoke, type RemoteStatus } from '@jeff/core'
-import { validateProjectWorkspaceJson } from '@jeff/core'
+import {
+  IPC, XIAOJIE_ID, agentRepo, projectRepo, projectAgentRepo, taskRepo, taskCardMessage, snapshotInstructions, APP_VERSION,
+  PrivateChatStoppedError, resolveSendText, resolveScreenshotScale, parseProjectWorkspaceState,
+  serializeProjectWorkspaceState, validateProjectWorkspaceJson, createCampaignProposal, updateCampaignProposal, reviewCampaignDirection,
+  attachCampaignProductionTask, submitCampaignDelivery, reviewCampaignDelivery,
+  type ThinkingTier, type ChatPluginInvoke, type RemoteStatus,
+} from '@jeff/core'
 import { listDirs, makeDir } from '../../../../packages/core/src/remote/dirs.js'
 import type { MemoryScopeInfo } from '@jeff/core'
 import type { JeffCore, TaskRow } from '@jeff/core'
@@ -26,6 +32,26 @@ type Handler = (payload: unknown) => Promise<unknown>
 function pngDimensions(buf: Buffer): { width: number; height: number } {
   if (buf.length < 24 || buf.readUInt32BE(0) !== 0x89504e47) throw new Error('截图返回的不是 PNG 数据')
   return { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20) }
+}
+
+/** Only register an existing file inside the project's workspace; never let an approval point outside it. */
+function resolveCampaignDeliveryPath(core: JeffCore, workspaceDir: string, input: string): string {
+  if (!input.trim()) throw new Error('请填写成品文件路径')
+  const root = path.resolve(workspaceDir || core.paths.workspaceDir)
+  let rootReal: string
+  let fileReal: string
+  try {
+    rootReal = fs.realpathSync(root)
+    fileReal = fs.realpathSync(path.isAbsolute(input) ? input : path.resolve(root, input))
+  } catch {
+    throw new Error('成品文件不存在；请先将 PPT/视频保存到项目工作区，再登记验收')
+  }
+  const relative = path.relative(rootReal, fileReal)
+  if (!relative || relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    throw new Error('成品必须位于该项目工作区内')
+  }
+  if (!fs.statSync(fileReal).isFile()) throw new Error('成品路径必须指向文件')
+  return relative.split(path.sep).join('/')
 }
 
 /**
@@ -484,15 +510,113 @@ export function registerIpc(core: JeffCore): Record<string, Handler> {
       }
       let row
       if (d.id) {
-        row = projectRepo(core.db).update(d.id, { title: d.title, description: d.description, icon: d.icon, leader_agent_id: d.leader_agent_id, ...(d.workspace_dir !== undefined ? { workspace_dir: d.workspace_dir } : {}), ...(d.workspace_state !== undefined ? { workspace_state: validateProjectWorkspaceJson(d.workspace_state) } : {}) })
+        const existing = projectRepo(core.db).get(d.id)
+        if (!existing) throw new Error('项目不存在')
+        const workspace = d.workspace_state === undefined
+          ? existing.workspace_state || '{}'
+          : serializeProjectWorkspaceState({
+              ...parseProjectWorkspaceState(validateProjectWorkspaceJson(d.workspace_state)),
+              // 审阅、成品与制作任务关联只能经 project:campaign 的服务端状态机修改。
+              campaigns: parseProjectWorkspaceState(existing.workspace_state).campaigns,
+            })
+        row = projectRepo(core.db).update(d.id, {
+          title: d.title, description: d.description, icon: d.icon, leader_agent_id: d.leader_agent_id,
+          ...(d.workspace_dir !== undefined ? { workspace_dir: d.workspace_dir } : {}),
+          ...(d.workspace_state !== undefined ? { workspace_state: workspace } : {}),
+        })
         if (!row) throw new Error('项目不存在')
       } else {
-        row = projectRepo(core.db).create({ title: d.title, description: d.description, icon: d.icon, leader_agent_id: d.leader_agent_id, workspace_dir: d.workspace_dir || '', workspace_state: d.workspace_state === undefined ? '{}' : validateProjectWorkspaceJson(d.workspace_state) })
+        const workspace = d.workspace_state === undefined ? '{}' : serializeProjectWorkspaceState({
+          ...parseProjectWorkspaceState(validateProjectWorkspaceJson(d.workspace_state)),
+          campaigns: [],
+        })
+        row = projectRepo(core.db).create({ title: d.title, description: d.description, icon: d.icon, leader_agent_id: d.leader_agent_id, workspace_dir: d.workspace_dir || '', workspace_state: workspace })
       }
       // 事务化成员快照：差集删除 + 群主唯一（直接用 create/update 返回的 row，不按可重复的 title 回查）
       projectAgentRepo(core.db).replaceMembers(row.id, d.leader_agent_id, memberIds)
       core.bus.emit('data-changed', 'projects')
       return toProjectInfo(core, row)
+    },
+    [IPC.projectCampaign]: async (p): Promise<ProjectInfo> => {
+      const d = p as ProjectCampaignCommand
+      let taskToAnnounce: TaskRow | undefined
+      core.db.exec('BEGIN IMMEDIATE')
+      try {
+        const project = projectRepo(core.db).get(d.projectId)
+        if (!project || project.deleted_at) throw new Error('项目不存在')
+        let state = parseProjectWorkspaceState(project.workspace_state)
+        switch (d.action) {
+          case 'create':
+            state = createCampaignProposal(state, {
+              kind: d.kind, title: d.title, feature: d.feature || '', story: d.story || '',
+              channels: d.channels, sellingPoints: d.sellingPoints, materialsNeeded: d.materialsNeeded,
+            })
+            break
+          case 'update':
+            state = updateCampaignProposal(state, d.campaignId, {
+              kind: d.kind, title: d.title, feature: d.feature || '', story: d.story || '',
+              channels: d.channels, sellingPoints: d.sellingPoints, materialsNeeded: d.materialsNeeded,
+            })
+            break
+          case 'review_direction':
+            state = reviewCampaignDirection(state, d.campaignId, d.decision, d.feedback || '')
+            break
+          case 'submit_delivery':
+            state = submitCampaignDelivery(state, d.campaignId, resolveCampaignDeliveryPath(core, project.workspace_dir, d.path))
+            break
+          case 'review_delivery':
+            state = reviewCampaignDelivery(state, d.campaignId, d.deliveryId, d.decision, d.feedback || '')
+            break
+          case 'create_task': {
+            const campaign = state.campaigns.find((item) => item.id === d.campaignId)
+            if (!campaign) throw new Error('找不到该宣传选题')
+            if (campaign.productionTaskId) {
+              const linked = taskRepo(core.db).get(campaign.productionTaskId)
+              if (!linked || linked.deleted_at) throw new Error('已关联的制作任务已删除；请修改选题后重新确认，再创建新任务')
+              break
+            }
+            if (!campaign.approvedRevision || campaign.approvedRevision !== campaign.revision || campaign.materialsNeeded.length) {
+              throw new Error('先确认当前版本的选题，并补齐待补素材')
+            }
+            const marker = `campaign_ref:${campaign.id}:v${campaign.revision}`
+            let task = taskRepo(core.db).listByProject(project.id).find((item) => item.description.includes(marker))
+            if (!task) {
+              task = taskRepo(core.db).create({
+                project_id: project.id,
+                title: `制作：${campaign.title}`,
+                description: [
+                  marker,
+                  `内容类型：${campaign.kind === 'system_deck' ? '完整系统介绍 PPT' : '单功能视频'}`,
+                  `具体功能：${campaign.feature || '完整系统介绍'}`,
+                  `销售对象：${state.salesAudience || '待补充'}`,
+                  `内容呈现对象：${state.storyAudience || '待补充'}`,
+                  `渠道：${campaign.channels.join('、') || '待补充'}`,
+                  `医护场景：${campaign.story}`,
+                  '核心卖点：', ...campaign.sellingPoints.map((point) => `- ${point}`),
+                ].join('\n'),
+                status: 'todo', priority: 'medium',
+              })
+              taskToAnnounce = task
+            }
+            state = attachCampaignProductionTask(state, campaign.id, task.id)
+            break
+          }
+        }
+        const updated = projectRepo(core.db).update(project.id, { workspace_state: serializeProjectWorkspaceState(state) })
+        if (!updated) throw new Error('保存宣传流程状态失败')
+        core.db.exec('COMMIT')
+        if (taskToAnnounce) {
+          const card = taskCardMessage(core.db, project.id, taskToAnnounce.id)
+          if (card.content) core.groupChat.addSystemMessage(project.id, card.content, card.meta)
+          core.bus.emit('data-changed', 'tasks')
+          core.bus.emit('group-updated', { projectId: project.id })
+        }
+        core.bus.emit('data-changed', 'projects')
+        return toProjectInfo(core, updated)
+      } catch (err) {
+        try { core.db.exec('ROLLBACK') } catch { /* transaction already closed */ }
+        throw err
+      }
     },
     [IPC.projectDelete]: async (p): Promise<{ ok: boolean }> => {
       const { id } = p as { id: string }

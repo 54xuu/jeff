@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { EMPTY_PROJECT_WORKSPACE, parseProjectWorkspaceState, serializeProjectWorkspaceState, validateProjectWorkspaceJson } from '../src/project/workspace.js'
+import {
+  EMPTY_PROJECT_WORKSPACE, parseProjectWorkspaceState, serializeProjectWorkspaceState, validateProjectWorkspaceJson,
+  createCampaignProposal, reviewCampaignDirection, canStartCampaignProduction, attachCampaignProductionTask,
+  submitCampaignDelivery, reviewCampaignDelivery, updateCampaignProposal,
+} from '../src/project/workspace.js'
 
 describe('project workspace profile', () => {
   it('older/invalid project state opens as an empty editable workspace', () => {
@@ -8,25 +12,60 @@ describe('project workspace profile', () => {
     expect(parseProjectWorkspaceState('[]')).toEqual(EMPTY_PROJECT_WORKSPACE)
   })
 
-  it('trims editable lists and round-trips the campaign fields', () => {
+  it('trims editable lists and migrates old profile data to the current schema', () => {
     const raw = serializeProjectWorkspaceState({
-      schemaVersion: 1,
+      schemaVersion: 2,
       goal: ' 宣传腕表方案 ',
       salesAudience: ' 渠道商 ',
       storyAudience: ' 一线医护 ',
       channels: ['微信', ' ', '现场'],
       systemOutline: ['整体方案', '功能介绍'],
       weeklyCadence: '每周一批',
+      campaigns: [],
     })
+    const legacy = parseProjectWorkspaceState(JSON.stringify({ schemaVersion: 1, goal: ' 宣传腕表方案 ', channels: [' 微信 '] }))
+    expect(legacy).toMatchObject({ schemaVersion: 2, goal: '宣传腕表方案', channels: ['微信'], campaigns: [] })
     expect(parseProjectWorkspaceState(raw)).toEqual({
-      schemaVersion: 1,
+      schemaVersion: 2,
       goal: '宣传腕表方案',
       salesAudience: '渠道商',
       storyAudience: '一线医护',
       channels: ['微信', '现场'],
       systemOutline: ['整体方案', '功能介绍'],
       weeklyCadence: '每周一批',
+      campaigns: [],
     })
+  })
+
+  it('holds production until direction and materials are approved, and records output review by version', () => {
+    let state = createCampaignProposal(EMPTY_PROJECT_WORKSPACE, {
+      kind: 'feature_video', title: '腕表病房呼叫', feature: '病房呼叫',
+      story: '护士忙碌时通过腕表接收呼叫并及时响应', channels: ['渠道群'], sellingPoints: ['降低漏接风险'], materialsNeeded: ['腕表实拍'],
+    }, 10)
+    const campaign = state.campaigns[0]!
+    expect(canStartCampaignProduction(campaign)).toBe(false)
+    state = reviewCampaignDirection(state, campaign.id, 'approve', '', 11)
+    expect(canStartCampaignProduction(state.campaigns[0]!)).toBe(false)
+    expect(() => attachCampaignProductionTask(state, campaign.id, 'task_1')).toThrow(/待补素材/)
+
+    state = updateCampaignProposal(state, campaign.id, {
+      kind: 'feature_video', title: campaign.title, feature: campaign.feature, story: campaign.story,
+      channels: campaign.channels, sellingPoints: campaign.sellingPoints, materialsNeeded: [],
+    }, 12)
+    expect(state.campaigns[0]?.approvedRevision).toBeNull()
+    state = reviewCampaignDirection(state, campaign.id, 'approve', '', 13)
+    expect(canStartCampaignProduction(state.campaigns[0]!)).toBe(true)
+    state = attachCampaignProductionTask(state, campaign.id, 'task_1')
+    state = submitCampaignDelivery(state, campaign.id, '宣传/腕表病房呼叫/v1.mp4', 14)
+    const delivery = state.campaigns[0]!.deliveries[0]!
+    expect(delivery).toMatchObject({ revision: 1, status: 'in_review', path: '宣传/腕表病房呼叫/v1.mp4' })
+    state = reviewCampaignDelivery(state, campaign.id, delivery.id, 'changes_requested', '字幕里的术语请调整', 15)
+    expect(state.campaigns[0]!.deliveries[0]).toMatchObject({ status: 'changes_requested', feedback: '字幕里的术语请调整', reviewedAt: 15 })
+    state = submitCampaignDelivery(state, campaign.id, '宣传/腕表病房呼叫/v2.mp4', 16)
+    expect(state.campaigns[0]!.deliveries.map((item) => item.revision)).toEqual([2, 1])
+    expect(() => submitCampaignDelivery(state, campaign.id, '宣传/腕表病房呼叫/v2.mp4')).toThrow(/旧版本/)
+    const serialized = serializeProjectWorkspaceState(state)
+    expect(parseProjectWorkspaceState(serialized).campaigns[0]!.productionTaskId).toBe('task_1')
   })
 
   it('rejects malformed, non-object, empty, and oversized JSON', () => {

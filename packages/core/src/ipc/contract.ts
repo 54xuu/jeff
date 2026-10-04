@@ -49,6 +49,7 @@ export const IPC = {
   chatStop: 'chat:stop',
   projectsList: 'projects:list',
   projectSave: 'project:save',
+  projectCampaign: 'project:campaign',
   projectDelete: 'project:delete',
   projectMembers: 'project:members',
   projectAddMember: 'project:addMember',
@@ -184,6 +185,14 @@ export interface ProjectInfo {
   updated_at: number
   memberCount: number
 }
+
+export type ProjectCampaignCommand =
+  | { projectId: string; action: 'create'; kind: 'system_deck' | 'feature_video'; title: string; feature?: string; story?: string; channels: string[]; sellingPoints: string[]; materialsNeeded: string[] }
+  | { projectId: string; action: 'update'; campaignId: string; kind: 'system_deck' | 'feature_video'; title: string; feature?: string; story?: string; channels: string[]; sellingPoints: string[]; materialsNeeded: string[] }
+  | { projectId: string; action: 'review_direction'; campaignId: string; decision: 'approve' | 'changes_requested'; feedback?: string }
+  | { projectId: string; action: 'create_task'; campaignId: string }
+  | { projectId: string; action: 'submit_delivery'; campaignId: string; path: string }
+  | { projectId: string; action: 'review_delivery'; campaignId: string; deliveryId: string; decision: 'accepted' | 'changes_requested'; feedback?: string }
 
 export interface ProjectMember {
   agent_id: string
@@ -606,6 +615,7 @@ export type InvokeMap = {
   [IPC.chatStop]: { agentId: string }
   [IPC.projectsList]: void
   [IPC.projectSave]: { id?: string; title: string; description?: string; icon?: string; leader_agent_id?: string | null; memberAgentIds?: string[]; workspace_dir?: string; workspace_state?: string }
+  [IPC.projectCampaign]: ProjectCampaignCommand
   [IPC.projectDelete]: { id: string }
   [IPC.projectMembers]: { projectId: string }
   [IPC.projectAddMember]: { projectId: string; agentId: string; role?: string }

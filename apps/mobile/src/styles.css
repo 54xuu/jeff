@@ -1818,6 +1818,58 @@ html[data-theme='dark'] .wechat-file-tip { color: #fbbf24; }
 }
 .project-workspace-form button:disabled { opacity: .6; }
 .project-workspace-result { margin: 0; color: var(--text-2); font-size: 12px; }
+.project-workspace-form select {
+  box-sizing: border-box;
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card);
+  color: var(--text);
+  padding: 10px 12px;
+  font: inherit;
+  font-size: 14px;
+}
+.campaign-mobile-title { margin: 12px 0 0; color: var(--text); font-size: 16px; }
+.campaign-mobile-card {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--card);
+  color: var(--text-2);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.campaign-mobile-card strong { color: var(--text); font-size: 14px; }
+.campaign-mobile-card p { margin: 0; }
+.campaign-mobile-card button {
+  border: 0;
+  border-radius: 9px;
+  background: var(--brand);
+  color: #fff;
+  padding: 10px;
+  font: inherit;
+  font-weight: 600;
+}
+.campaign-mobile-card button:disabled { opacity: .5; }
+.campaign-mobile-card input {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--bg);
+  color: var(--text);
+  padding: 10px;
+  font: inherit;
+}
+.campaign-mobile-actions { display: flex; gap: 8px; }
+.campaign-mobile-actions button { flex: 1; }
+.campaign-mobile-delivery { display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--border); padding-top: 10px; }
+.campaign-mobile-delivery p { color: var(--text-2); }
 
 .wechat-fileview {
   flex: 1;

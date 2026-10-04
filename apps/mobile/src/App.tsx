@@ -1,7 +1,10 @@
 import { Capacitor } from '@capacitor/core'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { IPC, XIAOJIE_ID, TOOL_ACTION_LABEL, extractThinkTags, mergeReasoning, sortedPinKeys, decodePluginUserMessage, parseProjectWorkspaceState, serializeProjectWorkspaceState } from '@jeff/core'
-import type { AgentInfo, AppInfo, ChatMsg, FileNode, FsDirEntry, GroupMessage, ProjectInfo, ContextPreviewInfo, PluginCommand, PluginInfo } from '@jeff/core'
+import {
+  IPC, XIAOJIE_ID, TOOL_ACTION_LABEL, extractThinkTags, mergeReasoning, sortedPinKeys, decodePluginUserMessage,
+  parseProjectWorkspaceState, serializeProjectWorkspaceState, canStartCampaignProduction,
+} from '@jeff/core'
+import type { AgentInfo, AppInfo, ChatMsg, FileNode, FsDirEntry, GroupMessage, ProjectInfo, ContextPreviewInfo, PluginCommand, PluginInfo, CampaignKind, CampaignProposalInput, CampaignProposal } from '@jeff/core'
 import type { RemoteStreamFrame } from '@jeff/core/remote'
 import { consumeBack } from './backstack'
 import Mascot from './Mascot'
@@ -457,6 +460,10 @@ export function App() {
   const [workspaceDraft, setWorkspaceDraft] = useState(() => parseProjectWorkspaceState('{}'))
   const [workspaceSaving, setWorkspaceSaving] = useState(false)
   const [workspaceSaved, setWorkspaceSaved] = useState('')
+  const [campaignDraft, setCampaignDraft] = useState<CampaignProposalInput>({ kind: 'feature_video', title: '', feature: '', story: '', channels: [], sellingPoints: [], materialsNeeded: [] })
+  const [editingCampaignId, setEditingCampaignId] = useState('')
+  const [campaignFeedback, setCampaignFeedback] = useState<Record<string, string>>({})
+  const [campaignPaths, setCampaignPaths] = useState<Record<string, string>>({})
   const dataDirRef = useRef('')
   const [computers, setComputers] = useState(phone.desktops)
   const [activeId, setActiveId] = useState('')
@@ -1199,15 +1206,20 @@ export function App() {
     if (!target || target.kind !== 'group') return
     const project = projects.find((p) => p.id === target.id)
     if (!project) return
-    setWorkspaceDraft(parseProjectWorkspaceState(project.workspace_state))
+    const state = parseProjectWorkspaceState(project.workspace_state)
+    setWorkspaceDraft(state)
+    setCampaignDraft({ kind: 'feature_video', title: '', feature: '', story: '', channels: state.channels, sellingPoints: [], materialsNeeded: [] })
+    setEditingCampaignId('')
+    setCampaignFeedback({})
+    setCampaignPaths({})
     setWorkspaceSaved('')
     setScreen('project')
   }
 
-  async function saveProjectWorkspace() {
-    if (!target || target.kind !== 'group') return
+  async function persistProjectWorkspace(state: ReturnType<typeof parseProjectWorkspaceState>): Promise<boolean> {
+    if (!target || target.kind !== 'group') return false
     const project = projects.find((p) => p.id === target.id)
-    if (!project) return
+    if (!project) return false
     setWorkspaceSaving(true)
     setWorkspaceSaved('')
     try {
@@ -1218,15 +1230,87 @@ export function App() {
         icon: project.icon,
         leader_agent_id: project.leader_agent_id,
         workspace_dir: project.workspace_dir,
-        workspace_state: serializeProjectWorkspaceState(workspaceDraft),
+        workspace_state: serializeProjectWorkspaceState(state),
       })
       setProjects((items) => items.map((item) => item.id === project.id ? updated : item))
+      setWorkspaceDraft(state)
       setWorkspaceSaved('已保存到项目资料')
+      return true
     } catch (err) {
       setWorkspaceSaved(`保存失败：${String((err as Error).message).slice(0, 100)}`)
+      return false
     } finally {
       setWorkspaceSaving(false)
     }
+  }
+
+  async function saveProjectWorkspace() { await persistProjectWorkspace(workspaceDraft) }
+
+  async function createCampaignOnPhone() {
+    try {
+      if (!target || target.kind !== 'group') return
+      const updated = await phone.invoke<ProjectInfo>(IPC.projectCampaign, { projectId: target.id, action: editingCampaignId ? 'update' : 'create', ...(editingCampaignId ? { campaignId: editingCampaignId } : {}), ...campaignDraft })
+      const nextState = parseProjectWorkspaceState(updated.workspace_state)
+      setProjects((items) => items.map((item) => item.id === updated.id ? updated : item))
+      setWorkspaceDraft(nextState)
+      setWorkspaceSaved('选题已保存，等待方向确认')
+      setEditingCampaignId('')
+      setCampaignDraft({ ...campaignDraft, title: '', feature: '', story: '', sellingPoints: [], materialsNeeded: [] })
+    } catch (err) { setWorkspaceSaved(`无法创建选题：${String((err as Error).message)}`) }
+  }
+
+  function editCampaignOnPhone(campaign: CampaignProposal) {
+    setEditingCampaignId(campaign.id)
+    setCampaignDraft({
+      kind: campaign.kind, title: campaign.title, feature: campaign.feature, story: campaign.story,
+      channels: campaign.channels, sellingPoints: campaign.sellingPoints, materialsNeeded: campaign.materialsNeeded,
+    })
+  }
+
+  async function reviewCampaignOnPhone(campaign: CampaignProposal, decision: 'approve' | 'changes_requested') {
+    try {
+      if (!target || target.kind !== 'group') return
+      const updated = await phone.invoke<ProjectInfo>(IPC.projectCampaign, { projectId: target.id, action: 'review_direction', campaignId: campaign.id, decision, feedback: campaignFeedback[campaign.id] || '' })
+      setProjects((items) => items.map((item) => item.id === updated.id ? updated : item))
+      setWorkspaceDraft(parseProjectWorkspaceState(updated.workspace_state))
+      setWorkspaceSaved('方向审核已保存')
+    }
+    catch (err) { setWorkspaceSaved(`无法确认选题：${String((err as Error).message)}`) }
+  }
+
+  async function makeCampaignTaskOnPhone(campaign: CampaignProposal) {
+    if (!target || target.kind !== 'group') return
+    const project = projects.find((item) => item.id === target.id)
+    if (!project) return
+    try {
+      if (!canStartCampaignProduction(campaign)) throw new Error('先确认方向并补齐素材')
+      const updated = await phone.invoke<ProjectInfo>(IPC.projectCampaign, { projectId: project.id, action: 'create_task', campaignId: campaign.id })
+      setProjects((items) => items.map((item) => item.id === updated.id ? updated : item))
+      setWorkspaceDraft(parseProjectWorkspaceState(updated.workspace_state))
+      setWorkspaceSaved('制作任务已创建并关联选题')
+    } catch (err) { setWorkspaceSaved(`无法创建制作任务：${String((err as Error).message)}`) }
+  }
+
+  async function submitCampaignOnPhone(campaign: CampaignProposal) {
+    try {
+      if (!target || target.kind !== 'group') return
+      const updated = await phone.invoke<ProjectInfo>(IPC.projectCampaign, { projectId: target.id, action: 'submit_delivery', campaignId: campaign.id, path: campaignPaths[campaign.id] || '' })
+      setProjects((items) => items.map((item) => item.id === updated.id ? updated : item))
+      setWorkspaceDraft(parseProjectWorkspaceState(updated.workspace_state))
+      setWorkspaceSaved('成品版本已提交验收')
+      setCampaignPaths((current) => ({ ...current, [campaign.id]: '' }))
+    } catch (err) { setWorkspaceSaved(`无法提交成品：${String((err as Error).message)}`) }
+  }
+
+  async function reviewDeliveryOnPhone(campaign: CampaignProposal, deliveryId: string, decision: 'accepted' | 'changes_requested') {
+    try {
+      if (!target || target.kind !== 'group') return
+      const updated = await phone.invoke<ProjectInfo>(IPC.projectCampaign, { projectId: target.id, action: 'review_delivery', campaignId: campaign.id, deliveryId, decision, feedback: campaignFeedback[deliveryId] || '' })
+      setProjects((items) => items.map((item) => item.id === updated.id ? updated : item))
+      setWorkspaceDraft(parseProjectWorkspaceState(updated.workspace_state))
+      setWorkspaceSaved('成品验收已保存')
+    }
+    catch (err) { setWorkspaceSaved(`无法验收成品：${String((err as Error).message)}`) }
   }
 
   async function loadFiles(dir: string) {
@@ -2378,6 +2462,46 @@ export function App() {
             <label><span>每周推进节奏</span><textarea rows={2} data-testid="mobile-workspace-cadence" value={workspaceDraft.weeklyCadence} onChange={(e) => setWorkspaceDraft((s) => ({ ...s, weeklyCadence: e.target.value }))} placeholder="每周提交一批选题与素材缺口" /></label>
             <button type="button" className="btn-primary" data-testid="mobile-workspace-save" disabled={workspaceSaving} onClick={() => void saveProjectWorkspace()}>{workspaceSaving ? '保存中…' : '保存项目资料'}</button>
             {workspaceSaved ? <p className="project-workspace-result" data-testid="mobile-workspace-result">{workspaceSaved}</p> : null}
+            <h3 className="campaign-mobile-title">宣传选题与成品</h3>
+            <p className="project-workspace-result">方向确认、制作任务和成品验收分开记录。只有当前方向已确认且待补素材清零，才可创建制作任务。</p>
+            <label><span>成果线</span><select data-testid="mobile-campaign-kind" value={campaignDraft.kind} onChange={(e) => setCampaignDraft((draft) => ({ ...draft, kind: e.target.value as CampaignKind }))}><option value="feature_video">单功能视频</option><option value="system_deck">完整系统介绍 PPT</option></select></label>
+            <label><span>选题标题</span><input data-testid="mobile-campaign-title" value={campaignDraft.title} onChange={(e) => setCampaignDraft((draft) => ({ ...draft, title: e.target.value }))} placeholder="例如：腕表让护士不错过病房呼叫" /></label>
+            {campaignDraft.kind === 'feature_video' ? <label><span>具体功能</span><input data-testid="mobile-campaign-feature" value={campaignDraft.feature} onChange={(e) => setCampaignDraft((draft) => ({ ...draft, feature: e.target.value }))} placeholder="例如：腕表病房呼叫" /></label> : null}
+            <label><span>一线医护使用场景</span><textarea rows={2} data-testid="mobile-campaign-story" value={campaignDraft.story} onChange={(e) => setCampaignDraft((draft) => ({ ...draft, story: e.target.value }))} placeholder="谁在什么时刻遇到什么问题，如何使用" /></label>
+            <label><span>传播渠道（每行一个）</span><textarea rows={2} data-testid="mobile-campaign-channels" value={campaignDraft.channels.join('\n')} onChange={(e) => setCampaignDraft((draft) => ({ ...draft, channels: e.target.value.split('\n') }))} placeholder="微信私聊\n渠道群转发\n现场讲解" /></label>
+            <label><span>核心卖点（每行一个）</span><textarea rows={3} data-testid="mobile-campaign-points" value={campaignDraft.sellingPoints.join('\n')} onChange={(e) => setCampaignDraft((draft) => ({ ...draft, sellingPoints: e.target.value.split('\n') }))} placeholder="仅填写资料能支持的产品事实" /></label>
+            <label><span>待补素材（每行一个）</span><textarea rows={2} data-testid="mobile-campaign-materials" value={campaignDraft.materialsNeeded.join('\n')} onChange={(e) => setCampaignDraft((draft) => ({ ...draft, materialsNeeded: e.target.value.split('\n') }))} placeholder="腕表实拍 / 已脱敏界面截图 / 接口说明" /></label>
+            <button type="button" className="btn-primary" data-testid="mobile-campaign-create" disabled={workspaceSaving} onClick={() => void createCampaignOnPhone()}>{editingCampaignId ? '保存为新选题版本' : '创建待确认选题'}</button>
+            {editingCampaignId ? <button type="button" data-testid="mobile-campaign-edit-cancel" onClick={() => setEditingCampaignId('')}>取消编辑</button> : null}
+            {workspaceDraft.campaigns.map((campaign) => (
+              <article className="campaign-mobile-card" key={campaign.id} data-testid={`mobile-campaign-${campaign.id}`}>
+                <strong>{campaign.kind === 'system_deck' ? '完整系统 PPT' : '单功能视频'} · {campaign.title}</strong>
+                <span>方向 v{campaign.revision} · {campaign.approvedRevision === campaign.revision ? '已确认' : '待确认'}</span>
+                <p>功能：{campaign.feature || '完整系统'}；场景：{campaign.story || '未填写'}</p>
+                <p>核心卖点：{campaign.sellingPoints.join('；')}</p>
+                <p>{campaign.materialsNeeded.length ? `待补素材：${campaign.materialsNeeded.join('、')}` : '素材缺口已清零'}</p>
+                {campaign.directionFeedback ? <p>方向意见：{campaign.directionFeedback}</p> : null}
+                <button type="button" data-testid={`mobile-campaign-edit-${campaign.id}`} onClick={() => editCampaignOnPhone(campaign)}>编辑并提交新版本</button>
+                {campaign.approvedRevision !== campaign.revision ? <>
+                  <input aria-label={`${campaign.title} 审阅意见`} data-testid={`mobile-campaign-feedback-${campaign.id}`} value={campaignFeedback[campaign.id] || ''} onChange={(e) => setCampaignFeedback((current) => ({ ...current, [campaign.id]: e.target.value }))} placeholder="退回时填写修改意见" />
+                  <div className="campaign-mobile-actions"><button type="button" data-testid={`mobile-campaign-request-changes-${campaign.id}`} onClick={() => void reviewCampaignOnPhone(campaign, 'changes_requested')}>退回修改</button><button type="button" data-testid={`mobile-campaign-approve-${campaign.id}`} onClick={() => void reviewCampaignOnPhone(campaign, 'approve')}>确认方向</button></div>
+                </> : null}
+                {campaign.approvedRevision === campaign.revision && !campaign.productionTaskId ? <button type="button" disabled={workspaceSaving || campaign.materialsNeeded.length > 0} data-testid={`mobile-campaign-task-${campaign.id}`} onClick={() => void makeCampaignTaskOnPhone(campaign)}>创建制作任务</button> : null}
+                {campaign.productionTaskId ? <span>已关联任务 {campaign.productionTaskId}</span> : null}
+                {campaign.approvedRevision === campaign.revision ? <>
+                  <input aria-label={`${campaign.title} 成品路径`} data-testid={`mobile-campaign-path-${campaign.id}`} value={campaignPaths[campaign.id] || ''} onChange={(e) => setCampaignPaths((current) => ({ ...current, [campaign.id]: e.target.value }))} placeholder="工作区相对路径，如 宣传/腕表呼叫/v1.mp4" />
+                  <button type="button" disabled={workspaceSaving || !canStartCampaignProduction(campaign) || !campaign.productionTaskId} data-testid={`mobile-campaign-submit-${campaign.id}`} onClick={() => void submitCampaignOnPhone(campaign)}>提交新版本验收</button>
+                </> : null}
+                {campaign.deliveries.map((delivery) => <div className="campaign-mobile-delivery" key={delivery.id} data-testid={`mobile-campaign-delivery-${delivery.id}`}>
+                  <span>v{delivery.revision} · {delivery.path} · {delivery.status === 'in_review' ? '待验收' : delivery.status === 'accepted' ? '已验收' : '要求修改'}</span>
+                  {delivery.feedback ? <p>意见：{delivery.feedback}</p> : null}
+                  {delivery.status === 'in_review' ? <>
+                    <input aria-label={`v${delivery.revision} 验收意见`} data-testid={`mobile-delivery-feedback-${delivery.id}`} value={campaignFeedback[delivery.id] || ''} onChange={(e) => setCampaignFeedback((current) => ({ ...current, [delivery.id]: e.target.value }))} placeholder="要求修改时填写意见" />
+                    <div className="campaign-mobile-actions"><button type="button" data-testid={`mobile-delivery-request-changes-${delivery.id}`} onClick={() => void reviewDeliveryOnPhone(campaign, delivery.id, 'changes_requested')}>要求修改</button><button type="button" data-testid={`mobile-delivery-accept-${delivery.id}`} onClick={() => void reviewDeliveryOnPhone(campaign, delivery.id, 'accepted')}>验收通过</button></div>
+                  </> : null}
+                </div>)}
+              </article>
+            ))}
           </div>
         </section>
       )}

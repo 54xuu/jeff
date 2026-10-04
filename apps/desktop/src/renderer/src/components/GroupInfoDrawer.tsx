@@ -1,7 +1,11 @@
 import { useEffect, useState } from 'react'
 import { useStore } from '../store'
 import { api } from '../api'
-import { IPC, projectRoleLabel, parseProjectWorkspaceState, serializeProjectWorkspaceState, type ProjectWorkspaceState, type GroupMessage, type GroupThreadBrief, type ProjectInfo } from '@jeff/core'
+import {
+  IPC, projectRoleLabel, parseProjectWorkspaceState, serializeProjectWorkspaceState,
+  canStartCampaignProduction,
+  type CampaignProposal, type CampaignKind, type ProjectWorkspaceState, type GroupMessage, type GroupThreadBrief, type ProjectInfo,
+} from '@jeff/core'
 import Avatar from './Avatar'
 import { EmojiPickerButton } from './ui/EmojiPicker'
 import { useDirtyClose } from './ui/useDirtyClose'
@@ -26,6 +30,16 @@ export default function GroupInfoDrawer(props: { project: ProjectInfo; busy?: bo
   const [description, setDescription] = useState(project.description || '')
   const [workspaceDir, setWorkspaceDir] = useState(project.workspace_dir || '')
   const [workspaceState, setWorkspaceState] = useState<ProjectWorkspaceState>(() => parseProjectWorkspaceState(project.workspace_state))
+  const [campaignKind, setCampaignKind] = useState<CampaignKind>('feature_video')
+  const [editingCampaignId, setEditingCampaignId] = useState('')
+  const [campaignTitle, setCampaignTitle] = useState('')
+  const [campaignFeature, setCampaignFeature] = useState('')
+  const [campaignStory, setCampaignStory] = useState('')
+  const [campaignPoints, setCampaignPoints] = useState('')
+  const [campaignMaterials, setCampaignMaterials] = useState('')
+  const [campaignChannels, setCampaignChannels] = useState('')
+  const [campaignFeedback, setCampaignFeedback] = useState<Record<string, string>>({})
+  const [deliveryPaths, setDeliveryPaths] = useState<Record<string, string>>({})
   const [leaderId, setLeaderId] = useState(project.leader_agent_id || '')
   const [saving, setSaving] = useState(false)
   const [saveMsg, setSaveMsg] = useState<string | null>(null)
@@ -64,29 +78,98 @@ export default function GroupInfoDrawer(props: { project: ProjectInfo; busy?: bo
     serializeProjectWorkspaceState(workspaceState) !== serializeProjectWorkspaceState(parseProjectWorkspaceState(project.workspace_state))
   const { requestClose, guard } = useDirtyClose({ dirty: formDirty, onClose, disabled: addingMember })
 
-  const saveSettings = async () => {
-    if (!title.trim() || !leaderId) return
+  const persistWorkspace = async (nextState: ProjectWorkspaceState): Promise<boolean> => {
+    if (!title.trim() || !leaderId) return false
     setSaving(true)
     setSaveMsg(null)
     try {
-      await api.invoke(IPC.projectSave, {
+      const updated = await api.invoke<ProjectInfo>(IPC.projectSave, {
         id: project.id,
         title: title.trim(),
         icon: icon.trim() || '👥',
         description: description.trim(),
         leader_agent_id: leaderId,
         workspace_dir: workspaceDir.trim(),
-        workspace_state: serializeProjectWorkspaceState(workspaceState),
+        workspace_state: serializeProjectWorkspaceState(nextState),
         memberAgentIds: members.map((m) => m.agent_id),
       })
+      setWorkspaceState(parseProjectWorkspaceState(updated.workspace_state))
       await refreshProjects()
       await refreshMembers()
       setSaveMsg('已保存')
+      return true
     } catch (err) {
       setSaveMsg(`保存失败：${String((err as Error).message).slice(0, 120)}`)
+      return false
     } finally {
       setSaving(false)
     }
+  }
+
+  const saveSettings = async () => { await persistWorkspace(workspaceState) }
+
+  const createCampaign = async () => {
+    try {
+      const updated = await api.invoke<ProjectInfo>(IPC.projectCampaign, {
+        projectId: project.id, action: editingCampaignId ? 'update' : 'create', ...(editingCampaignId ? { campaignId: editingCampaignId } : {}), kind: campaignKind, title: campaignTitle,
+        feature: campaignFeature, story: campaignStory,
+        channels: campaignChannels.split('\n'), sellingPoints: campaignPoints.split('\n'), materialsNeeded: campaignMaterials.split('\n'),
+      })
+      setWorkspaceState(parseProjectWorkspaceState(updated.workspace_state))
+      await refreshProjects()
+      setSaveMsg('选题已保存，等待方向确认')
+      setEditingCampaignId('')
+      setCampaignTitle('')
+      setCampaignFeature('')
+      setCampaignStory('')
+      setCampaignPoints('')
+      setCampaignMaterials('')
+    } catch (err) { setSaveMsg(`无法创建选题：${String((err as Error).message)}`) }
+  }
+
+  const editCampaign = (campaign: CampaignProposal) => {
+    setCampaignKind(campaign.kind)
+    setEditingCampaignId(campaign.id)
+    setCampaignTitle(campaign.title)
+    setCampaignFeature(campaign.feature)
+    setCampaignStory(campaign.story)
+    setCampaignPoints(campaign.sellingPoints.join('\n'))
+    setCampaignMaterials(campaign.materialsNeeded.join('\n'))
+    setCampaignChannels(campaign.channels.join('\n'))
+  }
+
+  const decideDirection = async (campaign: CampaignProposal, decision: 'approve' | 'changes_requested') => {
+    try {
+      const updated = await api.invoke<ProjectInfo>(IPC.projectCampaign, { projectId: project.id, action: 'review_direction', campaignId: campaign.id, decision, feedback: campaignFeedback[campaign.id] || '' })
+      setWorkspaceState(parseProjectWorkspaceState(updated.workspace_state))
+      await refreshProjects()
+    } catch (err) { setSaveMsg(`无法确认选题：${String((err as Error).message)}`) }
+  }
+
+  const makeProductionTask = async (campaign: CampaignProposal) => {
+    try {
+      if (!canStartCampaignProduction(campaign)) throw new Error('先确认当前版本的选题，并补齐所需素材')
+      const updated = await api.invoke<ProjectInfo>(IPC.projectCampaign, { projectId: project.id, action: 'create_task', campaignId: campaign.id })
+      setWorkspaceState(parseProjectWorkspaceState(updated.workspace_state))
+      await refreshProjects()
+    } catch (err) { setSaveMsg(`无法创建制作任务：${String((err as Error).message)}`) }
+  }
+
+  const submitDelivery = async (campaign: CampaignProposal) => {
+    try {
+      const updated = await api.invoke<ProjectInfo>(IPC.projectCampaign, { projectId: project.id, action: 'submit_delivery', campaignId: campaign.id, path: deliveryPaths[campaign.id] || '' })
+      setWorkspaceState(parseProjectWorkspaceState(updated.workspace_state))
+      await refreshProjects()
+      setDeliveryPaths((paths) => ({ ...paths, [campaign.id]: '' }))
+    } catch (err) { setSaveMsg(`无法提交成品：${String((err as Error).message)}`) }
+  }
+
+  const decideDelivery = async (campaign: CampaignProposal, deliveryId: string, decision: 'accepted' | 'changes_requested') => {
+    try {
+      const updated = await api.invoke<ProjectInfo>(IPC.projectCampaign, { projectId: project.id, action: 'review_delivery', campaignId: campaign.id, deliveryId, decision, feedback: campaignFeedback[deliveryId] || '' })
+      setWorkspaceState(parseProjectWorkspaceState(updated.workspace_state))
+      await refreshProjects()
+    } catch (err) { setSaveMsg(`无法验收成品：${String((err as Error).message)}`) }
   }
 
   const pickDir = async () => {
@@ -164,6 +247,53 @@ export default function GroupInfoDrawer(props: { project: ProjectInfo; busy?: bo
               </button>
               {saveMsg && <span className="settings-tip" data-testid="project-workspace-save-result">{saveMsg}</span>}
             </div>
+          </div>
+          <div className="drawer-sec">宣传选题与成品</div>
+          <div className="group-settings campaign-workspace" data-testid="campaign-workspace">
+            <p className="settings-tip">每个版本单独确认方向；只有当前选题已确认且素材缺口清零后才能创建制作任务。成品按新路径登记版本，审核记录与路径会随项目同步。</p>
+            <label className="field"><span>成果线</span>
+              <select data-testid="campaign-kind" value={campaignKind} onChange={(event) => setCampaignKind(event.target.value as CampaignKind)}>
+                <option value="feature_video">单功能视频</option><option value="system_deck">完整系统介绍 PPT</option>
+              </select>
+            </label>
+            <label className="field"><span>选题标题</span><input data-testid="campaign-title" value={campaignTitle} onChange={(event) => setCampaignTitle(event.target.value)} placeholder="例如：腕表让护士不错过病房呼叫" /></label>
+            {campaignKind === 'feature_video' ? <label className="field"><span>具体功能</span><input data-testid="campaign-feature" value={campaignFeature} onChange={(event) => setCampaignFeature(event.target.value)} placeholder="例如：腕表病房呼叫" /></label> : null}
+            <label className="field"><span>一线医护使用场景</span><textarea rows={2} data-testid="campaign-story" value={campaignStory} onChange={(event) => setCampaignStory(event.target.value)} placeholder="描述具体角色、时刻、操作与改善" /></label>
+            <label className="field"><span>传播渠道（每行一个）</span><textarea rows={2} data-testid="campaign-channels" value={campaignChannels} onChange={(event) => setCampaignChannels(event.target.value)} placeholder="微信私聊\n渠道群转发\n现场讲解" /></label>
+            <label className="field"><span>核心卖点（每行一个）</span><textarea rows={3} data-testid="campaign-points" value={campaignPoints} onChange={(event) => setCampaignPoints(event.target.value)} placeholder="只填写已有资料能支持的产品事实" /></label>
+            <label className="field"><span>待补素材（每行一个；清空后才能创建制作任务）</span><textarea rows={2} data-testid="campaign-materials" value={campaignMaterials} onChange={(event) => setCampaignMaterials(event.target.value)} placeholder="腕表实拍 / 已脱敏界面截图 / 接口说明" /></label>
+            <button className="btn primary" data-testid="campaign-create" disabled={saving} onClick={() => void createCampaign()}>{editingCampaignId ? '保存为新选题版本' : '创建待确认选题'}</button>
+            {editingCampaignId ? <button className="btn" data-testid="campaign-edit-cancel" onClick={() => setEditingCampaignId('')}>取消编辑</button> : null}
+            {workspaceState.campaigns.map((campaign) => (
+              <article key={campaign.id} className="campaign-card" data-testid={`campaign-${campaign.id}`}>
+                <div className="campaign-card-head"><strong>{campaign.kind === 'system_deck' ? '完整系统 PPT' : '单功能视频'} · {campaign.title}</strong><span>方向 v{campaign.revision}{campaign.approvedRevision === campaign.revision ? ' · 已确认' : ' · 待确认'}</span></div>
+                <p>功能：{campaign.feature || '完整系统'}；场景：{campaign.story || '未填写'}</p>
+                <p>核心卖点：{campaign.sellingPoints.join('；')}</p>
+                <p>渠道：{campaign.channels.join('、') || '待配置'}{campaign.materialsNeeded.length ? ` · 待补素材：${campaign.materialsNeeded.join('、')}` : ' · 素材缺口已清零'}</p>
+                {campaign.directionFeedback ? <p className="campaign-feedback">方向意见：{campaign.directionFeedback}</p> : null}
+                <button className="btn" data-testid={`campaign-edit-${campaign.id}`} onClick={() => editCampaign(campaign)}>编辑并提交新版本</button>
+                {campaign.approvedRevision !== campaign.revision ? <div className="campaign-actions">
+                  <input aria-label={`${campaign.title} 审阅意见`} data-testid={`campaign-feedback-${campaign.id}`} value={campaignFeedback[campaign.id] || ''} onChange={(event) => setCampaignFeedback((current) => ({ ...current, [campaign.id]: event.target.value }))} placeholder="退回时填写修改意见" />
+                  <button className="btn" data-testid={`campaign-request-changes-${campaign.id}`} onClick={() => void decideDirection(campaign, 'changes_requested')}>退回修改</button>
+                  <button className="btn primary" data-testid={`campaign-approve-${campaign.id}`} onClick={() => void decideDirection(campaign, 'approve')}>确认方向</button>
+                </div> : null}
+                {campaign.approvedRevision === campaign.revision && !campaign.productionTaskId ? <button className="btn primary" data-testid={`campaign-task-${campaign.id}`} disabled={saving || campaign.materialsNeeded.length > 0} onClick={() => void makeProductionTask(campaign)}>创建制作任务</button> : null}
+                {campaign.productionTaskId ? <p data-testid={`campaign-task-linked-${campaign.id}`}>已关联制作任务 {campaign.productionTaskId}</p> : null}
+                {campaign.approvedRevision === campaign.revision ? <div className="campaign-actions">
+                  <input aria-label={`${campaign.title} 成品路径`} data-testid={`campaign-path-${campaign.id}`} value={deliveryPaths[campaign.id] || ''} onChange={(event) => setDeliveryPaths((current) => ({ ...current, [campaign.id]: event.target.value }))} placeholder="项目工作区中的相对路径，例如 宣传/腕表呼叫/v1.mp4" />
+                  <button className="btn" data-testid={`campaign-submit-${campaign.id}`} disabled={!canStartCampaignProduction(campaign) || !campaign.productionTaskId || saving} onClick={() => void submitDelivery(campaign)}>提交新版本验收</button>
+                </div> : null}
+                {campaign.deliveries.map((delivery) => <div key={delivery.id} className="campaign-delivery" data-testid={`campaign-delivery-${delivery.id}`}>
+                  <span>v{delivery.revision} · {delivery.path} · {delivery.status === 'in_review' ? '待验收' : delivery.status === 'accepted' ? '已验收' : '要求修改'}</span>
+                  {delivery.feedback ? <span className="campaign-feedback">意见：{delivery.feedback}</span> : null}
+                  {delivery.status === 'in_review' ? <div className="campaign-actions">
+                    <input aria-label={`v${delivery.revision} 验收意见`} data-testid={`delivery-feedback-${delivery.id}`} value={campaignFeedback[delivery.id] || ''} onChange={(event) => setCampaignFeedback((current) => ({ ...current, [delivery.id]: event.target.value }))} placeholder="要求修改时填写意见" />
+                    <button className="btn" data-testid={`delivery-request-changes-${delivery.id}`} onClick={() => void decideDelivery(campaign, delivery.id, 'changes_requested')}>要求修改</button>
+                    <button className="btn primary" data-testid={`delivery-accept-${delivery.id}`} onClick={() => void decideDelivery(campaign, delivery.id, 'accepted')}>验收通过</button>
+                  </div> : null}
+                </div>)}
+              </article>
+            ))}
           </div>
         </div>
 

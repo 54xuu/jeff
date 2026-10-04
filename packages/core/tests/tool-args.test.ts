@@ -10,6 +10,7 @@ import { ToolBridge } from '../src/tools/bridge.js'
 import { registerAdminTools } from '../src/tools/adminTools.js'
 import { registerProjectTools } from '../src/tools/projectTools.js'
 import { allToolDefs } from '../src/tools/definitions.js'
+import { createCampaignProposal, reviewCampaignDirection, parseProjectWorkspaceState, serializeProjectWorkspaceState } from '../src/project/workspace.js'
 
 let tmp: string
 let db: DB
@@ -101,9 +102,28 @@ describe('小杰改项目群 / 任务：空值不抹字段', () => {
     const leader = agentRepo(db).create({ name: '项目统筹' })
     const project = projectRepo(db).create({ title: '宣传项目', leader_agent_id: leader.id, workspace_state: '{"goal":"旧目标"}' })
     await expect(call('jeff_project_update', { id: project.id, workspace_state: '{' })).rejects.toThrow(/合法 JSON/)
-    expect(projectRepo(db).get(project.id)?.workspace_state).toBe('{"goal":"旧目标"}')
+    expect(parseProjectWorkspaceState(projectRepo(db).get(project.id)?.workspace_state).goal).toBe('旧目标')
     await call('jeff_project_update', { id: project.id, workspace_state: '{"goal":"新目标"}' })
-    expect(JSON.parse(projectRepo(db).get(project.id)!.workspace_state)).toEqual({ goal: '新目标' })
+    expect(parseProjectWorkspaceState(projectRepo(db).get(project.id)!.workspace_state).goal).toBe('新目标')
+  })
+
+  it('Agent 可改项目事实，但不能伪造用户选题确认与成品状态', async () => {
+    const call = projCall()
+    const leader = agentRepo(db).create({ name: '项目统筹' })
+    let workspace = createCampaignProposal(parseProjectWorkspaceState('{}'), {
+      kind: 'feature_video', title: '腕表呼叫', feature: '病房呼叫', story: '护士用腕表接收呼叫',
+      channels: ['渠道群'], sellingPoints: ['及时接收'], materialsNeeded: [],
+    })
+    const campaignId = workspace.campaigns[0]!.id
+    workspace = reviewCampaignDirection(workspace, campaignId, 'approve')
+    const project = projectRepo(db).create({ title: '宣传项目', leader_agent_id: leader.id, workspace_state: serializeProjectWorkspaceState(workspace) })
+    const forged = JSON.parse(serializeProjectWorkspaceState(workspace)) as Record<string, unknown>
+    forged.goal = 'Agent 可维护的目标'
+    ;(forged.campaigns as Array<Record<string, unknown>>)[0] = { ...(forged.campaigns as Array<Record<string, unknown>>)[0], approvedRevision: null, productionTaskId: 'forged', deliveries: [{ id: 'fake', path: 'fake.mp4', status: 'accepted' }] }
+    await call('jeff_project_update', { id: project.id, workspace_state: JSON.stringify(forged) })
+    const saved = parseProjectWorkspaceState(projectRepo(db).get(project.id)!.workspace_state)
+    expect(saved.goal).toBe('Agent 可维护的目标')
+    expect(saved.campaigns[0]).toEqual(workspace.campaigns[0])
   })
 
   it('改群名时空串字段不覆盖已有值；工作空间目录传空串才是「清除」', async () => {

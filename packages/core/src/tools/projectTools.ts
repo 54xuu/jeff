@@ -1,7 +1,7 @@
 import type { ToolBridge } from './bridge.js'
 import type { DB } from '../db/db.js'
 import { PROJECT_STATUSES, TASK_PRIORITIES, TASK_STATUSES, agentRepo, projectAgentRepo, projectRepo, taskRepo } from '../db/repos.js'
-import { validateProjectWorkspaceJson } from '../project/workspace.js'
+import { parseProjectWorkspaceState, serializeProjectWorkspaceState, validateProjectWorkspaceJson } from '../project/workspace.js'
 
 export interface ProjectToolDeps {
   db: DB
@@ -72,7 +72,13 @@ export function registerProjectTools(reg: ToolBridge, deps: ProjectToolDeps): vo
       icon: nonBlank(args.icon),
       status: nonBlank(args.status),
       leader_agent_id: nonBlank(args.leader_agent_id),
-      ...(args.workspace_state !== undefined ? { workspace_state: validateProjectWorkspaceJson(args.workspace_state) } : {}),
+      ...(args.workspace_state !== undefined ? {
+        workspace_state: serializeProjectWorkspaceState({
+          ...parseProjectWorkspaceState(validateProjectWorkspaceJson(args.workspace_state)),
+          // 自治 agent 可以维护项目事实，但不能伪造用户的选题确认、制作关联或成品验收。
+          campaigns: parseProjectWorkspaceState(projects.get(args.id)?.workspace_state).campaigns,
+        }),
+      } : {}),
       // 例外：工作空间目录明确支持「传空串 = 清除为默认工作区」（工具说明里写明了）
       ...(args.workspace_dir !== undefined ? { workspace_dir: String(args.workspace_dir).trim() } : {}),
     })

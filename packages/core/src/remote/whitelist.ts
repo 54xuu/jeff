@@ -41,6 +41,9 @@ const PUSH = new Set<string>([
   IPC.evChatStream,
 ])
 
+// 宣传审批状态迁移由桌面主进程执行，App 只经现有加密链路调用该契约。
+const ALLOW = new Set<string>([IPC.projectCampaign])
+
 function build(): Record<string, RemoteRule> {
   const out: Record<string, RemoteRule> = {}
   for (const ch of Object.values(IPC)) {
@@ -48,6 +51,7 @@ function build(): Record<string, RemoteRule> {
     if (DENY[ch]) out[ch] = { policy: 'deny', note: DENY[ch] }
     else if (REPLACE[ch]) out[ch] = { policy: 'replace', note: REPLACE[ch] }
     else if (PUSH.has(ch)) out[ch] = { policy: 'push' }
+    else if (ALLOW.has(ch)) out[ch] = { policy: 'allow' }
     else out[ch] = { policy: 'allow' }
   }
   return out

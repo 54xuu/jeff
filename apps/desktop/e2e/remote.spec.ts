@@ -5,6 +5,7 @@ import path from 'node:path'
 import { createServer } from 'vite'
 import WebSocket from 'ws'
 import { XIAOJIE_ID } from '../../../packages/core/src/ipc/contract.js'
+import { parseProjectWorkspaceState } from '../../../packages/core/src/project/workspace.js'
 import {
   RelayLink,
   b64ToBytes,
@@ -131,6 +132,34 @@ test('假手机经本地中转站绑定，并让桌面切到新项目群', async
     await phone.link.request(qr.desktopId, 'group:threadNew', { projectId: project.id, title: '来自手机' })
     await expect(page.getByTestId('chat-window').or(page.locator('.chat-header-name'))).toContainText('遥控器验收', { timeout: 15000 })
 
+    // 手机通过真实密文中转调用桌面宣传状态机；方向审核、制作任务和成品版本都由主进程落库。
+    const created = await phone.link.request(qr.desktopId, 'project:campaign', {
+      projectId: project.id, action: 'create', kind: 'feature_video', title: '腕表病房呼叫',
+      feature: '腕表病房呼叫', story: '护士通过腕表接收病房呼叫', channels: ['渠道群'],
+      sellingPoints: ['减少漏接'], materialsNeeded: [],
+    }) as { workspace_state: string }
+    const campaign = parseProjectWorkspaceState(created.workspace_state).campaigns[0]!
+    expect(campaign.approvedRevision).toBeNull()
+    const approved = await phone.link.request(qr.desktopId, 'project:campaign', {
+      projectId: project.id, action: 'review_direction', campaignId: campaign.id, decision: 'approve',
+    }) as { workspace_state: string }
+    expect(parseProjectWorkspaceState(approved.workspace_state).campaigns[0]).toMatchObject({ approvedRevision: 1, directionReviews: [{ decision: 'approve', revision: 1 }] })
+    const taskLinked = await phone.link.request(qr.desktopId, 'project:campaign', {
+      projectId: project.id, action: 'create_task', campaignId: campaign.id,
+    }) as { workspace_state: string }
+    const linked = parseProjectWorkspaceState(taskLinked.workspace_state).campaigns[0]!
+    expect(linked.productionTaskId).toMatch(/^task_/)
+    fs.writeFileSync(path.join(dir, 'campaign-v1.mp4'), Buffer.from('e2e media placeholder'))
+    const submitted = await phone.link.request(qr.desktopId, 'project:campaign', {
+      projectId: project.id, action: 'submit_delivery', campaignId: campaign.id, path: 'campaign-v1.mp4',
+    }) as { workspace_state: string }
+    const delivery = parseProjectWorkspaceState(submitted.workspace_state).campaigns[0]!.deliveries[0]!
+    expect(delivery).toMatchObject({ status: 'in_review', path: 'campaign-v1.mp4', revision: 1 })
+    const accepted = await phone.link.request(qr.desktopId, 'project:campaign', {
+      projectId: project.id, action: 'review_delivery', campaignId: campaign.id, deliveryId: delivery.id, decision: 'accepted',
+    }) as { workspace_state: string }
+    expect(parseProjectWorkspaceState(accepted.workspace_state).campaigns[0]!.deliveries[0]).toMatchObject({ status: 'accepted' })
+
     await page.getByTestId('nav-settings').click()
     await page.getByTestId('settings-nav-remote').click()
     await expect(page.getByTestId('remote-bound')).toContainText('验收手机')
@@ -216,6 +245,9 @@ test('手机页面在 390×844 里完成绑定并列出会话', async () => {
           desk.respond(ev.from, ev.id, true, { ok: true })
         } else if (ev.ch === 'fs:listDirs') {
           desk.respond(ev.from, ev.id, true, { dir: '/tmp/ws', parent: '/tmp', entries: [{ name: 'notes', path: '/tmp/ws/notes' }] })
+        } else if (ev.ch === 'fs:listFiles') {
+          const body = (ev.p || {}) as { dir?: string }
+          desk.respond(ev.from, ev.id, true, { dir: body.dir || '/tmp/ws', exists: true, nodes: [] })
         } else if (ev.ch === 'project:save') {
           calls.push(ev.ch)
           const body = (ev.p || {}) as { workspace_dir?: string }
@@ -283,7 +315,7 @@ test('手机页面在 390×844 里完成绑定并列出会话', async () => {
     desk.sendPlain(ask.appId, {
       t: 'push',
       what: 'chat-stream',
-      p: { kind: 'private', agentId: 'agt_xiaojie', messageId: 'm-stream', reset: true, textDelta: '正在写', reasoningDelta: '', done: false },
+      p: { kind: 'private', agentId: 'agt_xiaojie', messageId: 'm-stream', reset: true, textDelta: '正在写', textLen: 3, reasoningDelta: '', reasoningLen: 0, done: false },
     })
     await expect(page.getByTestId('stream')).toContainText('正在写')
     await page.getByTestId('chat-stop').click()
@@ -298,9 +330,12 @@ test('手机页面在 390×844 里完成绑定并列出会话', async () => {
     await page.getByTestId('chat-back').click()
     await page.getByTestId('msg-list').getByRole('button', { name: /验收群/ }).click()
     await page.getByTestId('workspace').click()
+    await page.getByTestId('workspace-change-dir').click()
     await expect(page.getByTestId('dir-picker')).toContainText('notes')
     await page.getByTestId('use-notes').click()
     await expect.poll(() => calls.includes('/tmp/ws/notes')).toBe(true)
+    await expect(page.getByTestId('workspace-files')).toBeVisible()
+    await page.getByTestId('workspace-files').locator('.bar .btn-nav-back').click()
     await page.getByTestId('chat-back').click()
     await page.getByTestId('tab-me').click()
     await page.getByRole('button', { name: /家里的电脑/ }).click()

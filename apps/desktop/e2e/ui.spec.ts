@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test'
 import path from 'node:path'
+import fs from 'node:fs'
 import { DatabaseSync } from 'node:sqlite'
 import { closeJeff, launchJeff, loadE2eEnv, REPO_ROOT } from './helpers/launch.js'
 
@@ -241,6 +242,79 @@ test.describe('Jeff UI 封闭清单', () => {
       await page.getByTestId('group-tab-workspace').click()
       await expect(page.getByTestId('project-workspace-goal')).toHaveValue('每周产出一批无声智慧病房宣传内容')
       await expect(page.getByTestId('project-workspace-outline')).toHaveValue('整体方案\n病房呼叫\n门诊叫号')
+
+      // 宣传选题必须先由用户确认，缺素材时挡住制作任务；成品按不同路径形成可追溯版本。
+      await page.getByTestId('campaign-title').fill('腕表让护士不错过病房呼叫')
+      await page.getByTestId('campaign-feature').fill('腕表病房呼叫')
+      await page.getByTestId('campaign-story').fill('护士忙碌时通过腕表接收呼叫')
+      await page.getByTestId('campaign-points').fill('腕表及时接收病房呼叫')
+      await page.getByTestId('campaign-materials').fill('腕表实拍')
+      await page.getByTestId('campaign-create').click()
+      const campaignCard = page.locator('[data-testid^="campaign-cmp_"]').first()
+      await expect(campaignCard).toBeVisible()
+      const campaignTestId = await campaignCard.getAttribute('data-testid')
+      const campaignId = campaignTestId!.slice('campaign-'.length)
+      const campaignProjectId = String((dbQuery(`SELECT id FROM project WHERE title=? AND deleted_at IS NULL`, 'E2E测试群')[0] as { id?: string } | undefined)?.id || '')
+      expect(campaignProjectId).toBeTruthy()
+      await page.getByTestId(`campaign-approve-${campaignId}`).click()
+      const taskButton = page.getByTestId(`campaign-task-${campaignId}`)
+      await expect(taskButton).toBeVisible()
+      await expect(taskButton).toBeDisabled()
+      await page.getByTestId(`campaign-edit-${campaignId}`).click()
+      await page.getByTestId('campaign-materials').fill('')
+      await page.getByTestId('campaign-create').click()
+      await expect(campaignCard).toContainText('方向 v2 · 待确认')
+      await expect(taskButton).toHaveCount(0)
+      await page.getByTestId(`campaign-approve-${campaignId}`).click()
+      await expect(page.getByTestId(`campaign-task-${campaignId}`)).toBeEnabled()
+      const directionAfterTamper = await page.evaluate(async (projectId) => {
+        const jeff = (window as unknown as { jeff: { invoke: (channel: string, payload?: unknown) => Promise<any> } }).jeff
+        const project = (await jeff.invoke('projects:list')).find((item: any) => item.id === projectId)
+        const forged = JSON.parse(project.workspace_state)
+        forged.campaigns[0].approvedRevision = null
+        forged.campaigns[0].productionTaskId = 'forged-task'
+        forged.campaigns[0].deliveries = [{ id: 'forged', revision: 1, path: 'fake.mp4', status: 'accepted', submittedAt: Date.now() }]
+        const updated = await jeff.invoke('project:save', { ...project, memberAgentIds: [project.leader_agent_id], workspace_state: JSON.stringify(forged) })
+        return JSON.parse(updated.workspace_state).campaigns[0]
+      }, campaignProjectId)
+      expect(directionAfterTamper).toMatchObject({ approvedRevision: 2, productionTaskId: '', deliveries: [] })
+      await page.getByTestId(`campaign-task-${campaignId}`).click()
+      await expect(page.getByTestId(`campaign-task-linked-${campaignId}`)).toContainText('已关联制作任务')
+      await page.evaluate(async ({ projectId, campaignId }) => {
+        const jeff = (window as unknown as { jeff: { invoke: (channel: string, payload?: unknown) => Promise<unknown> } }).jeff
+        await jeff.invoke('project:campaign', { projectId, action: 'create_task', campaignId })
+        await jeff.invoke('project:campaign', { projectId, action: 'create_task', campaignId })
+      }, { projectId: campaignProjectId, campaignId })
+      const taskRows = dbQuery(`SELECT id, title, description FROM task WHERE project_id=? AND deleted_at IS NULL`, campaignProjectId)
+      const campaignTasks = taskRows.filter((row) => String(row.description).includes(`campaign_ref:${campaignId}:v2`))
+      expect(campaignTasks).toHaveLength(1)
+      const outsidePathError = await page.evaluate(async ({ projectId, campaignId }) => {
+        const jeff = (window as unknown as { jeff: { invoke: (channel: string, payload?: unknown) => Promise<unknown> } }).jeff
+        return jeff.invoke('project:campaign', { projectId, action: 'submit_delivery', campaignId, path: '/etc/hosts' }).then(() => '').catch((err) => String(err.message))
+      }, { projectId: campaignProjectId, campaignId })
+      expect(outsidePathError).toContain('必须位于该项目工作区内')
+
+      const outputRoot = path.join(home, 'workspace')
+      const outputDir = path.join(outputRoot, '宣传', '腕表呼叫')
+      fs.mkdirSync(outputDir, { recursive: true })
+      fs.writeFileSync(path.join(outputDir, 'v1.mp4'), Buffer.from('e2e media placeholder'))
+      await page.getByTestId(`campaign-path-${campaignId}`).fill('宣传/腕表呼叫/v1.mp4')
+      await page.getByTestId(`campaign-submit-${campaignId}`).click()
+      const deliveryRow = campaignCard.locator('[data-testid^="campaign-delivery-"]').first()
+      await expect(deliveryRow).toContainText('待验收')
+      const deliveryId = (await deliveryRow.getAttribute('data-testid'))!.slice('campaign-delivery-'.length)
+      await deliveryRow.getByTestId(`delivery-feedback-${deliveryId}`).fill('请统一视频字幕里的功能名称')
+      await deliveryRow.getByTestId(`delivery-request-changes-${deliveryId}`).click()
+      await expect(deliveryRow).toContainText('要求修改')
+
+      fs.writeFileSync(path.join(outputDir, 'v2.mp4'), Buffer.from('e2e media placeholder v2'))
+      await page.getByTestId(`campaign-path-${campaignId}`).fill('宣传/腕表呼叫/v2.mp4')
+      await page.getByTestId(`campaign-submit-${campaignId}`).click()
+      const latestDelivery = campaignCard.locator('[data-testid^="campaign-delivery-"]').first()
+      await expect(latestDelivery).toContainText('v2 · 宣传/腕表呼叫/v2.mp4 · 待验收')
+      const latestDeliveryId = (await latestDelivery.getAttribute('data-testid'))!.slice('campaign-delivery-'.length)
+      await latestDelivery.getByTestId(`delivery-accept-${latestDeliveryId}`).click()
+      await expect(latestDelivery).toContainText('已验收')
       // 会话记录（原「任务看板」）现在是独立 Tab，切过去才可见
       await page.getByTestId('group-tab-history').click()
       await expect(page.getByTestId('group-chat-history')).toBeVisible()
