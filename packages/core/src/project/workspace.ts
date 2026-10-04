@@ -1,6 +1,6 @@
 /** Project-level facts shared by the desktop, phone, agent tools, and WebDAV sync. */
 export interface ProjectWorkspaceState {
-  schemaVersion: 2
+  schemaVersion: 3
   goal: string
   salesAudience: string
   storyAudience: string
@@ -8,6 +8,22 @@ export interface ProjectWorkspaceState {
   systemOutline: string[]
   weeklyCadence: string
   campaigns: CampaignProposal[]
+  assets: ProjectAsset[]
+}
+
+export type ProjectAssetKind = 'image' | 'video' | 'document' | 'demo_url'
+export type ProjectAssetSource = 'user_provided' | 'authorized_screenshot' | 'generated_illustration' | 'demo_material'
+export interface ProjectAsset {
+  id: string
+  title: string
+  kind: ProjectAssetKind
+  feature: string
+  path: string
+  source: ProjectAssetSource
+  sourceNote: string
+  isReal: boolean
+  confirmed: boolean
+  createdAt: number
 }
 
 export type CampaignKind = 'system_deck' | 'feature_video'
@@ -61,7 +77,7 @@ export interface CampaignDirectionReview {
 }
 
 export const EMPTY_PROJECT_WORKSPACE: ProjectWorkspaceState = {
-  schemaVersion: 2,
+  schemaVersion: 3,
   goal: '',
   salesAudience: '',
   storyAudience: '',
@@ -69,6 +85,7 @@ export const EMPTY_PROJECT_WORKSPACE: ProjectWorkspaceState = {
   systemOutline: [],
   weeklyCadence: '',
   campaigns: [],
+  assets: [],
 }
 
 /** Older projects (and older remote backups) have no workspace state. */
@@ -78,7 +95,7 @@ export function parseProjectWorkspaceState(raw: string | null | undefined): Proj
     const value = JSON.parse(raw) as Record<string, unknown>
     if (!value || typeof value !== 'object' || Array.isArray(value)) return { ...EMPTY_PROJECT_WORKSPACE }
     return {
-      schemaVersion: 2,
+      schemaVersion: 3,
       goal: typeof value.goal === 'string' ? value.goal.trim() : '',
       salesAudience: typeof value.salesAudience === 'string' ? value.salesAudience.trim() : '',
       storyAudience: typeof value.storyAudience === 'string' ? value.storyAudience.trim() : '',
@@ -86,6 +103,7 @@ export function parseProjectWorkspaceState(raw: string | null | undefined): Proj
       systemOutline: stringList(value.systemOutline),
       weeklyCadence: typeof value.weeklyCadence === 'string' ? value.weeklyCadence.trim() : '',
       campaigns: campaignList(value.campaigns),
+      assets: assetList(value.assets),
     }
   } catch {
     return { ...EMPTY_PROJECT_WORKSPACE }
@@ -94,7 +112,7 @@ export function parseProjectWorkspaceState(raw: string | null | undefined): Proj
 
 export function serializeProjectWorkspaceState(state: ProjectWorkspaceState): string {
   return JSON.stringify({
-    schemaVersion: 2,
+    schemaVersion: 3,
     goal: state.goal.trim(),
     salesAudience: state.salesAudience.trim(),
     storyAudience: state.storyAudience.trim(),
@@ -102,7 +120,22 @@ export function serializeProjectWorkspaceState(state: ProjectWorkspaceState): st
     systemOutline: cleanLines(state.systemOutline),
     weeklyCadence: state.weeklyCadence.trim(),
     campaigns: state.campaigns.map(normalizeCampaign),
+    assets: state.assets.map(normalizeAsset),
   })
+}
+
+export function registerProjectAsset(state: ProjectWorkspaceState, input: Omit<ProjectAsset, 'id' | 'createdAt' | 'confirmed'>, at = Date.now()): ProjectWorkspaceState {
+  const asset = normalizeAsset({ ...input, id: '', createdAt: at, confirmed: false })
+  if (!asset.title) throw new Error('素材名称不能为空')
+  if (!asset.path) throw new Error('请填写工作区内的文件路径或演示地址')
+  if (asset.source === 'generated_illustration' && asset.isReal) throw new Error('生成示意图不能标记为真实产品素材')
+  return { ...state, schemaVersion: 3, assets: [{ ...asset, id: newId('asset'), createdAt: at }, ...state.assets] }
+}
+
+export function reviewProjectAsset(state: ProjectWorkspaceState, id: string, confirmed: boolean): ProjectWorkspaceState {
+  const asset = state.assets.find((item) => item.id === id)
+  if (!asset) throw new Error('找不到该素材')
+  return { ...state, assets: state.assets.map((item) => item.id === id ? { ...item, confirmed } : item) }
 }
 
 export function validateProjectWorkspaceJson(raw: string): string {
@@ -123,7 +156,7 @@ export function createCampaignProposal(state: ProjectWorkspaceState, input: Camp
   if (!proposal.title) throw new Error('选题标题不能为空')
   if (proposal.kind === 'feature_video' && !proposal.feature) throw new Error('单功能视频必须填写具体功能')
   if (proposal.sellingPoints.length === 0) throw new Error('至少填写一个核心卖点')
-  return { ...state, schemaVersion: 2, campaigns: [{ ...proposal, id: newId('cmp'), revision: 1, approvedRevision: null, directionFeedback: '', directionReviews: [], productionTaskId: '', updatedAt: at, deliveries: [] }, ...state.campaigns] }
+  return { ...state, schemaVersion: 3, campaigns: [{ ...proposal, id: newId('cmp'), revision: 1, approvedRevision: null, directionFeedback: '', directionReviews: [], productionTaskId: '', updatedAt: at, deliveries: [] }, ...state.campaigns] }
 }
 
 export function updateCampaignProposal(state: ProjectWorkspaceState, id: string, input: CampaignProposalInput, at = Date.now()): ProjectWorkspaceState {
@@ -207,6 +240,27 @@ function campaignList(value: unknown): CampaignProposal[] {
   return value.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object' && !Array.isArray(item))
     .map((item) => normalizeCampaign(item))
     .filter((item) => Boolean(item.id && item.title))
+}
+
+function assetList(value: unknown): ProjectAsset[] {
+  if (!Array.isArray(value)) return []
+  return value.filter(isRecord).map(normalizeAsset).filter((item) => Boolean(item.id && item.title && item.path))
+}
+
+function normalizeAsset(value: Record<string, unknown> | ProjectAsset): ProjectAsset {
+  const source: ProjectAssetSource = value.source === 'authorized_screenshot' || value.source === 'generated_illustration' || value.source === 'demo_material' ? value.source : 'user_provided'
+  return {
+    id: typeof value.id === 'string' ? value.id : '',
+    title: typeof value.title === 'string' ? value.title.trim() : '',
+    kind: value.kind === 'video' || value.kind === 'document' || value.kind === 'demo_url' ? value.kind : 'image',
+    feature: typeof value.feature === 'string' ? value.feature.trim() : '',
+    path: typeof value.path === 'string' ? value.path.trim() : '',
+    source,
+    sourceNote: typeof value.sourceNote === 'string' ? value.sourceNote.trim() : '',
+    isReal: value.isReal === true,
+    confirmed: value.confirmed === true,
+    createdAt: finiteNumber(value.createdAt, 0),
+  }
 }
 
 function normalizeCampaign(value: Record<string, unknown> | CampaignProposal): CampaignProposal {

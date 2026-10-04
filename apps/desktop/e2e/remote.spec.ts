@@ -132,6 +132,18 @@ test('假手机经本地中转站绑定，并让桌面切到新项目群', async
     await phone.link.request(qr.desktopId, 'group:threadNew', { projectId: project.id, title: '来自手机' })
     await expect(page.getByTestId('chat-window').or(page.locator('.chat-header-name'))).toContainText('遥控器验收', { timeout: 15000 })
 
+    fs.writeFileSync(path.join(dir, 'watch.png'), Buffer.from('e2e image placeholder'))
+    const assetRegistered = await phone.link.request(qr.desktopId, 'project:campaign', {
+      projectId: project.id, action: 'register_asset', title: '腕表正面照片', kind: 'image', feature: '病房呼叫',
+      path: 'watch.png', source: 'user_provided', sourceNote: '手机登记', isReal: true,
+    }) as { workspace_state: string }
+    const asset = parseProjectWorkspaceState(assetRegistered.workspace_state).assets[0]!
+    expect(asset).toMatchObject({ title: '腕表正面照片', source: 'user_provided', isReal: true, confirmed: false, path: 'watch.png' })
+    const assetConfirmed = await phone.link.request(qr.desktopId, 'project:campaign', {
+      projectId: project.id, action: 'review_asset', assetId: asset.id, confirmed: true,
+    }) as { workspace_state: string }
+    expect(parseProjectWorkspaceState(assetConfirmed.workspace_state).assets[0]?.confirmed).toBe(true)
+
     // 手机通过真实密文中转调用桌面宣传状态机；方向审核、制作任务和成品版本都由主进程落库。
     const created = await phone.link.request(qr.desktopId, 'project:campaign', {
       projectId: project.id, action: 'create', kind: 'feature_video', title: '腕表病房呼叫',

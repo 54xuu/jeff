@@ -242,6 +242,17 @@ test.describe('Jeff UI 封闭清单', () => {
       await page.getByTestId('group-tab-workspace').click()
       await expect(page.getByTestId('project-workspace-goal')).toHaveValue('每周产出一批无声智慧病房宣传内容')
       await expect(page.getByTestId('project-workspace-outline')).toHaveValue('整体方案\n病房呼叫\n门诊叫号')
+      fs.mkdirSync(path.join(home, 'workspace', '产品资料'), { recursive: true })
+      fs.writeFileSync(path.join(home, 'workspace', '产品资料', '腕表.png'), Buffer.from('image placeholder'))
+      await page.getByTestId('asset-title').fill('腕表实拍')
+      await page.getByTestId('asset-path').fill('产品资料/腕表.png')
+      await page.getByTestId('asset-feature').fill('腕表病房呼叫')
+      await page.getByTestId('asset-real').check()
+      await page.getByTestId('asset-register').click()
+      const assetCard = page.locator('[data-testid^="asset-asset_"]').first()
+      await expect(assetCard).toContainText('腕表实拍')
+      await assetCard.getByRole('button', { name: '确认可用' }).click()
+      await expect(assetCard).toContainText('已确认')
 
       // 宣传选题必须先由用户确认，缺素材时挡住制作任务；成品按不同路径形成可追溯版本。
       await page.getByTestId('campaign-title').fill('腕表让护士不错过病房呼叫')
@@ -274,10 +285,13 @@ test.describe('Jeff UI 封闭清单', () => {
         forged.campaigns[0].approvedRevision = null
         forged.campaigns[0].productionTaskId = 'forged-task'
         forged.campaigns[0].deliveries = [{ id: 'forged', revision: 1, path: 'fake.mp4', status: 'accepted', submittedAt: Date.now() }]
+        forged.assets[0].confirmed = false
         const updated = await jeff.invoke('project:save', { ...project, memberAgentIds: [project.leader_agent_id], workspace_state: JSON.stringify(forged) })
-        return JSON.parse(updated.workspace_state).campaigns[0]
+        const saved = JSON.parse(updated.workspace_state)
+        return { campaign: saved.campaigns[0], asset: saved.assets[0] }
       }, campaignProjectId)
-      expect(directionAfterTamper).toMatchObject({ approvedRevision: 2, productionTaskId: '', deliveries: [] })
+      expect(directionAfterTamper.campaign).toMatchObject({ approvedRevision: 2, productionTaskId: '', deliveries: [] })
+      expect(directionAfterTamper.asset).toMatchObject({ confirmed: true, isReal: true, source: 'user_provided' })
       await page.getByTestId(`campaign-task-${campaignId}`).click()
       await expect(page.getByTestId(`campaign-task-linked-${campaignId}`)).toContainText('已关联制作任务')
       await page.evaluate(async ({ projectId, campaignId }) => {

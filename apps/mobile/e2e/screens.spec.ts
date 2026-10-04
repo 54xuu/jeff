@@ -93,6 +93,7 @@ test.describe('1.11 统一风格全屏回归', () => {
                   const state = JSON.parse(project.workspace_state || '{}')
                   state.schemaVersion = 2
                   state.campaigns ||= []
+                  state.assets ||= []
                   if (p.action === 'create') {
                     state.campaigns.unshift({
                       id: 'cmp_mobile_e2e', kind: p.kind, title: p.title, feature: p.feature, story: p.story,
@@ -102,7 +103,9 @@ test.describe('1.11 统一风格全屏回归', () => {
                     })
                   } else {
                     const campaign = state.campaigns.find((x: any) => x.id === p.campaignId)
-                    if (p.action === 'update') {
+                    if (p.action === 'register_asset') state.assets.unshift({ id: 'asset_mobile_e2e', ...p, confirmed: false, createdAt: Date.now() })
+                    else if (p.action === 'review_asset') Object.assign(state.assets.find((asset: any) => asset.id === p.assetId), { confirmed: p.confirmed })
+                    else if (p.action === 'update') {
                       Object.assign(campaign, p, { revision: campaign.revision + 1, approvedRevision: null, directionFeedback: '', productionTaskId: '' })
                     } else if (p.action === 'review_direction') {
                       campaign.approvedRevision = p.decision === 'approve' ? campaign.revision : null
@@ -365,5 +368,19 @@ test.describe('1.11 统一风格全屏回归', () => {
     await expect(page.getByTestId('file-preview-body')).toContainText('体温 36.7℃')
     await noOverflow(page, 'file-preview')
     await page.screenshot({ path: '../../.tmp/e2e-screens/12-file-preview.png' })
+  })
+
+  test('手机登记素材并确认来源状态', async ({ page }) => {
+    await page.getByTestId('chat-group-一个很长很长的项目群名字用来测试顶栏按钮不溢出').click()
+    await expect(page.getByTestId('bubbles')).toBeVisible()
+    await page.getByTestId('project-workspace').click()
+    await expect(page.getByTestId('project-workspace-screen')).toBeVisible()
+    await page.getByTestId('mobile-asset-title').fill('腕表正面照片')
+    await page.getByTestId('mobile-asset-path').fill('assets/watch.png')
+    await page.getByTestId('mobile-asset-feature').fill('病房呼叫')
+    await page.getByTestId('mobile-asset-register').click()
+    await expect(page.getByTestId('mobile-asset-asset_mobile_e2e')).toContainText('待确认')
+    await page.getByRole('button', { name: '确认可用' }).click()
+    await expect(page.getByTestId('mobile-asset-asset_mobile_e2e')).toContainText('已确认')
   })
 })

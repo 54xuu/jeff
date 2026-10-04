@@ -39,6 +39,13 @@ export default function GroupInfoDrawer(props: { project: ProjectInfo; busy?: bo
   const [campaignMaterials, setCampaignMaterials] = useState('')
   const [campaignChannels, setCampaignChannels] = useState('')
   const [campaignFeedback, setCampaignFeedback] = useState<Record<string, string>>({})
+  const [assetTitle, setAssetTitle] = useState('')
+  const [assetPath, setAssetPath] = useState('')
+  const [assetFeature, setAssetFeature] = useState('')
+  const [assetKind, setAssetKind] = useState<'image' | 'video' | 'document' | 'demo_url'>('image')
+  const [assetSourceNote, setAssetSourceNote] = useState('')
+  const [assetSource, setAssetSource] = useState<'user_provided' | 'authorized_screenshot' | 'generated_illustration' | 'demo_material'>('user_provided')
+  const [assetReal, setAssetReal] = useState(false)
   const [deliveryPaths, setDeliveryPaths] = useState<Record<string, string>>({})
   const [leaderId, setLeaderId] = useState(project.leader_agent_id || '')
   const [saving, setSaving] = useState(false)
@@ -171,6 +178,18 @@ export default function GroupInfoDrawer(props: { project: ProjectInfo; busy?: bo
       await refreshProjects()
     } catch (err) { setSaveMsg(`无法验收成品：${String((err as Error).message)}`) }
   }
+  const registerAsset = async () => {
+    try {
+      const updated = await api.invoke<ProjectInfo>(IPC.projectCampaign, { projectId: project.id, action: 'register_asset', title: assetTitle, kind: assetKind, feature: assetFeature, path: assetPath, source: assetSource, sourceNote: assetSourceNote, isReal: assetReal })
+      setWorkspaceState(parseProjectWorkspaceState(updated.workspace_state)); setAssetTitle(''); setAssetPath(''); setAssetFeature(''); setAssetSourceNote('')
+    } catch (error) { setSaveMsg(error instanceof Error ? error.message : String(error)) }
+  }
+  const reviewAsset = async (assetId: string, confirmed: boolean) => {
+    try {
+      const updated = await api.invoke<ProjectInfo>(IPC.projectCampaign, { projectId: project.id, action: 'review_asset', assetId, confirmed })
+      setWorkspaceState(parseProjectWorkspaceState(updated.workspace_state))
+    } catch (error) { setSaveMsg(error instanceof Error ? error.message : String(error)) }
+  }
 
   const pickDir = async () => {
     const dir = await api.invoke<string | null>(IPC.dialogPickDir, { title: '选择工作空间目录', defaultPath: workspaceDir || undefined })
@@ -250,6 +269,19 @@ export default function GroupInfoDrawer(props: { project: ProjectInfo; busy?: bo
           </div>
           <div className="drawer-sec">宣传选题与成品</div>
           <div className="group-settings campaign-workspace" data-testid="campaign-workspace">
+            <section className="campaign-assets" data-testid="project-assets">
+              <strong>项目素材库</strong>
+              <p className="settings-tip">真实产品素材和生成示意图分开标记；文件需在项目工作区内，截图需来自授权演示环境且先脱敏。</p>
+              <label className="field"><span>素材名称</span><input data-testid="asset-title" value={assetTitle} onChange={(e) => setAssetTitle(e.target.value)} /></label>
+              <label className="field"><span>工作区相对路径</span><input data-testid="asset-path" value={assetPath} onChange={(e) => setAssetPath(e.target.value)} placeholder="产品资料/腕表正面.png" /></label>
+              <label className="field"><span>所属功能</span><input data-testid="asset-feature" value={assetFeature} onChange={(e) => setAssetFeature(e.target.value)} placeholder="腕表病房呼叫" /></label>
+              <label className="field"><span>素材类型</span><select data-testid="asset-kind" value={assetKind} onChange={(e) => setAssetKind(e.target.value as typeof assetKind)}><option value="image">图片</option><option value="video">视频</option><option value="document">文档</option><option value="demo_url">演示地址</option></select></label>
+              <label className="field"><span>素材来源</span><select data-testid="asset-source" value={assetSource} onChange={(e) => setAssetSource(e.target.value as typeof assetSource)}><option value="user_provided">用户提供</option><option value="authorized_screenshot">授权系统截图</option><option value="generated_illustration">生成示意图</option><option value="demo_material">演示素材</option></select></label>
+              <label className="field"><span>来源说明</span><input data-testid="asset-source-note" value={assetSourceNote} onChange={(e) => setAssetSourceNote(e.target.value)} placeholder="授权环境、生成工具或资料来源" /></label>
+              <label><input type="checkbox" data-testid="asset-real" checked={assetReal} onChange={(e) => setAssetReal(e.target.checked)} />真实产品素材（非示意图）</label>
+              <button className="btn" data-testid="asset-register" disabled={saving || !assetTitle.trim() || !assetPath.trim()} onClick={() => void registerAsset()}>登记为待确认素材</button>
+              {workspaceState.assets.map((asset) => <div className="campaign-asset-row" key={asset.id} data-testid={`asset-${asset.id}`}><span><strong>{asset.title}</strong> · {{ image: '图片', video: '视频', document: '文档', demo_url: '演示地址' }[asset.kind]} · {asset.feature || '通用'} · {asset.source === 'generated_illustration' ? '生成示意图' : asset.isReal ? '真实素材' : '素材'} · {asset.path}{asset.sourceNote ? ` · 来源：${asset.sourceNote}` : ''}</span><span>{asset.confirmed ? '已确认' : <><button className="btn" onClick={() => void reviewAsset(asset.id, true)}>确认可用</button><button className="btn" onClick={() => void reviewAsset(asset.id, false)}>撤销确认</button></>}</span></div>)}
+            </section>
             <p className="settings-tip">每个版本单独确认方向；只有当前选题已确认且素材缺口清零后才能创建制作任务。成品按新路径登记版本，审核记录与路径会随项目同步。</p>
             <label className="field"><span>成果线</span>
               <select data-testid="campaign-kind" value={campaignKind} onChange={(event) => setCampaignKind(event.target.value as CampaignKind)}>

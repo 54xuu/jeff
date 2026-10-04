@@ -464,6 +464,7 @@ export function App() {
   const [editingCampaignId, setEditingCampaignId] = useState('')
   const [campaignFeedback, setCampaignFeedback] = useState<Record<string, string>>({})
   const [campaignPaths, setCampaignPaths] = useState<Record<string, string>>({})
+  const [assetDraft, setAssetDraft] = useState<{ title: string; path: string; feature: string; kind: 'image' | 'video' | 'document' | 'demo_url'; source: 'user_provided' | 'authorized_screenshot' | 'generated_illustration' | 'demo_material'; sourceNote: string; isReal: boolean }>({ title: '', path: '', feature: '', kind: 'image', source: 'user_provided', sourceNote: '', isReal: false })
   const dataDirRef = useRef('')
   const [computers, setComputers] = useState(phone.desktops)
   const [activeId, setActiveId] = useState('')
@@ -1311,6 +1312,26 @@ export function App() {
       setWorkspaceSaved('成品验收已保存')
     }
     catch (err) { setWorkspaceSaved(`无法验收成品：${String((err as Error).message)}`) }
+  }
+
+  async function registerAssetOnPhone() {
+    try {
+      if (!target || target.kind !== 'group') return
+      const updated = await phone.invoke<ProjectInfo>(IPC.projectCampaign, { projectId: target.id, action: 'register_asset', ...assetDraft })
+      setProjects((items) => items.map((item) => item.id === updated.id ? updated : item))
+      setWorkspaceDraft(parseProjectWorkspaceState(updated.workspace_state))
+      setAssetDraft({ title: '', path: '', feature: '', kind: 'image', source: 'user_provided', sourceNote: '', isReal: false })
+      setWorkspaceSaved('素材已登记，待确认来源与可用性')
+    } catch (err) { setWorkspaceSaved(`无法登记素材：${String((err as Error).message)}`) }
+  }
+
+  async function reviewAssetOnPhone(assetId: string, confirmed: boolean) {
+    try {
+      if (!target || target.kind !== 'group') return
+      const updated = await phone.invoke<ProjectInfo>(IPC.projectCampaign, { projectId: target.id, action: 'review_asset', assetId, confirmed })
+      setProjects((items) => items.map((item) => item.id === updated.id ? updated : item))
+      setWorkspaceDraft(parseProjectWorkspaceState(updated.workspace_state))
+    } catch (err) { setWorkspaceSaved(`无法确认素材：${String((err as Error).message)}`) }
   }
 
   async function loadFiles(dir: string) {
@@ -2463,6 +2484,17 @@ export function App() {
             <button type="button" className="btn-primary" data-testid="mobile-workspace-save" disabled={workspaceSaving} onClick={() => void saveProjectWorkspace()}>{workspaceSaving ? '保存中…' : '保存项目资料'}</button>
             {workspaceSaved ? <p className="project-workspace-result" data-testid="mobile-workspace-result">{workspaceSaved}</p> : null}
             <h3 className="campaign-mobile-title">宣传选题与成品</h3>
+            <h4>项目素材库</h4>
+            <p className="project-workspace-result">真实素材、授权截图与生成示意图分别标记；文件需先放入项目工作区，截图先脱敏。</p>
+            <label><span>素材名称</span><input data-testid="mobile-asset-title" value={assetDraft.title} onChange={(e) => setAssetDraft((d) => ({ ...d, title: e.target.value }))} /></label>
+            <label><span>工作区相对路径</span><input data-testid="mobile-asset-path" value={assetDraft.path} onChange={(e) => setAssetDraft((d) => ({ ...d, path: e.target.value }))} placeholder="产品资料/腕表正面.png" /></label>
+            <label><span>所属功能</span><input data-testid="mobile-asset-feature" value={assetDraft.feature} onChange={(e) => setAssetDraft((d) => ({ ...d, feature: e.target.value }))} /></label>
+            <label><span>类型</span><select data-testid="mobile-asset-kind" value={assetDraft.kind} onChange={(e) => setAssetDraft((d) => ({ ...d, kind: e.target.value as typeof d.kind }))}><option value="image">图片</option><option value="video">视频</option><option value="document">文档</option><option value="demo_url">演示地址</option></select></label>
+            <label><span>来源</span><select data-testid="mobile-asset-source" value={assetDraft.source} onChange={(e) => setAssetDraft((d) => ({ ...d, source: e.target.value as typeof d.source }))}><option value="user_provided">用户提供</option><option value="authorized_screenshot">授权系统截图</option><option value="generated_illustration">生成示意图</option><option value="demo_material">演示素材</option></select></label>
+            <label><span>来源说明</span><input data-testid="mobile-asset-source-note" value={assetDraft.sourceNote} onChange={(e) => setAssetDraft((d) => ({ ...d, sourceNote: e.target.value }))} /></label>
+            <label><input type="checkbox" checked={assetDraft.isReal} onChange={(e) => setAssetDraft((d) => ({ ...d, isReal: e.target.checked }))} />真实产品素材</label>
+            <button type="button" disabled={workspaceSaving || !assetDraft.title.trim() || !assetDraft.path.trim()} data-testid="mobile-asset-register" onClick={() => void registerAssetOnPhone()}>登记素材</button>
+            {workspaceDraft.assets.map((asset) => <div className="campaign-mobile-delivery" key={asset.id} data-testid={`mobile-asset-${asset.id}`}><span>{asset.title} · {{ image: '图片', video: '视频', document: '文档', demo_url: '演示地址' }[asset.kind]} · {asset.feature || '通用'} · {asset.source === 'generated_illustration' ? '生成示意图' : asset.isReal ? '真实素材' : '素材'} · {asset.path}{asset.sourceNote ? ` · 来源：${asset.sourceNote}` : ''} · {asset.confirmed ? '已确认' : '待确认'}</span>{!asset.confirmed ? <button type="button" onClick={() => void reviewAssetOnPhone(asset.id, true)}>确认可用</button> : <button type="button" onClick={() => void reviewAssetOnPhone(asset.id, false)}>撤销确认</button>}</div>)}
             <p className="project-workspace-result">方向确认、制作任务和成品验收分开记录。只有当前方向已确认且待补素材清零，才可创建制作任务。</p>
             <label><span>成果线</span><select data-testid="mobile-campaign-kind" value={campaignDraft.kind} onChange={(e) => setCampaignDraft((draft) => ({ ...draft, kind: e.target.value as CampaignKind }))}><option value="feature_video">单功能视频</option><option value="system_deck">完整系统介绍 PPT</option></select></label>
             <label><span>选题标题</span><input data-testid="mobile-campaign-title" value={campaignDraft.title} onChange={(e) => setCampaignDraft((draft) => ({ ...draft, title: e.target.value }))} placeholder="例如：腕表让护士不错过病房呼叫" /></label>

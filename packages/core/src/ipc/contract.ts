@@ -187,6 +187,8 @@ export interface ProjectInfo {
 }
 
 export type ProjectCampaignCommand =
+  | { projectId: string; action: 'register_asset'; title: string; kind: 'image' | 'video' | 'document' | 'demo_url'; feature: string; path: string; source: 'user_provided' | 'authorized_screenshot' | 'generated_illustration' | 'demo_material'; sourceNote: string; isReal: boolean }
+  | { projectId: string; action: 'review_asset'; assetId: string; confirmed: boolean }
   | { projectId: string; action: 'create'; kind: 'system_deck' | 'feature_video'; title: string; feature?: string; story?: string; channels: string[]; sellingPoints: string[]; materialsNeeded: string[] }
   | { projectId: string; action: 'update'; campaignId: string; kind: 'system_deck' | 'feature_video'; title: string; feature?: string; story?: string; channels: string[]; sellingPoints: string[]; materialsNeeded: string[] }
   | { projectId: string; action: 'review_direction'; campaignId: string; decision: 'approve' | 'changes_requested'; feedback?: string }

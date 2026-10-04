@@ -18,7 +18,7 @@ import {
   IPC, XIAOJIE_ID, agentRepo, projectRepo, projectAgentRepo, taskRepo, taskCardMessage, snapshotInstructions, APP_VERSION,
   PrivateChatStoppedError, resolveSendText, resolveScreenshotScale, parseProjectWorkspaceState,
   serializeProjectWorkspaceState, validateProjectWorkspaceJson, createCampaignProposal, updateCampaignProposal, reviewCampaignDirection,
-  attachCampaignProductionTask, submitCampaignDelivery, reviewCampaignDelivery,
+  attachCampaignProductionTask, submitCampaignDelivery, reviewCampaignDelivery, registerProjectAsset, reviewProjectAsset,
   type ThinkingTier, type ChatPluginInvoke, type RemoteStatus,
 } from '@jeff/core'
 import { listDirs, makeDir } from '../../../../packages/core/src/remote/dirs.js'
@@ -52,6 +52,13 @@ function resolveCampaignDeliveryPath(core: JeffCore, workspaceDir: string, input
   }
   if (!fs.statSync(fileReal).isFile()) throw new Error('成品路径必须指向文件')
   return relative.split(path.sep).join('/')
+}
+
+function validateDemoUrl(raw: string): string {
+  let url: URL
+  try { url = new URL(raw.trim()) } catch { throw new Error('演示地址必须是合法 URL') }
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') throw new Error('演示地址只支持 HTTP/HTTPS')
+  return url.toString()
 }
 
 /**
@@ -518,6 +525,7 @@ export function registerIpc(core: JeffCore): Record<string, Handler> {
               ...parseProjectWorkspaceState(validateProjectWorkspaceJson(d.workspace_state)),
               // 审阅、成品与制作任务关联只能经 project:campaign 的服务端状态机修改。
               campaigns: parseProjectWorkspaceState(existing.workspace_state).campaigns,
+              assets: parseProjectWorkspaceState(existing.workspace_state).assets,
             })
         row = projectRepo(core.db).update(d.id, {
           title: d.title, description: d.description, icon: d.icon, leader_agent_id: d.leader_agent_id,
@@ -529,6 +537,7 @@ export function registerIpc(core: JeffCore): Record<string, Handler> {
         const workspace = d.workspace_state === undefined ? '{}' : serializeProjectWorkspaceState({
           ...parseProjectWorkspaceState(validateProjectWorkspaceJson(d.workspace_state)),
           campaigns: [],
+          assets: [],
         })
         row = projectRepo(core.db).create({ title: d.title, description: d.description, icon: d.icon, leader_agent_id: d.leader_agent_id, workspace_dir: d.workspace_dir || '', workspace_state: workspace })
       }
@@ -546,6 +555,14 @@ export function registerIpc(core: JeffCore): Record<string, Handler> {
         if (!project || project.deleted_at) throw new Error('项目不存在')
         let state = parseProjectWorkspaceState(project.workspace_state)
         switch (d.action) {
+          case 'register_asset': {
+            const assetPath = d.kind === 'demo_url' ? validateDemoUrl(d.path) : resolveCampaignDeliveryPath(core, project.workspace_dir, d.path)
+            state = registerProjectAsset(state, { title: d.title, kind: d.kind, feature: d.feature, path: assetPath, source: d.source, sourceNote: d.sourceNote, isReal: d.isReal })
+            break
+          }
+          case 'review_asset':
+            state = reviewProjectAsset(state, d.assetId, d.confirmed)
+            break
           case 'create':
             state = createCampaignProposal(state, {
               kind: d.kind, title: d.title, feature: d.feature || '', story: d.story || '',

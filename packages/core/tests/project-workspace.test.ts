@@ -3,6 +3,7 @@ import {
   EMPTY_PROJECT_WORKSPACE, parseProjectWorkspaceState, serializeProjectWorkspaceState, validateProjectWorkspaceJson,
   createCampaignProposal, reviewCampaignDirection, canStartCampaignProduction, attachCampaignProductionTask,
   submitCampaignDelivery, reviewCampaignDelivery, updateCampaignProposal,
+  registerProjectAsset, reviewProjectAsset,
 } from '../src/project/workspace.js'
 
 describe('project workspace profile', () => {
@@ -12,9 +13,24 @@ describe('project workspace profile', () => {
     expect(parseProjectWorkspaceState('[]')).toEqual(EMPTY_PROJECT_WORKSPACE)
   })
 
+  it('keeps project asset provenance and user confirmation separate from ordinary profile edits', () => {
+    expect(() => registerProjectAsset(EMPTY_PROJECT_WORKSPACE, {
+      title: '示意图', kind: 'image', feature: '', path: 'assets/mock.png',
+      source: 'generated_illustration', sourceNote: '', isReal: true,
+    })).toThrow(/不能标记为真实/)
+    let state = registerProjectAsset(EMPTY_PROJECT_WORKSPACE, {
+      title: '腕表界面示意图', kind: 'image', feature: '病房呼叫', path: 'assets/watch.png',
+      source: 'generated_illustration', sourceNote: '由绘图 Agent 生成', isReal: false,
+    }, 42)
+    expect(state.assets[0]).toMatchObject({ title: '腕表界面示意图', source: 'generated_illustration', isReal: false, confirmed: false, createdAt: 42 })
+    state = reviewProjectAsset(state, state.assets[0]!.id, true)
+    expect(state.assets[0]?.confirmed).toBe(true)
+    expect(parseProjectWorkspaceState(serializeProjectWorkspaceState(state)).assets).toEqual(state.assets)
+  })
+
   it('trims editable lists and migrates old profile data to the current schema', () => {
     const raw = serializeProjectWorkspaceState({
-      schemaVersion: 2,
+      schemaVersion: 3,
       goal: ' 宣传腕表方案 ',
       salesAudience: ' 渠道商 ',
       storyAudience: ' 一线医护 ',
@@ -22,11 +38,12 @@ describe('project workspace profile', () => {
       systemOutline: ['整体方案', '功能介绍'],
       weeklyCadence: '每周一批',
       campaigns: [],
+      assets: [],
     })
     const legacy = parseProjectWorkspaceState(JSON.stringify({ schemaVersion: 1, goal: ' 宣传腕表方案 ', channels: [' 微信 '] }))
-    expect(legacy).toMatchObject({ schemaVersion: 2, goal: '宣传腕表方案', channels: ['微信'], campaigns: [] })
+    expect(legacy).toMatchObject({ schemaVersion: 3, goal: '宣传腕表方案', channels: ['微信'], campaigns: [], assets: [] })
     expect(parseProjectWorkspaceState(raw)).toEqual({
-      schemaVersion: 2,
+      schemaVersion: 3,
       goal: '宣传腕表方案',
       salesAudience: '渠道商',
       storyAudience: '一线医护',
@@ -34,6 +51,7 @@ describe('project workspace profile', () => {
       systemOutline: ['整体方案', '功能介绍'],
       weeklyCadence: '每周一批',
       campaigns: [],
+      assets: [],
     })
   })
 
