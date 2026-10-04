@@ -5,7 +5,7 @@ import path from 'node:path'
 import { startMockWebdav } from './helpers/mock-webdav.mjs'
 import { openDb } from '../src/db/db.js'
 import { buildPaths, ensureDirs, type JeffPaths } from '../src/paths.js'
-import { agentRepo, projectRepo, projectAgentRepo, taskRepo, kvRepo } from '../src/db/repos.js'
+import { agentRepo, projectRepo, projectAgentRepo, taskActivityRepo, taskRepo, kvRepo } from '../src/db/repos.js'
 import { MemoryStore } from '../src/memory/store.js'
 import { SyncEngine } from '../src/sync/engine.js'
 import { XIAOJIE_ID } from '../src/ipc/contract.js'
@@ -86,6 +86,7 @@ describe('SyncEngine（实体级双向合并）', () => {
     expect(rA.error).toBeUndefined()
     expect(rA.uploaded).toBeGreaterThan(0)
     expect(fs.existsSync(path.join(davRoot, 'dav/r1/agents.json'))).toBe(true)
+    expect(fs.existsSync(path.join(davRoot, 'dav/r1/task_activity.json'))).toBe(true)
     expect(fs.existsSync(path.join(davRoot, 'dav/r1/memory/user.md'))).toBe(true)
     expect(fs.existsSync(path.join(davRoot, 'dav/r1/agents-md/user.md'))).toBe(true)
 
@@ -102,6 +103,11 @@ describe('SyncEngine（实体级双向合并）', () => {
     expect(JSON.parse(projects[0].workspace_state)).toEqual({ goal: '项目级宣传计划', systemOutline: ['整体方案', '腕表呼叫'] })
     expect(projectAgentRepo(B.db).listByProject(projects[0].id)).toHaveLength(2)
     expect(taskRepo(B.db).listByProject(projects[0].id)).toHaveLength(1)
+    const syncedTask = taskRepo(A.db).listByProject(projects[0].id)[0]
+    taskRepo(A.db).update(syncedTask.id, { status: 'in_progress' })
+    await A.engine.sync()
+    await B.engine.sync()
+    expect(taskActivityRepo(B.db).listByProject(projects[0].id).map((item) => item.kind)).toEqual(['created', 'status_changed'])
     expect(B.memory.list({ kind: 'user' })).toContain('称呼：Jeff 老师们')
     const devB = agentsB.find((a) => a.name === '开发')!
     expect(B.memory.list({ kind: 'agent', agentId: devB.id })).toContain('用户偏好 vite')

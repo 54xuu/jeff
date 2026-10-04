@@ -3,7 +3,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { openDb, migrate } from '../src/db/db.js'
-import { agentRepo, projectRepo, projectAgentRepo, taskRepo, chatMessageRepo, kvRepo } from '../src/db/repos.js'
+import { agentRepo, projectRepo, projectAgentRepo, taskActivityRepo, taskRepo, chatMessageRepo, kvRepo } from '../src/db/repos.js'
 import { buildPaths } from '../src/paths.js'
 import type { DB } from '../src/db/db.js'
 
@@ -45,6 +45,23 @@ describe('agentRepo', () => {
 })
 
 describe('taskRepo', () => {
+  it('为创建、状态变更和删除写不可变活动记录，普通字段编辑不伪造状态变化', () => {
+    const p = projectRepo(db).create({ title: '历史记录项目' })
+    const tasks = taskRepo(db)
+    const activity = taskActivityRepo(db)
+    const task = tasks.create({ project_id: p.id, title: '接口联调' })
+    tasks.update(task.id, { description: '补充现场说明' })
+    tasks.update(task.id, { status: 'in_progress' })
+    tasks.update(task.id, { status: 'done' })
+    tasks.softDelete(task.id)
+    expect(activity.listByProject(p.id).map((item) => [item.kind, item.from_status, item.to_status])).toEqual([
+      ['created', '', 'todo'],
+      ['status_changed', 'todo', 'in_progress'],
+      ['status_changed', 'in_progress', 'done'],
+      ['deleted', 'done', 'done'],
+    ])
+  })
+
   it('项目内编号递增（JEF-n），跨项目独立', () => {
     const projects = projectRepo(db)
     const p1 = projects.create({ title: ' Jeff 本体' })

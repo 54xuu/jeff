@@ -206,6 +206,7 @@ export type ProjectCampaignCommand =
   | { projectId: string; action: 'review_delivery'; campaignId: string; deliveryId: string; decision: 'accepted' | 'changes_requested'; feedback?: string }
 
 export interface ProjectDocumentInfo { kind: 'charter' | 'weekly_report' | 'closeout'; path: string; content: string; missing: string[] }
+export interface ProjectDocumentCommand { projectId: string; kind: 'charter' | 'weekly_report' | 'closeout'; startDate?: string; endDate?: string }
 export interface SiYuanConfigInfo { baseUrl: string; tokenConfigured: boolean }
 export interface SiYuanSearchResult { docId: string; title: string; path: string; snippet: string }
 export interface ProjectReportInfo { path: string; content: string; templateId: string; sourceDocIds: string[] }
@@ -642,7 +643,7 @@ export type InvokeMap = {
   [IPC.projectsList]: void
   [IPC.projectSave]: { id?: string; title: string; description?: string; icon?: string; leader_agent_id?: string | null; memberAgentIds?: string[]; workspace_dir?: string; workspace_state?: string }
   [IPC.projectCampaign]: ProjectCampaignCommand
-  [IPC.projectDocument]: { projectId: string; kind: 'charter' | 'weekly_report' | 'closeout' }
+  [IPC.projectDocument]: ProjectDocumentCommand
   [IPC.siyuanConfigGet]: void
   [IPC.siyuanConfigSave]: { baseUrl: string; token?: string }
   [IPC.siyuanSearch]: { keyword: string }

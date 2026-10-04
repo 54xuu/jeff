@@ -3,7 +3,7 @@ import https from 'node:https'
 import path from 'node:path'
 import { createClient, WebDAVClient } from 'webdav'
 import type { DB } from '../db/db.js'
-import { agentRepo, cronTaskRepo, projectAgentRepo, projectRepo, taskRepo, type AgentRow, type CronTaskRow, type ProjectAgentRow, type ProjectRow, type TaskRow } from '../db/repos.js'
+import { agentRepo, cronTaskRepo, projectAgentRepo, projectRepo, taskActivityRepo, taskRepo, type AgentRow, type CronTaskRow, type ProjectAgentRow, type ProjectRow, type TaskActivityRow, type TaskRow } from '../db/repos.js'
 import { BUILTIN_SKILL_DIR, userSkillsDir, type JeffPaths } from '../paths.js'
 import type { MemoryStore, MemoryScope } from '../memory/store.js'
 import type { SkillsBackupReport, SkillsRestoreApply, SkillsRestoreStage } from '../ipc/contract.js'
@@ -66,7 +66,7 @@ export interface SyncReport {
 
 /**
  * WebDAV 同步（实体级双向合并）：
- * - 远端：<basePath>/{agents,projects,tasks,settings}.json + tombstones.json + manifest.json
+ * - 远端：<basePath>/{agents,projects,tasks,task_activity,settings}.json + tombstones.json + manifest.json
  *         + memory/*.md + agents-md/{user,project-*}.md
  * - 合并：按实体 updatedAt LWW；软删除 = 墓碑（deletedAt 时间参与 LWW）；双端都改 → 记录冲突并按 LWW 取胜
  * - settings 含 providers/defaultModel/theme/themePack/mcp（webdav 配置本身不同步）
@@ -480,7 +480,7 @@ export class SyncEngine {
 
       // 1. 拉远端 → 归一化（墓碑时间并入 updatedAt）
       const remote = new Map<string, RemoteRec>()
-      for (const name of ['agents', 'projects', 'tasks', 'settings', 'cron_tasks'] as const) {
+      for (const name of ['agents', 'projects', 'tasks', 'task_activity', 'settings', 'cron_tasks'] as const) {
         for (const raw of await this.getJsonArray(name)) {
           remote.set(raw.id, { id: raw.id, updatedAt: raw.updatedAt, deletedAt: raw.deletedAt, data: raw.data, memoryFile: null })
         }
@@ -569,6 +569,9 @@ export class SyncEngine {
     for (const { id } of allTasks) {
       const t = taskRepo(this.db).get(id)
       if (t) out.set(t.id, { id: t.id, updatedAt: t.updated_at, deletedAt: t.deleted_at, data: t, memoryFile: null })
+    }
+    for (const activity of taskActivityRepo(this.db).listAll()) {
+      out.set(activity.id, { id: activity.id, updatedAt: activity.at, deletedAt: null, data: activity, memoryFile: null })
     }
     // 定时任务定义（运行历史 cron_run 属本机日志，不同步）
     for (const c of cronTaskRepo(this.db).list(true)) {
@@ -778,6 +781,13 @@ export class SyncEngine {
               .run(d.project_id, d.number, d.title, d.description, d.status, d.priority, d.assignee_type, d.assignee_id, d.parent_task_id, d.due_at ?? null, d.depends_on || '[]', d.acceptance_criteria || '', d.evidence_paths || '[]', d.position, rec.updatedAt, rec.deletedAt, id)
           }
           n += 1
+          continue
+        }
+        if (id.startsWith('activity_')) {
+          const activity = rec.data as TaskActivityRow | null
+          if (!activity) continue
+          taskActivityRepo(this.db).merge([activity])
+          n += 1
         }
       }
       this.db.exec('COMMIT')
@@ -797,7 +807,7 @@ export class SyncEngine {
     const client = this.client()
     const base = this.base()
     let uploaded = 0
-    const byName: Record<string, Array<{ id: string; updatedAt: number; deletedAt: number | null; data: unknown }>> = { agents: [], projects: [], tasks: [], settings: [], cron_tasks: [] }
+    const byName: Record<string, Array<{ id: string; updatedAt: number; deletedAt: number | null; data: unknown }>> = { agents: [], projects: [], tasks: [], task_activity: [], settings: [], cron_tasks: [] }
     const tomb: Record<string, number> = {}
     for (const rec of merged.values()) {
       if (rec.id.startsWith('mem:') || rec.id.startsWith('amd:')) {
@@ -811,10 +821,11 @@ export class SyncEngine {
       else if (rec.id.startsWith('agt_')) byName.agents.push({ id: rec.id, updatedAt: rec.updatedAt, deletedAt: rec.deletedAt, data: rec.data })
       else if (rec.id.startsWith('prj_')) byName.projects.push({ id: rec.id, updatedAt: rec.updatedAt, deletedAt: rec.deletedAt, data: rec.data })
       else if (rec.id.startsWith('task_')) byName.tasks.push({ id: rec.id, updatedAt: rec.updatedAt, deletedAt: rec.deletedAt, data: rec.data })
+      else if (rec.id.startsWith('activity_')) byName.task_activity.push({ id: rec.id, updatedAt: rec.updatedAt, deletedAt: null, data: rec.data })
       else if (rec.id.startsWith('cron_')) byName.cron_tasks.push({ id: rec.id, updatedAt: rec.updatedAt, deletedAt: rec.deletedAt, data: rec.data })
       if (rec.deletedAt != null) tomb[rec.id] = rec.deletedAt
     }
-    for (const name of ['agents', 'projects', 'tasks', 'settings', 'cron_tasks'] as const) {
+    for (const name of ['agents', 'projects', 'tasks', 'task_activity', 'settings', 'cron_tasks'] as const) {
       await client.putFileContents(`${base}/${name}.json`, JSON.stringify(byName[name], null, 2), { overwrite: true })
       uploaded += 1
     }

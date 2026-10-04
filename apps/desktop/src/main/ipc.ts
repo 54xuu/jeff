@@ -14,6 +14,7 @@ import type {
   FileNode,
   ProjectCampaignCommand,
   ProjectDocumentInfo,
+  ProjectDocumentCommand,
   ProjectReportCommand,
   ProjectReportInfo,
   SiYuanConfigInfo,
@@ -25,13 +26,14 @@ import {
   serializeProjectWorkspaceState, validateProjectWorkspaceJson, createCampaignProposal, updateCampaignProposal, reviewCampaignDirection,
   attachCampaignProductionTask, submitCampaignDelivery, reviewCampaignDelivery, registerProjectAsset, reviewProjectAsset, resolveCampaignMaterial,
   type ThinkingTier, type ChatPluginInvoke, type RemoteStatus,
-  buildProjectDocument,
+  buildProjectDocument, currentWeekRange,
+  taskActivityRepo,
   confirmReportSources, deleteReportTemplate, removeReportSource, saveReportTemplate,
   isISODate,
 } from '@jeff/core'
 import { listDirs, makeDir } from '../../../../packages/core/src/remote/dirs.js'
 import type { MemoryScopeInfo } from '@jeff/core'
-import type { JeffCore, TaskRow } from '@jeff/core'
+import type { JeffCore, TaskActivityRow, TaskRow } from '@jeff/core'
 import { getMainWindow, getSidecarLogs, showDesktopNotification, setBrowserResult, setBrowserState } from './index.js'
 import { exportSiYuanMarkdown, getSiYuanConfig, saveSiYuanConfig, searchSiYuan } from './siyuan.js'
 
@@ -750,11 +752,22 @@ export function registerIpc(core: JeffCore): Record<string, Handler> {
       }
     },
     [IPC.projectDocument]: async (p): Promise<ProjectDocumentInfo> => {
-      const { projectId, kind } = p as { projectId: string; kind: 'charter' | 'weekly_report' | 'closeout' }
+      const command = p as ProjectDocumentCommand
+      const { projectId, kind } = command
       if (!['charter', 'weekly_report', 'closeout'].includes(kind)) throw new Error('不支持的项目文档类型')
       const project = projectRepo(core.db).get(projectId)
       if (!project || project.deleted_at) throw new Error('项目不存在')
-      const output = buildProjectDocument(project, taskRepo(core.db).listByProject(projectId), kind)
+      let range: { startDate: string; endDate: string } | undefined
+      let activities: TaskActivityRow[] = []
+      if (kind === 'weekly_report') {
+        const defaults = currentWeekRange()
+        range = { startDate: command.startDate || defaults.startDate, endDate: command.endDate || defaults.endDate }
+        const startAt = Date.parse(`${range.startDate}T00:00:00+08:00`)
+        const endAt = Date.parse(`${range.endDate}T00:00:00+08:00`) + 86_400_000 - 1
+        activities = taskActivityRepo(core.db).listByProject(projectId, startAt, endAt)
+        core.debugLog.log('project-weekly-report', { projectId, startDate: range.startDate, endDate: range.endDate, activityCount: activities.length })
+      }
+      const output = buildProjectDocument(project, taskRepo(core.db).listByProject(projectId), kind, Date.now(), activities, range)
       const folder = kind === 'charter' ? '立项' : kind === 'weekly_report' ? '周报' : '结项'
       const dir = path.resolve(project.workspace_dir || core.paths.workspaceDir, '项目文档', folder)
       fs.mkdirSync(dir, { recursive: true })

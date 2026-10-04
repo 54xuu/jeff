@@ -73,6 +73,18 @@ CREATE TABLE IF NOT EXISTS task (
   UNIQUE (project_id, number)
 );
 
+CREATE TABLE IF NOT EXISTS task_activity (
+  id          TEXT PRIMARY KEY,                 -- 活动唯一 id（activity_*）
+  project_id  TEXT NOT NULL,                    -- 所属项目 id
+  task_id     TEXT NOT NULL,                    -- 关联任务 id（任务软删除后记录仍保留）
+  task_number INTEGER NOT NULL,                 -- 任务编号快照
+  title       TEXT NOT NULL,                    -- 任务标题快照
+  kind        TEXT NOT NULL,                    -- created/status_changed/deleted
+  from_status TEXT NOT NULL DEFAULT '',          -- 变更前状态；创建时为空
+  to_status   TEXT NOT NULL DEFAULT '',          -- 变更后状态；删除时为删除前状态
+  at          INTEGER NOT NULL                  -- 发生时间（ms）
+);
+
 CREATE TABLE IF NOT EXISTS chat_message (
   id           TEXT PRIMARY KEY,                 -- 消息唯一 id
   scope        TEXT NOT NULL,                    -- 消息域：group:<projectId>
@@ -118,6 +130,7 @@ CREATE TABLE IF NOT EXISTS cron_run (
 
 CREATE INDEX IF NOT EXISTS idx_agent_name ON agent(name);
 CREATE INDEX IF NOT EXISTS idx_task_project ON task(project_id, status);
+CREATE INDEX IF NOT EXISTS idx_task_activity_project ON task_activity(project_id, at);
 CREATE INDEX IF NOT EXISTS idx_msg_scope ON chat_message(scope, created_at);
 CREATE INDEX IF NOT EXISTS idx_cron_next ON cron_task(enabled, next_run_at);
 CREATE INDEX IF NOT EXISTS idx_cron_run_task ON cron_run(task_id, started_at);
@@ -134,6 +147,10 @@ CREATE INDEX IF NOT EXISTS idx_cron_run_task ON cron_run(task_id, started_at);
   addColumn(db, 'task', 'depends_on', "TEXT NOT NULL DEFAULT '[]'", '依赖任务 id 数组 JSON')
   addColumn(db, 'task', 'acceptance_criteria', "TEXT NOT NULL DEFAULT ''", '任务验收标准')
   addColumn(db, 'task', 'evidence_paths', "TEXT NOT NULL DEFAULT '[]'", '任务验收证据的工作区相对路径数组 JSON')
+
+  // 旧任务只有当前状态和创建时间：回填创建事实，不猜测历史状态变化。
+  db.exec(`INSERT OR IGNORE INTO task_activity (id, project_id, task_id, task_number, title, kind, from_status, to_status, at)
+    SELECT 'activity_legacy_' || id, project_id, id, number, title, 'created', '', status, created_at FROM task`)
 
   // 角色归一：历史 member / 开发 / ui / 测试 / 产品 … → worker；再按 project.leader_agent_id 校正群主
   db.exec(`UPDATE project_agent SET role = 'worker' WHERE role IS NULL OR trim(role) = '' OR lower(role) != 'leader'`)

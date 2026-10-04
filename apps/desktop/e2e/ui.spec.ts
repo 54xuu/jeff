@@ -308,6 +308,16 @@ test.describe('Jeff UI 封闭清单', () => {
       await expect(page.getByTestId('project-document-result')).toContainText('/项目文档/立项/charter-')
       const charterPath = (await page.getByTestId('project-document-result').innerText()).replace(/^已生成草稿：/, '').split('；')[0]
       expect(fs.readFileSync(charterPath, 'utf8')).toContain('每周产出一批无声智慧病房宣传内容')
+      const today = await page.evaluate(() => new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Shanghai' }))
+      await page.getByTestId('project-weekly-start').fill(today)
+      await page.getByTestId('project-weekly-end').fill(today)
+      await page.getByTestId('project-document-weekly').click()
+      await expect(page.getByTestId('project-document-result')).toContainText('/项目文档/周报/weekly_report-')
+      const weeklyPath = (await page.getByTestId('project-document-result').innerText()).replace(/^已生成草稿：/, '').split('；')[0]
+      const weeklyContent = fs.readFileSync(weeklyPath, 'utf8')
+      expect(weeklyContent).toContain(`周期进展（${today} 至 ${today}）`)
+      expect(weeklyContent).toContain('JEF-1')
+      expect(weeklyContent).toContain('新建（todo）')
       await page.getByTestId('group-tab-settings').click()
       await page.getByTestId('group-tab-workspace').click()
       await expect(page.getByTestId('project-workspace-goal')).toHaveValue('每周产出一批无声智慧病房宣传内容')

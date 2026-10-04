@@ -1,7 +1,7 @@
 import { Capacitor } from '@capacitor/core'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
-  IPC, XIAOJIE_ID, TOOL_ACTION_LABEL, extractThinkTags, mergeReasoning, sortedPinKeys, decodePluginUserMessage,
+  IPC, XIAOJIE_ID, TOOL_ACTION_LABEL, extractThinkTags, mergeReasoning, sortedPinKeys, decodePluginUserMessage, currentWeekRange,
   parseProjectWorkspaceState, serializeProjectWorkspaceState, canStartCampaignProduction,
 } from '@jeff/core'
 import type { AgentInfo, AppInfo, ChatMsg, FileNode, FsDirEntry, GroupMessage, ProjectInfo, ContextPreviewInfo, PluginCommand, PluginInfo, CampaignKind, CampaignProposalInput, CampaignProposal, TaskInfo, ProjectDocumentInfo, ProjectReportInfo, SiYuanSearchResult } from '@jeff/core'
@@ -465,6 +465,8 @@ export function App() {
   const [newTaskDue, setNewTaskDue] = useState('')
   const [newTaskCriteria, setNewTaskCriteria] = useState('')
   const [newTaskDepends, setNewTaskDepends] = useState<string[]>([])
+  const [weeklyStartDate, setWeeklyStartDate] = useState(() => currentWeekRange().startDate)
+  const [weeklyEndDate, setWeeklyEndDate] = useState(() => currentWeekRange().endDate)
   const [reportQuery, setReportQuery] = useState('')
   const [reportHits, setReportHits] = useState<SiYuanSearchResult[]>([])
   const [reportSelected, setReportSelected] = useState<string[]>([])
@@ -1264,7 +1266,7 @@ export function App() {
     if (!target || target.kind !== 'group') return
     setWorkspaceSaving(true)
     try {
-      const result = await phone.invoke<ProjectDocumentInfo>(IPC.projectDocument, { projectId: target.id, kind })
+      const result = await phone.invoke<ProjectDocumentInfo>(IPC.projectDocument, { projectId: target.id, kind, ...(kind === 'weekly_report' ? { startDate: weeklyStartDate, endDate: weeklyEndDate } : {}) })
       setWorkspaceSaved(`已生成草稿：${result.path}${result.missing.length ? `；待补：${result.missing.join('、')}` : ''}`)
     } catch (error) { setWorkspaceSaved(`生成失败：${error instanceof Error ? error.message : String(error)}`) }
     finally { setWorkspaceSaving(false) }
@@ -2633,9 +2635,10 @@ export function App() {
             <p className="project-workspace-result">生成的均为待复核 Markdown 草稿，保存在电脑的项目工作区。</p>
             <div className="campaign-mobile-actions">
               <button type="button" disabled={workspaceSaving} data-testid="mobile-project-document-charter" onClick={() => void generateProjectDocument('charter')}>生成立项文档草稿</button>
-              <button type="button" disabled={workspaceSaving} data-testid="mobile-project-document-weekly" onClick={() => void generateProjectDocument('weekly_report')}>生成项目周报草稿</button>
               <button type="button" disabled={workspaceSaving} data-testid="mobile-project-document-closeout" onClick={() => void generateProjectDocument('closeout')}>生成结项核查草稿</button>
             </div>
+            <div className="project-workspace-form"><label><span>周报统计开始日期</span><input data-testid="mobile-project-weekly-start" type="date" value={weeklyStartDate} onChange={(e) => setWeeklyStartDate(e.target.value)} /></label><label><span>周报统计结束日期</span><input data-testid="mobile-project-weekly-end" type="date" value={weeklyEndDate} onChange={(e) => setWeeklyEndDate(e.target.value)} /></label></div>
+            <button type="button" disabled={workspaceSaving || !weeklyStartDate || !weeklyEndDate || weeklyStartDate > weeklyEndDate} data-testid="mobile-project-document-weekly" onClick={() => void generateProjectDocument('weekly_report')}>生成项目周报草稿</button>
             <h3 className="campaign-mobile-title">思源日报与报告模板</h3>
             <p className="project-workspace-result">思源连接需先在桌面「设置 → 思源知识库」配置。请核对每篇日报日期，思源文档创建时间可能不同于日报日期。生成时正文会发送给项目群主所用模型，并在独立报告话题留痕；搜索结果只有经你确认后才会进入项目来源。</p>
             <label><span>搜索日报</span><input data-testid="mobile-report-query" value={reportQuery} onChange={(e) => setReportQuery(e.target.value)} placeholder="标题或内容关键词" /></label>

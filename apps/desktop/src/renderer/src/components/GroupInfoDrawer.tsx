@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useStore } from '../store'
 import { api } from '../api'
 import {
-  IPC, projectRoleLabel, parseProjectWorkspaceState, serializeProjectWorkspaceState,
+  IPC, currentWeekRange, projectRoleLabel, parseProjectWorkspaceState, serializeProjectWorkspaceState,
   canStartCampaignProduction,
   type CampaignProposal, type CampaignKind, type ProjectWorkspaceState, type GroupMessage, type GroupThreadBrief, type ProjectInfo, type ProjectDocumentInfo,
 } from '@jeff/core'
@@ -59,6 +59,8 @@ export default function GroupInfoDrawer(props: { project: ProjectInfo; busy?: bo
   const [saving, setSaving] = useState(false)
   const [saveMsg, setSaveMsg] = useState<string | null>(null)
   const [documentMsg, setDocumentMsg] = useState('')
+  const [weeklyStartDate, setWeeklyStartDate] = useState(() => currentWeekRange().startDate)
+  const [weeklyEndDate, setWeeklyEndDate] = useState(() => currentWeekRange().endDate)
 
 
   useEffect(() => {
@@ -125,7 +127,7 @@ export default function GroupInfoDrawer(props: { project: ProjectInfo; busy?: bo
   const saveSettings = async () => { await persistWorkspace(workspaceState) }
   const generateProjectDocument = async (kind: 'charter' | 'weekly_report' | 'closeout') => {
     try {
-      const result = await api.invoke<ProjectDocumentInfo>(IPC.projectDocument, { projectId: project.id, kind })
+      const result = await api.invoke<ProjectDocumentInfo>(IPC.projectDocument, { projectId: project.id, kind, ...(kind === 'weekly_report' ? { startDate: weeklyStartDate, endDate: weeklyEndDate } : {}) })
       setDocumentMsg(`已生成草稿：${result.path}${result.missing.length ? `；待补：${result.missing.join('、')}` : ''}`)
     } catch (error) { setDocumentMsg(`生成失败：${error instanceof Error ? error.message : String(error)}`) }
   }
@@ -315,9 +317,9 @@ export default function GroupInfoDrawer(props: { project: ProjectInfo; busy?: bo
             </div>
             <div className="settings-actions" style={{ justifyContent: 'flex-start', marginTop: 8 }}>
               <button className="btn" data-testid="project-document-charter" onClick={() => void generateProjectDocument('charter')}>生成立项文档草稿</button>
-              <button className="btn" data-testid="project-document-weekly" onClick={() => void generateProjectDocument('weekly_report')}>生成项目周报草稿</button>
               <button className="btn" data-testid="project-document-closeout" onClick={() => void generateProjectDocument('closeout')}>生成结项核查草稿</button>
             </div>
+            <label className="field"><span>周报统计区间</span><div className="settings-actions"><input data-testid="project-weekly-start" type="date" value={weeklyStartDate} onChange={(event) => setWeeklyStartDate(event.target.value)} /><input data-testid="project-weekly-end" type="date" value={weeklyEndDate} onChange={(event) => setWeeklyEndDate(event.target.value)} /><button className="btn" data-testid="project-document-weekly" disabled={!weeklyStartDate || !weeklyEndDate || weeklyStartDate > weeklyEndDate} onClick={() => void generateProjectDocument('weekly_report')}>生成项目周报草稿</button></div></label>
             {documentMsg && <p className="settings-tip" role="status" data-testid="project-document-result">{documentMsg}</p>}
           </div>
           <ProjectReportsPanel project={project} state={workspaceState} onState={setWorkspaceState} />

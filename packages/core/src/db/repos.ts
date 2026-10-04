@@ -100,6 +100,18 @@ export interface TaskRow {
   deleted_at: number | null
 }
 
+export interface TaskActivityRow {
+  id: string
+  project_id: string
+  task_id: string
+  task_number: number
+  title: string
+  kind: 'created' | 'status_changed' | 'deleted'
+  from_status: string
+  to_status: string
+  at: number
+}
+
 export interface ChatMessageRow {
   id: string
   scope: string
@@ -333,6 +345,11 @@ export const projectAgentRepo = (db: DB) => ({
 })
 
 // ---------- task ----------
+function recordTaskActivity(db: DB, task: TaskRow, kind: TaskActivityRow['kind'], fromStatus = '', toStatus = task.status): void {
+  db.prepare('INSERT INTO task_activity (id, project_id, task_id, task_number, title, kind, from_status, to_status, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(genId('activity'), task.project_id, task.id, task.number, task.title, kind, fromStatus, toStatus, now())
+}
+
 export const taskRepo = (db: DB) => ({
   listByProject(projectId: string, includeDeleted = false): TaskRow[] {
     const where = includeDeleted ? 'WHERE project_id = ?' : 'WHERE project_id = ? AND deleted_at IS NULL'
@@ -376,6 +393,7 @@ export const taskRepo = (db: DB) => ({
       `INSERT INTO task (id, project_id, number, title, description, status, priority, assignee_type, assignee_id, parent_task_id, due_at, depends_on, acceptance_criteria, evidence_paths, position, created_at, updated_at, deleted_at)
        VALUES (@id, @project_id, @number, @title, @description, @status, @priority, @assignee_type, @assignee_id, @parent_task_id, @due_at, @depends_on, @acceptance_criteria, @evidence_paths, @position, @created_at, @updated_at, @deleted_at)`,
     ).run(row as unknown as Record<string, never>)
+    recordTaskActivity(db, row, 'created', '', row.status)
     return row
   },
   update(id: string, patch: Partial<Pick<TaskRow, 'title' | 'description' | 'status' | 'priority' | 'assignee_type' | 'assignee_id' | 'parent_task_id' | 'position' | 'due_at' | 'depends_on' | 'acceptance_criteria' | 'evidence_paths'>>): TaskRow | undefined {
@@ -428,13 +446,34 @@ export const taskRepo = (db: DB) => ({
       updated_at: next.updated_at,
       id: next.id,
     })
+    if (next.status !== cur.status) recordTaskActivity(db, next, 'status_changed', cur.status, next.status)
     return this.get(id)
   },
   softDelete(id: string): boolean {
     const cur = this.get(id)
     if (!cur) return false
-    db.prepare('UPDATE task SET deleted_at = ?, updated_at = ? WHERE id = ?').run(now(), now(), id)
+    const at = now()
+    db.prepare('UPDATE task SET deleted_at = ?, updated_at = ? WHERE id = ?').run(at, at, id)
+    recordTaskActivity(db, { ...cur, deleted_at: at }, 'deleted', cur.status, cur.status)
     return true
+  },
+})
+
+export const taskActivityRepo = (db: DB) => ({
+  listByProject(projectId: string, startAt = Number.MIN_SAFE_INTEGER, endAt = Number.MAX_SAFE_INTEGER): TaskActivityRow[] {
+    return db.prepare('SELECT * FROM task_activity WHERE project_id = ? AND at >= ? AND at <= ? ORDER BY at ASC, id ASC').all(projectId, startAt, endAt) as unknown as TaskActivityRow[]
+  },
+  listAll(): TaskActivityRow[] {
+    return db.prepare('SELECT * FROM task_activity ORDER BY at ASC, id ASC').all() as unknown as TaskActivityRow[]
+  },
+  merge(rows: TaskActivityRow[]): number {
+    const insert = db.prepare('INSERT OR IGNORE INTO task_activity (id, project_id, task_id, task_number, title, kind, from_status, to_status, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    let inserted = 0
+    for (const row of rows) {
+      const result = insert.run(row.id, row.project_id, row.task_id, row.task_number, row.title, row.kind, row.from_status, row.to_status, row.at)
+      inserted += Number(result.changes || 0)
+    }
+    return inserted
   },
 })
 
