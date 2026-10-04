@@ -466,6 +466,7 @@ export function App() {
   const [campaignPaths, setCampaignPaths] = useState<Record<string, string>>({})
   const [campaignAssetChoices, setCampaignAssetChoices] = useState<Record<string, string>>({})
   const [captureDraft, setCaptureDraft] = useState({ title: '', feature: '', fullPage: false, redactionConfirmed: false })
+  const [assetScanDirectory, setAssetScanDirectory] = useState('素材')
   const [assetDraft, setAssetDraft] = useState<{ title: string; path: string; feature: string; kind: 'image' | 'video' | 'document' | 'demo_url'; source: 'user_provided' | 'authorized_screenshot' | 'generated_illustration' | 'demo_material'; sourceNote: string; isReal: boolean }>({ title: '', path: '', feature: '', kind: 'image', source: 'user_provided', sourceNote: '', isReal: false })
   const dataDirRef = useRef('')
   const [computers, setComputers] = useState(phone.desktops)
@@ -1356,6 +1357,21 @@ export function App() {
       setCaptureDraft({ title: '', feature: '', fullPage: false, redactionConfirmed: false })
       setWorkspaceSaved('截图已保存到项目素材库，待确认可用性')
     } catch (err) { setWorkspaceSaved(`无法截图：${String((err as Error).message)}`) }
+    finally { setWorkspaceSaving(false) }
+  }
+
+  async function scanProjectAssetsOnPhone() {
+    try {
+      if (!target || target.kind !== 'group') return
+      setWorkspaceSaving(true)
+      const before = workspaceDraft.assets.length
+      const updated = await phone.invoke<ProjectInfo>(IPC.projectCampaign, { projectId: target.id, action: 'scan_asset_candidates', directory: assetScanDirectory })
+      setProjects((items) => items.map((item) => item.id === updated.id ? updated : item))
+      const nextState = parseProjectWorkspaceState(updated.workspace_state)
+      setWorkspaceDraft(nextState)
+      const count = Math.max(0, nextState.assets.length - before)
+      setWorkspaceSaved(`扫描完成，发现 ${count} 个新候选${count >= 200 ? '（本轮到达 200 项上限，可再次扫描下一批）' : ''}；来源和脱敏确认前不能用于制作`)
+    } catch (err) { setWorkspaceSaved(`无法扫描素材：${String((err as Error).message)}`) }
     finally { setWorkspaceSaving(false) }
   }
 
@@ -2511,6 +2527,8 @@ export function App() {
             <h3 className="campaign-mobile-title">宣传选题与成品</h3>
             <h4>项目素材库</h4>
             <p className="project-workspace-result">真实素材、授权截图与生成示意图分别标记；文件需先放入项目工作区，截图先脱敏。</p>
+            <label><span>扫描候选目录（工作区相对路径）</span><input data-testid="mobile-asset-scan-directory" value={assetScanDirectory} onChange={(e) => setAssetScanDirectory(e.target.value)} /></label>
+            <button type="button" disabled={workspaceSaving || !assetScanDirectory.trim()} data-testid="mobile-asset-scan" onClick={() => void scanProjectAssetsOnPhone()}>扫描目录中的新素材</button>
             <label><span>当前页面截图场景</span><input data-testid="mobile-asset-capture-title" value={captureDraft.title} onChange={(e) => setCaptureDraft((d) => ({ ...d, title: e.target.value }))} placeholder="护士接收腕表呼叫" /></label>
             <label><span>所属功能</span><input data-testid="mobile-asset-capture-feature" value={captureDraft.feature} onChange={(e) => setCaptureDraft((d) => ({ ...d, feature: e.target.value }))} /></label>
             <label><input type="checkbox" checked={captureDraft.fullPage} onChange={(e) => setCaptureDraft((d) => ({ ...d, fullPage: e.target.checked }))} />截取完整页面</label>
@@ -2524,7 +2542,7 @@ export function App() {
             <label><span>来源说明</span><input data-testid="mobile-asset-source-note" value={assetDraft.sourceNote} onChange={(e) => setAssetDraft((d) => ({ ...d, sourceNote: e.target.value }))} /></label>
             <label><input type="checkbox" checked={assetDraft.isReal} onChange={(e) => setAssetDraft((d) => ({ ...d, isReal: e.target.checked }))} />真实产品素材</label>
             <button type="button" disabled={workspaceSaving || !assetDraft.title.trim() || !assetDraft.path.trim()} data-testid="mobile-asset-register" onClick={() => void registerAssetOnPhone()}>登记素材</button>
-            {workspaceDraft.assets.map((asset) => <div className="campaign-mobile-delivery" key={asset.id} data-testid={`mobile-asset-${asset.id}`}><span>{asset.title} · {{ image: '图片', video: '视频', document: '文档', demo_url: '演示地址' }[asset.kind]} · {asset.feature || '通用'} · {asset.source === 'generated_illustration' ? '生成示意图' : asset.source === 'authorized_screenshot' ? '授权截图' : asset.isReal ? '真实素材' : '素材'} · {asset.path}{asset.sourceNote ? ` · 来源：${asset.sourceNote}` : ''} · {asset.confirmed ? '已确认' : '待确认'}</span>{!asset.confirmed ? <button type="button" onClick={() => void reviewAssetOnPhone(asset.id, true)}>确认可用</button> : <button type="button" onClick={() => void reviewAssetOnPhone(asset.id, false)}>撤销确认</button>}</div>)}
+            {workspaceDraft.assets.map((asset) => <div className="campaign-mobile-delivery" key={asset.id} data-testid={`mobile-asset-${asset.id}`}><span>{asset.title} · {{ image: '图片', video: '视频', document: '文档', demo_url: '演示地址' }[asset.kind]} · {asset.feature || '通用'} · {asset.source === 'unverified_candidate' ? '扫描候选·来源待核实' : asset.source === 'generated_illustration' ? '生成示意图' : asset.source === 'authorized_screenshot' ? '授权截图' : asset.isReal ? '真实素材' : '素材'} · {asset.path}{asset.sourceNote ? ` · 来源：${asset.sourceNote}` : ''} · {asset.confirmed ? '已确认' : '待确认'}</span>{!asset.confirmed ? <button type="button" onClick={() => void reviewAssetOnPhone(asset.id, true)}>确认可用</button> : <button type="button" onClick={() => void reviewAssetOnPhone(asset.id, false)}>撤销确认</button>}</div>)}
             <p className="project-workspace-result">方向确认、制作任务和成品验收分开记录。只有当前方向已确认且待补素材清零，才可创建制作任务。</p>
             <label><span>成果线</span><select data-testid="mobile-campaign-kind" value={campaignDraft.kind} onChange={(e) => setCampaignDraft((draft) => ({ ...draft, kind: e.target.value as CampaignKind }))}><option value="feature_video">单功能视频</option><option value="system_deck">完整系统介绍 PPT</option></select></label>
             <label><span>选题标题</span><input data-testid="mobile-campaign-title" value={campaignDraft.title} onChange={(e) => setCampaignDraft((draft) => ({ ...draft, title: e.target.value }))} placeholder="例如：腕表让护士不错过病房呼叫" /></label>

@@ -12,7 +12,7 @@ export interface ProjectWorkspaceState {
 }
 
 export type ProjectAssetKind = 'image' | 'video' | 'document' | 'demo_url'
-export type ProjectAssetSource = 'user_provided' | 'authorized_screenshot' | 'generated_illustration' | 'demo_material'
+export type ProjectAssetSource = 'user_provided' | 'authorized_screenshot' | 'generated_illustration' | 'demo_material' | 'unverified_candidate'
 export interface ProjectAsset {
   id: string
   title: string
@@ -264,7 +264,7 @@ function assetList(value: unknown): ProjectAsset[] {
 }
 
 function normalizeAsset(value: Record<string, unknown> | ProjectAsset): ProjectAsset {
-  const source: ProjectAssetSource = value.source === 'authorized_screenshot' || value.source === 'generated_illustration' || value.source === 'demo_material' ? value.source : 'user_provided'
+  const source: ProjectAssetSource = value.source === 'authorized_screenshot' || value.source === 'generated_illustration' || value.source === 'demo_material' || value.source === 'unverified_candidate' ? value.source : 'user_provided'
   return {
     id: typeof value.id === 'string' ? value.id : '',
     title: typeof value.title === 'string' ? value.title.trim() : '',

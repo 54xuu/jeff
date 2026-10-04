@@ -44,6 +44,7 @@ export default function GroupInfoDrawer(props: { project: ProjectInfo; busy?: bo
   const [assetFeature, setAssetFeature] = useState('')
   const [assetKind, setAssetKind] = useState<'image' | 'video' | 'document' | 'demo_url'>('image')
   const [assetSourceNote, setAssetSourceNote] = useState('')
+  const [assetScanDirectory, setAssetScanDirectory] = useState('素材')
   const [captureTitle, setCaptureTitle] = useState('')
   const [captureFeature, setCaptureFeature] = useState('')
   const [captureFullPage, setCaptureFullPage] = useState(false)
@@ -211,6 +212,18 @@ export default function GroupInfoDrawer(props: { project: ProjectInfo; busy?: bo
     } catch (error) { setSaveMsg(error instanceof Error ? error.message : String(error)) }
     finally { setSaving(false) }
   }
+  const scanAssetCandidates = async () => {
+    setSaving(true)
+    try {
+      const before = workspaceState.assets.length
+      const updated = await api.invoke<ProjectInfo>(IPC.projectCampaign, { projectId: project.id, action: 'scan_asset_candidates', directory: assetScanDirectory })
+      const nextState = parseProjectWorkspaceState(updated.workspace_state)
+      setWorkspaceState(nextState)
+      const count = Math.max(0, nextState.assets.length - before)
+      setSaveMsg(`扫描完成，发现 ${count} 个新候选${count >= 200 ? '（本轮到达 200 项上限，可再次扫描下一批）' : ''}；来源和脱敏确认前不能用于制作`)
+    } catch (error) { setSaveMsg(error instanceof Error ? error.message : String(error)) }
+    finally { setSaving(false) }
+  }
 
   const pickDir = async () => {
     const dir = await api.invoke<string | null>(IPC.dialogPickDir, { title: '选择工作空间目录', defaultPath: workspaceDir || undefined })
@@ -293,6 +306,8 @@ export default function GroupInfoDrawer(props: { project: ProjectInfo; busy?: bo
             <section className="campaign-assets" data-testid="project-assets">
               <strong>项目素材库</strong>
               <p className="settings-tip">真实产品素材和生成示意图分开标记；文件需在项目工作区内，截图需来自授权演示环境且先脱敏。</p>
+              <label className="field"><span>扫描候选目录（工作区相对路径）</span><input data-testid="asset-scan-directory" value={assetScanDirectory} onChange={(e) => setAssetScanDirectory(e.target.value)} placeholder="素材" /></label>
+              <button className="btn" data-testid="asset-scan" disabled={saving || !assetScanDirectory.trim()} onClick={() => void scanAssetCandidates()}>扫描目录中的新素材</button>
               <label className="field"><span>当前页面截图场景</span><input data-testid="asset-capture-title" value={captureTitle} onChange={(e) => setCaptureTitle(e.target.value)} placeholder="护士在治疗中接收腕表呼叫" /></label>
               <label className="field"><span>所属功能</span><input data-testid="asset-capture-feature" value={captureFeature} onChange={(e) => setCaptureFeature(e.target.value)} placeholder="腕表病房呼叫" /></label>
               <label><input type="checkbox" data-testid="asset-capture-full-page" checked={captureFullPage} onChange={(e) => setCaptureFullPage(e.target.checked)} />截取完整页面</label>
@@ -306,7 +321,7 @@ export default function GroupInfoDrawer(props: { project: ProjectInfo; busy?: bo
               <label className="field"><span>来源说明</span><input data-testid="asset-source-note" value={assetSourceNote} onChange={(e) => setAssetSourceNote(e.target.value)} placeholder="授权环境、生成工具或资料来源" /></label>
               <label><input type="checkbox" data-testid="asset-real" checked={assetReal} onChange={(e) => setAssetReal(e.target.checked)} />真实产品素材（非示意图）</label>
               <button className="btn" data-testid="asset-register" disabled={saving || !assetTitle.trim() || !assetPath.trim()} onClick={() => void registerAsset()}>登记为待确认素材</button>
-              {workspaceState.assets.map((asset) => <div className="campaign-asset-row" key={asset.id} data-testid={`asset-${asset.id}`}><span><strong>{asset.title}</strong> · {{ image: '图片', video: '视频', document: '文档', demo_url: '演示地址' }[asset.kind]} · {asset.feature || '通用'} · {asset.source === 'generated_illustration' ? '生成示意图' : asset.source === 'authorized_screenshot' ? '授权截图' : asset.isReal ? '真实素材' : '素材'} · {asset.path}{asset.sourceNote ? ` · 来源：${asset.sourceNote}` : ''}</span><span>{asset.confirmed ? '已确认' : <><button className="btn" onClick={() => void reviewAsset(asset.id, true)}>确认可用</button><button className="btn" onClick={() => void reviewAsset(asset.id, false)}>撤销确认</button></>}</span></div>)}
+              {workspaceState.assets.map((asset) => <div className="campaign-asset-row" key={asset.id} data-testid={`asset-${asset.id}`}><span><strong>{asset.title}</strong> · {{ image: '图片', video: '视频', document: '文档', demo_url: '演示地址' }[asset.kind]} · {asset.feature || '通用'} · {asset.source === 'unverified_candidate' ? '扫描候选·来源待核实' : asset.source === 'generated_illustration' ? '生成示意图' : asset.source === 'authorized_screenshot' ? '授权截图' : asset.isReal ? '真实素材' : '素材'} · {asset.path}{asset.sourceNote ? ` · 来源：${asset.sourceNote}` : ''}</span><span>{asset.confirmed ? '已确认' : <><button className="btn" onClick={() => void reviewAsset(asset.id, true)}>确认可用</button><button className="btn" onClick={() => void reviewAsset(asset.id, false)}>撤销确认</button></>}</span></div>)}
             </section>
             <p className="settings-tip">每个版本单独确认方向；只有当前选题已确认且素材缺口清零后才能创建制作任务。成品按新路径登记版本，审核记录与路径会随项目同步。</p>
             <label className="field"><span>成果线</span>

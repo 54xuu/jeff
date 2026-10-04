@@ -103,7 +103,8 @@ test.describe('1.11 统一风格全屏回归', () => {
                     })
                   } else {
                     const campaign = state.campaigns.find((x: any) => x.id === p.campaignId)
-                    if (p.action === 'capture_browser_screenshot') state.assets.unshift({ id: 'asset_mobile_capture', title: p.title, kind: 'image', feature: p.feature, path: '素材/浏览器截图/e2e.png', source: 'authorized_screenshot', sourceNote: '授权 E2E 页面', isReal: true, confirmed: false, createdAt: Date.now() })
+                    if (p.action === 'scan_asset_candidates') state.assets.unshift({ id: 'asset_mobile_candidate', title: '病房呼叫场景', kind: 'image', feature: '', path: `${p.directory}/ward.png`, source: 'unverified_candidate', sourceNote: '扫描候选，待核实', isReal: false, confirmed: false, createdAt: Date.now() })
+                    else if (p.action === 'capture_browser_screenshot') state.assets.unshift({ id: 'asset_mobile_capture', title: p.title, kind: 'image', feature: p.feature, path: '素材/浏览器截图/e2e.png', source: 'authorized_screenshot', sourceNote: '授权 E2E 页面', isReal: true, confirmed: false, createdAt: Date.now() })
                     else if (p.action === 'register_asset') state.assets.unshift({ id: 'asset_mobile_e2e', ...p, confirmed: false, createdAt: Date.now() })
                     else if (p.action === 'review_asset') Object.assign(state.assets.find((asset: any) => asset.id === p.assetId), { confirmed: p.confirmed })
                     else if (p.action === 'resolve_material') {
@@ -230,6 +231,9 @@ test.describe('1.11 统一风格全屏回归', () => {
     await page.getByTestId('chat-group-一个很长很长的项目群名字用来测试顶栏按钮不溢出').click()
     await page.getByTestId('project-workspace').click()
     await expect(page.getByTestId('project-workspace-screen')).toBeVisible()
+    await page.getByTestId('mobile-asset-scan').click()
+    await expect(page.getByTestId('mobile-asset-asset_mobile_candidate')).toContainText('扫描候选·来源待核实')
+    await expect(page.getByTestId('mobile-asset-asset_mobile_candidate')).toContainText('待确认')
     await page.getByTestId('mobile-workspace-goal').fill('完成无声智慧病房系统介绍')
     await page.getByTestId('mobile-workspace-sales-audience').fill('渠道商与集成商')
     await page.getByTestId('mobile-workspace-story-audience').fill('一线医护人员')

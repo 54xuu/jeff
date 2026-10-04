@@ -61,6 +61,57 @@ function validateDemoUrl(raw: string): string {
   return url.toString()
 }
 
+function scanProjectAssetCandidates(core: JeffCore, workspaceDir: string, directory: string, knownPaths: Set<string>) {
+  const root = path.resolve(workspaceDir || core.paths.workspaceDir)
+  let rootReal: string
+  try { rootReal = fs.realpathSync(root) } catch { throw new Error('项目工作区不存在，无法扫描素材') }
+  const requestedDir = String(directory || '').trim()
+  if (!requestedDir || path.isAbsolute(requestedDir) || requestedDir.split(/[\\/]+/).includes('..')) throw new Error('扫描目录必须是项目工作区内的相对路径')
+  let scanReal: string
+  try { scanReal = fs.realpathSync(path.resolve(rootReal, requestedDir)) } catch { throw new Error('扫描目录不存在，请先建立素材目录并把待整理文件放进去') }
+  const scanRelative = path.relative(rootReal, scanReal)
+  if (!scanRelative || scanRelative === '..' || scanRelative.startsWith(`..${path.sep}`) || path.isAbsolute(scanRelative)) throw new Error('扫描目录必须位于项目工作区内')
+  const ignoredDirs = new Set(['.git', 'node_modules', 'dist', 'build', 'release', 'target', 'vendor'])
+  const kinds: Record<string, 'image' | 'video' | 'document'> = {
+    '.png': 'image', '.jpg': 'image', '.jpeg': 'image', '.webp': 'image', '.gif': 'image',
+    '.mp4': 'video', '.mov': 'video', '.webm': 'video',
+    '.pdf': 'document', '.ppt': 'document', '.pptx': 'document', '.doc': 'document', '.docx': 'document', '.xlsx': 'document', '.md': 'document',
+  }
+  const found: Array<{ title: string; kind: 'image' | 'video' | 'document'; feature: string; path: string; source: 'unverified_candidate'; sourceNote: string; isReal: false }> = []
+  let visited = 0
+  const walk = (dir: string, depth: number) => {
+    if (depth > 5 || found.length >= 200 || visited >= 5000) return
+    let entries: fs.Dirent[]
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }) } catch { return }
+    for (const entry of entries) {
+      if (found.length >= 200 || visited >= 5000) break
+      visited++
+      if (entry.name.startsWith('.') || entry.isSymbolicLink()) continue
+      const abs = path.join(dir, entry.name)
+      if (entry.isDirectory()) {
+        if (!ignoredDirs.has(entry.name.toLowerCase())) walk(abs, depth + 1)
+        continue
+      }
+      if (!entry.isFile()) continue
+      const ext = path.extname(entry.name).toLowerCase()
+      const kind = kinds[ext]
+      if (!kind) continue
+      const relative = path.relative(rootReal, abs)
+      if (!relative || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) continue
+      const normalized = relative.split(path.sep).join('/')
+      if (knownPaths.has(normalized)) continue
+      let st: fs.Stats
+      try { st = fs.statSync(abs) } catch { continue }
+      found.push({
+        title: path.basename(entry.name, ext), kind, feature: '', path: normalized,
+        source: 'unverified_candidate', sourceNote: `工作区扫描发现（${new Date().toISOString().slice(0, 10)}）；来源、功能归属与脱敏待确认`, isReal: false,
+      })
+    }
+  }
+  walk(scanReal, 0)
+  return { candidates: found, capped: visited >= 5000 || found.length >= 200 }
+}
+
 /**
  * 注册全部 IPC handler：渲染进程 invoke('jeff:<channel>') → core 调用。
  */
@@ -549,6 +600,13 @@ export function registerIpc(core: JeffCore): Record<string, Handler> {
     [IPC.projectCampaign]: async (p): Promise<ProjectInfo> => {
       const d = p as ProjectCampaignCommand
       let taskToAnnounce: TaskRow | undefined
+      let scannedAssets: ReturnType<typeof scanProjectAssetCandidates>['candidates'] = []
+      if (d.action === 'scan_asset_candidates') {
+        const project = projectRepo(core.db).get(d.projectId)
+        if (!project || project.deleted_at) throw new Error('项目不存在')
+        const state = parseProjectWorkspaceState(project.workspace_state)
+        scannedAssets = scanProjectAssetCandidates(core, project.workspace_dir, d.directory, new Set(state.assets.map((asset) => asset.path))).candidates
+      }
       let screenshotAsset: { title: string; kind: 'image'; feature: string; path: string; source: 'authorized_screenshot'; sourceNote: string; isReal: boolean } | undefined
       // Capture before opening the SQLite write transaction: the browser request crosses renderer IPC.
       if (d.action === 'capture_browser_screenshot') {
@@ -586,6 +644,11 @@ export function registerIpc(core: JeffCore): Record<string, Handler> {
         if (!project || project.deleted_at) throw new Error('项目不存在')
         let state = parseProjectWorkspaceState(project.workspace_state)
         switch (d.action) {
+          case 'scan_asset_candidates':
+            for (const candidate of scannedAssets) {
+              if (!state.assets.some((asset) => asset.path === candidate.path)) state = registerProjectAsset(state, candidate)
+            }
+            break
           case 'capture_browser_screenshot':
             if (!screenshotAsset) throw new Error('没有可登记的截图')
             state = registerProjectAsset(state, screenshotAsset)

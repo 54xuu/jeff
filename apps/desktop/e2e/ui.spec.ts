@@ -242,6 +242,18 @@ test.describe('Jeff UI 封闭清单', () => {
       await page.getByTestId('group-tab-workspace').click()
       await expect(page.getByTestId('project-workspace-goal')).toHaveValue('每周产出一批无声智慧病房宣传内容')
       await expect(page.getByTestId('project-workspace-outline')).toHaveValue('整体方案\n病房呼叫\n门诊叫号')
+      fs.mkdirSync(path.join(home, 'workspace', '素材', '待整理'), { recursive: true })
+      fs.writeFileSync(path.join(home, 'workspace', '素材', '待整理', '护士站.png'), Buffer.from('candidate image'))
+      await page.getByTestId('asset-scan-directory').fill('素材/待整理')
+      await page.getByTestId('asset-scan').click()
+      const candidateCard = page.locator('[data-testid^="asset-asset_"]').filter({ hasText: '护士站' })
+      await expect(candidateCard).toContainText('扫描候选·来源待核实')
+      await expect(candidateCard).toContainText('待确认')
+      const scanTraversalError = await page.evaluate(async (projectId) => {
+        const jeff = (window as unknown as { jeff: { invoke: (channel: string, payload?: unknown) => Promise<any> } }).jeff
+        return jeff.invoke('project:campaign', { projectId, action: 'scan_asset_candidates', directory: '../' }).then(() => '').catch((error) => String(error.message))
+      }, String((dbQuery(`SELECT id FROM project WHERE title=? AND deleted_at IS NULL`, 'E2E测试群')[0] as { id?: string } | undefined)?.id || ''))
+      expect(scanTraversalError).toContain('相对路径')
       fs.mkdirSync(path.join(home, 'workspace', '产品资料'), { recursive: true })
       fs.writeFileSync(path.join(home, 'workspace', '产品资料', '腕表.png'), Buffer.from('image placeholder'))
       await page.getByTestId('asset-title').fill('腕表实拍')
