@@ -16,6 +16,6 @@ App 的长时间报告生成使用与聊天相同的远程请求时限，避免�
 
 验证：`npm run typecheck`；`npm test`（core 396 passed /17 skipped，relay 11 passed）、mobile 单测 12/12；桌面 UI E2E 2/2、v18 4/4、cron 11/11、remote 3/3；App E2E 17/17；真实模型报告端到端 1/1（模拟 Kernel API、真实硅基流动模型、核对落盘 Markdown 与来源引用）。core、desktop 与 mobile 均成功构建。真实报告耗时约 59 秒；其加密远程调用长超时策略有单测覆盖。任务时间线与按日期周报新增 repo、同步、文档和 UI 回归覆盖。
 
-版本 `1.11.3`（PATCH）。产物：`apps/desktop/release/jeff-desktop_1.11.3_amd64.deb`、`apps/desktop/release/Jeff-1.11.3.AppImage`、`apps/desktop/release/jeff-Setup-1.11.3.exe`、`apps/mobile/android/app/build/outputs/apk/debug/app-debug.apk`。deb 元数据版本为 1.11.3；Windows exe 为 PE32 Nullsoft Installer，asar 包含思源 IPC 功能串且内置 Windows opencode 在位；APK 的 `versionName=1.11.3`、`versionCode=11103`。Windows 按仓库要求完成产物级校验，不使用本机 Wine 弹窗作为验收门。
+版本 `1.11.3`（PATCH）。产物：`apps/desktop/release/jeff-desktop_1.11.3_amd64.deb`、`apps/desktop/release/Jeff-1.11.3.AppImage`、`apps/desktop/release/jeff-Setup-1.11.3.exe`、正式签名 APK `apps/mobile/android/release/jeff-1.11.3.apk`。deb 元数据版本为 1.11.3；Windows exe 为 PE32 Nullsoft Installer，asar 包含思源 IPC 功能串且内置 Windows opencode 在位；APK 的 `versionName=1.11.3`、`versionCode=11103`，`apksigner verify` 的 v1 / v2 签名校验通过。Windows 按仓库要求完成产物级校验，不使用本机 Wine 弹窗作为验收门。
 
 仍待补齐的项目管理深度：公司专属的立项/周报/结项和统计报表模板。现有季/月/年报输出 Markdown，待获得公司模板后再按真实版式扩展。
