@@ -130,9 +130,10 @@ App 的首要用途是随时与智能体、项目群聊天，采用微信式的�
 | 仓库单测、typecheck | 通过 | `npm test`：core 396 通过/17 跳过，relay 11 通过；`npm run typecheck` 通过 |
 | Desktop UI、v18、cron | 通过 | Xvfb 下 UI 2/2、v18 4/4、cron 11/11；布局仍为三栏 |
 | Android APK 版本与启动 | 通过 | APK 已安装到 AVD；`aapt` 显示 1.11.4 / 11104；软键盘显示及 Android 返回收起已实测 |
-| Android 真实绑定与远程聊天链路 | 未验证 | AVD 当前处于未绑定状态，实际电脑通信、会话切换和服务端落库未跑 |
+| Remote 手机 UI、真实中转与模型回复 | 通过 | `apps/desktop/e2e/remote.spec.ts` 3/3：真实本地 relay、手机绑定/多电脑 UI、真模型回复，并核对桌面气泡与聊天历史 |
+| Android 原生 APK 与真实电脑配对 | 未验证 | APK 已装 AVD 并检查软键盘/返回；该 AVD 仍是未绑定状态，未从原生安装包完成配对 |
 | Linux deb/AppImage | 通过 | 两个产物已生成；deb 安装后系统为 1.11.4，`/opt/Jeff` 与 `linux-unpacked` 的 app.asar MD5 一致 |
 | Windows exe | 产物通过 | PE32 Nullsoft、`项目资料：` 已进入 app.asar，Windows `opencode.exe` 在位；尚未在 Windows 实机安装 |
-| 截图人工检查 | 通过（浏览器与 AVD 起始/空态） | `.tmp/e2e-screens/01-list.png`、`13-contacts.png`、`14-project-overview.png`、`15-project-profile.png`、`16-android-avd-home.png`、`17-android-avd-contacts.png`、`18-android-keyboard.png`、`19-android-back.png` |
+| 截图人工检查 | 通过（浏览器与 AVD 起始/空态） | `.tmp/e2e-screens/01-list.png`、`13-contacts.png`、`14-project-overview.png`、`15-project-profile.png`、`16-android-avd-home.png`、`17-android-avd-contacts.png`、`18-android-keyboard.png`、`19-android-back.png`、`.tmp/remote-app-light.png`、`.tmp/remote-app-dark.png` |
 
-AVD 测试期间因 debug 签名与此前安装不一致，卸载了专用测试 AVD 中的旧 Jeff 包后重装；真实桌面端数据未动。原生键盘显示与系统返回收起已验证，锁屏恢复、真实绑定/远程聊天/落库链路仍待后续验证。Windows 安装器未在 Windows 机器上安装验证。
+AVD 测试期间因 debug 签名与此前安装不一致，卸载了专用测试 AVD 中的旧 Jeff 包后重装；真实桌面端数据未动。原生键盘显示与系统返回收起已验证。Playwright 的手机 UI + 本地 relay + desktop + 真实模型链路通过，消息也与 desktop 历史一致；实际 Android APK 在 AVD 上配对仍待后续验证。Windows 安装器未在 Windows 机器上安装验证。
