@@ -129,7 +129,8 @@ App 的首要用途是随时与智能体、项目群聊天，采用微信式的�
 | 360/390/412 宽度 × 亮/暗色核心页面 | 通过（浏览器视口） | Playwright 六种视口/主题组合覆盖聊天列表、通讯录、工作区概览和资料详情 |
 | 仓库单测、typecheck | 通过 | `npm test`：core 396 通过/17 跳过，relay 11 通过；`npm run typecheck` 通过 |
 | Desktop UI、v18、cron | 通过 | Xvfb 下 UI 2/2、v18 4/4、cron 11/11；布局仍为三栏 |
-| Android APK 版本与启动 | 通过 | APK 已安装到 AVD；`aapt` 显示 1.11.4 / 11104；软键盘显示及 Android 返回收起已实测 |
+| Android debug APK 版本与启动 | 通过 | debug APK 已安装到 AVD；`aapt` 显示 1.11.4 / 11104；软键盘显示及 Android 返回收起已实测 |
+| Android release APK 构建与签名 | 通过（2026-10-07 补产） | `apps/mobile/android/release/jeff-1.11.4.apk`；`assembleRelease` 成功；`aapt dump badging` 确认 `app.jeff.mobile` / 1.11.4 / 11104；`apksigner verify` 通过，签名者为 Jeff |
 | Remote 手机 UI、真实中转与模型回复 | 通过 | `apps/desktop/e2e/remote.spec.ts` 3/3：真实本地 relay、手机绑定/多电脑 UI、真模型回复，并核对桌面气泡与聊天历史 |
 | Android 原生 APK 与真实电脑配对 | 未验证 | APK 已装 AVD 并检查软键盘/返回；该 AVD 仍是未绑定状态，未从原生安装包完成配对 |
 | Linux deb/AppImage | 通过 | 两个产物已生成；deb 安装后系统为 1.11.4，`/opt/Jeff` 与 `linux-unpacked` 的 app.asar MD5 一致 |
@@ -137,3 +138,5 @@ App 的首要用途是随时与智能体、项目群聊天，采用微信式的�
 | 截图人工检查 | 通过（浏览器与 AVD 起始/空态） | `.tmp/e2e-screens/01-list.png`、`13-contacts.png`、`14-project-overview.png`、`15-project-profile.png`、`16-android-avd-home.png`、`17-android-avd-contacts.png`、`18-android-keyboard.png`、`19-android-back.png`、`.tmp/remote-app-light.png`、`.tmp/remote-app-dark.png` |
 
 AVD 测试期间因 debug 签名与此前安装不一致，卸载了专用测试 AVD 中的旧 Jeff 包后重装；真实桌面端数据未动。原生键盘显示与系统返回收起已验证。Playwright 的手机 UI + 本地 relay + desktop + 真实模型链路通过，消息也与 desktop 历史一致；实际 Android APK 在 AVD 上配对仍待后续验证。Windows 安装器未在 Windows 机器上安装验证。
+
+2026-10-07 补充：此前只构建并安装了 debug APK，未生成用户需要的正式 release 包。现已重新执行 `npm run cap:sync` 与 `./gradlew assembleRelease`，正式 APK 位于 `apps/mobile/android/release/jeff-1.11.4.apk`。该目录受 `.gitignore` 忽略，APK 不提交 Git；版本、包名及 release 签名均已核验，SHA-256 为 `4bb705d37cdb1ab45722d062ea45307f4fb84342f1169b717907f1d57d99bb8d`。
