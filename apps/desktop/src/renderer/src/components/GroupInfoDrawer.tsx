@@ -253,7 +253,7 @@ export default function GroupInfoDrawer(props: { project: ProjectInfo; busy?: bo
     <div className="drawer-mask" data-testid="group-info-drawer" onClick={requestClose}>
       <div className="drawer drawer-wide" onClick={(e) => e.stopPropagation()}>
         <div className="drawer-head">
-          <span>群资料：{project.title}</span>
+          <span>项目资料：{project.title}</span>
           <button className="icon-btn" title="关闭" onClick={requestClose}>
             <IconClose />
           </button>

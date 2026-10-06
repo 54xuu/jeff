@@ -57,6 +57,13 @@ async function noOverflow(page: Page, tag: string) {
   expect(r.docW, `${tag} 文档横向滚动宽超出视口`).toBeLessThanOrEqual(r.innerW)
 }
 
+async function openContact(page: Page, testId: string) {
+  if (!await page.getByTestId('contacts-list').isVisible().catch(() => false)) {
+    await page.getByTestId('tab-contacts').click()
+  }
+  await page.getByTestId(testId).click()
+}
+
 test.describe('1.11 统一风格全屏回归', () => {
   test.beforeEach(async ({ page }) => {
     await page.addInitScript(
@@ -202,12 +209,62 @@ test.describe('1.11 统一风格全屏回归', () => {
 
   test('会话列表：无溢出 + 未读角标可见', async ({ page }) => {
     await expect(page.getByTestId('chat-agent-小杰')).toBeVisible()
+    await expect(page.getByTestId('chat-group-一个很长很长的项目群名字用来测试顶栏按钮不溢出')).toHaveCount(0)
+    await expect(page.getByTestId('chat-agent-一个名字特别特别长的智能体用来测试顶栏省略号显示')).toHaveCount(0)
     await noOverflow(page, 'list')
     await page.screenshot({ path: '../../.tmp/e2e-screens/01-list.png' })
   })
 
+  test('最近聊天按活动时间排序，置顶项目群可移到聊天首页前部', async ({ page }) => {
+    await openContact(page, 'chat-group-一个很长很长的项目群名字用来测试顶栏按钮不溢出')
+    await page.getByTestId('chat-back').click()
+    await openContact(page, 'chat-agent-一个名字特别特别长的智能体用来测试顶栏省略号显示')
+    await page.getByTestId('chat-back').click()
+
+    const position = async (testId: string) => page.getByTestId(testId).evaluate((element) => Array.from(element.parentElement!.children).indexOf(element))
+    const agentId = 'chat-agent-一个名字特别特别长的智能体用来测试顶栏省略号显示'
+    const groupId = 'chat-group-一个很长很长的项目群名字用来测试顶栏按钮不溢出'
+    expect(await position(agentId)).toBeLessThan(await position(groupId))
+
+    await page.getByTestId(groupId).locator('button').click({ button: 'right' })
+    await page.getByTestId('sheet-toggle-pin').click()
+    await expect(page.getByTestId(groupId)).toContainText('置顶')
+    expect(await position(groupId)).toBeLessThan(await position(agentId))
+  })
+
+  test('底部通讯录：项目群与智能体分组可见，搜索后能打开联系人', async ({ page }) => {
+    await page.getByTestId('tab-contacts').click()
+    await expect(page.getByTestId('contacts-list')).toBeVisible()
+    await expect(page.getByText('项目群', { exact: true })).toBeVisible()
+    await expect(page.getByTestId('chat-agent-group-开发工具')).toBeVisible()
+    await page.screenshot({ path: '../../.tmp/e2e-screens/13-contacts.png' })
+    await page.getByTestId('chat-list-search').fill('名字特别特别长')
+    await expect(page.getByTestId('chat-agent-一个名字特别特别长的智能体用来测试顶栏省略号显示')).toBeVisible()
+    await openContact(page, 'chat-agent-一个名字特别特别长的智能体用来测试顶栏省略号显示')
+    await expect(page.getByTestId('chat')).toBeVisible()
+  })
+
+  test('核心导航与项目工作区：360/390/412 宽度、亮色与暗色均无横向溢出', async ({ page }) => {
+    for (const width of [360, 390, 412]) {
+      await page.setViewportSize({ width, height: width === 360 ? 640 : width === 390 ? 844 : 915 })
+      for (const colorScheme of ['light', 'dark'] as const) {
+        await page.emulateMedia({ colorScheme })
+        await page.goto('/')
+        await noOverflow(page, `list-${width}-${colorScheme}`)
+        await page.getByTestId('tab-contacts').click()
+        await noOverflow(page, `contacts-${width}-${colorScheme}`)
+        await openContact(page, 'chat-group-一个很长很长的项目群名字用来测试顶栏按钮不溢出')
+        await page.getByTestId('project-workspace').click()
+        await expect(page.getByTestId('project-workspace-overview')).toBeVisible()
+        await noOverflow(page, `project-overview-${width}-${colorScheme}`)
+        await page.getByTestId('project-section-profile').click()
+        await noOverflow(page, `project-profile-${width}-${colorScheme}`)
+      }
+    }
+  })
+
   test('私聊（超长名字）：顶栏省略号、消息新形态、无溢出', async ({ page }) => {
-    await page.getByTestId('chat-agent-一个名字特别特别长的智能体用来测试顶栏省略号显示').click()
+    await openContact(page, 'chat-agent-一个名字特别特别长的智能体用来测试顶栏省略号显示')
     await expect(page.getByTestId('bubbles')).toBeVisible()
     // 助手消息：新形态（去气泡 + 弱化折叠条）
     await expect(page.locator('.wechat-ai-body')).toHaveCount(2)
@@ -217,6 +274,7 @@ test.describe('1.11 统一风格全屏回归', () => {
     // 顶栏标题省略号不把右侧图标挤出视口
     const bar = page.locator('.wechat-chat-bar')
     await expect(bar).toBeVisible()
+    await page.getByTestId('chat-more').click()
     await expect(page.getByTestId('session-history')).toBeVisible()
     const sesBtn = await page.getByTestId('session-history').boundingBox()
     expect(sesBtn!.x + sesBtn!.width).toBeLessThanOrEqual(page.viewportSize()!.width + 1)
@@ -244,8 +302,9 @@ test.describe('1.11 统一风格全屏回归', () => {
   })
 
   test('群聊（超长群名）：顶栏图标按钮完整、群成员头像与名字', async ({ page }) => {
-    await page.getByTestId('chat-group-一个很长很长的项目群名字用来测试顶栏按钮不溢出').click()
+    await openContact(page, 'chat-group-一个很长很长的项目群名字用来测试顶栏按钮不溢出')
     await expect(page.getByTestId('bubbles')).toBeVisible()
+    await page.getByTestId('chat-more').click()
     await expect(page.getByTestId('session-history')).toBeVisible()
     await expect(page.getByTestId('workspace')).toBeVisible()
     const ws = await page.getByTestId('workspace').boundingBox()
@@ -257,12 +316,18 @@ test.describe('1.11 统一风格全屏回归', () => {
   })
 
   test('项目资料：手机修改后可重新打开读取', async ({ page }) => {
-    await page.getByTestId('chat-group-一个很长很长的项目群名字用来测试顶栏按钮不溢出').click()
+    await openContact(page, 'chat-group-一个很长很长的项目群名字用来测试顶栏按钮不溢出')
     await page.getByTestId('project-workspace').click()
     await expect(page.getByTestId('project-workspace-screen')).toBeVisible()
+    await expect(page.getByTestId('project-workspace-overview')).toBeVisible()
+    await page.screenshot({ path: '../../.tmp/e2e-screens/14-project-overview.png' })
+    await page.getByTestId('project-section-assets').click()
     await page.getByTestId('mobile-asset-scan').click()
     await expect(page.getByTestId('mobile-asset-asset_mobile_candidate')).toContainText('扫描候选·来源待核实')
     await expect(page.getByTestId('mobile-asset-asset_mobile_candidate')).toContainText('待确认')
+    await page.locator('.project-workspace-screen .btn-nav-back').click()
+    await page.getByTestId('project-section-profile').click()
+    await page.screenshot({ path: '../../.tmp/e2e-screens/15-project-profile.png' })
     await page.getByTestId('mobile-workspace-goal').fill('完成无声智慧病房系统介绍')
     await page.getByTestId('mobile-workspace-sales-audience').fill('渠道商与集成商')
     await page.getByTestId('mobile-workspace-story-audience').fill('一线医护人员')
@@ -272,9 +337,11 @@ test.describe('1.11 统一风格全屏回归', () => {
     await page.getByTestId('mobile-project-document-weekly').click()
     await expect(page.getByTestId('mobile-workspace-result')).toContainText('项目文档/weekly_report.md')
     await page.locator('.project-workspace-screen .btn-nav-back').click()
-    await page.getByTestId('project-workspace').click()
+    await page.getByTestId('project-section-profile').click()
     await expect(page.getByTestId('mobile-workspace-goal')).toHaveValue('完成无声智慧病房系统介绍')
     await expect(page.getByTestId('mobile-workspace-outline')).toHaveValue('系统方案\n病房呼叫\n门诊叫号')
+    await page.locator('.project-workspace-screen .btn-nav-back').click()
+    await page.getByTestId('project-section-reports').click()
     await page.getByTestId('mobile-report-query').fill('接口联调')
     await page.getByTestId('mobile-report-search').click()
     await page.getByLabel('选择 测试日报 2026-10-05').check()
@@ -287,6 +354,8 @@ test.describe('1.11 统一风格全屏回归', () => {
     await expect(page.getByTestId('mobile-report-message')).toContainText('模板已保存')
     await page.getByTestId('mobile-report-generate').click()
     await expect(page.getByTestId('mobile-report-result')).toContainText('测试报告')
+    await page.locator('.project-workspace-screen .btn-nav-back').click()
+    await page.getByTestId('project-section-tasks').click()
     await page.getByTestId('mobile-project-task-title').fill('先完成接口联调')
     await page.getByTestId('mobile-project-task-create').click()
     await expect(page.getByTestId('mobile-project-task-task_mobile_1')).toContainText('先完成接口联调')
@@ -299,6 +368,8 @@ test.describe('1.11 统一风格全屏回归', () => {
     await expect(mobileSecondTask.getByRole('combobox')).toBeDisabled()
     await page.getByTestId('mobile-project-task-task_mobile_1').getByRole('combobox').selectOption('done')
     await expect(mobileSecondTask.getByRole('combobox')).toBeEnabled()
+    await page.locator('.project-workspace-screen .btn-nav-back').click()
+    await page.getByTestId('project-section-campaigns').click()
     await page.getByTestId('mobile-campaign-title').fill('腕表让护士不错过病房呼叫')
     await page.getByTestId('mobile-campaign-feature').fill('腕表病房呼叫')
     await page.getByTestId('mobile-campaign-story').fill('护士忙碌时通过腕表接收呼叫')
@@ -375,7 +446,7 @@ test.describe('1.11 统一风格全屏回归', () => {
   })
 
   test('未读角标：其他会话来新消息，列表行出现红点数字', async ({ page }) => {
-    await page.getByTestId('chat-agent-一个名字特别特别长的智能体用来测试顶栏省略号显示').click()
+    await openContact(page, 'chat-agent-一个名字特别特别长的智能体用来测试顶栏省略号显示')
     await expect(page.getByTestId('bubbles')).toBeVisible()
     await page.getByTestId('chat-back').click()
     await expect(page.getByTestId('msg-list')).toBeVisible()
@@ -395,8 +466,9 @@ test.describe('1.11 统一风格全屏回归', () => {
   })
 
   test('工作区文件浏览：列目录/下钻/非 md 提示', async ({ page }) => {
-    await page.getByTestId('chat-group-一个很长很长的项目群名字用来测试顶栏按钮不溢出').click()
+    await openContact(page, 'chat-group-一个很长很长的项目群名字用来测试顶栏按钮不溢出')
     await expect(page.getByTestId('bubbles')).toBeVisible()
+    await page.getByTestId('chat-more').click()
     await page.getByTestId('workspace').click()
     await expect(page.getByTestId('workspace-files')).toBeVisible()
     await expect(page.getByTestId('workspace-file-path')).toContainText('/home/x/ws')
@@ -418,8 +490,9 @@ test.describe('1.11 统一风格全屏回归', () => {
   })
 
   test('工作区 md 预览：markdown 渲染 + 站内相对路径链接跳转', async ({ page }) => {
-    await page.getByTestId('chat-group-一个很长很长的项目群名字用来测试顶栏按钮不溢出').click()
+    await openContact(page, 'chat-group-一个很长很长的项目群名字用来测试顶栏按钮不溢出')
     await expect(page.getByTestId('bubbles')).toBeVisible()
+    await page.getByTestId('chat-more').click()
     await page.getByTestId('workspace').click()
     await expect(page.getByTestId('workspace-files')).toBeVisible()
     await page.getByTestId('file-汇总.md').click()
@@ -436,10 +509,11 @@ test.describe('1.11 统一风格全屏回归', () => {
   })
 
   test('手机登记素材并确认来源状态', async ({ page }) => {
-    await page.getByTestId('chat-group-一个很长很长的项目群名字用来测试顶栏按钮不溢出').click()
+    await openContact(page, 'chat-group-一个很长很长的项目群名字用来测试顶栏按钮不溢出')
     await expect(page.getByTestId('bubbles')).toBeVisible()
     await page.getByTestId('project-workspace').click()
     await expect(page.getByTestId('project-workspace-screen')).toBeVisible()
+    await page.getByTestId('project-section-assets').click()
     await page.getByTestId('mobile-asset-capture-title').fill('护士查看叫号队列')
     await page.getByTestId('mobile-asset-capture-feature').fill('门诊叫号')
     const captureButton = page.getByTestId('mobile-asset-capture')
@@ -454,6 +528,8 @@ test.describe('1.11 统一风格全屏回归', () => {
     await expect(page.getByTestId('mobile-asset-asset_mobile_e2e')).toContainText('待确认')
     await page.getByTestId('mobile-asset-asset_mobile_e2e').getByRole('button', { name: '确认可用' }).click()
     await expect(page.getByTestId('mobile-asset-asset_mobile_e2e')).toContainText('已确认')
+    await page.locator('.project-workspace-screen .btn-nav-back').click()
+    await page.getByTestId('project-section-campaigns').click()
     await page.getByTestId('mobile-campaign-title').fill('护士接收病房呼叫')
     await page.getByTestId('mobile-campaign-feature').fill('病房呼叫')
     await page.getByTestId('mobile-campaign-points').fill('及时接收呼叫')

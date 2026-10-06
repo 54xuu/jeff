@@ -12,11 +12,29 @@ import { Markdown } from './Markdown'
 import { isMarkdownPath, joinWorkspacePath, linkifyWorkspaceMarkdown } from './linkify'
 import { Native, PhoneLink, mergeStream, shrinkImage } from './session'
 
-type Tab = 'messages' | 'me'
+type Tab = 'messages' | 'contacts' | 'me'
 type Screen = 'list' | 'chat' | 'dirs' | 'files' | 'file' | 'project'
+type ChatFilter = 'all' | 'agent' | 'group'
+type ProjectSection = 'overview' | 'profile' | 'reports' | 'tasks' | 'assets' | 'campaigns'
 type ChatTarget =
   | { kind: 'agent'; id: string; name: string; avatar?: string }
   | { kind: 'group'; id: string; name: string; icon?: string }
+type ConversationEntry = {
+  key: string
+  target: ChatTarget
+  title: string
+  sub: string
+  time?: number
+  avatar?: string
+  agentId?: string
+  kind: 'agent' | 'group'
+  isGroup: boolean
+  isBuiltin: boolean
+  pinned: boolean
+  busy: boolean
+  unread: number
+  pinOrder: number
+}
 
 const DEFAULT_GROUP = '默认'
 
@@ -430,6 +448,11 @@ export function App() {
   const [locked, setLocked] = useState(Capacitor.isNativePlatform())
   const [tab, setTab] = useState<Tab>('messages')
   const [screen, setScreen] = useState<Screen>('list')
+  const [chatFilter, setChatFilter] = useState<ChatFilter>('all')
+  const [listQuery, setListQuery] = useState('')
+  const [listMenuOpen, setListMenuOpen] = useState(false)
+  const [chatMenuOpen, setChatMenuOpen] = useState(false)
+  const [projectSection, setProjectSection] = useState<ProjectSection>('overview')
   const [paste, setPaste] = useState('')
   const [adding, setAdding] = useState(false)
   const [error, setError] = useState('')
@@ -454,6 +477,7 @@ export function App() {
   const [dirs, setDirs] = useState<{ dir: string; parent?: string; entries: FsDirEntry[] } | null>(null)
   // 工作区文件浏览：一次 fs:listFiles 拉整棵树（fs 忽略名单已滤 node_modules 等），页内用 trail 逐级下钻
   const [filesData, setFilesData] = useState<{ root: string; exists: boolean; nodes: FileNode[] } | null>(null)
+  const [fileReturnScreen, setFileReturnScreen] = useState<Screen>('files')
   const [fileTrail, setFileTrail] = useState<Array<{ name: string; abs: string }>>([])
   const [filePreview, setFilePreview] = useState<{ name: string; content: string; truncated?: boolean } | null>(null)
   const [filesTip, setFilesTip] = useState('')
@@ -661,10 +685,14 @@ export function App() {
       return
     }
     if (screenRef.current === 'file') {
-      setScreen('files')
+      setScreen(fileReturnScreen)
       return
     }
     if (screenRef.current === 'project') {
+      if (projectSection !== 'overview') {
+        setProjectSection('overview')
+        return
+      }
       setScreen('chat')
       return
     }
@@ -680,6 +708,10 @@ export function App() {
       setScreen('list')
       // 离开聊天就清掉当前会话：否则推送仍把最后聊过的会话当「正在看」，列表永远不记未读
       setTarget(null)
+      return
+    }
+    if (tabRef.current === 'contacts') {
+      setTab('messages')
       return
     }
     if (tabRef.current === 'me') {
@@ -1013,10 +1045,13 @@ export function App() {
 
   async function openChat(t: ChatTarget) {
     const same = targetRef.current && targetRef.current.kind === t.kind && targetRef.current.id === t.id
+    setTab('messages')
+    setListQuery('')
     setTarget(t)
     setScreen('chat')
     setStream(null)
     setPlus(false)
+    setChatMenuOpen(false)
     setSessionDrawer(false)
     setError('')
     setFailedLocal(null)
@@ -1232,6 +1267,22 @@ export function App() {
     if (!project) return
     const state = parseProjectWorkspaceState(project.workspace_state)
     setWorkspaceDraft(state)
+    setProjectSection('overview')
+    setFilesData(null)
+    void (async () => {
+      try {
+        let dir = project.workspace_dir.trim()
+        if (!dir) {
+          const dataDir = await ensureDataDir()
+          if (dataDir) dir = dataDir + '/workspace'
+        }
+        if (!dir) return
+        const result = await phone.invoke<{ exists: boolean; nodes: FileNode[] }>(IPC.fsListFiles, { dir })
+        setFilesData({ root: dir.replace(/[\\/]+$/, ''), exists: result.exists, nodes: result.nodes || [] })
+      } catch {
+        setFilesData(null)
+      }
+    })()
     setReportQuery(''); setReportHits([]); setReportSelected([]); setReportResult(null); setReportMessage('')
     const firstTemplate = state.reportTemplates[0]
     setReportTemplateId(firstTemplate?.id || '')
@@ -1504,6 +1555,7 @@ export function App() {
       return
     }
     try {
+      setFileReturnScreen(screen === 'project' ? 'project' : screen === 'file' ? fileReturnScreen : 'files')
       const r = await phone.invoke<{ content: string; truncated?: boolean }>(IPC.fsReadFile, { file: path })
       setFilePreview({ name, content: r.content, truncated: r.truncated })
       setScreen('file')
@@ -1514,6 +1566,117 @@ export function App() {
 
   const xiaojie = useMemo(() => agents.find((a) => a.builtin), [agents])
   const others = useMemo(() => agents.filter((a) => !a.builtin), [agents])
+
+  const pinOrder = useMemo(() => sortedPinKeys(pins), [pins])
+  const contacts = useMemo(() => {
+    const entries: ConversationEntry[] = []
+    if (xiaojie) {
+      const key = `agent:${xiaojie.id}`
+      const recent = recentMap[key]
+      entries.push({
+        key,
+        target: { kind: 'agent', id: xiaojie.id, name: xiaojie.name, avatar: xiaojie.avatar },
+        title: xiaojie.name,
+        sub: recent?.text || 'Jeff 内置管家 · 问我什么都能办',
+        time: recent?.time,
+        avatar: xiaojie.avatar || '🤖',
+        agentId: xiaojie.id,
+        kind: 'agent',
+        isGroup: false,
+        isBuiltin: true,
+        pinned: true,
+        busy: stream !== null && target?.id === xiaojie.id,
+        unread: unread[key] || 0,
+        pinOrder: -1,
+      })
+    }
+    for (const agent of others) {
+      const key = `agent:${agent.id}`
+      const recent = recentMap[key]
+      const pinIndex = pinOrder.indexOf(key)
+      entries.push({
+        key,
+        target: { kind: 'agent', id: agent.id, name: agent.name, avatar: agent.avatar },
+        title: agent.name,
+        sub: recent?.text || agent.description || '（无简介）',
+        time: recent?.time,
+        avatar: agent.avatar,
+        agentId: agent.id,
+        kind: 'agent',
+        isGroup: false,
+        isBuiltin: false,
+        pinned: pinIndex >= 0,
+        busy: stream !== null && target?.id === agent.id,
+        unread: unread[key] || 0,
+        pinOrder: pinIndex,
+      })
+    }
+    for (const project of projects) {
+      const key = `group:${project.id}`
+      const recent = recentMap[key]
+      const pinIndex = pinOrder.indexOf(key)
+      entries.push({
+        key,
+        target: { kind: 'group', id: project.id, name: project.title, icon: project.icon },
+        title: project.title,
+        sub: recent?.text || `${project.memberCount || 0} 个成员 · 群主统筹`,
+        time: recent?.time,
+        avatar: project.icon,
+        kind: 'group',
+        isGroup: true,
+        isBuiltin: false,
+        pinned: pinIndex >= 0,
+        busy: stream !== null && target?.id === project.id,
+        unread: unread[key] || 0,
+        pinOrder: pinIndex,
+      })
+    }
+    return entries.sort((a, b) => {
+      if (a.pinned !== b.pinned) return a.pinned ? -1 : 1
+      if (a.pinned) return a.pinOrder - b.pinOrder
+      return (b.time || 0) - (a.time || 0) || a.title.localeCompare(b.title, 'zh-CN')
+    })
+  }, [xiaojie, others, projects, recentMap, pinOrder, stream, target, unread])
+  const conversations = useMemo(
+    () => contacts.filter((entry) => entry.isBuiltin || entry.pinned || entry.time != null),
+    [contacts],
+  )
+  const searchedConversations = useMemo(() => {
+    const query = listQuery.trim().toLocaleLowerCase('zh-CN')
+    const source = tab === 'messages' ? conversations : contacts
+    return source.filter((entry) => {
+      if (tab === 'messages' && chatFilter !== 'all' && entry.kind !== chatFilter) return false
+      if (!query) return true
+      return `${entry.title} ${entry.sub}`.toLocaleLowerCase('zh-CN').includes(query)
+    })
+  }, [conversations, contacts, listQuery, chatFilter, tab])
+
+  const renderConversation = (entry: ConversationEntry) => (
+    <WeChatItemRow
+      key={entry.key}
+      title={entry.title}
+      sub={entry.sub.length > 64 ? entry.sub.slice(0, 64) + '…' : entry.sub}
+      time={entry.time}
+      avatar={entry.avatar}
+      agentId={entry.agentId}
+      kind={entry.kind}
+      isGroup={entry.isGroup}
+      isBuiltin={entry.isBuiltin}
+      pinned={entry.pinned}
+      busy={entry.busy}
+      unread={entry.unread}
+      onClick={() => void openChat(entry.target)}
+      onLongPress={() => setActionMenu({
+        key: entry.key,
+        title: entry.title,
+        avatar: entry.avatar,
+        agentId: entry.agentId,
+        isPinned: entry.pinned,
+        isBuiltin: entry.isBuiltin,
+        target: entry.target,
+      })}
+    />
+  )
 
   // 工作区文件：按 fileTrail 从整棵树里走当前目录层
   const currentNodes = useMemo<FileNode[]>(() => {
@@ -1527,6 +1690,18 @@ export function App() {
     return nodes
   }, [filesData, fileTrail])
 
+  const recentWorkspaceFiles = useMemo(() => {
+    const files: FileNode[] = []
+    const visit = (nodes: FileNode[]) => {
+      for (const node of nodes) {
+        if (node.dir) visit(node.children || [])
+        else files.push(node)
+      }
+    }
+    visit(filesData?.nodes || [])
+    return files.sort((a, b) => b.mtime - a.mtime).slice(0, 3)
+  }, [filesData])
+
   const groups = useMemo(() => {
     const map = new Map<string, AgentInfo[]>()
     for (const a of others) {
@@ -1539,28 +1714,6 @@ export function App() {
       x === DEFAULT_GROUP ? 1 : y === DEFAULT_GROUP ? -1 : x.localeCompare(y, 'zh-CN')
     )
   }, [others])
-
-  const pinOrder = useMemo(() => sortedPinKeys(pins), [pins])
-  const pinnedAgents = useMemo(
-    () =>
-      pinOrder
-        .filter((k) => k.startsWith('agent:'))
-        .map((k) => others.find((a) => `agent:${a.id}` === k))
-        .filter((a): a is AgentInfo => !!a),
-    [pinOrder, others]
-  )
-  const pinnedProjects = useMemo(
-    () =>
-      pinOrder
-        .filter((k) => k.startsWith('group:'))
-        .map((k) => projects.find((p) => `group:${p.id}` === k))
-        .filter((p): p is ProjectInfo => !!p),
-    [pinOrder, projects]
-  )
-  const pinnedAgentIds = useMemo(() => new Set(pinnedAgents.map((a) => a.id)), [pinnedAgents])
-  const pinnedProjectIds = useMemo(() => new Set(pinnedProjects.map((p) => p.id)), [pinnedProjects])
-
-  const totalChatCount = (xiaojie ? 1 : 0) + others.length + projects.length
 
   const peer = computers.get(activeId)
   const bound = computers.size > 0
@@ -1662,328 +1815,134 @@ export function App() {
 
   return (
     <main className="shell">
-      {screen === 'list' && tab === 'messages' && (
+      {screen === 'list' && tab !== 'me' && (
         <>
-          <header className="bar wechat-bar">
+          <header className="bar wechat-bar mobile-list-bar">
             <div className="bar-left">
-              <button type="button" className="bar-title" data-testid="computer-switch" onClick={() => setTab('me')}>
-                <i className={!bound || offline ? 'dot off' : 'dot'} />
-                <span className="bar-pc-name">{peer?.name || '未绑定电脑'}</span>
-              </button>
+              {tab === 'messages' ? (
+                <button type="button" className="bar-title" data-testid="computer-switch" onClick={() => setTab('me')}>
+                  <i className={!bound || offline ? 'dot off' : 'dot'} />
+                  <span className="bar-pc-name">{peer?.name || '未绑定电脑'}</span>
+                  <span className="mobile-bar-chevron">⌄</span>
+                </button>
+              ) : (
+                <strong className="mobile-directory-title">通讯录</strong>
+              )}
             </div>
             <div className="bar-right">
-              {bound ? (
-                <button
-                  type="button"
-                  className="bar-icon-btn"
-                  title="添加/设置"
-                  onClick={() => setTab('me')}
-                >
-                  <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor">
-                    <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm5 11h-4v4h-2v-4H7v-2h4V7h2v4h4v2z" />
-                  </svg>
-                </button>
-              ) : null}
+              <button type="button" className="bar-icon-btn" data-testid="chat-list-search-focus" title="搜索聊天" onClick={() => document.querySelector<HTMLInputElement>('[data-testid="chat-list-search"]')?.focus()}>
+                <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="11" cy="11" r="7" /><path d="m20 20-4-4" />
+                </svg>
+              </button>
+              <button type="button" className="bar-icon-btn mobile-new-chat" data-testid="mobile-start-chat" title="发起聊天" onClick={() => { setListQuery(''); setTab('contacts') }}>
+                <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M12 5v14M5 12h14" />
+                </svg>
+              </button>
+              <button type="button" className="bar-icon-btn" data-testid="mobile-list-more" title="更多" aria-label="更多" aria-expanded={listMenuOpen} onClick={() => setListMenuOpen((open) => !open)}>
+                <svg viewBox="0 0 24 24" width="21" height="21" fill="currentColor"><circle cx="5" cy="12" r="1.7" /><circle cx="12" cy="12" r="1.7" /><circle cx="19" cy="12" r="1.7" /></svg>
+              </button>
             </div>
           </header>
           {offline && bound ? (
-            <button
-              type="button"
-              className="banner wechat-offline-banner"
-              data-testid="reconnect"
-              onClick={() => {
-                haptic(12)
-                void loadLists()
-              }}
-            >
-              <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
-                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z" />
-              </svg>
-              <span>电脑离线，当前为本地只读缓存{syncedAt ? ` (同步于 ${new Date(syncedAt).toLocaleTimeString()})` : ''} · 点击重新连接</span>
+            <button type="button" className="banner wechat-offline-banner" data-testid="reconnect" onClick={() => { haptic(12); void loadLists() }}>
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z" /></svg>
+              <span>电脑离线，当前为本地只读缓存{syncedAt ? '（同步于 ' + new Date(syncedAt).toLocaleTimeString() + '）' : ''} · 点击重新连接</span>
             </button>
           ) : null}
-          {!bound ? (
+          <div className="mobile-list-heading">
+            <div>
+              <h1>{tab === 'messages' ? '聊天' : '通讯录'}</h1>
+              <p>{tab === 'messages' ? '最近对话' : '选择智能体或项目群开始聊天'}</p>
+            </div>
+            <span>{tab === 'messages' ? conversations.length + ' 个会话' : agents.length + projects.length + ' 个联系人'}</span>
+          </div>
+          <div className="mobile-list-tools">
+            <label className="mobile-list-search">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="7" /><path d="m20 20-4-4" /></svg>
+              <input data-testid="chat-list-search" value={listQuery} onChange={(event) => setListQuery(event.target.value)} placeholder={tab === 'messages' ? '搜索聊天' : '搜索智能体或项目群'} />
+              {listQuery ? <button type="button" aria-label="清除搜索" onClick={() => setListQuery('')}>×</button> : null}
+            </label>
+            {tab === 'messages' ? (
+              <div className="mobile-chat-filters" role="group" aria-label="筛选聊天">
+                {([
+                  ['all', '全部'],
+                  ['agent', '智能体'],
+                  ['group', '项目群'],
+                ] as const).map(([value, label]) => (
+                  <button key={value} type="button" className={chatFilter === value ? 'active' : ''} aria-pressed={chatFilter === value} onClick={() => setChatFilter(value)}>{label}</button>
+                ))}
+              </div>
+            ) : null}
+          </div>
+          {tab === 'messages' && !bound ? (
             <section className="pair wechat-pair-panel" data-testid="pair-panel">
               <div className="pair-hero">
-                <div className="pair-logo-wrap">
-                  <Mascot size={56} mood="idle" />
-                </div>
+                <div className="pair-logo-wrap"><Mascot size={56} mood="idle" /></div>
                 <h2>绑定电脑</h2>
                 <p className="hint">在电脑 Jeff 的「设置 → 远程控制」里点击绑定手机，使用下方方式一键绑定。</p>
               </div>
               {Capacitor.isNativePlatform() ? (
-                <button
-                  type="button"
-                  data-testid="pair-scan"
-                  className="btn-scan"
-                  disabled={busy}
-                  onClick={() => {
-                    setError('')
-                    void Native.scan()
-                      .then((r) => acceptPair(r.text))
-                      .catch((err) => {
-                        const msg = (err as Error).message || ''
-                        if (msg && !msg.includes('取消')) setError(msg)
-                      })
-                  }}
-                >
-                  <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
-                    <path d="M3 4b1 1 0 011-1h4a1 1 0 010 2H5v3a1 1 0 01-2 0V4zm16-1a1 1 0 011 1v4a1 1 0 11-2 0V5h-3a1 1 0 110-2h4zM3 19a1 1 0 001 1h4a1 1 0 100-2H5v-3a1 1 0 10-2 0v4zm17 0a1 1 0 01-1 1h-4a1 1 0 110-2h3v-3a1 1 0 112 0v4zM8 8h8v8H8V8z" />
-                  </svg>
+                <button type="button" data-testid="pair-scan" className="btn-scan" disabled={busy} onClick={() => { setError(''); void Native.scan().then((result) => acceptPair(result.text)).catch((err) => { const message = (err as Error).message || ''; if (message && !message.includes('取消')) setError(message) }) }}>
+                  <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M3 4b1 1 0 011-1h4a1 1 0 010 2H5v3a1 1 0 01-2 0V4zm16-1a1 1 0 011 1v4a1 1 0 11-2 0V5h-3a1 1 0 110-2h4zM3 19a1 1 0 001 1h4a1 1 0 100-2H5v-3a1 1 0 10-2 0v4zm17 0a1 1 0 01-1 1h-4a1 1 0 110-2h3v-3a1 1 0 112 0v4zM8 8h8v8H8V8z" /></svg>
                   扫码绑定电脑
                 </button>
               ) : null}
-              <div className="pair-divider">
-                <span>或手动粘贴绑定码</span>
-              </div>
-              <textarea
-                data-testid="pair-paste"
-                value={paste}
-                placeholder="在此粘贴电脑端生成的绑定码或 JSON 字符串"
-                onChange={(e) => setPaste(e.target.value)}
-              />
-              <button
-                type="button"
-                data-testid="pair-go"
-                className="btn-paste-go"
-                disabled={busy || !paste.trim()}
-                onClick={() => void acceptPair(paste)}
-              >
-                {busy ? '正在绑定…' : '使用粘贴内容绑定'}
-              </button>
+              <div className="pair-divider"><span>或手动粘贴绑定码</span></div>
+              <textarea data-testid="pair-paste" value={paste} placeholder="在此粘贴电脑端生成的绑定码或 JSON 字符串" onChange={(event) => setPaste(event.target.value)} />
+              <button type="button" data-testid="pair-go" className="btn-paste-go" disabled={busy || !paste.trim()} onClick={() => void acceptPair(paste)}>{busy ? '正在绑定…' : '使用粘贴内容绑定'}</button>
               {error ? <p className="err">{error}</p> : null}
             </section>
+          ) : tab === 'messages' ? (
+            <ul className="msgs wechat-list mobile-conversation-list" data-testid="msg-list" onTouchStart={onPullStart} onTouchMove={onPullMove} onTouchEnd={onPullEnd} onTouchCancel={onPullEnd}>
+              {pullPx > 0 ? <li className="wechat-pull-tip" style={{ opacity: Math.min(1, pullPx / 40) }}>{pullPx >= 28 ? '松开刷新' : '下拉刷新…'}</li> : null}
+              {searchedConversations.filter((entry) => entry.pinned).length ? <li className="wechat-section-header"><span>置顶</span><span className="wechat-section-count">{searchedConversations.filter((entry) => entry.pinned).length}</span></li> : null}
+              {searchedConversations.filter((entry) => entry.pinned).map(renderConversation)}
+              {searchedConversations.filter((entry) => !entry.pinned).length ? <li className="wechat-section-header"><span>最近聊天</span><span className="wechat-section-count">{searchedConversations.filter((entry) => !entry.pinned).length}</span></li> : null}
+              {searchedConversations.filter((entry) => !entry.pinned).map(renderConversation)}
+              {searchedConversations.length === 0 ? <li className="mobile-empty-state">{listQuery ? '没有找到相关聊天' : '还没有会话，去通讯录选择一个智能体或项目群开始聊天'}</li> : null}
+            </ul>
           ) : (
-            <ul
-              className="msgs wechat-list"
-              data-testid="msg-list"
-              onTouchStart={onPullStart}
-              onTouchMove={onPullMove}
-              onTouchEnd={onPullEnd}
-              onTouchCancel={onPullEnd}
-            >
-              {pullPx > 0 ? (
-                <li className="wechat-pull-tip" style={{ opacity: Math.min(1, pullPx / 40) }}>
-                  {pullPx >= 28 ? '松开刷新' : '下拉刷新…'}
-                </li>
+            <div className="mobile-contacts-list" data-testid="contacts-list">
+              {searchedConversations.filter((entry) => entry.kind === 'group').length ? (
+                <section>
+                  <h2 className="mobile-contact-section-title">项目群</h2>
+                  <ul>{searchedConversations.filter((entry) => entry.kind === 'group').map(renderConversation)}</ul>
+                </section>
               ) : null}
-              {xiaojie && (
-                <WeChatItemRow
-                  title={xiaojie.name}
-                  agentId={xiaojie.id}
-                  sub={
-                    recentMap[`agent:${xiaojie.id}`]?.text
-                      ? (recentMap[`agent:${xiaojie.id}`].text.length > 40
-                          ? recentMap[`agent:${xiaojie.id}`].text.slice(0, 40) + '…'
-                          : recentMap[`agent:${xiaojie.id}`].text)
-                      : 'Jeff 内置管家 · 问我什么都能办'
-                  }
-                  time={recentMap[`agent:${xiaojie.id}`]?.time}
-                  avatar={xiaojie.avatar || '🤖'}
-                  kind="agent"
-                  isBuiltin
-                  pinned
-                  busy={stream !== null && target?.id === xiaojie.id}
-                  unread={unread[`agent:${xiaojie.id}`] || 0}
-                  onClick={() => void openChat({ kind: 'agent', id: xiaojie.id, name: xiaojie.name, avatar: xiaojie.avatar })}
-                  onLongPress={() =>
-                    setActionMenu({
-                      key: `agent:${xiaojie.id}`,
-                      title: xiaojie.name,
-                      agentId: xiaojie.id,
-                      avatar: xiaojie.avatar || '🤖',
-                      isPinned: true,
-                      isBuiltin: true,
-                      target: { kind: 'agent', id: xiaojie.id, name: xiaojie.name, avatar: xiaojie.avatar },
-                    })
-                  }
-                />
-              )}
-
-              {(pinnedAgents.length > 0 || pinnedProjects.length > 0) && (
-                <>
-                  <li className="wechat-section-header" data-testid="chat-pin-section">
-                    <span>置顶</span>
-                    <span className="wechat-section-count">{pinnedAgents.length + pinnedProjects.length}</span>
-                  </li>
-                  {pinnedProjects.map((p) => {
-                    const rec = recentMap[`group:${p.id}`]
-                    return (
-                      <WeChatItemRow
-                        key={`pin:g:${p.id}`}
-                        title={p.title}
-                        sub={
-                          rec?.text
-                            ? (rec.text.length > 40 ? rec.text.slice(0, 40) + '…' : rec.text)
-                            : `${p.memberCount || 0} 个成员 · 群主统筹`
-                        }
-                        time={rec?.time}
-                        avatar={p.icon}
-                        kind="group"
-                        isGroup
-                        pinned
-                        busy={stream !== null && target?.id === p.id}
-                        unread={unread[`group:${p.id}`] || 0}
-                        onClick={() => void openChat({ kind: 'group', id: p.id, name: p.title, icon: p.icon })}
-                        onLongPress={() =>
-                          setActionMenu({
-                            key: `group:${p.id}`,
-                            title: p.title,
-                            avatar: p.icon,
-                            isPinned: true,
-                            target: { kind: 'group', id: p.id, name: p.title, icon: p.icon },
-                          })
-                        }
-                      />
-                    )
-                  })}
-                  {pinnedAgents.map((a) => {
-                    const rec = recentMap[`agent:${a.id}`]
-                    return (
-                      <WeChatItemRow
-                        key={`pin:a:${a.id}`}
-                        title={a.name}
-                        agentId={a.id}
-                        sub={
-                          rec?.text
-                            ? (rec.text.length > 40 ? rec.text.slice(0, 40) + '…' : rec.text)
-                            : (a.description || '（无简介）')
-                        }
-                        time={rec?.time}
-                        avatar={a.avatar}
-                        kind="agent"
-                        pinned
-                        busy={stream !== null && target?.id === a.id}
-                        unread={unread[`agent:${a.id}`] || 0}
-                        onClick={() => void openChat({ kind: 'agent', id: a.id, name: a.name, avatar: a.avatar })}
-                        onLongPress={() =>
-                          setActionMenu({
-                            key: `agent:${a.id}`,
-                            title: a.name,
-                            avatar: a.avatar,
-                            agentId: a.id,
-                            isPinned: true,
-                            target: { kind: 'agent', id: a.id, name: a.name, avatar: a.avatar },
-                          })
-                        }
-                      />
-                    )
-                  })}
-                </>
-              )}
-
-              <li className="wechat-section-header">
-                <span>项目群</span>
-                <span className="wechat-section-count">{projects.length}</span>
-              </li>
-              {projects.length === 0 && <li className="wechat-empty-hint">还没有项目群，可在电脑端发起群聊</li>}
-              {projects
-                .filter((p) => !pinnedProjectIds.has(p.id))
-                .map((p) => {
-                  const rec = recentMap[`group:${p.id}`]
+              <section>
+                <h2 className="mobile-contact-section-title">智能体</h2>
+                {xiaojie && searchedConversations.some((entry) => entry.isBuiltin) ? <ul>{searchedConversations.filter((entry) => entry.isBuiltin).map(renderConversation)}</ul> : null}
+                {groups.map(([name, list]) => {
+                  const matching = list.filter((agent) => searchedConversations.some((entry) => entry.key === 'agent:' + agent.id))
+                  if (!matching.length) return null
+                  const isCollapsed = !!collapsed[name]
                   return (
-                    <WeChatItemRow
-                      key={`g:${p.id}`}
-                      title={p.title}
-                      sub={
-                        rec?.text
-                          ? (rec.text.length > 40 ? rec.text.slice(0, 40) + '…' : rec.text)
-                          : `${p.memberCount || 0} 个成员 · 群主统筹`
-                      }
-                      time={rec?.time}
-                      avatar={p.icon}
-                      kind="group"
-                      isGroup
-                      busy={stream !== null && target?.id === p.id}
-                      unread={unread[`group:${p.id}`] || 0}
-                      onClick={() => void openChat({ kind: 'group', id: p.id, name: p.title, icon: p.icon })}
-                      onLongPress={() =>
-                        setActionMenu({
-                          key: `group:${p.id}`,
-                          title: p.title,
-                          avatar: p.icon,
-                          isPinned: false,
-                          target: { kind: 'group', id: p.id, name: p.title, icon: p.icon },
-                        })
-                      }
-                    />
+                    <div className="wechat-group-block mobile-contact-group" key={name}>
+                      <button type="button" className="wechat-group-head" data-testid={'chat-agent-group-' + name} aria-expanded={!isCollapsed} onClick={() => setCollapsed((current) => ({ ...current, [name]: !current[name] }))}>
+                        <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className={isCollapsed ? 'rot' : ''}><path d="M6 9l6 6 6-6" /></svg>
+                        <span>{name}</span><span className="wechat-group-count">{matching.length}</span>
+                      </button>
+                      {!isCollapsed ? <ul>{matching.map((agent) => {
+                        const entry = searchedConversations.find((candidate) => candidate.key === 'agent:' + agent.id)
+                        return entry ? renderConversation(entry) : null
+                      })}</ul> : null}
+                    </div>
                   )
                 })}
-
-              <li className="wechat-section-header">
-                <span>智能体</span>
-                <span className="wechat-section-count">{others.length}</span>
-              </li>
-              {others.length === 0 && <li className="wechat-empty-hint">还没有其他智能体，可在电脑端或找小杰创建</li>}
-              {groups.map(([name, list]) => {
-                const isCollapsed = !!collapsed[name]
-                return (
-                  <li className="wechat-group-block" key={name}>
-                    <button
-                      type="button"
-                      className="wechat-group-head"
-                      data-testid={`chat-agent-group-${name}`}
-                      onClick={() => setCollapsed((c) => ({ ...c, [name]: !c[name] }))}
-                    >
-                      <svg
-                        viewBox="0 0 24 24"
-                        width="12"
-                        height="12"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2.5"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        className={isCollapsed ? 'rot' : ''}
-                      >
-                        <path d="M6 9l6 6 6-6" />
-                      </svg>
-                      <span>{name}</span>
-                      <span className="wechat-group-count">{list.length}</span>
-                    </button>
-                    {!isCollapsed &&
-                      list
-                        .filter((a) => !pinnedAgentIds.has(a.id))
-                        .map((a) => {
-                          const rec = recentMap[`agent:${a.id}`]
-                          return (
-                            <WeChatItemRow
-                              key={`a:${a.id}`}
-                              title={a.name}
-                              agentId={a.id}
-                              sub={
-                                rec?.text
-                                  ? (rec.text.length > 40 ? rec.text.slice(0, 40) + '…' : rec.text)
-                                  : (a.description || '（无简介）')
-                              }
-                              time={rec?.time}
-                              avatar={a.avatar}
-                              kind="agent"
-                              busy={stream !== null && target?.id === a.id}
-                              unread={unread[`agent:${a.id}`] || 0}
-                              onClick={() => void openChat({ kind: 'agent', id: a.id, name: a.name, avatar: a.avatar })}
-                              onLongPress={() =>
-                                setActionMenu({
-                                  key: `agent:${a.id}`,
-                                  title: a.name,
-                                  avatar: a.avatar,
-                                  agentId: a.id,
-                                  isPinned: false,
-                                  target: { kind: 'agent', id: a.id, name: a.name, avatar: a.avatar },
-                                })
-                              }
-                            />
-                          )
-                        })}
-                  </li>
-                )
-              })}
-              {totalChatCount === 0 && <li className="empty">这台电脑上还没有会话</li>}
-            </ul>
+              </section>
+              {searchedConversations.length === 0 ? <p className="mobile-empty-state">{listQuery ? '没有找到联系人' : '还没有可用联系人'}</p> : null}
+            </div>
           )}
+          {listMenuOpen ? (
+            <div className="mobile-list-menu" data-testid="mobile-list-menu">
+              <button type="button" onClick={() => { setListMenuOpen(false); setTab('contacts') }}>发起聊天</button>
+              <button type="button" onClick={() => { setListMenuOpen(false); setTab('me') }}>电脑与设置</button>
+            </div>
+          ) : null}
         </>
       )}
-
       {screen === 'chat' && target && (
         <section className="chat wechat-chat" data-testid="chat">
           <header className="bar wechat-bar wechat-chat-bar">
@@ -2005,75 +1964,26 @@ export function App() {
                 </button>
               ) : null}
             </div>
-            <button
-              type="button"
-              className="bar-icon-btn"
-              data-testid="chat-find"
-              title="查找聊天内容"
-              onClick={() => {
-                haptic(10)
-                setFindOpen((v) => !v)
-                if (findOpen) setFindQuery('')
-              }}
-            >
-              <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                <circle cx="11" cy="11" r="7" />
-                <path d="M21 21l-4.35-4.35" />
-              </svg>
-            </button>
             {target.kind === 'group' ? (
-              <>
-                <button
-                  type="button"
-                  className="bar-icon-btn"
-                  data-testid="session-history"
-                  title="话题"
-                  onClick={() => void openSessionDrawer()}
-                >
-                  <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M21 12a8 8 0 1 1-3.1-6.3L21 4l-.9 3.4A8 8 0 0 1 21 12z" />
-                    <path d="M8.5 10.5h7M8.5 14h4.5" />
-                  </svg>
-                </button>
-                <button
-                  type="button"
-                  className="bar-icon-btn"
-                  data-testid="project-workspace"
-                  title="项目资料与内容大纲"
-                  onClick={openProjectWorkspace}
-                >
-                  <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H19v16H5.5A1.5 1.5 0 0 1 4 18.5z" />
-                    <path d="M8 8h7M8 12h7M8 16h4" />
-                  </svg>
-                </button>
-                <button
-                  type="button"
-                  className="bar-icon-btn"
-                  data-testid="workspace"
-                  title="工作区文件"
-                  onClick={() => void openWorkspaceFiles()}
-                >
-                  <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-                  </svg>
-                </button>
-              </>
-            ) : (
-              <button
-                type="button"
-                className="bar-icon-btn"
-                data-testid="session-history"
-                title="会话"
-                onClick={() => void openSessionDrawer()}
-              >
+              <button type="button" className="bar-icon-btn project-workspace-entry" data-testid="project-workspace" title="项目工作区" aria-label="项目工作区" onClick={openProjectWorkspace}>
                 <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M21 12a8 8 0 1 1-3.1-6.3L21 4l-.9 3.4A8 8 0 0 1 21 12z" />
-                  <path d="M8.5 10.5h7M8.5 14h4.5" />
+                  <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
                 </svg>
               </button>
-            )}
+            ) : null}
+            <button type="button" className="bar-icon-btn" data-testid="chat-more" title="更多聊天操作" aria-label="更多聊天操作" aria-expanded={chatMenuOpen} onClick={() => setChatMenuOpen((open) => !open)}>
+              <svg viewBox="0 0 24 24" width="21" height="21" fill="currentColor"><circle cx="5" cy="12" r="1.7" /><circle cx="12" cy="12" r="1.7" /><circle cx="19" cy="12" r="1.7" /></svg>
+            </button>
           </header>
+          {chatMenuOpen ? (
+            <div className="mobile-chat-menu" data-testid="chat-menu">
+              <button type="button" data-testid="chat-find" onClick={() => { setChatMenuOpen(false); haptic(10); setFindOpen(true); setFindQuery('') }}>查找聊天内容</button>
+              <button type="button" data-testid="session-history" onClick={() => { setChatMenuOpen(false); void openSessionDrawer() }}>切换会话</button>
+              <button type="button" data-testid="chat-new-session" onClick={() => { setChatMenuOpen(false); void newSession() }}>新建会话</button>
+              {target.kind === 'group' ? <button type="button" data-testid="workspace" onClick={() => { setChatMenuOpen(false); void openWorkspaceFiles() }}>工作区文件</button> : null}
+              <button type="button" data-testid="chat-context" onClick={() => { setChatMenuOpen(false); setCtxOpen(true) }}>上下文用量</button>
+            </div>
+          ) : null}
           {offline && bound ? (
             <button
               type="button"
@@ -2228,7 +2138,7 @@ export function App() {
                           <AssistantText text={m.text} reasoning={m.reasoning} tools={m.tools} />
                         </div>
                       ) : (
-                        <>
+        <>
                           {decodedUser?.invoke ? <span className="wechat-msg-chip">{decodedUser.invoke.command} · {decodedUser.invoke.name}</span> : null}
                           <LongPressArea className="wechat-user-bubble" onLongPress={openMenu} onClick={isFailed ? () => void resend(m.id) : undefined}>
                             {m.images?.length ? (
@@ -2300,53 +2210,6 @@ export function App() {
           {plus ? (
             <div className="plus wechat-plus-sheet" data-testid="plus-panel">
               <div className="wechat-plus-grid">
-                <button
-                  type="button"
-                  className="wechat-plus-cell"
-                  data-testid="new-session"
-                  onClick={() => void newSession()}
-                >
-                  <div className="wechat-plus-icon">
-                    <svg viewBox="0 0 24 24" width="26" height="26" fill="currentColor">
-                      <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" />
-                    </svg>
-                  </div>
-                  <span>新建会话</span>
-                </button>
-                <button
-                  type="button"
-                  className="wechat-plus-cell"
-                  data-testid="plus-find"
-                  onClick={() => {
-                    setPlus(false)
-                    setFindOpen(true)
-                  }}
-                >
-                  <div className="wechat-plus-icon">
-                    <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                      <circle cx="11" cy="11" r="7" />
-                      <path d="M21 21l-4.35-4.35" />
-                    </svg>
-                  </div>
-                  <span>查找聊天内容</span>
-                </button>
-                <button
-                  type="button"
-                  className="wechat-plus-cell"
-                  data-testid="plus-compress"
-                  disabled={ctxBusy || !ctx?.sessionId}
-                  onClick={() => {
-                    setPlus(false)
-                    void compressCtx()
-                  }}
-                >
-                  <div className="wechat-plus-icon">
-                    <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M4 5h16M4 19h16M8 9h8M8 15h8" />
-                    </svg>
-                  </div>
-                  <span>压缩上下文</span>
-                </button>
                 {Capacitor.isNativePlatform() ? (
                   <button
                     type="button"
@@ -2385,48 +2248,7 @@ export function App() {
                     />
                   </label>
                 )}
-                <button
-                  type="button"
-                  className="wechat-plus-cell"
-                  onClick={() => void loadSessions()}
-                >
-                  <div className="wechat-plus-icon">
-                    <svg viewBox="0 0 24 24" width="26" height="26" fill="currentColor">
-                      <path d="M20 2H4c-1.1 0-1.99.9-1.99 2L2 22l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zM6 9h12v2H6V9zm8 5H6v-2h8v2zm4-6H6V6h12v2z" />
-                    </svg>
-                  </div>
-                  <span>切换会话</span>
-                </button>
-                {target.kind === 'group' ? (
-                  <button
-                    type="button"
-                    className="wechat-plus-cell"
-                    onClick={() => void openDirs()}
-                  >
-                    <div className="wechat-plus-icon">
-                      <svg viewBox="0 0 24 24" width="26" height="26" fill="currentColor">
-                        <path d="M10 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z" />
-                      </svg>
-                    </div>
-                    <span>工作空间</span>
-                  </button>
-                ) : null}
               </div>
-              {sessions.length > 0 ? (
-                <div className="wechat-plus-sessions">
-                  <div className="wechat-plus-sessions-title">已有历史会话</div>
-                  <ul>
-                    {sessions.map((s) => (
-                      <li key={s.id}>
-                        <button type="button" onClick={() => void activateSession(s.id)}>
-                          <span className="wechat-session-name">{s.title || s.id}</span>
-                          <span className="wechat-session-switch">切换 ›</span>
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              ) : null}
             </div>
           ) : null}
           {slashOpen ? (
@@ -2465,7 +2287,7 @@ export function App() {
               type="button"
               className="wechat-composer-plus"
               data-testid="plus"
-              onClick={() => (plus ? setPlus(false) : void loadSessions())}
+              onClick={() => setPlus((open) => !open)}
             >
               <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
                 <circle cx="12" cy="12" r="9.2" />
@@ -2614,15 +2436,40 @@ export function App() {
       {screen === 'project' && target?.kind === 'group' && (
         <section className="dirs wechat-dirs project-workspace-screen" data-testid="project-workspace-screen">
           <header className="bar wechat-bar">
-            <button type="button" className="btn-nav-back" onClick={() => setScreen('chat')}>
+            <button type="button" className="btn-nav-back" onClick={() => projectSection === 'overview' ? setScreen('chat') : setProjectSection('overview')}>
               <span className="wechat-back-chevron">‹</span>
-              <span className="wechat-back-text">返回</span>
+              <span className="wechat-back-text">{projectSection === 'overview' ? '返回聊天' : '项目概览'}</span>
             </button>
-            <b>项目资料</b>
+            <b>{projectSection === 'overview' ? '项目工作区' : ({ profile: '项目资料', reports: '日报与报告', tasks: '任务看板', assets: '项目素材', campaigns: '宣传选题与成品' } as Record<ProjectSection, string>)[projectSection]}</b>
             <span style={{ width: 48 }} />
           </header>
-          <p className="wechat-file-hint">保存项目目标、受众、传播渠道与系统大纲，桌面端和手机共用。</p>
-          <div className="project-workspace-form">
+          <p className="wechat-file-hint">项目进度、待交付和最近文件集中在这里；具体资料按需打开。</p>
+          {projectSection === 'overview' ? (
+            <div className="project-workspace-overview" data-testid="project-workspace-overview">
+              <article className="project-overview-hero">
+                <span className="project-overview-eyebrow">项目工作区</span>
+                <h2>{target.name}</h2>
+                <p>查看团队进展，或进入一个具体事项继续处理。</p>
+              </article>
+              <div className="project-overview-stats">
+                <button type="button" onClick={() => setProjectSection('tasks')}><strong>{projectTasks.filter((task) => task.status !== 'done' && task.status !== 'cancelled').length}</strong><span>进行中任务</span></button>
+                <button type="button" onClick={() => setProjectSection('campaigns')}><strong>{workspaceDraft.campaigns.reduce((sum, campaign) => sum + campaign.deliveries.filter((delivery) => delivery.status === 'in_review').length, 0)}</strong><span>待验收交付</span></button>
+                <button type="button" onClick={() => setProjectSection('assets')}><strong>{workspaceDraft.assets.filter((asset) => !asset.confirmed).length}</strong><span>待确认素材</span></button>
+              </div>
+              <div className="project-overview-links">
+                <button type="button" data-testid="project-section-profile" onClick={() => setProjectSection('profile')}><span>项目资料</span><small>目标、受众与项目文档</small><b>›</b></button>
+                <button type="button" data-testid="project-section-reports" onClick={() => setProjectSection('reports')}><span>日报与报告</span><small>搜索来源、管理模板、生成草稿</small><b>›</b></button>
+                <button type="button" data-testid="project-section-tasks" onClick={() => setProjectSection('tasks')}><span>任务看板</span><small>{projectTasks.length} 项任务</small><b>›</b></button>
+                <button type="button" data-testid="project-section-assets" onClick={() => setProjectSection('assets')}><span>项目素材</span><small>{workspaceDraft.assets.length} 项素材</small><b>›</b></button>
+                <button type="button" data-testid="project-section-campaigns" onClick={() => setProjectSection('campaigns')}><span>宣传选题与成品</span><small>{workspaceDraft.campaigns.length} 个选题</small><b>›</b></button>
+              </div>
+              <section className="project-overview-files">
+                <div><h3>最近文件</h3><span>项目工作区</span></div>
+                {recentWorkspaceFiles.length ? recentWorkspaceFiles.map((file) => <button type="button" key={file.abs} onClick={() => void openRemoteFile(file.abs, file.name)}><span>▤</span><strong>{file.name}</strong><small>{new Date(file.mtime).toLocaleDateString('zh-CN')}</small><b>›</b></button>) : <p>还没有项目文件。文件生成后会显示在这里。</p>}
+              </section>
+            </div>
+          ) : null}
+          {projectSection === 'profile' && <div className="project-workspace-form">
             <label><span>阶段目标</span><textarea rows={3} data-testid="mobile-workspace-goal" value={workspaceDraft.goal} onChange={(e) => setWorkspaceDraft((s) => ({ ...s, goal: e.target.value }))} placeholder="这个项目当前要达成什么结果？" /></label>
             <label><span>销售对象</span><input data-testid="mobile-workspace-sales-audience" value={workspaceDraft.salesAudience} onChange={(e) => setWorkspaceDraft((s) => ({ ...s, salesAudience: e.target.value }))} placeholder="例如：渠道商与集成商" /></label>
             <label><span>内容呈现对象</span><input data-testid="mobile-workspace-story-audience" value={workspaceDraft.storyAudience} onChange={(e) => setWorkspaceDraft((s) => ({ ...s, storyAudience: e.target.value }))} placeholder="例如：一线医护人员" /></label>
@@ -2639,6 +2486,8 @@ export function App() {
             </div>
             <div className="project-workspace-form"><label><span>周报统计开始日期</span><input data-testid="mobile-project-weekly-start" type="date" value={weeklyStartDate} onChange={(e) => setWeeklyStartDate(e.target.value)} /></label><label><span>周报统计结束日期</span><input data-testid="mobile-project-weekly-end" type="date" value={weeklyEndDate} onChange={(e) => setWeeklyEndDate(e.target.value)} /></label></div>
             <button type="button" disabled={workspaceSaving || !weeklyStartDate || !weeklyEndDate || weeklyStartDate > weeklyEndDate} data-testid="mobile-project-document-weekly" onClick={() => void generateProjectDocument('weekly_report')}>生成项目周报草稿</button>
+          </div>}
+          {projectSection === 'reports' && <div className="project-workspace-form">
             <h3 className="campaign-mobile-title">思源日报与报告模板</h3>
             <p className="project-workspace-result">思源连接需先在桌面「设置 → 思源知识库」配置。请核对每篇日报日期，思源文档创建时间可能不同于日报日期。生成时正文会发送给项目群主所用模型，并在独立报告话题留痕；搜索结果只有经你确认后才会进入项目来源。</p>
             <label><span>搜索日报</span><input data-testid="mobile-report-query" value={reportQuery} onChange={(e) => setReportQuery(e.target.value)} placeholder="标题或内容关键词" /></label>
@@ -2655,6 +2504,8 @@ export function App() {
             <button type="button" className="btn-primary" data-testid="mobile-report-generate" disabled={reportBusy || !reportTemplateId || workspaceDraft.reportSources.length === 0 || reportStartDate > reportEndDate} onClick={() => void generateProjectReportOnPhone()}>{reportBusy ? '生成中…' : '生成报告草稿'}</button>
             {reportMessage ? <p className="project-workspace-result" role="status" data-testid="mobile-report-message">{reportMessage}</p> : null}
             {reportResult ? <details data-testid="mobile-report-result"><summary>{reportResult.path}</summary><pre>{reportResult.content}</pre></details> : null}
+          </div>}
+          {projectSection === 'tasks' && <div className="project-workspace-form">
             <h3 className="campaign-mobile-title">项目管理 · 任务</h3>
             <p className="project-workspace-result">设置期限、前置任务和验收标准；依赖未完成的任务不能标记完成。</p>
             <label><span>任务标题</span><input data-testid="mobile-project-task-title" value={newTaskTitle} onChange={(e) => setNewTaskTitle(e.target.value)} placeholder="例如：完成腕表呼叫联调" /></label>
@@ -2668,7 +2519,8 @@ export function App() {
               const risk = task.status === 'done' || task.status === 'cancelled' ? '' : blocked ? '风险：等待前置任务' : daysLeft !== null && daysLeft < 0 ? `风险：已逾期 ${-daysLeft} 天` : daysLeft !== null && daysLeft <= 3 ? `风险：${daysLeft === 0 ? '今天到期' : `${daysLeft} 天内到期`}` : ''
               return <div className="campaign-mobile-delivery" key={task.id} data-testid={`mobile-project-task-${task.id}`}><span><strong>{task.key} · {task.title}</strong><br />{task.due_at ? `截止 ${new Date(task.due_at).toLocaleDateString('zh-CN')}` : '未设期限'} · {blocked ? '等待前置任务' : task.status}{risk ? <><br /><strong data-testid={`mobile-project-task-risk-${task.id}`}>{risk}</strong></> : null}{task.acceptance_criteria ? ` · 验收：${task.acceptance_criteria}` : ''}</span><select aria-label={`${task.key} 状态`} value={task.status} disabled={workspaceSaving || (blocked && task.status !== 'done')} onChange={(e) => void saveProjectTask(task, e.target.value)}><option value="todo">待办</option><option value="in_progress">进行中</option><option value="in_review">待验收</option><option value="done">已完成</option><option value="cancelled">已取消</option></select></div>
             })}
-            <h3 className="campaign-mobile-title">宣传选题与成品</h3>
+          </div>}
+          {projectSection === 'assets' && <div className="project-workspace-form">
             <h4>项目素材库</h4>
             <p className="project-workspace-result">真实素材、授权截图与生成示意图分别标记；文件需先放入项目工作区，截图先脱敏。</p>
             <label><span>扫描候选目录（工作区相对路径）</span><input data-testid="mobile-asset-scan-directory" value={assetScanDirectory} onChange={(e) => setAssetScanDirectory(e.target.value)} /></label>
@@ -2687,6 +2539,9 @@ export function App() {
             <label><input type="checkbox" checked={assetDraft.isReal} onChange={(e) => setAssetDraft((d) => ({ ...d, isReal: e.target.checked }))} />真实产品素材</label>
             <button type="button" disabled={workspaceSaving || !assetDraft.title.trim() || !assetDraft.path.trim()} data-testid="mobile-asset-register" onClick={() => void registerAssetOnPhone()}>登记素材</button>
             {workspaceDraft.assets.map((asset) => <div className="campaign-mobile-delivery" key={asset.id} data-testid={`mobile-asset-${asset.id}`}><span>{asset.title} · {{ image: '图片', video: '视频', document: '文档', demo_url: '演示地址' }[asset.kind]} · {asset.feature || '通用'} · {asset.source === 'unverified_candidate' ? '扫描候选·来源待核实' : asset.source === 'generated_illustration' ? '生成示意图' : asset.source === 'authorized_screenshot' ? '授权截图' : asset.isReal ? '真实素材' : '素材'} · {asset.path}{asset.sourceNote ? ` · 来源：${asset.sourceNote}` : ''} · {asset.confirmed ? '已确认' : '待确认'}</span>{!asset.confirmed ? <button type="button" onClick={() => void reviewAssetOnPhone(asset.id, true)}>确认可用</button> : <button type="button" onClick={() => void reviewAssetOnPhone(asset.id, false)}>撤销确认</button>}</div>)}
+          </div>}
+          {projectSection === 'campaigns' && <div className="project-workspace-form">
+            <h3 className="campaign-mobile-title">宣传选题与成品</h3>
             <p className="project-workspace-result">方向确认、制作任务和成品验收分开记录。只有当前方向已确认且待补素材清零，才可创建制作任务。</p>
             <label><span>成果线</span><select data-testid="mobile-campaign-kind" value={campaignDraft.kind} onChange={(e) => setCampaignDraft((draft) => ({ ...draft, kind: e.target.value as CampaignKind }))}><option value="feature_video">单功能视频</option><option value="system_deck">完整系统介绍 PPT</option></select></label>
             <label><span>选题标题</span><input data-testid="mobile-campaign-title" value={campaignDraft.title} onChange={(e) => setCampaignDraft((draft) => ({ ...draft, title: e.target.value }))} placeholder="例如：腕表让护士不错过病房呼叫" /></label>
@@ -2727,14 +2582,14 @@ export function App() {
                 </div>)}
               </article>
             ))}
-          </div>
+          </div>}
         </section>
       )}
 
       {screen === 'file' && filePreview && (
         <section className="fileview wechat-fileview" data-testid="file-preview">
           <header className="bar wechat-bar">
-            <button type="button" className="btn-nav-back" onClick={() => setScreen('files')}>
+            <button type="button" className="btn-nav-back" onClick={() => setScreen(fileReturnScreen)}>
               <span className="wechat-back-chevron">‹</span>
               <span className="wechat-back-text">返回</span>
             </button>
@@ -3043,7 +2898,22 @@ export function App() {
                 </svg>
               )}
             </div>
-            <span>消息</span>
+            <span>聊天</span>
+          </button>
+          <button
+            type="button"
+            className={tab === 'contacts' ? 'on' : ''}
+            data-testid="tab-contacts"
+            onClick={() => setTab('contacts')}
+          >
+            <div className="wechat-tab-icon">
+              {tab === 'contacts' ? (
+                <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor"><path d="M16 11c1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3 1.34 3 3 3zm-8 0c1.66 0 3-1.34 3-3S9.66 5 8 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5C15 14.17 10.33 13 8 13zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.96 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z" /></svg>
+              ) : (
+                <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M16 11a4 4 0 1 0-8 0" /><circle cx="12" cy="7" r="4" /><path d="M3 20c0-3.2 3.8-5 9-5s9 1.8 9 5" /></svg>
+              )}
+            </div>
+            <span>通讯录</span>
           </button>
           <button
             type="button"

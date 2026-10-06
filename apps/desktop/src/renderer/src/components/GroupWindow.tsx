@@ -254,7 +254,7 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
           <button className="icon-btn" data-testid="group-new-session" disabled={busy} onClick={() => void doNewThread()} title="开启新会话（旧记录保留在「群资料 → 会话记录」）">
             <IconNewSession />
           </button>
-          <button className="icon-btn" data-testid="group-info-btn" title="群资料 / 会话记录" onClick={() => setDrawer(true)}>
+          <button className="icon-btn" data-testid="group-info-btn" title="项目资料 / 会话记录" onClick={() => setDrawer(true)}>
             <IconGroupProfile />
           </button>
         </div>
