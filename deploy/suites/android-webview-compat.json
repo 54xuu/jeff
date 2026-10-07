@@ -1,0 +1,12 @@
+{
+  "description": "WebView 61 兼容验收：安装版界面、横屏、联系人/个人页；另需对真实绑定实例运行 MobileMessageCompatibilityTest 并核对模型回复落库。",
+  "desktop": {
+    "visible": ["[data-testid=nav-rail]"],
+    "actions": [
+      { "type": "click", "selector": "[data-testid=nav-settings]" },
+      { "type": "click", "selector": "[data-testid=settings-nav-about]" },
+      { "type": "expect-visible", "selector": ".about-card" }
+    ]
+  },
+  "androidTestClass": "MobileInstallSmokeTest"
+}

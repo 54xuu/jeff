@@ -1,7 +1,7 @@
 {
   "name": "jeff-monorepo",
   "private": true,
-  "version": "1.11.4",
+  "version": "1.11.6",
   "description": "Jeff — 个人「开发 + 项目管理」agent 桌面应用",
   "workspaces": [
     "packages/*",
@@ -9,14 +9,16 @@
   ],
   "scripts": {
     "typecheck": "tsc -p tsconfig.base.json --noEmit",
-    "test": "npm run test -w @jeff/core && npm run test -w @jeff/relay",
+    "test": "npm run test -w @jeff/core && npm run test -w @jeff/relay && npm run test:deploy",
     "test:e2e": "npm run test:e2e -w jeff-desktop",
     "test:e2e:live": "npm run test:e2e:live -w jeff-desktop",
     "smoke": "node scripts/smoke.mjs",
     "dev": "npm run dev -w jeff-desktop",
     "build": "npm run build -w @jeff/core && npm run build -w jeff-desktop",
     "package:linux": "npm run package:linux -w jeff-desktop",
-    "package:win": "npm run package:win -w jeff-desktop"
+    "package:win": "npm run package:win -w jeff-desktop",
+    "deploy:windows": "node scripts/deploy-windows.mjs",
+    "test:deploy": "node --test scripts/deploy-windows.test.mjs"
   },
   "devDependencies": {
     "typescript": "^5.7.0"

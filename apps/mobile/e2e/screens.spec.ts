@@ -282,6 +282,26 @@ test.describe('1.11 统一风格全屏回归', () => {
     await page.screenshot({ path: '../../.tmp/e2e-screens/02-chat-agent.png' })
   })
 
+  test('横屏聊天：会话列表常驻侧栏，可直接切换联系人', async ({ page }) => {
+    await page.setViewportSize({ width: 844, height: 390 })
+    await openContact(page, 'chat-agent-小杰')
+    const pane = page.getByTestId('landscape-conversation-pane')
+    await expect(pane).toBeVisible()
+    await expect(page.getByTestId('chat')).toBeVisible()
+    await expect(page.getByTestId('landscape-nav-rail')).toBeVisible()
+    await expect(page.getByTestId('landscape-nav-rail').getByRole('button', { name: '聊天' })).toHaveAttribute('aria-pressed', 'true')
+    await expect(page.getByTestId('chat-back')).toBeHidden()
+    await expect(page.getByTestId('chat-agent-小杰').locator('button')).toHaveAttribute('aria-current', 'true')
+    await noOverflow(page, 'landscape-chat')
+    await page.screenshot({ path: '../../.tmp/e2e-screens/landscape-chat.png' })
+
+    await page.getByTestId('landscape-nav-rail').getByRole('button', { name: '通讯录' }).click()
+    await expect(page.getByTestId('chat-agent-一个名字特别特别长的智能体用来测试顶栏省略号显示')).toBeVisible()
+    await page.getByTestId('chat-agent-一个名字特别特别长的智能体用来测试顶栏省略号显示').click()
+    await expect(page.getByTestId('chat')).toContainText('一个名字特别特别长的智能体用来测试顶栏省略号显示')
+    await expect(page.getByTestId('chat-agent-一个名字特别特别长的智能体用来测试顶栏省略号显示').locator('button')).toHaveAttribute('aria-current', 'true')
+  })
+
   test('私聊发送：乐观回显立刻可见（不等电脑回复）', async ({ page }) => {
     await page.getByTestId('chat-agent-小杰').click()
     await expect(page.getByTestId('bubbles')).toBeVisible()

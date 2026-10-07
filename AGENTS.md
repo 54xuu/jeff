@@ -192,6 +192,20 @@ deb：`dpkg -l jeff-desktop` 版本正确 + `/opt/Jeff` 与 `linux-unpacked` 的
 - Windows 首次配置见 `deploy/windows/README.md`。密钥、relay 地址和手机 serial 只保存在忽略的 `.tmp/deploy/config.json` 或本机；不得提交凭据。
 - 远程验收必须从 Windows 实际安装目录启动 Jeff，使用隔离数据目录；产物 SHA-256、安装结果、截图与测试日志回传至 `.tmp/deploy/<运行编号>/`。Windows 不可达时仅报告已完成的 Ubuntu/本地产物验收，不得声称双机验收通过。
 
+### 从 Ubuntu 调试 Windows（已实测，默认不使用 Windows Codex）
+
+- **默认通道**：Ubuntu `192.168.3.176` → OpenSSH/SFTP → Windows `192.168.3.143`。由 Ubuntu Agent 编排，Windows 执行 PowerShell、安装器、界面运行器及 SDK ADB；不需要唤起 Windows ChatGPT/Codex。只有用户明确要求或 SSH 通道无法满足任务时才考虑 Windows Agent。
+- SSH 使用专用密钥、已核对的主机指纹和 `BatchMode=yes`；本机 SSH config / known_hosts 放忽略目录 `.tmp/deploy/`，不得关闭 `StrictHostKeyChecking`。登录用户名、路径、ADB 版本须从实际 Windows 状态发现，不能假设工作区已有源码。
+- 命令通过 `powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand <UTF-16LE base64>` 执行，设置 UTF-8 输出；分别保存 stdout、stderr、退出码。不要把口令/模型凭据放进命令、日志或报告。Windows 绝对 SFTP 路径用 `/C:/Users/...` 格式；上传后在 Windows 重新核对 SHA-256。
+- **安装**：从注册表和实际进程发现安装目录及 per-user/all-users 范围；活跃任务时暂停部署。先正常退出 Jeff、在 Windows 本机保存日常数据快照，再用 NSIS `/S` 静默升级，沿用安装范围及目录（`/D=...` 参数最后传入）。需提权时使用已建立的安装任务或已授权的管理员 SSH 会话；普通 GUI 任务不提权。核对实际 EXE 版本、已安装 `app.asar` 哈希和内置 opencode，不能用安装器退出码单独判成功。
+- **GUI**：Windows 必须保持用户登录；SSHD 会话不能直接代替交互桌面。注册当前登录用户、`Interactive` / `Limited` 的验收计划任务，启动**实际安装目录**的 `Jeff.exe`。使用独立 `JEFF_HOME`、`JEFF_SKILLS_DIR`、Electron `--user-data-dir`、`JEFF_E2E=1`；需要中转站时显式提供真实 `JEFF_RELAY_URL`，不要改日常绑定或数据。
+- GUI 调试端口仅监听 Windows `127.0.0.1`，通过 `ssh -L 127.0.0.1:<local>:127.0.0.1:<remote>` 转发给 Ubuntu。Ubuntu 用 agent-browser / 现有 Playwright CDP 运行器操作界面、截图、执行具名断言；确认页面来自安装目录 `app.asar`，不能验收开发网页后声称安装版通过。
+- **Android**：先 Ubuntu AVD，再 Windows USB，最后网络设备 `192.168.3.121:5555`。Windows 端显式使用 SDK `platform-tools/adb.exe`（本机已发现为 `D:\soft\android\sdk\platform-tools\adb.exe`，不要依赖 PATH 的旧 scrcpy ADB）。`adb connect` 后每个命令都带 `-s <serial>`；执行同一 release APK 的 `install -r`、版本/签名核对、instrumentation、截图和日志采集。
+- Android 白屏可通过指定设备 `adb forward tcp:<port> localabstract:webview_devtools_remote_<appPid>`，再经 SSH 转发该端口，在实际 APK 的 WebView CDP 中定位 JS/资源错误。端口及进程必须从当前状态确认，不复用过期 PID。
+- **成功判据与清理**：instrumentation 必须有明确的全部用例通过证据，不能把 `adb` / SSH 退出码 0 当功能通过。原始失败证据保留；验收后核对日常数据库/配置哈希，仅清理本轮启动的实例、模拟器、临时计划任务和端口转发，保留升级后的软件。证据回传 `.tmp/deploy/<运行编号>/`；区分“安装成功”“界面冒烟通过”“真实模型链路通过”，未验证项不能扩大宣称。
+
+- **旧 WebView 回归**：不得用主界面渲染成功代替真实回复渲染成功。移动端加密兼容须对齐桌面/Kotlin 向量，并验证真实加密配对、模型回复及两端文本落库；GFM/Markdown 必须保留链接、表格和代码能力。先跑 `MobileInstallSmokeTest`，再对已经绑定且有真实回复的隔离实例运行 `MobileMessageCompatibilityTest`，通过 instrumentation 的 `agentName` / `replyMarker` 参数指定具名测试数据。缺少真实数据必须失败，不用假消息替代。首次系统授权弹窗应正常授予并记录，保留被弹窗阻挡的原始失败证据后重跑完整用例。
+
 ## 开发常用命令
 
 ```bash

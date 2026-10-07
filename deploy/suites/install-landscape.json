@@ -1,0 +1,12 @@
+{
+  "description": "实际安装版启动与设置导航；Android 验证界面渲染、横屏视口和通讯录/个人页切换，兼容 WebView 60+。不替代真实模型聊天验收。",
+  "desktop": {
+    "visible": ["[data-testid=nav-rail]"],
+    "actions": [
+      { "type": "click", "selector": "[data-testid=nav-settings]" },
+      { "type": "click", "selector": "[data-testid=settings-nav-about]" },
+      { "type": "expect-visible", "selector": ".about-card" }
+    ]
+  },
+  "androidTestClass": "MobileInstallSmokeTest"
+}

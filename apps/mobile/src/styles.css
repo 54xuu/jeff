@@ -40,6 +40,11 @@
   -webkit-tap-highlight-color: transparent;
 }
 
+/* WebView 60 does not support env(); keep safe-area variables usable. */
+@supports not (padding: env(safe-area-inset-bottom)) {
+  :root { --safe-top: 0px; --safe-bottom: 0px; }
+}
+
 @media (prefers-color-scheme: dark) {
   :root {
     --bg: #101613;
@@ -86,7 +91,9 @@ button, input, textarea {
 }
 
 .shell {
+  height: 100vh;
   height: 100dvh;
+  max-height: 100vh;
   max-height: 100dvh;
   display: flex;
   flex-direction: column;
@@ -347,6 +354,9 @@ html[data-theme='dark'] .wechat-avatar.agent { color: #34d399; }
 }
 
 .wechat-item { display: block; }
+.wechat-item.selected { position: relative; }
+.wechat-item.selected::before { content: ''; position: absolute; inset: 9px auto 9px 0; width: 3px; border-radius: 0 3px 3px 0; background: var(--brand); }
+.wechat-item.selected .wechat-item-btn { background: var(--green-soft); }
 
 .wechat-item-btn {
   width: 100%;
@@ -591,7 +601,9 @@ html[data-theme='dark'] .wechat-tag-blue { color: #34d399; }
 .wechat-drawer-panel {
   background: var(--card);
   border-radius: 16px 16px 0 0;
+  max-height: 80vh;
   max-height: 80dvh;
+  height: 70vh;
   height: 70dvh;
   display: flex;
   flex-direction: column;
@@ -1252,6 +1264,7 @@ html[data-theme='dark'] .wechat-session-switch { color: #34d399; }
 
 .wechat-viewer-mask img {
   max-width: 100vw;
+  max-height: 100vh;
   max-height: 100dvh;
   object-fit: contain;
   user-select: none;
@@ -1625,6 +1638,7 @@ html[data-theme='dark'] .btn-paste-go { color: #34d399; }
 
 /* === 锁屏 === */
 .lock {
+  height: 100vh;
   height: 100dvh;
   display: flex;
   align-items: center;
@@ -2453,6 +2467,9 @@ button.banner {
 .mobile-chat-filters button.active { background: var(--green-soft); color: var(--brand-hover); border-color: color-mix(in srgb, var(--brand) 22%, transparent); font-weight: 600; }
 html[data-theme='dark'] .mobile-chat-filters button.active { color: #34d399; }
 .mobile-conversation-list { flex: 1; min-height: 0; overflow-y: auto; padding-bottom: 8px; }
+.mobile-list-pane { display: flex; min-height: 0; flex: 1; flex-direction: column; }
+.landscape-list-pane { display: none; }
+.landscape-nav-rail { display: none; }
 .mobile-contacts-list { flex: 1; min-height: 0; overflow-y: auto; background: var(--bg); padding-bottom: 8px; }
 .mobile-contact-section-title { margin: 0; padding: 16px 16px 7px; color: var(--text-3); font-size: 12px; font-weight: 600; }
 .mobile-contact-group { border-top: 0; }
@@ -2464,6 +2481,47 @@ html[data-theme='dark'] .mobile-chat-filters button.active { color: #34d399; }
 .wechat-chat { position: relative; }
 .wechat-tabs { height: calc(58px + var(--safe-bottom)); }
 .wechat-tabs button { min-height: 48px; }
+
+/* Landscape is a working two-pane chat workspace: keep conversations in reach while replying. */
+@media (orientation: landscape) and (min-width: 680px) {
+  .shell.has-landscape-chat,
+  .shell.has-landscape-list,
+  .shell.has-landscape-me { flex-direction: row; }
+  .shell.has-landscape-chat > .wechat-chat { order: 3; }
+  .shell.has-landscape-chat > .landscape-list-pane { order: 2; }
+  .shell.has-landscape-chat > .landscape-nav-rail { order: 1; }
+  .landscape-nav-rail { display: flex; flex: 0 0 62px; flex-direction: column; align-items: center; gap: 7px; padding: 10px 5px calc(10px + var(--safe-bottom)); border-right: 1px solid var(--border); background: var(--bg-sub); }
+  .landscape-nav-rail button { width: 50px; min-height: 54px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; border: 0; border-radius: 12px; background: transparent; color: var(--text-3); font: inherit; font-size: 10px; }
+  .landscape-nav-rail button.active { background: var(--green-soft); color: var(--brand-hover); font-weight: 650; }
+  html[data-theme='dark'] .landscape-nav-rail button.active { color: #34d399; }
+  .shell.has-landscape-list > .mobile-list-pane { flex: 1; }
+  .shell.has-landscape-list > .wechat-tabs,
+  .shell.has-landscape-me > .wechat-tabs { order: -1; width: 62px; height: auto; flex: 0 0 62px; flex-direction: column; gap: 7px; padding: 10px 5px calc(10px + var(--safe-bottom)); border-top: 0; border-right: 1px solid var(--border); }
+  .shell.has-landscape-list > .wechat-tabs button,
+  .shell.has-landscape-me > .wechat-tabs button { flex: 0 0 54px; min-height: 54px; border-radius: 12px; }
+  .shell.has-landscape-me > .wechat-me { width: min(100%, 560px); align-self: center; margin-inline: auto; }
+  .landscape-list-pane { display: flex; flex: 0 0 300px; flex: 0 0 clamp(270px, 34vw, 340px); min-width: 0; min-height: 0; flex-direction: column; border-right: 1px solid var(--border); background: var(--bg); }
+  .landscape-list-pane .mobile-list-bar { min-height: 48px; height: 48px; padding-inline: 8px; }
+  .landscape-list-pane .mobile-list-heading { padding: 9px 13px 5px; }
+  .landscape-list-pane .mobile-list-heading h1 { font-size: 19px; }
+  .landscape-list-pane .mobile-list-heading p { display: none; }
+  .landscape-list-pane .mobile-list-tools { padding: 6px 9px 8px; }
+  .landscape-list-pane .mobile-chat-filters { gap: 5px; margin-top: 6px; }
+  .landscape-list-pane .mobile-chat-filters button { min-height: 28px; padding-inline: 10px; }
+  .landscape-list-pane .wechat-item-btn { gap: 9px; padding: 8px 10px; }
+  .landscape-list-pane .wechat-avatar { border-radius: 10px; }
+  .landscape-list-pane .wechat-item-title { font-size: 14px; }
+  .landscape-list-pane .wechat-item-sub { font-size: 11px; }
+  .landscape-list-pane .wechat-time { font-size: 10px; }
+  .landscape-list-pane .wechat-section-header { height: 28px; padding-inline: 11px; }
+  .landscape-list-pane .mobile-empty-state { padding: 20px 14px; }
+  .shell.has-landscape-chat > .wechat-chat { flex: 1 1 0; width: 0; min-width: 0; }
+  .shell.has-landscape-chat .wechat-chat-bar { min-height: 48px; height: 48px; padding-inline: 10px; }
+  .shell.has-landscape-chat .wechat-chat-bar [data-testid='chat-back'] { display: none; }
+  .shell.has-landscape-chat .wechat-chat-title { justify-content: flex-start; font-size: 15px; }
+  .shell.has-landscape-chat .wechat-bubbles { padding: 9px 16px 6px; gap: 9px; }
+  .shell.has-landscape-chat .wechat-composer { padding: 6px 10px calc(6px + var(--safe-bottom)); }
+}
 
 .project-workspace-screen { gap: 0; }
 .project-workspace-overview { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 14px 14px calc(24px + var(--safe-bottom)); background: var(--bg); }

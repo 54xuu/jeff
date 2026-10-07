@@ -71,12 +71,12 @@ export function b64ToBytes(s: string): Uint8Array {
 
 /** 12 字节 nonce：前 4 字节为 0，后 8 字节是大端计数器 */
 export function nonceFor(n: number): Uint8Array {
-  if (!Number.isInteger(n) || n < 0) throw new Error(`nonce 计数器非法：${n}`)
+  if (!Number.isSafeInteger(n) || n < 0) throw new Error(`nonce 计数器非法：${n}`)
   const out = new Uint8Array(12)
-  let x = BigInt(n)
+  let x = n
   for (let i = 11; i >= 4; i--) {
-    out[i] = Number(x & 0xffn)
-    x >>= 8n
+    out[i] = x % 256
+    x = Math.floor(x / 256)
   }
   return out
 }

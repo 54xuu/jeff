@@ -233,6 +233,7 @@ export function WeChatItemRow(props: {
   isBuiltin?: boolean
   pinned?: boolean
   busy?: boolean
+  selected?: boolean
   /** 未读条数（>0 显示数字，<0 只显示红点） */
   unread?: number
   onClick: () => void
@@ -274,12 +275,13 @@ export function WeChatItemRow(props: {
 
   return (
     <li
-      className={`wechat-item ${props.pinned ? 'pinned' : ''}`}
+      className={`wechat-item ${props.pinned ? 'pinned' : ''} ${props.selected ? 'selected' : ''}`}
       data-testid={props.isGroup ? `chat-group-${props.title}` : `chat-agent-${props.title}`}
     >
       <button
         type="button"
         className="wechat-item-btn"
+        aria-current={props.selected ? 'true' : undefined}
         onClick={() => {
           if (!moved.current) props.onClick()
         }}
@@ -1664,6 +1666,7 @@ export function App() {
       isBuiltin={entry.isBuiltin}
       pinned={entry.pinned}
       busy={entry.busy}
+      selected={screen === 'chat' && target?.kind === entry.target.kind && target.id === entry.target.id}
       unread={entry.unread}
       onClick={() => void openChat(entry.target)}
       onLongPress={() => setActionMenu({
@@ -1814,9 +1817,9 @@ export function App() {
   }
 
   return (
-    <main className="shell">
-      {screen === 'list' && tab !== 'me' && (
-        <>
+    <main className={`shell${screen === 'chat' && target ? ' has-landscape-chat' : ''}${screen === 'list' && tab !== 'me' ? ' has-landscape-list' : ''}${screen === 'list' && tab === 'me' ? ' has-landscape-me' : ''}`}>
+      {(screen === 'list' || (screen === 'chat' && !!target)) && tab !== 'me' && (
+        <div className={screen === 'chat' ? 'landscape-list-pane' : 'mobile-list-pane'} data-testid="landscape-conversation-pane" role={screen === 'chat' ? 'complementary' : undefined} aria-label="会话列表">
           <header className="bar wechat-bar mobile-list-bar">
             <div className="bar-left">
               {tab === 'messages' ? (
@@ -1941,8 +1944,21 @@ export function App() {
               <button type="button" onClick={() => { setListMenuOpen(false); setTab('me') }}>电脑与设置</button>
             </div>
           ) : null}
-        </>
+        </div>
       )}
+      {screen === 'chat' && target && tab !== 'me' ? (
+        <nav className="landscape-nav-rail" aria-label="主导航" data-testid="landscape-nav-rail">
+          <button type="button" className={tab === 'messages' ? 'active' : ''} aria-label="聊天" aria-pressed={tab === 'messages'} onClick={() => setTab('messages')}>
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M20 11.5a7.5 7.5 0 0 1-7.5 7.5H5l-2 2v-6a7.5 7.5 0 1 1 17-3.5Z" /></svg><span>聊天</span>
+          </button>
+          <button type="button" className={tab === 'contacts' ? 'active' : ''} aria-label="通讯录" aria-pressed={tab === 'contacts'} onClick={() => setTab('contacts')}>
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="9" cy="8" r="3.5" /><path d="M2.5 20c.4-3.2 2.7-5 6.5-5s6.1 1.8 6.5 5M17 5.5a3.5 3.5 0 0 1 0 6.8M17.5 15c2.2.5 3.5 2 4 5" /></svg><span>通讯录</span>
+          </button>
+          <button type="button" aria-label="我" onClick={() => { setTab('me'); setScreen('list'); setTarget(null) }}>
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="7" r="4" /><path d="M4 21c0-4 3-6 8-6s8 2 8 6" /></svg><span>我</span>
+          </button>
+        </nav>
+      ) : null}
       {screen === 'chat' && target && (
         <section className="chat wechat-chat" data-testid="chat">
           <header className="bar wechat-bar wechat-chat-bar">
