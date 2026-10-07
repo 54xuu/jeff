@@ -193,7 +193,7 @@ export default function RemoteSettings(): React.JSX.Element {
                 <ol className="remote-pair-steps">
                   <li>打开手机上的 Jeff App</li>
                   <li>在「消息」或「我」页面点击<strong>「扫码绑定」</strong></li>
-                  <li>对准此二维码，核对两端出现的 6 位数字安全码即可绑定</li>
+                  <li>扫码或粘贴绑定码后，核对两端的 6 位数字安全码</li><li>在这台电脑的 Jeff 弹窗中点击<strong>「确认绑定」</strong>，手机才会完成绑定</li>
                 </ol>
                 <div className="remote-pair-manual">
                   <span className="settings-tip">若摄像头不便扫描，可点击下方复制绑定码后在手机上手动粘贴：</span>

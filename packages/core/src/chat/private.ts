@@ -33,7 +33,7 @@ export const autoTitleKey = (sessionId: string) => `sesauto:${sessionId}`
 
 export interface PrivateChatHooks {
   /** 每次确保会话前调用（用于惰性重启 sidecar 等） */
-  beforeEnsure?: () => Promise<void>
+  beforeEnsure?: (agentId?: string) => Promise<void>
   /** 新会话创建后记录元数据（session → jeff 语义映射） */
   onSessionCreated?: (sessionId: string, meta: { kind: 'private' | 'group' | 'review'; agentId: string; projectId?: string }) => void
   /** 每条消息的 system 注入（长期记忆块） */
@@ -104,11 +104,12 @@ export class PrivateChat {
   }
 
   private async doEnsureSession(agentId: string, agentName: string): Promise<string> {
-    await this.hooks?.beforeEnsure?.()
+    await this.hooks?.beforeEnsure?.(agentId)
     const kv = kvRepo(this.db)
     const existing = kv.get(SESSION_KEY(agentId))
     if (existing) {
       try {
+        if (this.getOc().sessionCompatible?.(existing, agentId) === false) throw new Error('执行引擎已切换')
         await this.getOc().getSession(existing)
         return existing
       } catch {
@@ -144,9 +145,9 @@ export class PrivateChat {
     }
   }
 
-  /** 开启全新会话（旧会话保留在 opencode 历史中） */
+  /** 开启全新会话；旧会话按原引擎保留 */
   async newSession(agentId: string, agentName: string): Promise<string> {
-    await this.hooks?.beforeEnsure?.()
+    await this.hooks?.beforeEnsure?.(agentId)
     kvRepo(this.db).delete(SESSION_KEY(agentId))
     return this.ensureSession(agentId, agentName)
   }
@@ -207,11 +208,12 @@ export class PrivateChat {
   }
 
   private async doEnsureDedicatedSession(agentId: string, kvKey: string, title?: string): Promise<string> {
-    await this.hooks?.beforeEnsure?.()
+    await this.hooks?.beforeEnsure?.(agentId)
     const kv = kvRepo(this.db)
     const existing = kv.get(kvKey)
     if (existing) {
       try {
+        if (this.getOc().sessionCompatible?.(existing, agentId) === false) throw new Error('执行引擎已切换')
         await this.getOc().getSession(existing)
         return existing
       } catch {
@@ -294,11 +296,17 @@ export class PrivateChat {
 
   async mapSessionMessages(sessionId: string): Promise<ChatMsg[]> {
     const msgs = await this.getOc().getMessages(sessionId)
-    // 末尾 assistant 消息 = 本轮最终答复；只有它之前的「工具步」正文才算推导/前言。
-    let lastAssistantIdx = -1
-    msgs.forEach((m, i) => {
-      if ((m.info as { role?: string })?.role === 'assistant') lastAssistantIdx = i
-    })
+    // Only an assistant followed by another assistant in the same user turn is intermediate.
+    // A later user request must never reclassify an earlier complete reply as reasoning.
+    const intermediateAssistants = new Set<number>()
+    let finalAssistantSeen = false
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      if (msgs[i].info.role === 'user') finalAssistantSeen = false
+      else if (msgs[i].info.role === 'assistant') {
+        if (finalAssistantSeen) intermediateAssistants.add(i)
+        finalAssistantSeen = true
+      }
+    }
     const out: ChatMsg[] = []
     for (let mi = 0; mi < msgs.length; mi++) {
       const m = msgs[mi]
@@ -311,7 +319,7 @@ export class PrivateChat {
       const images: NonNullable<ChatMsg['images']> = []
       // 中间步（带工具调用、且后面还有最终答复）：它的正文是「工具调用前的推导/前言」，
       // 流式期间由思考区展示，历史回放同样收进思考区，避免同一内容在流式/历史两处位置不一致。
-      const toolStep = mi < lastAssistantIdx && parts.some((p) => p.type === 'tool')
+      const toolStep = intermediateAssistants.has(mi) && parts.some((p) => p.type === 'tool')
       for (const p of parts) {
         if (p.type === 'text' && !p.synthetic && typeof p.text === 'string' && p.text.trim()) {
           if (toolStep) reasoning.push(p.text)

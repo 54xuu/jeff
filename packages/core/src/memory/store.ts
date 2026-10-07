@@ -56,6 +56,11 @@ export class MemoryStore {
     return path.join(this.paths.memoryDir, 'projects', k.slice(8), 'MEMORY.md')
   }
 
+  /** 公开内容：私聊为全局规则，项目群为项目规则。 */
+  rulesFile(scope: MemoryScope): string {
+    return scope.kind === 'project' ? path.join(this.paths.agentsMdDir, `${scope.projectId}.md`) : this.paths.agentsMdUser
+  }
+
   label(scope: MemoryScope): string {
     if (scope.kind === 'user') return '全局用户画像'
     if (scope.kind === 'agent') return `agent ${scope.agentId} 记忆`
@@ -163,7 +168,7 @@ export class MemoryStore {
     fs.mkdirSync(path.dirname(file), { recursive: true })
     const content = entries.length === 0 ? '' : entries.join(ENTRY_DELIMITER) + '\n'
     const tmp = `${file}.tmp-${process.pid}`
-    fs.writeFileSync(tmp, content, 'utf8')
+    fs.writeFileSync(tmp, content, { encoding: 'utf8', mode: 0o600 })
     fs.renameSync(tmp, file)
   }
 

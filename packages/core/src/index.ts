@@ -5,7 +5,7 @@ import { BUILTIN_SKILL_DIR, buildPaths, ensureDirs, jeffRoot, userSkillsDir, typ
 import { openDb, type DB } from './db/db.js'
 import { agentRepo, kvRepo, chatMessageRepo, projectRepo, projectAgentRepo, cronTaskRepo, cronRunRepo, type AgentRow, type CronTaskRow } from './db/repos.js'
 import { SidecarManager } from './sidecar/manager.js'
-import { OcClient } from './oc/client.js'
+import { EngineClient } from './engines/client.js'
 import { writeSidecarConfig, migrateProviders, firstEnabledModel, configuredModelOptions, inferDefaultContextLimit, type ProviderSetting } from './oc/configWriter.js'
 import { AgentRegistry, XIAOJIE_INSTRUCTIONS, agentSlug, agentDeniedTools } from './agents/registry.js'
 import { XIAOJIE_ID } from './ipc/contract.js'
@@ -13,6 +13,7 @@ import { ToolBridge, renderBridgePlugin } from './tools/bridge.js'
 import { registerAdminTools } from './tools/adminTools.js'
 import { registerSelfTools } from './tools/selfTools.js'
 import { registerProjectTools, taskCardMessage } from './tools/projectTools.js'
+import { containsCredentialValue } from './memory/routing.js'
 import { registerMemoryTools, DELEGATE_TOOL, sesMetaKey, type SessionScopeCtx } from './tools/memoryTools.js'
 import { registerCronTools, CRON_TOOL_NAMES } from './tools/cronTools.js'
 import { registerPluginTools, PLUGIN_TOOL_NAMES } from './tools/pluginTools.js'
@@ -166,7 +167,7 @@ export class JeffCore extends EventEmitter {
   paths: JeffPaths
   db!: DB
   sidecar!: SidecarManager
-  oc!: OcClient
+  oc!: EngineClient
   registry!: AgentRegistry
   bridge = new ToolBridge()
   privateChat!: PrivateChat
@@ -276,6 +277,7 @@ export class JeffCore extends EventEmitter {
       indexer: this.indexer,
       resolveSession: (sessionId) => this.resolveSession(sessionId),
       onChanged: () => this.bus.emit('data-changed', 'memory'),
+      rulesContent: (scope) => this.agentsMdGet(scope.kind === 'project' ? 'project' : 'user', scope.kind === 'project' ? scope.projectId : 'user').content,
     })
     registerCronTools(this.bridge, {
       db: this.db,
@@ -470,7 +472,9 @@ export class JeffCore extends EventEmitter {
 
   private chatHooks() {
     return {
-      beforeEnsure: () => this.ensureSidecarReady(),
+      beforeEnsure: async (agentId?: string) => {
+        if (!agentId || (agentRepo(this.db).get(agentId)?.execution_engine || 'opencode') === 'opencode') await this.ensureSidecarReady()
+      },
       onPipelineIdle: () => this.flushPendingRegistryRestart(),
       onSessionCreated: (sessionId: string, meta: { kind: 'private' | 'group' | 'review'; agentId: string; projectId?: string }) => {
         this.kv().setJSON(sesMetaKey(sessionId), meta)
@@ -503,7 +507,7 @@ export class JeffCore extends EventEmitter {
     if (userBlock) blocks.push(userBlock)
     if (blocks.length === 0) return undefined
     return [
-      '【长期记忆与规则（Jeff）】以下是关于用户/项目的持久记忆与 AGENTS.md 规则，供你参考；如与当前对话冲突，以对话为准，记忆可用 jeff_memory 工具更新。',
+      '【长期记忆与规则（Jeff）】以下是关于用户/项目的持久记忆与 AGENTS.md 规则，供你参考；如与当前对话冲突，以对话为准。用 jeff_memory 更新：保密内容存私有记忆；公开内容按全局或项目范围写 AGENTS.md。',
       ...blocks,
     ].join('\n')
   }
@@ -607,6 +611,8 @@ export class JeffCore extends EventEmitter {
 
   /** 切换当前会话（私聊） */
   activateSession(scope: 'private' | 'group', agentId: string, sessionId: string, projectId?: string): void {
+    this.oc.assertSessionOwner(sessionId, agentId)
+    this.kv().set(`engine:activated:${sessionId}`, agentId)
     const kv = this.kv()
     if (scope === 'group' && projectId) {
       // 群侧请用 activateGroupThread；此处兼容：若 sessionId 是 threadId
@@ -670,7 +676,8 @@ export class JeffCore extends EventEmitter {
     const sessionId = projectId
       ? this.groupChat.getSessionId(projectId, agentId)
       : this.privateChat.getSessionId(agentId)
-    const model = this.resolveModel(agentId, input.model)
+    const engine = sessionId ? this.oc.sessionEngine(sessionId) : agentRepo(this.db).get(agentId)?.execution_engine || 'opencode'
+    const model = engine === 'opencode' ? this.resolveModel(agentId, input.model) : null
     const { contextLimit, outputLimit } = this.modelLimits(model)
     const threshold = compactionThreshold(contextLimit ?? undefined, outputLimit ?? undefined)
     const system = this.buildMemorySystem(agentId, projectId) || null
@@ -678,6 +685,7 @@ export class JeffCore extends EventEmitter {
     if (!sessionId) {
       return {
         sessionId: null,
+        engine, statsAvailable: engine === 'opencode', compressionAvailable: engine === 'opencode',
         agentId,
         ...(projectId ? { projectId } : {}),
         usedTokens: 0,
@@ -698,7 +706,8 @@ export class JeffCore extends EventEmitter {
       sessionId,
       agentId,
       ...(projectId ? { projectId } : {}),
-      usedTokens: parts.usedTokens,
+      engine, statsAvailable: engine === 'opencode', compressionAvailable: engine === 'opencode',
+      usedTokens: engine === 'opencode' ? parts.usedTokens : 0,
       contextLimit,
       outputLimit,
       threshold,
@@ -800,6 +809,7 @@ export class JeffCore extends EventEmitter {
     const list = this.agentsMdList()
     const hit = list.find((x) => x.kind === kind && x.id === id)
     if (!hit) throw new Error('AGENTS.md 条目不存在')
+    if (containsCredentialValue(content)) throw new Error('检测到凭据内容，请存入私有记忆，不要写入公开 AGENTS.md')
     fs.mkdirSync(path.dirname(hit.file), { recursive: true })
     fs.writeFileSync(hit.file, content, 'utf8')
     this.bus.emit('data-changed', 'agentsmd')
@@ -1286,7 +1296,7 @@ export class JeffCore extends EventEmitter {
           timeoutMs: 120000,
           text: [
             '【后台记忆自省】回顾以下最近对话（你只能用 jeff_memory 工具，不要回复用户任何文字）。',
-            '把值得长期记住的信息写进你的记忆：用户偏好、环境事实、被纠正的错误、长期惯例。',
+            '用 jeff_memory 自动分流长期信息：保密内容用 privacy=private 存本机记忆，公开内容写 AGENTS.md；按事实作用范围选择全局 self 或 project:<projectId>，不要把项目约定写成全局。',
             '不要记录：琐碎寒暄、可随时重查的信息、本次会话临时内容。已有条目不必重复添加。若没有值得记的，直接结束（不用调用工具）。',
             '',
             '--- 对话记录 ---',
@@ -1500,24 +1510,25 @@ export class JeffCore extends EventEmitter {
     const startedAt = prev?.startedAt ?? part.state?.time?.start ?? now
     this.toolTrace.set(part.id, { tool: part.tool || prev?.tool || '?', callId: part.callID, startedAt, lastStatus: status })
     if (this.toolTrace.size > 400) this.toolTrace.delete(this.toolTrace.keys().next().value as string)
+    const isMemoryTool = !!part.tool?.includes('jeff_memory')
     const base = {
       sessionId,
       messageId: part.messageID,
       callId: part.callID,
       tool: part.tool,
       status,
-      title: part.state?.title,
+      title: isMemoryTool ? '[记忆内容已隐藏]' : part.state?.title,
       elapsedMs: now - startedAt,
     }
     if (status === 'completed') {
-      this.debugLog.log('tool-done', { ...base, args: truncateJson(part.state?.input), output: truncateText(part.state?.output) })
+      this.debugLog.log('tool-done', { ...base, args: isMemoryTool ? '[记忆内容已隐藏]' : truncateJson(part.state?.input), output: isMemoryTool ? '[记忆内容已隐藏]' : truncateText(part.state?.output) })
     } else if (status === 'error') {
-      this.debugLog.log('tool-error', { ...base, args: truncateJson(part.state?.input), error: truncateText(part.state?.error) })
+      this.debugLog.log('tool-error', { ...base, args: isMemoryTool ? '[记忆内容已隐藏]' : truncateJson(part.state?.input), error: isMemoryTool ? '[记忆内容已隐藏]' : truncateText(part.state?.error) })
     } else if (status === 'pending') {
       // pending 长期不流转 = 疑似等权限/等交互（历史卡死根因）
-      this.debugLog.log('tool-pending', { ...base, args: truncateJson(part.state?.input) })
+      this.debugLog.log('tool-pending', { ...base, args: isMemoryTool ? '[记忆内容已隐藏]' : truncateJson(part.state?.input) })
     } else {
-      this.debugLog.log('tool-start', { ...base, args: truncateJson(part.state?.input) })
+      this.debugLog.log('tool-start', { ...base, args: isMemoryTool ? '[记忆内容已隐藏]' : truncateJson(part.state?.input) })
     }
   }
 
@@ -1557,6 +1568,7 @@ export class JeffCore extends EventEmitter {
     if (!this.started) return
     this.cron?.stop()
     this.oc?.stopEventStream()
+    await this.oc?.disposeEngines()
     await this.sidecar?.stop().catch(() => {})
     await this.bridge?.stop().catch(() => {})
     this.db?.close()
@@ -1663,9 +1675,13 @@ export class JeffCore extends EventEmitter {
     // 先失败旧客户端上的在途 send，再换新客户端。否则停止打到新端口，旧 POST 要空转到 90 分钟超时。
     this.oc?.cancelInflight('引擎刚刚重启，进行中的对话已中断，请再发一次')
     this.oc?.stopEventStream()
-    this.oc = new OcClient(this.sidecar.port, this.debugLog.fn())
+    if (this.oc) {
+      this.oc.port = this.sidecar.port
+    } else {
+      this.oc = new EngineClient(this.sidecar.port, { db: this.db, root: this.paths.root, workspace: this.paths.workspaceDir, bridge: this.bridge, mcp: () => this.listMcp() }, this.debugLog.fn())
+      this.wireOcClient()
+    }
     this.oc.startEventStream()
-    this.wireOcClient()
   }
 
   /** 内置小杰：不存在则创建；存在则仅在指令漂移时对齐（避免每次启动顶 updated_at） */
@@ -1731,7 +1747,7 @@ Jeff 把「开发 + 项目管理」组织成三个概念（微信心智模型）
 - 创建途径：群里对话让 leader/小杰建（自动出现任务卡片）、或群资料看板手动建。
 
 ## 其他能力
-- **记忆**：每个智能体有自己的长期记忆；项目群有共享记忆；全局用户画像由小杰维护（用 jeff_memory 工具读写，用户说「记住/忘记/整理记忆」即可）。设置页可人工查看、删除单条；每个范围有字符预算防止 token 浪费。
+- **记忆**：说「记住/忘记/整理记忆」后，jeff_memory 自动把保密内容存本机私有记忆，把公开信息写全局或项目 AGENTS.md。私有条目不参与同步；旧记忆保留。设置 → 记忆可搜索智能体和项目群、筛选范围、人工编辑，手机「我 → 记忆与公开规则」也可管理。
 - **AGENTS.md**：用户级（数据目录 AGENTS.md）与项目级规则文件，每轮对话自动注入；项目级按项目保存在数据目录 agents-md/ 下（设置 → 记忆页可编辑，随 WebDAV 同步）。旧版放在工作空间目录下的 AGENTS.md 仅在项目规则尚未创建时作为迁移来源，保存后即以数据目录为准。
 - **会话搜索**：所有历史对话全文可搜（jeff_session_search）。
 - **模型提供商**：设置页配置自定义提供商（Chat / Responses / Anthropic 三种 API 格式），每个模型可配上下文/最大输出/图片输入/思考档位（none/low/high/max）；模型与思考程度在智能体资料（通讯录 / 私聊「资料」）里配置，聊天输入框不再切换。新会话默认用第一个启用提供商的第一个模型。

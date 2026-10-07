@@ -1,6 +1,7 @@
 import http from 'node:http'
 import { EventEmitter } from 'node:events'
 import { randomToken } from '../util/id.js'
+import { allToolDefs } from './definitions.js'
 
 /**
  * 工具桥：本地 HTTP API，opencode 插件工具通过它调用 Jeff 核心能力。
@@ -11,6 +12,14 @@ export class ToolBridge extends EventEmitter {
   private handlers = new Map<string, (args: unknown) => Promise<unknown>>()
   token = randomToken()
   port = 0
+  private sessions = new Map<string, { sessionID: string; agent: string; denied: Set<string> }>()
+
+  /** A random, run-scoped capability binds identity outside model-controlled arguments. */
+  openMcpSession(sessionID: string, agent: string, denied: Set<string>): { url: string; close: () => void } {
+    const capability = randomToken()
+    this.sessions.set(capability, { sessionID, agent, denied })
+    return { url: `${this.url()}/mcp/${capability}`, close: () => { this.sessions.delete(capability) } }
+  }
 
   register<TIn, TOut>(name: string, handler: (args: TIn) => Promise<TOut>): void {
     this.handlers.set(name, handler as (args: unknown) => Promise<unknown>)
@@ -27,6 +36,46 @@ export class ToolBridge extends EventEmitter {
         res.end(JSON.stringify(body))
       }
       const url = new URL(req.url || '/', 'http://127.0.0.1')
+      if (url.pathname.startsWith('/mcp/')) {
+        const scope = this.sessions.get(url.pathname.slice(5))
+        if (!scope) { done(403, { error: '会话工具访问已失效' }); return }
+        if (req.method !== 'POST') { done(405, { error: '仅支持 POST' }); return }
+        let body = ''
+        req.on('data', (chunk) => {
+          body += chunk
+          if (body.length > 2 * 1024 * 1024) req.destroy()
+        })
+        req.on('end', async () => {
+          let rpc: { id?: unknown; method?: string; params?: { name?: string; arguments?: Record<string, unknown> } }
+          try { rpc = JSON.parse(body) } catch { done(400, { error: '无效 MCP 请求' }); return }
+          if (rpc.id === undefined) { res.writeHead(202); res.end(); return }
+          const reply = (result: unknown) => done(200, { jsonrpc: '2.0', id: rpc.id, result })
+          if (rpc.method === 'initialize') {
+            reply({ protocolVersion: '2024-11-05', capabilities: { tools: {} }, serverInfo: { name: 'jeff', version: '1.0.0' } })
+          } else if (rpc.method === 'ping') reply({})
+          else if (rpc.method === 'tools/list') {
+            reply({ tools: allToolDefs().filter((def) => !scope.denied.has(def.name)).map((def) => ({
+              name: def.name, description: def.description,
+              inputSchema: { type: 'object', properties: def.args, additionalProperties: false },
+            })) })
+          } else if (rpc.method === 'tools/call') {
+            const name = rpc.params?.name || ''
+            const handler = this.handlers.get(name)
+            if (!handler || scope.denied.has(name) || !allToolDefs().some((def) => def.name === name)) {
+              reply({ isError: true, content: [{ type: 'text', text: '该会话无权调用此工具' }] }); return
+            }
+            const args = { ...rpc.params?.arguments }
+            if ('__ctx' in args) {
+              reply({ isError: true, content: [{ type: 'text', text: '禁止提供调用者身份' }] }); return
+            }
+            try {
+              const data = await handler({ ...args, __ctx: { sessionID: scope.sessionID, agent: scope.agent } })
+              reply({ content: [{ type: 'text', text: typeof data === 'string' ? data : JSON.stringify(data ?? 'ok') }] })
+            } catch (err) { reply({ isError: true, content: [{ type: 'text', text: String((err as Error).message) }] }) }
+          } else done(200, { jsonrpc: '2.0', id: rpc.id, error: { code: -32601, message: '不支持的 MCP 方法' } })
+        })
+        return
+      }
       if (req.method === 'GET' && url.pathname === '/health') {
         done(200, { ok: true })
         return

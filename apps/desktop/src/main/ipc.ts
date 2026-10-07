@@ -21,7 +21,7 @@ import type {
   SiYuanSearchResult,
 } from '@jeff/core'
 import {
-  IPC, XIAOJIE_ID, agentRepo, projectRepo, projectAgentRepo, taskRepo, taskCardMessage, snapshotInstructions, APP_VERSION,
+  IPC, XIAOJIE_ID, engineId, agentRepo, projectRepo, projectAgentRepo, taskRepo, taskCardMessage, snapshotInstructions, APP_VERSION,
   PrivateChatStoppedError, resolveSendText, resolveScreenshotScale, parseProjectWorkspaceState,
   serializeProjectWorkspaceState, validateProjectWorkspaceJson, createCampaignProposal, updateCampaignProposal, reviewCampaignDirection,
   attachCampaignProductionTask, submitCampaignDelivery, reviewCampaignDelivery, registerProjectAsset, reviewProjectAsset, resolveCampaignMaterial,
@@ -128,6 +128,16 @@ function scanProjectAssetCandidates(core: JeffCore, workspaceDir: string, direct
  */
 export function registerIpc(core: JeffCore): Record<string, Handler> {
   const handlers: Record<string, Handler> = {
+    [IPC.enginesList]: async () => {
+      const engines = await core.oc.engines()
+      const oc = engines.find((engine) => engine.id === 'opencode')!
+      oc.path = core.sidecar.resolveBinary(); oc.available = core.sidecar.status === 'running'
+      oc.version = (await core.sidecar.version().catch(() => undefined)) || undefined
+      return engines
+    },
+    [IPC.enginesProbe]: async (p) => core.oc.probe(engineId((p as { engine: string }).engine)),
+    [IPC.enginesModels]: async (p) => core.oc.models(engineId((p as { engine: string }).engine)),
+    [IPC.enginesPathSave]: async (p) => { const d = p as { engine: string; path: string }; return core.oc.savePath(engineId(d.engine), d.path) },
     [IPC.appInfo]: async (): Promise<AppInfo> => ({
       version: app.getVersion(),
       jeffVersion: APP_VERSION,
@@ -149,8 +159,12 @@ export function registerIpc(core: JeffCore): Record<string, Handler> {
       return toAgentInfo(row)
     },
     [IPC.agentsUpsert]: async (p): Promise<AgentInfo> => {
-      const d = p as { id?: string; name: string; avatar?: string; description?: string; instructions?: string; model_provider?: string; model_id?: string; thinking?: string; category?: string }
+      const d = p as { id?: string; name: string; avatar?: string; description?: string; instructions?: string; model_provider?: string; model_id?: string; thinking?: string; category?: string; execution_engine?: import('@jeff/core').EngineId; engine_model?: string }
+      const previous = d.id ? core.agents.get(d.id) : undefined
+      if (previous && d.execution_engine && d.execution_engine !== (previous.execution_engine || 'opencode') && core.oc.hasInflight()) throw new Error('请等待当前任务完成后再切换执行引擎')
       const patch = {
+        execution_engine: engineId(d.execution_engine ?? previous?.execution_engine ?? 'opencode'),
+        engine_model: d.engine_model ?? previous?.engine_model ?? '',
         name: d.name,
         avatar: d.avatar,
         description: d.description,
@@ -164,6 +178,8 @@ export function registerIpc(core: JeffCore): Record<string, Handler> {
       if (d.id === XIAOJIE_ID) {
         // 小杰可配模型/思考/指令/分类外的一切（名称头像锁定），指令保持内置
         row = core.agents.update(XIAOJIE_ID, {
+          execution_engine: patch.execution_engine,
+          engine_model: patch.engine_model,
           model_provider: patch.model_provider,
           model_id: patch.model_id,
           thinking: patch.thinking,
@@ -181,6 +197,14 @@ export function registerIpc(core: JeffCore): Record<string, Handler> {
         row = core.agents.create(patch)
       }
       if (!row) throw new Error('保存失败')
+      if (previous && previous.execution_engine !== row.execution_engine) {
+        core.kv().delete(`session:private:${row.id}`)
+        const keys = core.db.prepare("SELECT key, value FROM kv WHERE key LIKE 'session:%'").all() as Array<{ key: string; value: string }>
+        for (const entry of keys) {
+          const meta = core.resolveSession(entry.value)
+          if (meta?.agentId === row.id) core.kv().delete(entry.key)
+        }
+      }
       core.syncRegistry()
       core.markRegistryDirty()
       core.bus.emit('data-changed', 'agents')
@@ -541,7 +565,6 @@ export function registerIpc(core: JeffCore): Record<string, Handler> {
     [IPC.memoryScopes]: async (): Promise<MemoryScopeInfo[]> => {
       const out: MemoryScopeInfo[] = [{ kind: 'user', id: 'user', label: '全局用户画像', file: core.memory.file({ kind: 'user' }) }]
       for (const a of agentRepo(core.db).list()) {
-        if (a.builtin) continue
         out.push({ kind: 'agent', id: a.id, label: `${a.avatar} ${a.name}`, file: core.memory.file({ kind: 'agent', agentId: a.id }) })
       }
       for (const pr of projectRepo(core.db).list()) {
@@ -1138,6 +1161,8 @@ export function toAgentInfo(row: import('@jeff/core').AgentRow): AgentInfo {
     avatar: row.avatar,
     description: row.description,
     instructions: row.instructions,
+    execution_engine: row.execution_engine || 'opencode',
+    engine_model: row.engine_model || '',
     model_provider: row.model_provider,
     model_id: row.model_id,
     thinking: row.thinking || '',

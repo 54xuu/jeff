@@ -10,8 +10,8 @@ async function main() {
   const browser = await chromium.connectOverCDP(endpoint)
   try {
     const context = browser.contexts()[0]
-    const page = context.pages()[0]
-    if (!page) throw new Error('Installed Jeff opened no window')
+    const page = context.pages()[0] || await context.waitForEvent('page', { timeout: 60_000 })
+    await page.waitForURL(/app\.asar/, { timeout: 60_000 })
     await page.waitForSelector('[data-testid=nav-rail]', { timeout: 60_000 })
     for (const selector of suite.desktop.visible || []) {
       await page.locator(selector).waitFor({ state: 'visible', timeout: 30_000 })

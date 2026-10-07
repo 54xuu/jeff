@@ -20,6 +20,8 @@ export function allToolDefs(): ToolDef[] {
         avatar: { type: 'string', description: '头像 emoji，默认 🤖' },
         description: { type: 'string', description: '一句话简介（仅展示）' },
         instructions: { type: 'string', description: '身份指令/系统提示（它擅长什么、怎么干活的规矩）' },
+        execution_engine: { type: 'string', description: '执行引擎；默认 opencode', enum: ['opencode', 'codex', 'cursor', 'claude'] },
+        engine_model: { type: 'string', description: '外部 CLI 模型名；省略沿用 CLI 默认' },
         model_provider: { type: 'string', description: '默认模型 provider id，可留空' },
         model_id: { type: 'string', description: '默认模型 id，可留空' },
         thinking: { type: 'string', description: "默认思考档位：空串=跟随模型；none/low/high/max", enum: ['', 'none', 'low', 'high', 'max'] },
@@ -35,6 +37,8 @@ export function allToolDefs(): ToolDef[] {
         avatar: { type: 'string', description: '新头像 emoji（可选）' },
         description: { type: 'string', description: '新简介（可选）' },
         instructions: { type: 'string', description: '新指令（可选）' },
+        execution_engine: { type: 'string', description: '执行引擎；默认 opencode', enum: ['opencode', 'codex', 'cursor', 'claude'] },
+        engine_model: { type: 'string', description: '外部 CLI 模型名；省略沿用 CLI 默认' },
         model_provider: { type: 'string', description: '模型 provider（可选）' },
         model_id: { type: 'string', description: '模型 id（可选）' },
         thinking: { type: 'string', description: "思考档位：空串=跟随模型；none/low/high/max", enum: ['', 'none', 'low', 'high', 'max'] },
@@ -172,16 +176,18 @@ export function allToolDefs(): ToolDef[] {
     {
       name: 'jeff_memory',
       description:
-        '读写长期记忆（会在每次对话时注入 system prompt，请保持精炼）。' +
-        'action: list 查看 / add 新增（与现有条目重复则不重复添加）/ replace 用 new_text 替换 old_text 唯一匹配的条目 / remove 删除 old_text 唯一匹配的条目 / batch 原子执行一组操作（用于腾空间时合并整理）。' +
-        'scope（可选）：省略=写自己的 agent 记忆；user=全局用户画像；project:<projectId>=项目群记忆。' +
-        '适合记：用户偏好、环境事实、被纠正的错误、长期惯例；不要记：可随时重查的信息、当前会话临时内容。',
+        '自动保存长期信息：密钥、密码及保密内容存入仅本机的私有记忆；公开偏好、事实和规则写入 AGENTS.md。' +
+        '先按内容判断全局或项目范围：跨项目通用用 self（私聊公开规则全局生效）；仅当前项目用 project:<projectId>，群聊默认当前项目。不要把项目规则写成全局规则。' +
+        'privacy=private 用于个人隐私或其他保密信息，public 用于公开信息，auto 默认自动识别；凭据检测优先于 public。' +
+        'action: list 查看记忆与自动规则 / add 新增 / replace 替换 old_text 唯一匹配 / remove 删除 / batch 原子整理。' +
+        '不要保存临时内容。返回 destinations 表示实际保存位置，不要在回复中复述密钥。',
       args: {
         action: { type: 'string', description: '操作', enum: ['list', 'add', 'replace', 'remove', 'batch'] },
         scope: {
           type: 'string',
           description: "记忆域：省略=self；user=用户画像；project:<projectId>=项目记忆（内置管家还可写 user）",
         },
+        privacy: { type: 'string', description: '保密性：默认 auto；个人隐私、凭据或用户要求保密时用 private', enum: ['auto', 'private', 'public'] },
         text: { type: 'string', description: 'add 的新条目内容' },
         old_text: { type: 'string', description: 'replace/remove 的唯一子串匹配' },
         new_text: { type: 'string', description: 'replace 的替换内容' },

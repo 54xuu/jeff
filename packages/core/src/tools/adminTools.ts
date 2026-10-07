@@ -44,7 +44,7 @@ export function registerAdminTools(reg: ToolBridge, deps: AdminDeps): void {
   const agents = agentRepo(deps.db)
   const [T_CREATE, T_UPDATE, T_DELETE, T_LIST, T_GET] = ADMIN_TOOL_NAMES
 
-  reg.register(T_CREATE, async (args: { name?: string; description?: string; instructions?: string; avatar?: string; model_provider?: string; model_id?: string; thinking?: string; category?: string }) => {
+  reg.register(T_CREATE, async (args: { name?: string; description?: string; instructions?: string; avatar?: string; model_provider?: string; model_id?: string; thinking?: string; category?: string; execution_engine?: import('../engines/contract.js').EngineId; engine_model?: string }) => {
     const name = (args.name || '').trim()
     if (!name) throw new Error('name 不能为空')
     const thinking = normalizeThinking(args.thinking)
@@ -53,6 +53,8 @@ export function registerAdminTools(reg: ToolBridge, deps: AdminDeps): void {
       avatar: args.avatar || '🤖',
       description: args.description || '',
       instructions: args.instructions || '',
+      execution_engine: args.execution_engine,
+      engine_model: args.engine_model,
       model_provider: args.model_provider || '',
       model_id: args.model_id || '',
       thinking,
@@ -62,7 +64,7 @@ export function registerAdminTools(reg: ToolBridge, deps: AdminDeps): void {
     return { id: row.id, name: row.name, category: row.category }
   })
 
-  reg.register(T_UPDATE, async (args: { id?: string; name?: string; description?: string; instructions?: string; avatar?: string; model_provider?: string; model_id?: string; thinking?: string; category?: string; archived?: boolean }) => {
+  reg.register(T_UPDATE, async (args: { id?: string; name?: string; description?: string; instructions?: string; avatar?: string; model_provider?: string; model_id?: string; thinking?: string; category?: string; execution_engine?: import('../engines/contract.js').EngineId; engine_model?: string; archived?: boolean }) => {
     if (!args.id) throw new Error('id 不能为空')
     if (args.id === XIAOJIE_ID) throw new Error('小杰是内置管家，不可编辑')
     const patch = onlyProvided({
@@ -70,6 +72,8 @@ export function registerAdminTools(reg: ToolBridge, deps: AdminDeps): void {
       description: nonBlank(args.description),
       instructions: nonBlank(args.instructions),
       avatar: nonBlank(args.avatar),
+      execution_engine: nonBlank(args.execution_engine),
+      engine_model: nonBlank(args.engine_model),
       model_provider: nonBlank(args.model_provider),
       model_id: nonBlank(args.model_id),
       category: nonBlank(args.category),

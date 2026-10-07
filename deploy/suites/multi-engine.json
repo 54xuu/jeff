@@ -1,0 +1,43 @@
+{
+  "description": "多执行引擎与记忆界面安装验收：四种引擎状态、记忆范围搜索及公开规则搜索；模型续接、实际记忆分流和加密手机链路另以真实模型与 instrumentation 核对。",
+  "desktop": {
+    "visible": [
+      "[data-testid=nav-rail]"
+    ],
+    "actions": [
+      {
+        "type": "click",
+        "selector": "[data-testid=nav-settings]"
+      },
+      {
+        "type": "click",
+        "selector": "[data-testid=settings-nav-engine]"
+      },
+      {
+        "type": "expect-visible",
+        "selector": "[data-testid=engine-codex]"
+      },
+      {
+        "type": "expect-visible",
+        "selector": "[data-testid=engine-cursor]"
+      },
+      {
+        "type": "expect-visible",
+        "selector": "[data-testid=engine-claude]"
+      },
+      {
+        "type": "click",
+        "selector": "[data-testid=settings-nav-memory]"
+      },
+      {
+        "type": "expect-visible",
+        "selector": "input[aria-label=\"搜索记忆范围\"]"
+      },
+      {
+        "type": "expect-visible",
+        "selector": "input[aria-label=\"搜索规则文件\"]"
+      }
+    ]
+  },
+  "androidTestClass": "MobileInstallSmokeTest"
+}

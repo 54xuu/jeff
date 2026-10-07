@@ -9,6 +9,7 @@ export interface RemoteRule {
 }
 
 const DENY: Record<string, string> = {
+  [IPC.enginesPathSave]: 'CLI 可执行文件路径只允许在电脑本机设置',
   [IPC.notifyDesktop]: '桌面通知只在电脑本机弹',
   [IPC.debugLogOpenDir]: '打开本机日志目录，手机没有这个文件夹',
   [IPC.browserResult]: '内置浏览器渲染层回传，不是用户操作',

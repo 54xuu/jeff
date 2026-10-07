@@ -106,6 +106,8 @@ test('假手机经本地中转站绑定，并让桌面切到新项目群', async
     phone.link.setPeerKey(qr.desktopId, qr.desktopX25519Pub)
     phone.link.pairRequest(qr.token, '验收手机')
     await expect(page.getByTestId('remote-pair-dialog')).toBeVisible()
+    await expect(page.getByTestId('remote-pair-dialog')).toContainText('手机正在等待你确认')
+    await expect.poll(() => fs.readFileSync(path.join(home, 'logs', fs.readdirSync(path.join(home, 'logs')).filter(name => name.startsWith('debug-')).sort().at(-1)!), 'utf8')).toContain('remote-pair-attention')
     const shown = (await page.getByTestId('remote-safety').innerText()).trim()
     expect(shown).toBe(safetyCode(b64ToBytes(qr.desktopX25519Pub), b64ToBytes(phone.link.x25519Pub)))
     await page.getByTestId('remote-pair-accept').click()
@@ -295,8 +297,11 @@ test('手机页面在 390×844 里完成绑定并列出会话', async () => {
     desktopX25519Pub: desk.x25519Pub,
     token: tokenEv.token,
   })
+  let allowConfirm!: () => void
+  const confirmationAllowed = new Promise<void>((resolve) => { allowConfirm = resolve })
   const confirm = (async () => {
     const ask = await waitEvent(events, 'pair-ask')
+    await confirmationAllowed
     if (ask.t === 'pair-ask') desk.pairConfirm(ask.token, true)
   })()
 
@@ -315,6 +320,11 @@ test('手机页面在 390×844 里完成绑定并列出会话', async () => {
     await page.goto(`http://127.0.0.1:${port}`)
     await page.getByTestId('pair-paste').fill(payload)
     await page.getByTestId('pair-go').click()
+    await expect(page.getByTestId('pair-progress')).toContainText('等待电脑确认绑定')
+    await expect(page.getByTestId('pair-progress')).toContainText('家里的电脑')
+    const pairAsk = await waitEvent(events, 'pair-ask') as Extract<LinkEvent, { t: 'pair-ask' }>
+    await expect(page.getByTestId('pair-safety')).toHaveText(safetyCode(b64ToBytes(desk.x25519Pub), b64ToBytes(pairAsk.x25519Pub)))
+    allowConfirm()
     await confirm
     await expect(page.getByTestId('msg-list')).toContainText('小杰', { timeout: 15000 })
     await page.screenshot({ path: path.join(REPO_ROOT, '.tmp/remote-list-light.png'), fullPage: true })

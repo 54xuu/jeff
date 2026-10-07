@@ -27,6 +27,7 @@ class MobileMessageCompatibilityTest {
         val args = InstrumentationRegistry.getArguments()
         val name = requireNotNull(args.getString("agentName")) { "agentName is required" }
         val marker = requireNotNull(args.getString("replyMarker")) { "replyMarker is required" }
+        require(marker.matches(Regex("[a-zA-Z0-9_-]+"))) { "Unsupported replyMarker" }
         require(name.none { it == '\'' || it == '\\' }) { "Unsupported agentName selector" }
         eventually {
             onWebView().forceJavascriptEnabled()
@@ -40,7 +41,7 @@ class MobileMessageCompatibilityTest {
         }
         eventually {
             onWebView()
-                .withElement(findElement(Locator.CSS_SELECTOR, ".wechat-ai-body"))
+                .withElement(findElement(Locator.XPATH, "//*[contains(concat(' ',normalize-space(@class),' '),' wechat-ai-body ') and contains(.,'$marker')]"))
                 .check(webMatches(getText(), containsString(marker)))
         }
     }

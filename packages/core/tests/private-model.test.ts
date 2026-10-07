@@ -323,3 +323,22 @@ describe('PrivateChat.sendDedicated 会话隔离', () => {
     expect(chat.getSessionIdByKey('session:cron:pa')).not.toBe(chat.getSessionIdByKey('session:cron:pb'))
   })
 })
+
+describe('PrivateChat.history 多回合工具正文', () => {
+  it('后续用户回合不能把之前完整的工具回复变成思考；同回合中间步骤仍归入思考', async () => {
+    const oc = { getMessages: async () => [
+      { info: { id: 'u1', role: 'user' }, parts: [{ type: 'text', text: '写文件' }] },
+      { info: { id: 'a1', role: 'assistant' }, parts: [{ type: 'tool', tool: 'Write', state: { status: 'completed' } }, { type: 'text', text: '文件已写入' }] },
+      { info: { id: 'u2', role: 'user' }, parts: [{ type: 'text', text: '验证文件' }] },
+      { info: { id: 'step', role: 'assistant' }, parts: [{ type: 'text', text: '开始检查' }, { type: 'tool', tool: 'Read', state: { status: 'completed' } }] },
+      { info: { id: 'a2', role: 'assistant' }, parts: [{ type: 'text', text: '验证成功' }] },
+      { info: { id: 'u3', role: 'user' }, parts: [{ type: 'text', text: '谢谢' }] },
+      { info: { id: 'a3', role: 'assistant' }, parts: [{ type: 'text', text: '收到' }] },
+    ] } as unknown as OcClient
+    const rows = await new PrivateChat(db, () => oc).mapSessionMessages('session')
+    expect(rows.find(row => row.id === 'a1')).toMatchObject({ text: '文件已写入' })
+    expect(rows.find(row => row.id === 'a1')?.reasoning).toBeUndefined()
+    expect(rows.find(row => row.id === 'step')).toMatchObject({ text: '', reasoning: ['开始检查'] })
+    expect(rows.find(row => row.id === 'a2')?.text).toBe('验证成功')
+  })
+})

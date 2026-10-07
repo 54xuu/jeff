@@ -9,6 +9,11 @@ import { pushBack } from './backstack'
 type RehypePlugins = React.ComponentProps<typeof ReactMarkdown>['rehypePlugins']
 const REHYPE: RehypePlugins = [[rehypeHighlight, { detect: true, ignoreMissing: true }]]
 
+function supportsUnicodeHighlighting(): boolean {
+  try { return new RegExp('\\p{XID_Start}', 'u').test('A') }
+  catch { return false }
+}
+
 const SCALE_MIN = 0.5
 const SCALE_MAX = 6
 
@@ -272,6 +277,9 @@ function MermaidBlock(props: { code: string }): React.JSX.Element {
  * onFileLink：传入时，#jeff-file: 站内文件链接（工作区相对路径）改为回调而不是外开浏览器。
  */
 function MarkdownInner(props: { text: string; live?: boolean; onFileLink?: (rel: string) => void }): React.JSX.Element {
+  // Highlight.js composes grammar regex sources dynamically. Babel cannot
+  // transpile those generated Unicode expressions on WebView 60/61.
+  const highlightPlugins = useMemo(() => supportsUnicodeHighlighting() ? REHYPE : undefined, [])
   const liveRef = useRef(props.live)
   liveRef.current = props.live
   const fileLinkRef = useRef(props.onFileLink)
@@ -307,7 +315,7 @@ function MarkdownInner(props: { text: string; live?: boolean; onFileLink?: (rel:
   )
   return (
     <div className="md-body" data-testid="md-body">
-      <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={props.live ? undefined : REHYPE} components={components}>
+      <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={props.live ? undefined : highlightPlugins} components={components}>
         {props.text}
       </ReactMarkdown>
     </div>

@@ -18,6 +18,11 @@ while ($true) {
       $installerHash = (Get-FileHash -Algorithm SHA256 $installer).Hash.ToLowerInvariant()
       if ($installerHash -ne $request.sha256) { throw 'Installer hash changed before elevation.' }
       $args = @('/S', "/$($request.scope)")
+      if ($request.directory) {
+        $directory = [IO.Path]::GetFullPath([string]$request.directory)
+        if (-not (Test-Path (Join-Path $directory 'Jeff.exe'))) { throw 'Original Jeff installation directory no longer exists.' }
+        $args += "/D=$directory"
+      }
       $process = Start-Process -FilePath $installer -ArgumentList $args -Wait -PassThru
       $result = [ordered]@{ ok = ($process.ExitCode -eq 0); exitCode = $process.ExitCode }
     } catch {

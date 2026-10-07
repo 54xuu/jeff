@@ -132,6 +132,7 @@ describe('远程白名单', () => {
         .sort()
     expect(of('deny')).toEqual(
       [
+        'engines:pathSave',
         'browser:pageShot',
         'browser:result',
         'browser:state',

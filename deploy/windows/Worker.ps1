@@ -1,4 +1,4 @@
-param([Parameter(Mandatory = $true)][string]$Root)
+﻿param([Parameter(Mandatory = $true)][string]$Root)
 $ErrorActionPreference = 'Stop'
 $incoming = Join-Path $Root 'incoming'
 $results = Join-Path $Root 'results'
@@ -9,6 +9,8 @@ $testApk = Join-Path $Root 'current\app-release-androidTest.apk'
 $probeApk = Get-ChildItem (Join-Path $Root 'current') -Filter 'jeff-*.apk' | Select-Object -First 1 -ExpandProperty FullName
 
 function Save-Result($Path, $Value) {
+  New-Item -ItemType Directory -Force -Path $Path | Out-Null
+  $Path = Join-Path $Path 'outcome.json'
   $tmp = "$Path.tmp"
   $Value | ConvertTo-Json -Depth 12 | Set-Content -Path $tmp -Encoding utf8
   Move-Item -Force $tmp $Path
@@ -23,7 +25,7 @@ function Invoke-AndroidTests([string]$Serial, [string]$Tag) {
   & $adb -s $Serial install -r $testApk | Out-File "$script:runEvidence\adb-test-install-$Tag.log"
   if ($LASTEXITCODE -ne 0) { throw "Android test APK install failed on $Serial" }
   & $adb -s $Serial shell am instrument -w -e class "app.jeff.mobile.$env:JEFF_DEPLOY_ANDROID_TEST_CLASS" app.jeff.mobile.test/androidx.test.runner.AndroidJUnitRunner 2>&1 | Tee-Object -FilePath "$script:runEvidence\android-tests-$Tag.log"
-  if ($LASTEXITCODE -ne 0 -or (Select-String -Path "$script:runEvidence\android-tests-$Tag.log" -Pattern 'FAILURES!!!|INSTRUMENTATION_FAILED' -Quiet)) { throw "Android instrumentation failed on $Serial" }
+  if ($LASTEXITCODE -ne 0 -or (Select-String -Path "$script:runEvidence\android-tests-$Tag.log" -Pattern 'FAILURES!!!|INSTRUMENTATION_FAILED' -Quiet) -or -not (Select-String -Path "$script:runEvidence\android-tests-$Tag.log" -Pattern 'OK \([1-9][0-9]* tests?\)' -Quiet)) { throw "Android instrumentation failed on $Serial" }
   Capture-AndroidDiagnostics $Serial $Tag
   & $adb -s $Serial shell screencap -p /sdcard/jeff-deploy.png
   & $adb -s $Serial pull /sdcard/jeff-deploy.png "$script:runEvidence\android-$Tag.png" | Out-Null
@@ -34,7 +36,7 @@ while ($true) {
     $requestPath = $_.FullName
     $request = $null
     try {
-      $request = Get-Content $requestPath -Raw | ConvertFrom-Json
+      $request = Get-Content $requestPath -Raw -Encoding UTF8 | ConvertFrom-Json
       $runId = [string]$request.runId
       if ($runId -notmatch '^[0-9TZ-]+$') { throw 'Invalid run id.' }
       $script:runEvidence = Join-Path $results $runId
@@ -59,10 +61,12 @@ while ($true) {
           Copy-Item (Join-Path (Join-Path $Root 'incoming') $artifact.name) (Join-Path $current $artifact.name) -Force
         }
         Copy-Item (Join-Path (Join-Path $Root 'incoming') "$($request.suite).json") (Join-Path $current "$($request.suite).json") -Force
-        $request.androidTestClass = [string](Get-Content (Join-Path $current "$($request.suite).json") -Raw | ConvertFrom-Json).androidTestClass
+        $request.androidTestClass = [string](Get-Content (Join-Path $current "$($request.suite).json") -Raw -Encoding UTF8 | ConvertFrom-Json).androidTestClass
         if ($request.androidTestClass -notmatch '^[A-Za-z][A-Za-z0-9_]*$') { throw 'Invalid Android instrumentation class in suite.' }
         $env:JEFF_DEPLOY_ANDROID_TEST_CLASS = $request.androidTestClass
 
+        $probeApk = Join-Path $current "jeff-$($request.version).apk"
+        if ($request.windowsAdb) { $adb = [string]$request.windowsAdb }
         $physical = $null
         if ($request.androidMode -eq 'physical' -and (Test-Path $adb)) {
           $devices = & $adb devices | Select-Object -Skip 1
@@ -125,12 +129,14 @@ while ($true) {
           Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue
           Get-ItemProperty 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue
           Get-ItemProperty 'HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue
-        ) | Where-Object { $_.DisplayName -eq 'Jeff' } | Select-Object -First 1
+        ) | Where-Object { $_.DisplayName -match '^Jeff(?: [0-9]+\.[0-9]+\.[0-9]+)?$' } | Select-Object -First 1
+        $originalExe = if ($existing.DisplayIcon) { ([string]$existing.DisplayIcon -split ',')[0].Trim('"') } elseif ($existing.InstallLocation) { Join-Path $existing.InstallLocation 'Jeff.exe' } else { $null }
+        $originalDirectory = if ($originalExe -and (Test-Path $originalExe)) { Split-Path $originalExe -Parent } else { $null }
         $scope = if ($existing.PSPath -like 'Microsoft.PowerShell.Core\Registry::HKEY_LOCAL_MACHINE*') { 'allusers' } else { 'currentuser' }
         $installerResult = Join-Path $script:runEvidence 'installer-result.json'
         $installRequestPath = Join-Path (Join-Path $Root 'install-requests') "$runId.json"
         $installRequest = [ordered]@{
-          installer = $desktop; scope = $scope
+          installer = $desktop; scope = $scope; directory = $originalDirectory
           sha256 = (Get-FileHash -Algorithm SHA256 $desktop).Hash.ToLowerInvariant()
           result = $installerResult
         }
@@ -140,20 +146,20 @@ while ($true) {
         $installDeadline = (Get-Date).AddMinutes(3)
         while (-not (Test-Path $installerResult) -and (Get-Date) -lt $installDeadline) { Start-Sleep -Milliseconds 500 }
         if (-not (Test-Path $installerResult)) { throw 'Elevated Jeff installer task timed out.' }
-        $installOutcome = Get-Content $installerResult -Raw | ConvertFrom-Json
+        $installOutcome = Get-Content $installerResult -Raw -Encoding UTF8 | ConvertFrom-Json
         if (-not $installOutcome.ok) {
           $installerFailure = $installOutcome.error
           if (-not $installerFailure) { $installerFailure = "exit code $($installOutcome.exitCode)" }
           throw "Jeff installer failed: $installerFailure"
         }
 
-        $exe = if ($existing.InstallLocation) { Join-Path $existing.InstallLocation 'Jeff.exe' } else { Join-Path $env:LOCALAPPDATA 'Programs\Jeff\Jeff.exe' }
+        $exe = if ($originalExe) { $originalExe } elseif ($existing.InstallLocation) { Join-Path $existing.InstallLocation 'Jeff.exe' } else { Join-Path $env:LOCALAPPDATA 'Programs\Jeff\Jeff.exe' }
         if (-not (Test-Path $exe)) {
           $uninstall = @(
             Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue
             Get-ItemProperty 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue
             Get-ItemProperty 'HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue
-          ) | Where-Object { $_.DisplayName -eq 'Jeff' } | Select-Object -First 1
+          ) | Where-Object { $_.DisplayName -match '^Jeff(?: [0-9]+\.[0-9]+\.[0-9]+)?$' } | Select-Object -First 1
           if ($uninstall.DisplayIcon) { $exe = ([string]$uninstall.DisplayIcon -split ',')[0].Trim('"') }
         }
         if (-not (Test-Path $exe)) { throw 'Installed Jeff.exe could not be resolved from the installer registration.' }

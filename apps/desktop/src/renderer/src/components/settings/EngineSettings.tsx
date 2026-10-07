@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useStore } from '../../store'
 import { api } from '../../api'
-import { IPC } from '@jeff/core'
+import { IPC, type EngineStatus, type EngineId } from '@jeff/core'
 
 const STATUS_LABELS: Record<string, string> = {
   stopped: '已停止',
@@ -13,6 +13,21 @@ const STATUS_LABELS: Record<string, string> = {
 /** 设置 → 引擎服务：opencode sidecar 状态 / 版本 / 重启 / 日志 / TLS 与调试开关 */
 export default function EngineSettings(): React.JSX.Element {
   const { appInfo, refreshAppInfo } = useStore()
+  const [engines, setEngines] = useState<EngineStatus[]>([])
+  const [paths, setPaths] = useState<Partial<Record<EngineId, string>>>({})
+  const [engineError, setEngineError] = useState('')
+  const [engineBusy, setEngineBusy] = useState<EngineId | null>(null)
+  const refreshEngines = async () => {
+    const detected = await api.invoke<EngineStatus[]>(IPC.enginesList)
+    setEngines(detected)
+    setPaths((previous) => Object.fromEntries(detected.map((engine) => [engine.id, previous[engine.id] ?? engine.configuredPath ?? ''])))
+  }
+  useEffect(() => { void refreshEngines().catch((err) => setEngineError(String(err.message))) }, [])
+  const configureEngine = async (engine: EngineId) => {
+    setEngineBusy(engine); setEngineError('')
+    try { await api.invoke(IPC.enginesPathSave, { engine, path: paths[engine] || '' }); await refreshEngines() }
+    catch (err) { setEngineError(String((err as Error).message)) } finally { setEngineBusy(null) }
+  }
   const [logs, setLogs] = useState<string[]>([])
   const [restarting, setRestarting] = useState(false)
   const [skipTls, setSkipTls] = useState(false)
@@ -84,8 +99,18 @@ export default function EngineSettings(): React.JSX.Element {
     <div className="settings-content" data-testid="engine-settings">
       <h2 className="settings-title">引擎服务</h2>
       <p className="settings-tip">
-        Jeff 基于 opencode 引擎运行（安装包内自带，无需单独安装）。修改供应商 / MCP 配置后会自动重启引擎；如遇异常也可手动重启。
+        OpenCode 是默认执行引擎（安装包内自带）。智能体资料中可选择本机已安装并登录的 Codex CLI、Cursor CLI 或 Claude Code。修改供应商 / MCP 配置后会自动重启引擎；如遇异常也可手动重启。
       </p>
+      {engineError && <p role="alert">{engineError}</p>}
+      {engines.filter((engine) => engine.id !== 'opencode').map((engine) => (
+        <div className="pv-detail" key={engine.id} data-testid={`engine-${engine.id}`}>
+          <h3>{engine.label} · {engine.available ? '已检测到' : '未就绪'}</h3>
+          <p className="settings-tip">{engine.version || ''} {engine.error || ''}</p>
+          <input aria-label={`${engine.label} 路径`} placeholder={engine.path || '可执行文件绝对路径（留空自动检测）'} value={paths[engine.id] ?? ''} onChange={(event) => setPaths((previous) => ({ ...previous, [engine.id]: event.target.value }))} />
+          <button type="button" disabled={engineBusy !== null} onClick={() => void configureEngine(engine.id)}>{engineBusy === engine.id ? '检测中…' : '保存并检测'}</button>
+          <p className="settings-tip">安装与登录在电脑上完成；检测只核对路径、版本和协议。实际登录与模型可用性请在聊天中发送消息验证。留空保存恢复自动检测。</p>
+        </div>
+      ))}
       <div className="pv-detail">
         <div className="provider-row">
           <div className="provider-main">

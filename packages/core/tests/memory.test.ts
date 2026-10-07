@@ -169,3 +169,46 @@ describe('resolveMemoryScope', () => {
     expect(groupDefault).toMatchObject({ scope: { kind: 'project', projectId: 'prj_1' } })
   })
 })
+
+describe('自动记忆分流', () => {
+  it('私聊公开约定进全局规则；密钥即使标 public 也只能进本机记忆', async () => {
+    const { MemoryRouter, publicMemoryContent } = await import('../src/memory/routing.js')
+    const router = new MemoryRouter(store)
+    const scope = { kind: 'agent', agentId: 'agt_1' } as const
+    fs.writeFileSync(store.rulesFile(scope), '# 手工规则\n请用中文\n')
+    expect(router.batch(scope, [{ action: 'add', text: '答复先说明结论' }]).ok).toBe(true)
+    expect(store.list(scope)).toEqual([])
+    expect(fs.readFileSync(store.rulesFile(scope), 'utf8')).toContain('# 手工规则\n请用中文')
+    expect(router.batch(scope, [{ action: 'add', text: 'api_key=test-only-private-value' }], 'public').ok).toBe(true)
+    expect(store.list(scope)[0]).toContain('[私有]')
+    expect(fs.readFileSync(store.rulesFile(scope), 'utf8')).not.toContain('test-only-private-value')
+    expect(publicMemoryContent(store.list(scope).join('\n§\n'))).toBe('')
+    expect(router.list(scope)).toHaveLength(2)
+    expect(router.batch(scope, [{ action: 'replace', old_text: 'test-only-private-value', new_text: '个人保留信息：测试联系方式' }], 'public').ok).toBe(true)
+    expect(store.list(scope)[0]).toContain('[私有]')
+    expect(fs.readFileSync(store.rulesFile(scope), 'utf8')).not.toContain('测试联系方式')
+    expect(fs.statSync(store.file(scope)).mode & 0o777).toBe(0o600)
+  })
+
+  it('项目约定隔离；跨存储 replace/remove 唯一匹配，失败不丢条目', async () => {
+    const { MemoryRouter } = await import('../src/memory/routing.js')
+    const router = new MemoryRouter(store)
+    const scope = { kind: 'project', projectId: 'prj_1' } as const
+    router.batch(scope, [{ action: 'add', text: '这个项目每周五发版' }])
+    expect(fs.existsSync(buildPaths(tmp).agentsMdUser)).toBe(false)
+    const result = router.batch(scope, [{ action: 'replace', old_text: '每周五', new_text: '客户联系方式 13800000000，用户要求不公开' }], 'private')
+    expect(result.ok).toBe(true)
+    expect(fs.readFileSync(store.rulesFile(scope), 'utf8')).not.toContain('每周五')
+    expect(store.list(scope)[0]).toContain('联系方式')
+    const before = router.list(scope)
+    expect(router.batch(scope, [{ action: 'remove', old_text: '不存在' }]).ok).toBe(false)
+    expect(router.list(scope)).toEqual(before)
+    expect(router.batch(scope, [{ action: 'remove', old_text: '联系方式' }]).ok).toBe(true)
+    expect(router.list(scope)).toEqual([])
+  })
+
+  it('群自省保持项目范围，非法项目不写文件', () => {
+    expect(resolveMemoryScope(db, { agentId: 'a', resolved: { kind: 'review', agentId: 'a', projectId: 'p' }, builtin: false })).toMatchObject({ scope: { kind: 'project', projectId: 'p' } })
+    expect(resolveMemoryScope(db, { agentId: 'a', resolved: null, explicit: 'project:../../outside', builtin: true })).toMatchObject({ error: '项目不存在' })
+  })
+})

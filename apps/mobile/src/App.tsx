@@ -1,7 +1,9 @@
+import MemorySettings from './MemorySettings'
+import EngineSelector from './EngineSelector'
 import { Capacitor } from '@capacitor/core'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
-  IPC, XIAOJIE_ID, TOOL_ACTION_LABEL, extractThinkTags, mergeReasoning, sortedPinKeys, decodePluginUserMessage, currentWeekRange,
+  IPC, ENGINE_LABELS, XIAOJIE_ID, TOOL_ACTION_LABEL, extractThinkTags, mergeReasoning, sortedPinKeys, decodePluginUserMessage, currentWeekRange,
   parseProjectWorkspaceState, serializeProjectWorkspaceState, canStartCampaignProduction,
 } from '@jeff/core'
 import type { AgentInfo, AppInfo, ChatMsg, FileNode, FsDirEntry, GroupMessage, ProjectInfo, ContextPreviewInfo, PluginCommand, PluginInfo, CampaignKind, CampaignProposalInput, CampaignProposal, TaskInfo, ProjectDocumentInfo, ProjectReportInfo, SiYuanSearchResult } from '@jeff/core'
@@ -10,7 +12,7 @@ import { consumeBack } from './backstack'
 import Mascot from './Mascot'
 import { Markdown } from './Markdown'
 import { isMarkdownPath, joinWorkspacePath, linkifyWorkspaceMarkdown } from './linkify'
-import { Native, PhoneLink, mergeStream, shrinkImage } from './session'
+import { type PairProgress, Native, PhoneLink, mergeStream, shrinkImage } from './session'
 
 type Tab = 'messages' | 'contacts' | 'me'
 type Screen = 'list' | 'chat' | 'dirs' | 'files' | 'file' | 'project'
@@ -446,6 +448,14 @@ function ToolsView({ tools }: { tools?: ToolItem[] }) {
   )
 }
 
+function PairingNotice({ progress }: { progress: PairProgress | null }) {
+  if (!progress) return null
+  return <div className="pair-progress" role="status" aria-live="polite" data-testid="pair-progress">
+    <strong>{progress.stage === 'connecting' ? '正在连接中转站…' : progress.stage === 'confirming' ? '等待电脑确认绑定' : '电脑已确认，正在建立安全连接…'}</strong>
+    {progress.stage === 'confirming' && <><p>请在电脑「{progress.desktopName}」打开 Jeff，在弹出的窗口中点击「确认绑定」。电脑确认后，手机会自动完成绑定。</p><p>两端安全码应一致：<b data-testid="pair-safety">{progress.safety}</b></p></>}
+  </div>
+}
+
 export function App() {
   const [locked, setLocked] = useState(Capacitor.isNativePlatform())
   const [tab, setTab] = useState<Tab>('messages')
@@ -455,9 +465,13 @@ export function App() {
   const [listMenuOpen, setListMenuOpen] = useState(false)
   const [chatMenuOpen, setChatMenuOpen] = useState(false)
   const [projectSection, setProjectSection] = useState<ProjectSection>('overview')
+  const [pairProgress, setPairProgress] = useState<PairProgress | null>(null)
   const [paste, setPaste] = useState('')
   const [adding, setAdding] = useState(false)
   const [error, setError] = useState('')
+  const memoryBackAction = useRef<(() => void) | null>(null)
+  const [memorySettingsOpen, setMemorySettingsOpen] = useState(false)
+  const [engineSelectorOpen, setEngineSelectorOpen] = useState(false)
   const [agents, setAgents] = useState<AgentInfo[]>([])
   const [projects, setProjects] = useState<ProjectInfo[]>([])
   const [target, setTarget] = useState<ChatTarget | null>(null)
@@ -665,6 +679,8 @@ export function App() {
   addingRef.current = adding
 
   const handleBack = () => {
+    if (memorySettingsOpen) { memoryBackAction.current?.(); return }
+    if (engineSelectorOpen) { setEngineSelectorOpen(false); return }
     if (consumeBack()) return
     if (viewer) {
       setViewer(null)
@@ -909,10 +925,11 @@ export function App() {
   }
 
   async function acceptPair(raw: string) {
+    setPairProgress(null)
     setError('')
     setBusy(true)
     try {
-      await phone.pair(raw, '我的手机')
+      await phone.pair(raw, '我的手机', setPairProgress)
       refreshPeers()
       await loadLists()
       setPaste('')
@@ -922,6 +939,7 @@ export function App() {
     } catch (err) {
       setError((err as Error).message)
     } finally {
+      setPairProgress(null)
       setBusy(false)
     }
   }
@@ -1894,7 +1912,8 @@ export function App() {
               ) : null}
               <div className="pair-divider"><span>或手动粘贴绑定码</span></div>
               <textarea data-testid="pair-paste" value={paste} placeholder="在此粘贴电脑端生成的绑定码或 JSON 字符串" onChange={(event) => setPaste(event.target.value)} />
-              <button type="button" data-testid="pair-go" className="btn-paste-go" disabled={busy || !paste.trim()} onClick={() => void acceptPair(paste)}>{busy ? '正在绑定…' : '使用粘贴内容绑定'}</button>
+              <button type="button" data-testid="pair-go" className="btn-paste-go" disabled={busy || !paste.trim()} onClick={() => void acceptPair(paste)}>{busy ? pairProgress?.stage === 'confirming' ? '等待电脑确认…' : '正在绑定…' : '使用粘贴内容绑定'}</button>
+              <PairingNotice progress={pairProgress} />
               {error ? <p className="err">{error}</p> : null}
             </section>
           ) : tab === 'messages' ? (
@@ -1959,6 +1978,8 @@ export function App() {
           </button>
         </nav>
       ) : null}
+      {memorySettingsOpen && <MemorySettings phone={phone} backAction={memoryBackAction} onClose={() => setMemorySettingsOpen(false)} />}
+      {engineSelectorOpen && <EngineSelector phone={phone} agents={agents} initialId={target?.kind === 'agent' ? target.id : undefined} onSave={(saved) => { setAgents((previous) => previous.map((agent) => agent.id === saved.id ? saved : agent)); if (target) void loadHistory(target) }} onClose={() => setEngineSelectorOpen(false)} />}
       {screen === 'chat' && target && (
         <section className="chat wechat-chat" data-testid="chat">
           <header className="bar wechat-bar wechat-chat-bar">
@@ -1976,7 +1997,7 @@ export function App() {
                   data-testid="ctx-badge"
                   onClick={() => setCtxOpen((v) => !v)}
                 >
-                  {fmtTokensShort(ctx.usedTokens)}/{fmtTokensShort(ctx.contextLimit)}
+                  {ctx.statsAvailable === false ? ENGINE_LABELS[ctx.engine || 'opencode'] : `${fmtTokensShort(ctx.usedTokens)}/${fmtTokensShort(ctx.contextLimit)}`}
                 </button>
               ) : null}
             </div>
@@ -1997,6 +2018,7 @@ export function App() {
               <button type="button" data-testid="session-history" onClick={() => { setChatMenuOpen(false); void openSessionDrawer() }}>切换会话</button>
               <button type="button" data-testid="chat-new-session" onClick={() => { setChatMenuOpen(false); void newSession() }}>新建会话</button>
               {target.kind === 'group' ? <button type="button" data-testid="workspace" onClick={() => { setChatMenuOpen(false); void openWorkspaceFiles() }}>工作区文件</button> : null}
+              <button type="button" data-testid="mobile-engine-settings" onClick={() => { setChatMenuOpen(false); setEngineSelectorOpen(true) }}>执行引擎与模型</button>
               <button type="button" data-testid="chat-context" onClick={() => { setChatMenuOpen(false); setCtxOpen(true) }}>上下文用量</button>
             </div>
           ) : null}
@@ -2055,10 +2077,10 @@ export function App() {
             <div className="wechat-ctx-box" data-testid="ctx-panel">
               <div className="wechat-ctx-header">
                 <span>
-                  上下文占用 {fmtTokensShort(ctx?.usedTokens ?? 0)}
+                  {ctx?.statsAvailable === false ? '引擎未提供上下文统计' : `上下文占用 ${fmtTokensShort(ctx?.usedTokens ?? 0)}`}
                   {ctx?.contextLimit ? ` / ${fmtTokensShort(ctx.contextLimit)}` : ' · 未配置窗口'}
                 </span>
-                <button type="button" className="wechat-btn-compress" data-testid="ctx-compress" disabled={ctxBusy || !ctx?.sessionId} onClick={() => void compressCtx()}>
+                <button type="button" className="wechat-btn-compress" data-testid="ctx-compress" disabled={ctx?.compressionAvailable === false || ctxBusy || !ctx?.sessionId} onClick={() => void compressCtx()}>
                   {ctxBusy ? '压缩中…' : '一键压缩'}
                 </button>
               </div>
@@ -2788,8 +2810,9 @@ export function App() {
                     disabled={busy || !paste.trim()}
                     onClick={() => void acceptPair(paste)}
                   >
-                    {busy ? '正在绑定…' : '使用粘贴内容绑定这台电脑'}
+                    {busy ? pairProgress?.stage === 'confirming' ? '等待电脑确认…' : '正在绑定…' : '使用粘贴内容绑定这台电脑'}
                   </button>
+                  <PairingNotice progress={pairProgress} />
                 </div>
               )}
             </div>
@@ -2884,6 +2907,7 @@ export function App() {
             </div>
           ) : null}
 
+          {bound && <button type="button" className="wechat-cell-btn" data-testid="mobile-memory-settings" onClick={() => setMemorySettingsOpen(true)}>记忆与公开规则</button>}
           <div className="wechat-me-hint-card">
             <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor">
               <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z" />

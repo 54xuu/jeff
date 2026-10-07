@@ -24,6 +24,9 @@ export function ContextUsageBar(props: {
       </button>
     )
   }
+  if (p.statsAvailable === false) {
+    return <button type="button" className="ctx-usage" onClick={props.onOpen} title="执行引擎未提供上下文统计" data-testid="context-usage">上下文统计不可用</button>
+  }
   if (!p.contextLimit) {
     return (
       <button type="button" className="ctx-usage warn" onClick={props.onOpen} title="未配置上下文窗口" data-testid="context-usage">
@@ -144,7 +147,7 @@ export default function ContextDrawer(props: {
           <div className="history-head-actions">
             <button
               className={`icon-btn ${compressing ? 'is-busy' : ''}`}
-              disabled={compressing || loading || !preview?.sessionId}
+              disabled={preview?.compressionAvailable === false || compressing || loading || !preview?.sessionId}
               onClick={() => void compress()}
               data-testid="context-compress"
               title={compressing ? '压缩中…' : '手动压缩当前会话上下文'}
@@ -175,7 +178,7 @@ export default function ContextDrawer(props: {
             <div className="ctx-stats">
               {preview.contextLimit ? (
                 <p className="settings-tip">
-                  占用 <b>{fmtTokens(preview.usedTokens)}</b> / {fmtTokens(preview.contextLimit)}
+                  {preview.statsAvailable === false ? '引擎未提供上下文统计' : <>占用 <b>{fmtTokens(preview.usedTokens)}</b> / {fmtTokens(preview.contextLimit)}</>}
                   {preview.threshold != null ? ` · 自动压缩阈值 ${fmtTokens(preview.threshold)}` : ''}
                   {preview.autoEnabled ? '' : ' · 自动压缩未启用'}
                   {preview.compactedCount > 0 ? ` · 已压缩隐藏 ${preview.compactedCount} 条` : ''}

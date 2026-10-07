@@ -202,6 +202,8 @@ function performLocalChecks() {
     ['Desktop UI E2E', 'xvfb-run', ['-a', 'npm', 'run', 'test:e2e']],
     ['v18 closed E2E', 'xvfb-run', ['-a', 'npx', 'playwright', 'test', '-c', 'apps/desktop/e2e/playwright.config.ts', '--project=v18']],
     ['cron closed E2E', 'xvfb-run', ['-a', 'npx', 'playwright', 'test', '-c', 'apps/desktop/e2e/playwright.config.ts', '--project=cron']],
+    ['Multi-engine E2E', 'xvfb-run', ['-a', 'npx', 'playwright', 'test', '-c', 'apps/desktop/e2e/playwright.config.ts', '--project=engines']],
+    ['Pairing closed E2E', 'xvfb-run', ['-a', 'npx', 'playwright', 'test', '-c', 'apps/desktop/e2e/playwright.config.ts', '--project=remote', '-g', '假手机经本地|手机页面在']],
     ['Mobile unit tests', 'npm', ['test', '-w', '@jeff/mobile']],
     ['Mobile browser E2E', 'npm', ['run', 'test:e2e', '-w', '@jeff/mobile']],
   ]
@@ -312,19 +314,19 @@ async function main() {
     runId: started, version, suite: args.suite, androidMode: android.kind,
     phoneSerial: android.connection === 'usb' ? android.serial : android.connection === 'network' ? android.serial : '',
     androidConnection: android.connection, androidPolicy: args.android,
-    relayUrl: config.relayUrl, androidTestClass: suite.androidTestClass,
+    relayUrl: config.relayUrl, androidTestClass: suite.androidTestClass, windowsAdb: config.windowsAdb,
     desktopAsarSha256: sha256File(desktopAsar),
     artifacts: entries,
   }
   const requestFile = path.join(runDir, `${started}.request.json`)
   fs.writeFileSync(requestFile, JSON.stringify(request, null, 2))
   // Upload the request marker last; the Windows worker only starts after every referenced file exists.
-  scp(config, [...files, path.join(runDir, 'manifest.json'), suiteFile, requestFile], `${config.sshAlias}:${config.incomingPath}`)
+  scp(config, [...files, path.join(runDir, 'manifest.json'), suiteFile, requestFile], config.incomingPath)
   sshOutput(config, `schtasks.exe /Run /TN JeffDeployWorker`)
   const deadline = Date.now() + 20 * 60_000
   let outcome
   while (Date.now() < deadline) {
-    const raw = sshOutput(config, `powershell.exe -NoProfile -Command "$p=Join-Path $env:USERPROFILE '.jeff-deploy\\results\\${started}'; if(Test-Path $p){ Get-Content $p -Raw }"`)
+    const raw = sshOutput(config, `powershell.exe -NoProfile -Command "$p=Join-Path $env:USERPROFILE '.jeff-deploy\\results\\${started}\\outcome.json'; if(Test-Path $p){ Get-Content $p -Raw }"`)
     if (raw.trim()) { outcome = JSON.parse(raw.replace(/^\uFEFF/, '')); break }
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 2000)
   }

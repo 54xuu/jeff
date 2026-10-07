@@ -5278,3 +5278,15 @@ body.pane-resizing {
   flex-shrink: 0;
 }
 .combo-item .ctx-tag + .tag { margin-left: 0; }
+
+/* 范围列表独立滚动，数量增长不拉长设置页面。 */
+.memory-scopes { min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.memory-scope-results { max-height: 360px; overflow-y: auto; scrollbar-gutter: stable; }
+.memory-scopes input, .memory-scopes select { width: 100%; min-width: 0; }
+.memory-rules-list { max-height: 320px; overflow-y: auto; scrollbar-gutter: stable; margin-top: 10px; }
+.memory-chip { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.memory-editor-head .settings-tip { overflow-wrap: anywhere; }
+
+.memory-search, .memory-filter { box-sizing: border-box; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--bg); color: var(--text); font: inherit; font-size: 12px; padding: 8px 10px; }
+.memory-search:focus, .memory-filter:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.memory-rule-search { width: min(100%, 360px); }

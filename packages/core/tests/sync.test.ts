@@ -77,6 +77,49 @@ afterAll(async () => {
 })
 
 describe('SyncEngine（实体级双向合并）', () => {
+  it('私有记忆不上传；远端新版记忆不会覆盖本机保密条目', async () => {
+    const A = makeSide('private-a', 'private-memory')
+    const B = makeSide('private-b', 'private-memory')
+    try {
+      A.memory.add({ kind: 'user' }, '[私有] api_key=test-local-secret')
+      A.memory.add({ kind: 'user' }, '旧版公开偏好：中文')
+      expect((await A.engine.sync()).ok).toBe(true)
+      const remote = path.join(davRoot, 'dav/private-memory/memory/user.md')
+      expect(fs.readFileSync(remote, 'utf8')).not.toContain('test-local-secret')
+      expect((await B.engine.sync()).ok).toBe(true)
+      expect(B.memory.list({ kind: 'user' })).toEqual(['旧版公开偏好：中文'])
+      B.memory.writeRaw({ kind: 'user' }, '另一台电脑更新公开偏好')
+      expect((await B.engine.sync()).ok).toBe(true)
+      expect((await A.engine.sync()).ok).toBe(true)
+      expect(A.memory.list({ kind: 'user' })).toContain('[私有] api_key=test-local-secret')
+      expect(A.memory.list({ kind: 'user' })).toContain('另一台电脑更新公开偏好')
+      expect(fs.readFileSync(remote, 'utf8')).not.toContain('test-local-secret')
+    } finally { A.db.close(); B.db.close(); fs.rmSync(A.home, { recursive: true, force: true }); fs.rmSync(B.home, { recursive: true, force: true }) }
+  })
+
+  it('引擎、模型、思考双向同步，旧 payload 不覆盖已有引擎；本机路径和会话不上传', async () => {
+    const A = makeSide('engine-a', 'engine-fields')
+    const B = makeSide('engine-b', 'engine-fields')
+    try {
+      const agent = agentRepo(A.db).create({ name: '多引擎开发', execution_engine: 'codex', engine_model: 'gpt-5', thinking: 'high' })
+      kvRepo(A.db).set('engine:path:codex', '/private/bin/codex')
+      kvRepo(A.db).setJSON('engine:session:local', { nativeSessionId: 'private-thread' })
+      expect((await A.engine.sync()).ok).toBe(true)
+      expect((await B.engine.sync()).ok).toBe(true)
+      expect(agentRepo(B.db).get(agent.id)).toMatchObject({ execution_engine: 'codex', engine_model: 'gpt-5', thinking: 'high' })
+      expect(kvRepo(B.db).get('engine:path:codex')).toBeNull()
+      const file = path.join(davRoot, 'dav/engine-fields/agents.json')
+      const rows = JSON.parse(fs.readFileSync(file, 'utf8'))
+      const row = rows.find((item: any) => item.id === agent.id)
+      delete row.data.execution_engine; delete row.data.engine_model
+      row.data.name = '旧客户端修改'; row.updatedAt = Date.now() + 1000
+      fs.writeFileSync(file, JSON.stringify(rows))
+      expect((await B.engine.sync()).ok).toBe(true)
+      expect(agentRepo(B.db).get(agent.id)).toMatchObject({ name: '旧客户端修改', execution_engine: 'codex', engine_model: 'gpt-5' })
+      expect(fs.readFileSync(path.join(davRoot, 'dav/engine-fields/settings.json'), 'utf8')).not.toMatch(/private-thread|private\/bin/)
+    } finally { A.db.close(); B.db.close(); fs.rmSync(A.home, { recursive: true, force: true }); fs.rmSync(B.home, { recursive: true, force: true }) }
+  })
+
   it('A 上传 → B 首次拉取全量（agents/projects/tasks/memory/settings/mcp/AGENTS.md）', async () => {
     const A = makeSide('a', 'r1')
     const B = makeSide('b', 'r1')

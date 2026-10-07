@@ -14,12 +14,16 @@ interface MemoryData {
 
 /** 设置 → 记忆：分层 scope + 条目级管理（§ 分隔）+ 字符预算占用 + AGENTS.md（用户级/项目级） */
 export default function MemorySettings(): React.JSX.Element {
+  const [query, setQuery] = useState('')
+  const [scopeKind, setScopeKind] = useState<'all' | 'user' | 'agent' | 'project'>('all')
+  const [mdQuery, setMdQuery] = useState('')
   const [scopes, setScopes] = useState<MemoryScopeInfo[]>([])
   const [sel, setSel] = useState<MemoryScopeInfo | null>(null)
   const [content, setContent] = useState('')
   const [budget, setBudget] = useState<number>(BUDGET.agent)
   const [dirty, setDirty] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
   const [loaded, setLoaded] = useState(false)
   const [agentsMds, setAgentsMds] = useState<AgentsMdInfo[]>([])
   const [mdSel, setMdSel] = useState<AgentsMdInfo | null>(null)
@@ -64,6 +68,7 @@ export default function MemorySettings(): React.JSX.Element {
   }, [mdSel, mdDirty, mdConfirmDiscard, mdSaving])
 
   const pick = async (m: MemoryScopeInfo, resetDirty = true) => {
+    if (resetDirty && dirty && !window.confirm('当前记忆有未保存的修改，切换后将丢失。是否继续？')) return
     const data = await api.invoke<MemoryData>(IPC.memoryGet, { kind: m.kind, id: m.id })
     setSel(m)
     setContent(data.content)
@@ -76,32 +81,39 @@ export default function MemorySettings(): React.JSX.Element {
   const usage = Math.min(100, Math.round((content.length / Math.max(1, budget)) * 100))
 
   const groups = useMemo(() => {
-    const user = scopes.filter((s) => s.kind === 'user')
-    const agents = scopes.filter((s) => s.kind === 'agent')
-    const projects = scopes.filter((s) => s.kind === 'project')
+    const visible = scopes.filter((s) => (scopeKind === 'all' || s.kind === scopeKind) && s.label.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()))
+    const user = visible.filter((s) => s.kind === 'user')
+    const agents = visible.filter((s) => s.kind === 'agent')
+    const projects = visible.filter((s) => s.kind === 'project')
     return [
       { title: '全局', hint: '用户画像，由小杰在对话中维护', items: user },
       { title: '智能体记忆', hint: '每个智能体各自的长期记忆', items: agents },
       { title: '项目群记忆', hint: '群聊中自动沉淀的项目共享记忆', items: projects },
     ]
-  }, [scopes])
+  }, [scopes, query, scopeKind])
 
   return (
     <div className="settings-content" data-testid="memory-settings">
       <h2 className="settings-title">记忆</h2>
       <p className="settings-tip">
-        长期记忆按范围分层（全局 / 智能体 / 项目群），由 agent 在对话中自主读写（说「记住…」「忘记…」即可）；这里可人工查看、编辑、删除单条。为控制 token 消耗，每个范围有字符预算，超出时 agent 会自动整合。
+        说「记住…」时 Jeff 自动分流：密钥、密码及保密内容存入私有记忆；公开偏好和规则写入全局或项目 AGENTS.md。标记为私有的条目仅保存在这台电脑，不参与同步。旧记忆保留，可在这里查看和整理。
       </p>
 
+      {error && <Toast kind="error" message={error} onClose={() => setError('')} />}
       {!loaded && <p className="settings-tip">加载中…</p>}
       {loaded && (
         <div className="settings-card">
           <div className="memory-layout">
           <div className="memory-scopes">
-            {groups.map((g) => (
+            <input className="memory-search" aria-label="搜索记忆范围" placeholder="搜索智能体或项目群…" value={query} onChange={(e) => setQuery(e.target.value)} />
+            <select className="memory-filter" aria-label="记忆范围类型" value={scopeKind} onChange={(e) => setScopeKind(e.target.value as typeof scopeKind)}>
+              <option value="all">全部范围（{scopes.length}）</option><option value="user">全局</option><option value="agent">智能体</option><option value="project">项目群</option>
+            </select>
+            <div className="memory-scope-results">
+            {groups.filter((g) => g.items.length > 0).map((g) => (
               <div key={g.title} className="memory-group">
                 <div className="memory-group-title">
-                  {g.title}
+                  {g.title} · {g.items.length}
                   {g.items.length === 0 && <span className="settings-tip">（暂无）</span>}
                 </div>
                 {g.items.map((m) => (
@@ -117,6 +129,8 @@ export default function MemorySettings(): React.JSX.Element {
                 {g.items.length === 0 && <div className="memory-empty-hint">{g.hint}</div>}
               </div>
             ))}
+            {groups.every((g) => g.items.length === 0) && <div className="memory-empty-hint">没有匹配的范围</div>}
+            </div>
             <div className="memory-empty-hint" style={{ marginTop: 8 }}>
               对话里对 agent 说「记住 / 忘记 / 整理记忆」即可增删改；超过预算会自动要求模型合并旧条目。
             </div>
@@ -173,10 +187,13 @@ export default function MemorySettings(): React.JSX.Element {
                       onClick={async () => {
                         if (!sel) return
                         setSaving(true)
+                        setError('')
                         try {
                           await api.invoke(IPC.memorySave, { kind: sel.kind, id: sel.id, content })
                           setDirty(false)
                           await refresh(`${sel.kind}:${sel.id}`)
+                        } catch (err) {
+                          setError(`保存失败：${(err as Error).message}`)
                         } finally {
                           setSaving(false)
                         }
@@ -200,9 +217,10 @@ export default function MemorySettings(): React.JSX.Element {
         用户级 AGENTS.md 对所有对话生效；项目级按项目保存在 Jeff 数据目录（agents-md/）下，仅该群的会话生效（每轮自动注入上下文），并随 WebDAV 同步。
         旧版放在工作空间目录下的 AGENTS.md 仅在项目规则尚未创建时作为迁移来源：首次编辑保存后会写入数据目录，此后以数据目录为准。
       </p>
-      <div className="pv-detail">
+      <input className="memory-search memory-rule-search" aria-label="搜索规则文件" placeholder="搜索全局规则或项目群…" value={mdQuery} onChange={(e) => setMdQuery(e.target.value)} />
+      <div className="pv-detail memory-rules-list">
         {agentsMds.length === 0 && <div className="empty-card">加载中…</div>}
-        {agentsMds.map((m) => (
+        {agentsMds.filter((m) => m.label.toLocaleLowerCase().includes(mdQuery.trim().toLocaleLowerCase())).map((m) => (
           <div key={`${m.kind}:${m.id}`} className="provider-row">
             <div className="provider-main">
               <div className="provider-name">

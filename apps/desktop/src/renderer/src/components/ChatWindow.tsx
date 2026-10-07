@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useStore } from '../store'
 import { api } from '../api'
-import { IPC, agentDraftKey, extractThinkTags, mergeReasoning, modelDisplayLabel, type ChatMsg, type ContextPreviewInfo } from '@jeff/core'
+import { IPC, ENGINE_LABELS, agentDraftKey, extractThinkTags, mergeReasoning, modelDisplayLabel, type ChatMsg, type ContextPreviewInfo } from '@jeff/core'
 import Avatar from './Avatar'
 import { useDonePulse, type MascotMood } from './Mascot'
 import { Markdown } from './Markdown'
@@ -141,14 +141,14 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
         <Avatar emoji={agent.avatar} size={34} busy={busyNow} agentId={agent.id} mood={headerMood} />
         <div className="chat-header-title">
           <span className="chat-header-name">{agent.name}</span>
-          <span className="chat-header-sub">{agent.builtin ? 'Jeff 内置管家' : agent.description || '智能体'}</span>
+          <span className="chat-header-sub">{agent.builtin ? 'Jeff 内置管家' : agent.description || '智能体'} · {ENGINE_LABELS[ctxPreview?.engine || agent.execution_engine || 'opencode']}</span>
         </div>
         <div className="chat-header-actions">
           <ContextUsageBar preview={ctxPreview} loading={ctxLoading} onOpen={() => setContextOpen(true)} />
           <button
             className={`icon-btn ${compressing ? 'is-busy' : ''}`}
             data-testid="chat-compress"
-            disabled={compressing || sendingNow || !ctxPreview?.sessionId}
+            disabled={ctxPreview?.compressionAvailable === false || compressing || sendingNow || !ctxPreview?.sessionId}
             onClick={() => void doCompress()}
             title={compressing ? '压缩中…' : '手动压缩当前会话上下文'}
           >
@@ -258,7 +258,7 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
             onClick={() => setProfileOpen(true)}
           >
             <span className="chip-dot" />
-            {currentModel ? modelDisplayLabel(currentModel, catalog) : '未配置模型 — 去资料或设置添加'}
+            {ENGINE_LABELS[ctxPreview?.engine || agent?.execution_engine || 'opencode']} · {ctxPreview?.engine && ctxPreview.engine !== (agent?.execution_engine || 'opencode') ? '历史会话模型' : agent?.execution_engine && agent.execution_engine !== 'opencode' ? agent.engine_model || 'CLI 默认模型' : currentModel ? modelDisplayLabel(currentModel, catalog) : '未配置模型 — 去资料或设置添加'}
           </button>
         </div>
         <ImagePreviews images={attachments.images} onRemove={attachments.remove} />

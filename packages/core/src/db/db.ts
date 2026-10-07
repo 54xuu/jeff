@@ -137,6 +137,8 @@ CREATE INDEX IF NOT EXISTS idx_cron_run_task ON cron_run(task_id, started_at);
 `)
 
   // 增量列迁移（CREATE TABLE IF NOT EXISTS 不会给旧库加列）
+  addColumn(db, 'agent', 'execution_engine', "TEXT NOT NULL DEFAULT 'opencode'", '执行引擎；旧智能体默认 OpenCode')
+  addColumn(db, 'agent', 'engine_model', "TEXT NOT NULL DEFAULT ''", '外部 CLI 模型；空串沿用 CLI 默认')
   addColumn(db, 'agent', 'thinking', "TEXT NOT NULL DEFAULT ''", "默认思考档位：'' /none/low/high/max（''=跟随模型配置）")
   addColumn(db, 'agent', 'category', "TEXT NOT NULL DEFAULT ''", "分组分类（如：项目管理/医疗场景/项目开发；空=默认分组）")
   addColumn(db, 'agent', 'instructions_version', 'INTEGER NOT NULL DEFAULT 0', '身份指令版本号：仅 instructions 实际变更时 +1（jeff_self_update 写前校验用，随同步携带）')

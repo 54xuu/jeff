@@ -1,8 +1,9 @@
+import { MemoryRouter, type MemoryPrivacy } from '../memory/routing.js'
 import type { ToolBridge } from './bridge.js'
 import type { MemoryStore, MemoryScope, MemoryOp } from '../memory/store.js'
 import type { SessionIndex } from '../memory/indexer.js'
 import type { DB } from '../db/db.js'
-import { agentRepo, projectAgentRepo } from '../db/repos.js'
+import { agentRepo, projectAgentRepo, projectRepo } from '../db/repos.js'
 
 /** 工具调用者上下文（由插件透传） */
 export interface ToolCtx {
@@ -24,6 +25,7 @@ export interface MemoryToolDeps {
   resolveSession(sessionId: string): SessionScopeCtx | null
   /** 记忆写入后回调（触发自动同步等） */
   onChanged?: () => void
+  rulesContent?: (scope: MemoryScope) => string
 }
 
 /** 内部工具名（bridge handler 名 = opencode 工具名） */
@@ -34,9 +36,10 @@ export const DELEGATE_TOOL = 'jeff_delegate'
 /** 注册记忆与会话搜索工具（所有 agent 可用） */
 export function registerMemoryTools(reg: ToolBridge, deps: MemoryToolDeps): void {
   const agents = agentRepo(deps.db)
+  const router = new MemoryRouter(deps.store, deps.rulesContent)
 
   reg.register(MEMORY_TOOL, async (raw: Record<string, unknown>) => {
-    const { __ctx, action, text, old_text, new_text, operations, scope } = raw as {
+    const { __ctx, action, text, old_text, new_text, operations, scope, privacy } = raw as {
       __ctx?: ToolCtx
       action?: string
       text?: string
@@ -44,6 +47,7 @@ export function registerMemoryTools(reg: ToolBridge, deps: MemoryToolDeps): void
       new_text?: string
       operations?: MemoryOpLike[]
       scope?: string
+      privacy?: MemoryPrivacy
     }
     const ctx = __ctx || {}
     const resolved = ctx.sessionID ? deps.resolveSession(ctx.sessionID) : null
@@ -53,28 +57,29 @@ export function registerMemoryTools(reg: ToolBridge, deps: MemoryToolDeps): void
     const target = resolveMemoryScope(deps.db, { agentId, resolved, explicit: scope, builtin: !!agents.get(agentId)?.builtin })
     if ('error' in target) return { ok: false, error: target.error }
     const memScope = target.scope
+    if (privacy && !['auto', 'private', 'public'].includes(privacy)) return { ok: false, error: '未知 privacy' }
 
     if (action === 'list') {
-      const entries = deps.store.list(memScope)
+      const entries = router.list(memScope)
       return { ok: true, entries, totalChars: entries.join('\n').length, budget: deps.store.budget(memScope), scope: deps.store.label(memScope) }
     }
     if (action === 'batch' && Array.isArray(operations)) {
-      const r = deps.store.batch(memScope, operations as MemoryOp[])
+      const r = router.batch(memScope, operations as MemoryOp[], privacy)
       if (r.ok) deps.onChanged?.()
       return r
     }
     if (action === 'add') {
-      const r = deps.store.add(memScope, String(text || ''))
+      const r = router.batch(memScope, [{ action: 'add', text: String(text || '') }], privacy)
       if (r.ok) deps.onChanged?.()
       return r
     }
     if (action === 'replace') {
-      const r = deps.store.replace(memScope, String(old_text || ''), String(new_text ?? ''))
+      const r = router.batch(memScope, [{ action: 'replace', old_text: String(old_text || ''), new_text: String(new_text ?? '') }], privacy)
       if (r.ok) deps.onChanged?.()
       return r
     }
     if (action === 'remove') {
-      const r = deps.store.remove(memScope, String(old_text || ''))
+      const r = router.batch(memScope, [{ action: 'remove', old_text: String(old_text || '') }], privacy)
       if (r.ok) deps.onChanged?.()
       return r
     }
@@ -123,6 +128,7 @@ export function resolveMemoryScope(
     }
     if (input.explicit.startsWith('project:')) {
       const projectId = input.explicit.slice(8)
+      if (!projectRepo(db).get(projectId)) return { error: '项目不存在' }
       if (!input.builtin) {
         const inProject = projectAgentRepo(db).getRole(projectId, input.agentId)
         if (!inProject) return { error: `你不属于项目 ${projectId}，不能写它的共享记忆` }
@@ -131,6 +137,7 @@ export function resolveMemoryScope(
     }
     return { error: `未知 scope: ${input.explicit}` }
   }
+  if (input.resolved?.kind === 'review' && input.resolved.projectId) return { scope: { kind: 'project', projectId: input.resolved.projectId } }
   if (input.resolved?.kind === 'group') return { scope: { kind: 'project', projectId: input.resolved.projectId } }
   return { scope: { kind: 'agent', agentId: input.agentId } }
 }

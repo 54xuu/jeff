@@ -1,3 +1,4 @@
+import { assertAgentEngine, engineId, type EngineId } from '../engines/contract.js'
 import type { DB } from './db.js'
 import { now } from './db.js'
 import { genId } from '../util/id.js'
@@ -10,6 +11,8 @@ export interface AgentRow {
   avatar: string
   description: string
   instructions: string
+  execution_engine?: EngineId
+  engine_model?: string
   model_provider: string
   model_id: string
   /** 默认思考档位：'' /none/low/high/max（''=跟随模型配置） */
@@ -168,7 +171,7 @@ export const agentRepo = (db: DB) => ({
   get(id: string): AgentRow | undefined {
     return db.prepare('SELECT * FROM agent WHERE id = ?').get(id) as unknown as AgentRow | undefined
   },
-  create(data: { name: string; avatar?: string; description?: string; instructions?: string; model_provider?: string; model_id?: string; thinking?: string; category?: string; builtin?: number; id?: string }): AgentRow {
+  create(data: { execution_engine?: EngineId; engine_model?: string; name: string; avatar?: string; description?: string; instructions?: string; model_provider?: string; model_id?: string; thinking?: string; category?: string; builtin?: number; id?: string }): AgentRow {
     const id = data.id ?? genId('agt')
     const row: AgentRow = {
       id,
@@ -176,6 +179,8 @@ export const agentRepo = (db: DB) => ({
       avatar: data.avatar || '🤖',
       description: data.description || '',
       instructions: data.instructions || '',
+      execution_engine: engineId(data.execution_engine || 'opencode'),
+      engine_model: data.engine_model || '',
       model_provider: data.model_provider || '',
       model_id: data.model_id || '',
       thinking: data.thinking || '',
@@ -187,28 +192,33 @@ export const agentRepo = (db: DB) => ({
       updated_at: now(),
       deleted_at: null,
     }
+    assertAgentEngine(row)
     db.prepare(
-      `INSERT INTO agent (id, name, avatar, description, instructions, model_provider, model_id, thinking, category, instructions_version, builtin, archived, created_at, updated_at, deleted_at)
-       VALUES (@id, @name, @avatar, @description, @instructions, @model_provider, @model_id, @thinking, @category, @instructions_version, @builtin, @archived, @created_at, @updated_at, @deleted_at)`,
+      `INSERT INTO agent (id, name, avatar, description, instructions, execution_engine, engine_model, model_provider, model_id, thinking, category, instructions_version, builtin, archived, created_at, updated_at, deleted_at)
+       VALUES (@id, @name, @avatar, @description, @instructions, @execution_engine, @engine_model, @model_provider, @model_id, @thinking, @category, @instructions_version, @builtin, @archived, @created_at, @updated_at, @deleted_at)`,
     ).run(row as unknown as Record<string, never>)
     return row
   },
-  update(id: string, patch: Partial<Pick<AgentRow, 'name' | 'avatar' | 'description' | 'instructions' | 'model_provider' | 'model_id' | 'thinking' | 'category' | 'archived'>>): AgentRow | undefined {
+  update(id: string, patch: Partial<Pick<AgentRow, 'name' | 'avatar' | 'description' | 'instructions' | 'execution_engine' | 'engine_model' | 'model_provider' | 'model_id' | 'thinking' | 'category' | 'archived'>>): AgentRow | undefined {
     const cur = this.get(id)
     if (!cur) return undefined
     // 版本号只在 instructions 真的变了时 +1（改模型/头像等不应让自改工具的写前校验误报）
     const instructionsVersion =
       patch.instructions !== undefined && patch.instructions !== cur.instructions ? (cur.instructions_version || 0) + 1 : cur.instructions_version || 0
+    if (patch.execution_engine !== undefined) engineId(patch.execution_engine)
     const next = { ...cur, ...patch, instructions_version: instructionsVersion, updated_at: now() }
+    assertAgentEngine(next)
     db.prepare(
       `UPDATE agent SET name=@name, avatar=@avatar, description=@description, instructions=@instructions,
-       model_provider=@model_provider, model_id=@model_id, thinking=@thinking, category=@category,
+       execution_engine=@execution_engine, engine_model=@engine_model, model_provider=@model_provider, model_id=@model_id, thinking=@thinking, category=@category,
        instructions_version=@instructions_version, archived=@archived, updated_at=@updated_at WHERE id=@id`,
     ).run({
       name: next.name,
       avatar: next.avatar,
       description: next.description,
       instructions: next.instructions,
+      execution_engine: next.execution_engine || 'opencode',
+      engine_model: next.engine_model || '',
       model_provider: next.model_provider,
       model_id: next.model_id,
       thinking: next.thinking,

@@ -1,6 +1,6 @@
 import { act, type ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Markdown } from './Markdown'
 
 const roots: Root[] = []
@@ -24,6 +24,24 @@ afterEach(() => {
 })
 
 describe('Markdown', () => {
+  it('旧 WebView 不支持 Unicode 高亮时仍保留真实回复的中文表格、链接和 Python 代码', () => {
+    const NativeRegExp = RegExp
+    class LegacyRegExp extends NativeRegExp {
+      constructor(pattern: string | RegExp, flags?: string) {
+        if (pattern === '\\p{XID_Start}') throw new SyntaxError('Unicode properties unsupported')
+        super(pattern, flags)
+      }
+    }
+    vi.stubGlobal('RegExp', LegacyRegExp)
+    try {
+      const el = mount(<Markdown text={'JEFF_CODEX_OK\n\n| 项目 | 内容 |\n| --- | --- |\n| 状态 | 通过 |\n\n[说明](https://example.com)\n\n```python\nprint("JEFF_CODEX_OK")\n```'} />)
+      expect(el.querySelector('table td')?.textContent).toBe('状态')
+      expect(el.querySelector('a')?.href).toBe('https://example.com/')
+      expect(el.querySelector('.md-code code')?.textContent).toContain('print("JEFF_CODEX_OK")')
+      expect(el.querySelector('.md-code .hljs-keyword')).toBeNull()
+      expect(el.querySelector('.md-copy-btn')?.textContent).toBe('复制')
+    } finally { vi.unstubAllGlobals() }
+  })
   it('渲染标题、列表、表格和代码块', () => {
     const el = mount(
       <Markdown

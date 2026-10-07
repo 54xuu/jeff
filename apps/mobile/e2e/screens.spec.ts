@@ -71,6 +71,7 @@ test.describe('1.11 统一风格全屏回归', () => {
         localStorage.clear()
         localStorage.setItem('jeff-phone-profile', JSON.stringify(profile))
         const taskRows: any[] = []
+        const memoryContent: Record<string, string> = {}
         let real: MockPhone
         Object.defineProperty(window, '__phone', {
           configurable: true,
@@ -85,6 +86,21 @@ test.describe('1.11 统一风格全屏回归', () => {
             v.invoke = async (channel: string, payload?: Record<string, any>) => {
               const p = payload || {}
               switch (channel) {
+                case 'memory:scopes':
+                  return Array.from({ length: 60 }, (_, i) => ({ kind: 'agent', id: `memory-${i}`, label: `记忆智能体 ${i}`, file: `local/memory-${i}.md` }))
+                case 'memory:get': return { content: memoryContent[p.id] || '' }
+                case 'memory:save': memoryContent[p.id] = p.content; return { ok: true }
+                case 'agentsmd:list': return [{ kind: 'user', id: 'user', label: '全局公开规则', file: 'local/AGENTS.md', exists: true }]
+                case 'agentsmd:get': return { content: '# 全局规则\n用中文', file: 'local/AGENTS.md' }
+                case 'engines:list':
+                  return ['opencode', 'codex', 'cursor', 'claude'].map(id => ({ id, available: true, version: '测试协议' }))
+                case 'engines:models':
+                  return { models: [{ id: 'test-model', label: '测试模型' }] }
+                case 'agents:upsert': {
+                  const agent = agents.find(item => item.id === p.id)
+                  if (!agent) throw new Error('智能体不存在')
+                  Object.assign(agent, p); return agent
+                }
                 case 'agents:list':
                   return agents
                 case 'projects:list':
@@ -205,6 +221,25 @@ test.describe('1.11 统一风格全屏回归', () => {
     )
     await page.goto('/')
     await expect(page.getByTestId('msg-list')).toBeVisible()
+  })
+
+  test('执行引擎：手机选择和保存到电脑、限制身份与窄屏弹窗', async ({ page }) => {
+    await openContact(page, 'chat-agent-一个名字特别特别长的智能体用来测试顶栏省略号显示')
+    await page.getByTestId('chat-more').click()
+    await page.getByTestId('mobile-engine-settings').click()
+    await expect(page.getByTestId('mobile-engine-selector')).toBeVisible()
+    await page.getByTestId('mobile-agent-engine').selectOption('codex')
+    await page.getByTestId('mobile-engine-model').fill('test-model')
+    await page.getByLabel('思考档位', { exact: true }).selectOption('high')
+    await noOverflow(page, 'engine-selector')
+    await page.screenshot({ path: '../../.tmp/engine-evidence/mobile-engine-selector.png' })
+    await page.getByRole('button', { name: '保存', exact: true }).click()
+    const stored = await page.evaluate(() => window.__phone.invoke('agents:list'))
+    expect(stored.find((item: any) => item.id === 'a1')).toMatchObject({ execution_engine: 'codex', engine_model: 'test-model', thinking: 'high' })
+    await expect(page.getByTestId('mobile-engine-selector')).toHaveCount(0)
+    await page.getByTestId('chat-more').click(); await page.getByTestId('mobile-engine-settings').click()
+    await page.getByLabel('智能体', { exact: true }).selectOption('agt_xiaojie')
+    await expect(page.getByTestId('mobile-agent-engine').locator('option[value=codex]')).toHaveAttribute('disabled', '')
   })
 
   test('会话列表：无溢出 + 未读角标可见', async ({ page }) => {
@@ -563,5 +598,25 @@ test.describe('1.11 统一风格全屏回归', () => {
     await page.getByTestId('mobile-campaign-asset-select-cmp_mobile_e2e').selectOption('asset_mobile_e2e')
     await page.getByTestId('mobile-campaign-material-resolve-cmp_mobile_e2e').click()
     await expect(task).toBeEnabled()
+  })
+  test('手机记忆范围搜索和保存，长列表不撑大弹窗', async ({ page }) => {
+    await page.getByTestId('tab-me').click()
+    await page.getByTestId('mobile-memory-settings').click()
+    const dialog = page.getByRole('dialog', { name: '记忆与规则' })
+    await expect(dialog.getByRole('button', { name: '记忆智能体 59', exact: true })).toBeAttached()
+    const size = await page.locator('.mobile-memory-scopes').evaluate((el) => ({ client: el.clientHeight, scroll: el.scrollHeight }))
+    expect(size.client).toBeLessThanOrEqual(180); expect(size.scroll).toBeGreaterThan(size.client)
+    await dialog.getByRole('textbox', { name: '搜索记忆范围' }).fill('记忆智能体 59')
+    await dialog.getByRole('button', { name: '记忆智能体 59', exact: true }).click()
+    await dialog.getByRole('textbox', { name: '记忆内容' }).fill('[私有] 手机验收条目')
+    await dialog.getByRole('button', { name: '保存修改' }).click()
+    await expect(dialog.getByRole('button', { name: '已保存' })).toBeDisabled()
+    await dialog.getByRole('button', { name: '关闭', exact: true }).click()
+    await page.getByTestId('mobile-memory-settings').click()
+    await dialog.getByRole('textbox', { name: '搜索记忆范围' }).fill('记忆智能体 59')
+    await dialog.getByRole('button', { name: '记忆智能体 59', exact: true }).click()
+    await expect(dialog.getByRole('textbox', { name: '记忆内容' })).toHaveValue('[私有] 手机验收条目')
+    await noOverflow(page, '记忆管理')
+    await page.screenshot({ path: '../../.tmp/engine-evidence/mobile-memory-search.png', fullPage: true })
   })
 })

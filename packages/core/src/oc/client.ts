@@ -180,6 +180,8 @@ export class OcClient extends EventEmitter {
     return this.req('POST', `/session${qs}`, input)
   }
 
+  sessionCompatible(_sessionId: string, _agentId: string): boolean { return true }
+
   async getSession(sessionId: string): Promise<SessionInfo> {
     return this.req('GET', `/session/${sessionId}`)
   }

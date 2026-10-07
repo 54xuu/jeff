@@ -142,7 +142,14 @@ if (!gotLock) {
     // 内置浏览器：把主进程实现注入 core（工具调用 → 渲染层 webview）
     core.browser = browserControl
     const handlers = registerIpc(core)
-    remote = startRemoteGateway({ core, handlers, broadcast: (what, payload) => broadcast(what, payload) })
+    remote = startRemoteGateway({ core, handlers, broadcast: (what, payload) => broadcast(what, payload), onPairRequest: (ask) => {
+      if (win && !win.isDestroyed() && !win.isFocused()) {
+        win.flashFrame(true)
+        win.once('focus', () => { if (win && !win.isDestroyed()) win.flashFrame(false) })
+      }
+      showDesktopNotification({ title: '手机请求绑定，请在 Jeff 确认', body: `手机「${ask.appName || '未命名'}」正在等待，请核对两端安全码后点击「确认绑定」。` })
+      core?.debugLog?.log('remote-pair-attention', { requested: true })
+    } })
     // 内置浏览器的资源加载失败（图片/脚本/接口 404 等）只有主进程看得到，补进控制台采集
     watchBrowserResourceErrors()
 

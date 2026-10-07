@@ -1,0 +1,45 @@
+# Jeff 1.12.0 多执行引擎交付记录
+
+## 变更
+
+OpenCode 继续作为开箱即用的默认引擎；新增 Codex CLI、Cursor CLI、Claude Code 适配器。智能体资料和手机聊天菜单可以设置引擎、模型、思考档位，设置页可检测 CLI 并保存本机路径。统一执行层管理流式正文、思考、工具、用量、原生会话续接、停止和异常退出。
+
+引擎切换创建新会话，历史会话沿原引擎续接。私聊、群成员、子任务、定时任务保持各自的会话。智能体配置双向同步；原生会话、认证和可执行路径只保存在本机。Jeff MCP 通过会话令牌绑定调用者，拒绝模型自行提供身份与已关闭会话的调用。受现有专属权限保护的小杰和医护助手禁止外部引擎。
+
+手机绑定补上三阶段进度、电脑名称和安全码，明确提示等待电脑确认。Windows 收到请求时显示通知、后台任务栏闪烁和已开启的提示音。此次用户遇到的停留实际是电脑等待确认，协议未失败。
+
+记忆工具新增自动分流：保密信息进入不参与同步的本机记忆，公开信息按全局/项目范围进入 AGENTS.md 的管理区块。保留手工规则与旧记忆，拒绝凭据进入公开规则。桌面记忆页加入范围搜索、分类筛选、独立滚动及未保存保护；手机增加记忆与公开规则编辑入口。
+
+使用说明见 [多执行引擎](../../execution-engines.md)。
+
+## 回归与真实模型
+
+最终应用源码回归：核心 423 通过、17 跳过；relay 11 通过；部署脚本 7 项通过；类型检查通过；桌面 mock 2、v18 4、cron 11、多引擎/大量记忆范围 2、绑定 2 用例通过；手机单测 29、浏览器 25 用例通过。最终串行核心日志：`.tmp/multi-engine-core-serial-final.log`；桌面、手机 E2E 与三端构建日志：`.tmp/multi-engine-delivery-history-final.log`；类型检查：`.tmp/multi-engine-typecheck-final.log`。另外补正 Claude CLI 子进程测试夹具为 `.cjs`，避免仓库 `type: module` 将其误解析为 ESM。
+
+真实协议新增覆盖 Claude 的独立内容块快照、缺失/变化的消息 ID、空快照与终态正文；Cursor 真实 MCP 事件工具名与参数，以及私有 `.cursor/mcp.json` 注入。Claude 的真实私有规则注入探测返回正确工作目录。
+
+OpenCode 与 Codex 真实模型界面、文本落库对账通过。Codex 三轮原生会话续接、文件产物、Jeff 会话 MCP、插件 MCP 服务端请求头与参数通过；混合引擎群协作及到点 Codex 定时任务会话隔离通过。证据：`.tmp/engine-live/codex-managed/evidence.json`、`.tmp/engine-evidence/extended-live.json`、真实界面截图及对应日志。截图已人工检查。
+
+Ubuntu 的 Claude 模型服务返回 AgentPlan 订阅错误，Cursor 返回 Authentication required，故这两条 Ubuntu 真实模型链路未验证。Windows 上此前已用真实安装版完成 Claude 与 Cursor 回复、多轮续接、Jeff/插件 MCP 调用；最终包安装后，自动 UI runner 未能再次打开安装版：`Jeff.exe` 进程快速退出（退出码 1），未生成 DevTools 端口。已确认安装器退出码 0、安装目录 `app.asar` 与产物一致，且 Windows Android 真机 instrumentation 3/3 通过；但本轮 Windows 安装版 UI/最终源码真实模型复验记为未通过/未验证，不声称通过；随后也尝试以正常数据目录重新启动已安装 1.12.0，进程同样立即退出，日常数据 `jeff.db` 与 `AGENTS.md` 仍存在且哈希未变。Windows 桌面当前未能恢复到运行状态，必须在 Windows 上继续查安装版启动故障。失败证据：`.tmp/deploy/2026-10-07T214928-011Z/outcome.json`、对应 `error.txt`；额外启动诊断在 `.tmp/engine-mobile-live/`。Ubuntu 上 Claude/Cursor 分别受服务订阅与未登录状态限制。Jeff 不自动修改账号、不自动安装或登录，也不会回退到其他引擎。
+
+## 安全与兼容
+
+真实样本覆盖中文分段 JSON、增量与最终快照去重、失败工具、缺少结束事件、进程中断、Unix 遗留子进程及 Windows npm shim 路径。会话 MCP 测试验证身份注入与跨会话令牌隔离；同步测试验证旧字段缺失不覆盖已有配置、本机路径与会话不上传。
+
+外部引擎使用 Jeff 私有运行目录，不覆盖工作区或全局配置。图片、思考档位与压缩按能力提示；不支持时明确报错。外部上下文统计与手动压缩暂不提供。Codex 原生插件和主机技能自动发现关闭；受专属禁用规则保护的智能体仅允许 OpenCode。
+
+## 正式产物与安装验收
+
+| 正式产物 | SHA-256 |
+|---|---|
+| `apps/desktop/release/jeff-desktop_1.12.0_amd64.deb` | `898047ececa705601514b9e9061d4a38c100af673caf1163470bdf9a10cf555f` |
+| `apps/desktop/release/Jeff-1.12.0.AppImage` | `d8aec8bffd6411af956081124207e329e294c4d8b5f7eea7fdfb19de3def91d4` |
+| `apps/desktop/release/jeff-Setup-1.12.0.exe` | `8d94ba83c284ff6a0c2d0b4031fe1cee3e6d79055739ad64e2ed5d0d4b867fbf` |
+| `apps/mobile/android/release/jeff-1.12.0.apk` | `3a6a5e28bb218de04081440e3cdaaaed8dbaf3f7e94794fc81d3a05bbb3964f0` |
+
+三个平台均为 1.12.0、同一份最终源码。Ubuntu 已安装，`dpkg-query` 为 1.12.0；安装后的 `/opt/Jeff/resources/app.asar` 与 `linux-unpacked` MD5 均为 `6545ce718d55c0162de765dece3399c6`。实际安装版「关于」「引擎服务」「记忆」页面和默认 OpenCode sidecar 启动通过。
+
+Windows 产物为 PE32 Nullsoft Installer，内置 `opencode.exe` 与本次引擎/记忆特征在包内。APK 的包名 `app.jeff.mobile`、versionName `1.12.0`、versionCode `11200`；release 签名验证通过。最终 APK SHA-256 与 AVD、Windows Android 真机测试使用的 APK 完全相同；Android 14 AVD 与 Windows 连接的物理设备 instrumentation 均为 3/3。APK release 签名 v1/v2 验证通过，证书 SHA-256 为 `3ff7dff8f41e9e7025e6e297820dd58225e3d17b147b6ee7013bab6d77c49c1d`。Linux 已重新安装 `.deb`，`dpkg-query` 显示 1.12.0，安装目录与正式 `linux-unpacked` 的 app.asar MD5 均为 `6545ce718d55c0162de765dece3399c6`。
+
+
+实际 Android 8.1 / WebView 61 验收发现 Python 高亮的动态 Unicode 正则使真实回复白屏；修复为按浏览器能力关闭语法着色，保留原文、复制、链接与表格。失败证据保留在 `.tmp/engine-mobile-live/physical-render-error.json`，回归单测及真实回复 instrumentation 通过。Windows Cursor 官方 cmd 版本选择与 npm shim 分开解析，覆盖最新完整版本、残缺版本和 ps1 对应 cmd 的安全解析。

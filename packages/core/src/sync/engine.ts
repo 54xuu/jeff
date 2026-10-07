@@ -5,6 +5,8 @@ import { createClient, WebDAVClient } from 'webdav'
 import type { DB } from '../db/db.js'
 import { agentRepo, cronTaskRepo, projectAgentRepo, projectRepo, taskActivityRepo, taskRepo, type AgentRow, type CronTaskRow, type ProjectAgentRow, type ProjectRow, type TaskActivityRow, type TaskRow } from '../db/repos.js'
 import { BUILTIN_SKILL_DIR, userSkillsDir, type JeffPaths } from '../paths.js'
+import { containsCredentialValue, isConfidential, publicMemoryContent } from '../memory/routing.js'
+import { parseEntries, ENTRY_DELIMITER } from '../memory/store.js'
 import type { MemoryStore, MemoryScope } from '../memory/store.js'
 import type { SkillsBackupReport, SkillsRestoreApply, SkillsRestoreStage } from '../ipc/contract.js'
 import { syncedNextRun } from '../cron/expr.js'
@@ -610,7 +612,7 @@ export class SyncEngine {
       } catch {
         continue
       }
-      out.set(key, { id: key, updatedAt: mtime, deletedAt: null, data: null, memoryFile: { rel: memRel(scope), content, mtime } })
+      out.set(key, { id: key, updatedAt: mtime, deletedAt: null, data: null, memoryFile: { rel: memRel(scope), content: publicMemoryContent(content), mtime } })
     }
     for (const rec of this.collectAgentsMd()) out.set(rec.id, rec)
     return out
@@ -682,13 +684,16 @@ export class SyncEngine {
           if (rec.memoryFile) {
             const file = this.memory.file(memScopeFromRel(rec.memoryFile.rel))
             fs.mkdirSync(path.dirname(file), { recursive: true })
-            fs.writeFileSync(file, rec.memoryFile.content, 'utf8')
+            const retained = this.memory.list(memScopeFromRel(rec.memoryFile.rel)).filter(isConfidential)
+            const imported = parseEntries(rec.memoryFile.content)
+            this.memory.writeRaw(memScopeFromRel(rec.memoryFile.rel), [...new Set([...imported, ...retained])].join(ENTRY_DELIMITER))
             n += 1
           }
           continue
         }
         if (id.startsWith('amd:')) {
           if (rec.memoryFile) {
+            if (containsCredentialValue(rec.memoryFile.content)) throw new Error('远端公开规则含凭据，已阻止写入；请先清理远端 AGENTS.md')
             const file = amdLocalFile(this.paths, id)
             if (file) {
               fs.mkdirSync(path.dirname(file), { recursive: true })
@@ -705,17 +710,19 @@ export class SyncEngine {
           if (!exists) {
             this.db
               .prepare(
-                `INSERT INTO agent (id, name, avatar, description, instructions, model_provider, model_id, thinking, category, instructions_version, builtin, archived, created_at, updated_at, deleted_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+                `INSERT INTO agent (id, name, avatar, description, instructions, execution_engine, engine_model, model_provider, model_id, thinking, category, instructions_version, builtin, archived, created_at, updated_at, deleted_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
               )
-              .run(id, d.name, d.avatar, d.description, d.instructions, d.model_provider, d.model_id, (d as { thinking?: string }).thinking || '', (d as { category?: string }).category || '', (d as { instructions_version?: number }).instructions_version ?? 0, d.builtin, d.archived, d.created_at, rec.updatedAt, rec.deletedAt)
+              .run(id, d.name, d.avatar, d.description, d.instructions, d.execution_engine || 'opencode', d.engine_model || '', d.model_provider, d.model_id, (d as { thinking?: string }).thinking || '', (d as { category?: string }).category || '', (d as { instructions_version?: number }).instructions_version ?? 0, d.builtin, d.archived, d.created_at, rec.updatedAt, rec.deletedAt)
           } else {
             this.db
-              .prepare(`UPDATE agent SET name=?, avatar=?, description=?, instructions=?, model_provider=?, model_id=?, thinking=?, category=?, instructions_version=?, builtin=?, archived=?, updated_at=?, deleted_at=? WHERE id=?`)
+              .prepare(`UPDATE agent SET name=?, avatar=?, description=?, instructions=?, execution_engine=?, engine_model=?, model_provider=?, model_id=?, thinking=?, category=?, instructions_version=?, builtin=?, archived=?, updated_at=?, deleted_at=? WHERE id=?`)
               .run(
                 d.name,
                 d.avatar,
                 d.description,
                 d.instructions,
+                d.execution_engine ?? exists.execution_engine ?? 'opencode',
+                d.engine_model ?? exists.engine_model ?? '',
                 d.model_provider,
                 d.model_id,
                 (d as { thinking?: string }).thinking || exists.thinking || '',
@@ -812,7 +819,8 @@ export class SyncEngine {
     for (const rec of merged.values()) {
       if (rec.id.startsWith('mem:') || rec.id.startsWith('amd:')) {
         if (rec.memoryFile) {
-          await client.putFileContents(`${base}/${rec.memoryFile.rel}`, rec.memoryFile.content, { overwrite: true })
+          if (rec.memoryFile.rel.startsWith('agents-md/') && containsCredentialValue(rec.memoryFile.content)) throw new Error('公开规则中含凭据，已阻止同步；请在设置 → 记忆中转入私有记忆')
+          await client.putFileContents(`${base}/${rec.memoryFile.rel}`, rec.memoryFile.rel.startsWith('memory/') ? publicMemoryContent(rec.memoryFile.content) : rec.memoryFile.content, { overwrite: true })
           uploaded += 1
         }
         continue

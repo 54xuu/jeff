@@ -1,5 +1,6 @@
+import { api } from '../api'
 import { useEffect, useMemo, useState } from 'react'
-import { formatModelKey, parseModelKey, type AgentInfo, type ModelOption, type ThinkingTier } from '@jeff/core'
+import { IPC, ENGINE_IDS, ENGINE_LABELS, type EngineId, type EngineStatus, formatModelKey, parseModelKey, type AgentInfo, type ModelOption, type ThinkingTier } from '@jeff/core'
 import Avatar from './Avatar'
 import ModelPickerCombo from './ModelPickerCombo'
 import { Button } from './ui/Button'
@@ -17,6 +18,8 @@ export type AgentEditorSave = {
   avatar: string
   description: string
   instructions: string
+  execution_engine: EngineId
+  engine_model: string
   model_provider: string
   model_id: string
   thinking: string
@@ -60,6 +63,12 @@ export default function AgentEditor(props: {
   const [description, setDescription] = useState(a.description || '')
   const [instructions, setInstructions] = useState(a.instructions || '')
   const [category, setCategory] = useState(a.category || '')
+  const [engine, setEngine] = useState<EngineId>(a.execution_engine || 'opencode')
+  const [engineModel, setEngineModel] = useState(a.engine_model || '')
+  const [engines, setEngines] = useState<EngineStatus[]>([])
+  const [engineModels, setEngineModels] = useState<Array<{ id: string; label: string }>>([])
+  useEffect(() => { let active = true; void api.invoke<EngineStatus[]>(IPC.enginesList).then((value) => { if (active) setEngines(value) }).catch(() => {}); return () => { active = false } }, [])
+  useEffect(() => { let active = true; setEngineModels([]); if (engine !== 'opencode') void api.invoke<{ models: Array<{ id: string; label: string }> }>(IPC.enginesModels, { engine }).then((value) => { if (active) setEngineModels(value.models) }).catch(() => {}); return () => { active = false } }, [engine])
   const [modelKey, setModelKey] = useState(initialModelKey)
   const [thinking, setThinking] = useState<ThinkingTierOpt>(initialThinking)
   const [saving, setSaving] = useState(false)
@@ -67,12 +76,13 @@ export default function AgentEditor(props: {
   const [error, setError] = useState<string | null>(null)
 
   const tiers = useMemo(() => {
+    if (engine !== 'opencode') return engine === 'cursor' ? [] : ['low', 'high', 'max'] as ThinkingTier[]
     const parsed = parseModelKey(modelKey)
     if (!parsed) return [] as ThinkingTier[]
     return (
       props.models.find((m) => m.providerID === parsed.providerID && m.modelID === parsed.modelID)?.thinkingTiers ?? []
     )
-  }, [modelKey, props.models])
+  }, [modelKey, props.models, engine])
 
   useEffect(() => {
     if (thinking && !tiers.includes(thinking as ThinkingTier)) setThinking('')
@@ -80,6 +90,7 @@ export default function AgentEditor(props: {
 
   // 脏检查：模型/思考所有人可改；名称等字段仅非锁定时参与比较
   const dirty = useMemo(() => {
+    if (engine !== (a.execution_engine || 'opencode') || engineModel !== (a.engine_model || '')) return true
     if (modelKey !== initialModelKey || thinking !== initialThinking) return true
     if (locked) return false
     return (
@@ -90,7 +101,7 @@ export default function AgentEditor(props: {
       (category || '') !== (a.category || '')
     )
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [locked, modelKey, thinking, name, avatar, description, instructions, category])
+  }, [locked, modelKey, thinking, name, avatar, description, instructions, category, engine, engineModel])
 
   useEffect(() => {
     props.onDirtyChange?.(dirty)
@@ -110,6 +121,8 @@ export default function AgentEditor(props: {
         avatar: locked ? a.avatar || '🧑‍💻' : avatar.trim() || '🤖',
         description: locked ? a.description || '' : description.trim(),
         instructions: locked ? a.instructions || '' : instructions,
+        execution_engine: engine,
+        engine_model: engineModel.trim(),
         model_provider: parsed?.providerID || '',
         model_id: parsed?.modelID || '',
         thinking,
@@ -187,6 +200,21 @@ export default function AgentEditor(props: {
           </Field>
         )}
         {showModel && (
+          <Field label="执行引擎" span>
+            <select data-testid="agent-engine" value={engine} onChange={(event) => { setEngine(event.target.value as EngineId); setEngineModel(''); setThinking('') }}>
+              {ENGINE_IDS.map((id) => <option key={id} value={id} disabled={id !== 'opencode' && (locked || category === '智慧病房' || name === '医护助手')}>{ENGINE_LABELS[id]}{id !== 'opencode' && engines.find((item) => item.id === id)?.available === false ? '（未就绪）' : ''}</option>)}
+            </select>
+            <p className="settings-tip">切换引擎会新建会话，原聊天记录保留。外部 CLI 使用电脑上已有的登录。</p>
+          </Field>
+        )}
+        {showModel && engine !== 'opencode' && (
+          <Field label="CLI 模型（留空沿用 CLI 默认，可手动填写）" span>
+            <input data-testid="agent-engine-model" value={engineModel} onChange={(event) => setEngineModel(event.target.value)} list="engine-model-options" />
+            <datalist id="engine-model-options">{engineModels.map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}</datalist>
+            {engines.find((item) => item.id === engine)?.error && <p className="settings-tip">{engines.find((item) => item.id === engine)?.error}</p>}
+          </Field>
+        )}
+        {showModel && engine === 'opencode' && (
           <Field label="模型（留空 = 默认用第一个启用提供商的第一个模型）" span>
             <ModelPickerCombo value={modelKey} onChange={setModelKey} placeholderEmpty="跟随默认" />
           </Field>

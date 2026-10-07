@@ -60,7 +60,7 @@ export interface GroupSendResult {
 }
 
 export interface GroupChatHooks {
-  beforeEnsure?: () => Promise<void>
+  beforeEnsure?: (agentId?: string) => Promise<void>
   onSessionCreated?: (sessionId: string, meta: { kind: 'private' | 'group' | 'review'; agentId: string; projectId?: string; threadId?: string }) => void
 
   /** 群消息的记忆块注入（追加在 briefing 之后） */
@@ -138,11 +138,12 @@ export class GroupChat {
   private sessionEnsureInflight = new Map<string, Promise<string>>()
 
   private async doEnsureSession(projectId: string, agentId: string, tid: string, key: string): Promise<string> {
-    await this.hooks?.beforeEnsure?.()
+    await this.hooks?.beforeEnsure?.(agentId)
     const kv = kvRepo(this.db)
     const existing = kv.get(key)
     if (existing) {
       try {
+        if (this.getOc().sessionCompatible?.(existing, agentId) === false) throw new Error('执行引擎已切换')
         await this.getOc().getSession(existing)
         return existing
       } catch {

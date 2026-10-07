@@ -27,6 +27,7 @@ export interface RemoteHost {
   core: JeffCore
   handlers: Record<string, Handler>
   broadcast: (what: string, payload?: unknown) => void
+  onPairRequest?: (ask: RemotePairAsk) => void
 }
 
 /** 出站连中转站，把手机的调用交给和本机同一张 handlers 表。 */
@@ -280,6 +281,7 @@ export class RemoteGateway {
         replace: !!this.bindings[0] && this.bindings[0].appId !== ask.appId,
       }
       this.host.broadcast('remote-pair-ask', view)
+      this.host.onPairRequest?.(view)
       return
     }
     if (ev.t === 'pair-result') {

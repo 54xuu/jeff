@@ -1,3 +1,5 @@
+import type { EngineId } from '../engines/contract.js'
+export * from '../engines/contract.js'
 import type { ChatMsg } from '../chat/private.js'
 import type { ProviderSetting } from '../oc/configWriter.js'
 import type { ChatPluginInvoke } from '../plugins/invoke.js'
@@ -38,6 +40,10 @@ export type { ChatMsg }
 
 // ---------- IPC 频道名 ----------
 export const IPC = {
+  enginesList: 'engines:list',
+  enginesProbe: 'engines:probe',
+  enginesModels: 'engines:models',
+  enginesPathSave: 'engines:pathSave',
   appInfo: 'app:info',
   agentsList: 'agents:list',
   agentsGet: 'agents:get',
@@ -167,6 +173,8 @@ export interface AgentInfo {
   avatar: string
   description: string
   instructions: string
+  execution_engine?: EngineId
+  engine_model?: string
   model_provider: string
   model_id: string
   /** 默认思考档位（'' = 跟随模型配置） */
@@ -313,6 +321,9 @@ export interface AppSettings {
 
 /** 对话上下文预览（占用 + system / 摘要 / 活跃消息） */
 export interface ContextPreviewInfo {
+  engine?: EngineId
+  statsAvailable?: boolean
+  compressionAvailable?: boolean
   sessionId: string | null
   agentId: string
   projectId?: string
@@ -620,6 +631,10 @@ export interface BrowserPageShot {
 }
 
 export type InvokeMap = {
+  [IPC.enginesList]: void
+  [IPC.enginesProbe]: { engine: EngineId }
+  [IPC.enginesModels]: { engine: EngineId }
+  [IPC.enginesPathSave]: { engine: EngineId; path: string }
   [IPC.appInfo]: void
   [IPC.agentsList]: void
   [IPC.agentsGet]: { id: string }
@@ -629,6 +644,8 @@ export type InvokeMap = {
     avatar?: string
     description?: string
     instructions?: string
+    execution_engine?: EngineId
+    engine_model?: string
     model_provider?: string
     model_id?: string
     thinking?: string

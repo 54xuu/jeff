@@ -7,6 +7,7 @@ import {
   decodePairingQr,
   randomEd25519,
   randomX25519,
+  safetyCode,
   type BindingView,
   type E2ePlain,
   type LinkEvent,
@@ -61,6 +62,8 @@ export interface PhoneProfile {
   desktops?: DesktopPeer[]
   activeId?: string
 }
+
+export interface PairProgress { stage: 'connecting' | 'confirming' | 'securing'; desktopName: string; safety?: string }
 
 export interface PhonePush {
   what: string
@@ -295,15 +298,16 @@ export class PhoneLink {
     }, wait)
   }
 
-  async pair(raw: string, appName: string): Promise<void> {
+  async pair(raw: string, appName: string, onProgress?: (progress: PairProgress) => void): Promise<void> {
     const qr: PairingQr = decodePairingQr(raw.trim())
+    onProgress?.({ stage: 'connecting', desktopName: qr.desktopName })
     await this.connect(qr.relay, qr.certSha256)
     const link = this.link
     if (!link) throw new Error('没有连接')
     link.setPeerKey(qr.desktopId, qr.desktopX25519Pub)
     this.desktops.set(qr.desktopId, { id: qr.desktopId, name: qr.desktopName, online: false, x25519: qr.desktopX25519Pub })
     const result = new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('电脑没有确认配对')), 5 * 60 * 1000)
+      const timer = setTimeout(() => reject(new Error(`电脑没有确认配对，请在「${qr.desktopName}」打开 Jeff 并点击确认绑定`)), 5 * 60 * 1000)
       const off = this.onPush((ev) => {
         if (ev.what === 'error') {
           const message = (ev.p as { message?: string } | undefined)?.message
@@ -322,8 +326,10 @@ export class PhoneLink {
         else reject(new Error(r.error || '配对失败'))
       })
     })
+    onProgress?.({ stage: 'confirming', desktopName: qr.desktopName, safety: safetyCode(b64ToBytes(link.x25519Pub), b64ToBytes(qr.desktopX25519Pub)) })
     link.pairRequest(qr.token, appName)
     await result
+    onProgress?.({ stage: 'securing', desktopName: qr.desktopName })
     this.activeId = qr.desktopId
     void this.persistProfile()
     await this.hello(qr.desktopId)
