@@ -140,3 +140,5 @@ App 的首要用途是随时与智能体、项目群聊天，采用微信式的�
 AVD 测试期间因 debug 签名与此前安装不一致，卸载了专用测试 AVD 中的旧 Jeff 包后重装；真实桌面端数据未动。原生键盘显示与系统返回收起已验证。Playwright 的手机 UI + 本地 relay + desktop + 真实模型链路通过，消息也与 desktop 历史一致；实际 Android APK 在 AVD 上配对仍待后续验证。Windows 安装器未在 Windows 机器上安装验证。
 
 2026-10-07 补充：此前只构建并安装了 debug APK，未生成用户需要的正式 release 包。现已重新执行 `npm run cap:sync` 与 `./gradlew assembleRelease`，正式 APK 位于 `apps/mobile/android/release/jeff-1.11.4.apk`。该目录受 `.gitignore` 忽略，APK 不提交 Git；版本、包名及 release 签名均已核验，SHA-256 为 `4bb705d37cdb1ab45722d062ea45307f4fb84342f1169b717907f1d57d99bb8d`。
+
+同日规则补充：项目 `AGENTS.md` 现明确要求每个包含代码、测试、资源或产品行为改动的任务，都产出 Ubuntu desktop `.deb` / AppImage、Windows desktop `.exe` 和签名 Android release APK；debug APK 不可替代正式包。纯分析与纯文档任务不构建软件。任务总结记录三种产物路径、版本与校验结果。

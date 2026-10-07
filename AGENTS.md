@@ -9,13 +9,7 @@
 
 ## ZCode 记忆文件
 
-ZCode 在本仓库的持久记忆存放在：
-
-```
-/home/xujian/.zcode/cli/memories/projects/jeff-1d2f0b1cdfcc2a44/memory/
-```
-
-`MEMORY.md` 是索引，其余每 `.md` 文件一条事实（frontmatter 含 `name` / `description` / `metadata.type`）。其他工具可直接读写实现跨工具共享；格式与写入规则详见 `/home/xujian/.agents/AGENTS.md` 第 6 节。
+本项目记忆位于 `/home/xujian/.zcode/cli/memories/projects/jeff-1d2f0b1cdfcc2a44/memory/`。格式、索引和维护规则统一遵循 `/home/xujian/.agents/AGENTS.md` 第 6 节。
 
 ## 版本号（SemVer）
 
@@ -31,7 +25,7 @@ ZCode 在本仓库的持久记忆存放在：
 
 ### 核心原则：默认 PATCH，MINOR 要克制
 
-版本号是**用户可见的发版信号**，不是每次改代码的进度条。近期已到 `1.7.0`，后续优先慢升。
+版本号是**用户可见的发版信号**，不是每次改代码的进度条。当前版本线为 `1.11.x`，后续优先慢升。
 
 判定顺序（从上往下，命中即停）：
 
@@ -48,16 +42,26 @@ ZCode 在本仓库的持久记忆存放在：
 - 「纯文档 / 纯测试 / 只改 AGENTS.md」→ **不 bump**。
 - 同一会话、同一发版意图内的多处改动 → **只 bump 一次**（按整包最高级别，不按文件数累加）。
 
-### 每次任务收尾：bump + 双平台编译（硬性约定）
+### 每个开发任务的正式交付产物（硬性门槛）
 
-**每个改动了桌面端的任务完成后都要产出 Windows 与 Ubuntu 两个安装包**，不需要用户另行提醒。只交代码、或只打一个平台，都算没做完。只改 `apps/mobile` 或 `apps/relay`、没有改桌面端行为时，不打桌面安装包、不升桌面版本号；改了 App 则另出 apk（见下文「Android 遥控器」）。
+**每个包含代码、测试、资源或产品行为改动的任务，收尾都必须构建三种正式软件：Ubuntu 桌面包、Windows 桌面包、Android release APK。** 这条规则与本次改动属于 desktop、mobile 还是 relay 无关；不能只按改动目录选择产物，也不能用 debug APK 代替正式 APK。只有纯分析、纯文档（包括只改 AGENTS.md）任务不构建软件。未完成测试、版本核对、三种构建及产物校验前，任务不能报告完成。
+
+同一任务的三个产物必须使用同一仓库版本和同一份最终源码。代码改动按本文件 SemVer 规则统一 bump 一次后再构建；纯文档或测试说明不 bump。一个任务内多次提交不重复 bump。
+
+| 目标 | 正式产物 | 构建命令 |
+| --- | --- | --- |
+| Ubuntu desktop | `.deb` 与 AppImage | `npm run package:linux` |
+| Windows desktop | NSIS `.exe` | `npm run package:win` |
+| Android app | 用 release keystore 签名的 APK | `cd apps/mobile && npm run cap:sync && cd android && ./gradlew --no-daemon assembleRelease` |
+
+APK 正式产物为 `apps/mobile/android/release/jeff-<version>.apk`。release keystore 在 `~/.jeff-android/release.keystore`，别名 `jeff`；口令从 ZCode 记忆 `android-release-keystore.md` 读取，通过环境变量传给 Gradle。禁止把口令写入仓库、命令记录或回复。APK 版本必须与仓库版本一致，`versionCode = major * 10000 + minor * 100 + patch`。Android SDK 工具使用 `~/Android/Sdk/build-tools/35.0.1/` 下的版本，避免 PATH 指向旧版。
 
 ```bash
 npm run package:linux   # → apps/desktop/release/jeff-desktop_<version>_amd64.deb（另出 Jeff-<version>.AppImage）
 npm run package:win     # → apps/desktop/release/jeff-Setup-<version>.exe
 ```
 
-两条命令各自会先跑 `electron-vite build`，不需要单独 build。**编译前先按上文规则 bump 版本**（否则装出来的版本号不变，无法确认装的是新包）；同一会话 / 同一发版意图**只 bump 一次**，不要在每个小提交途中反复改版本号，而是在任务收尾时一次 bump 完再打两个包。
+两条 desktop 命令各自会先跑 `electron-vite build`，不需要单独 build。先完成测试，再按上文规则 bump 版本并构建全部三种正式产物；禁止只打当前改动涉及的平台。
 
 装本机验证（Linux 侧）：
 
@@ -106,13 +110,14 @@ ls apps/desktop/release/win-unpacked/resources/oc-bin/windows-x64/opencode.exe
 npm test                    # @jeff/core 与 @jeff/relay 单测（含版本一致性校验，bump 后跑可防漂移）
 npm run typecheck           # core/desktop 包级 tsc；根 tsconfig 有 3 个存量 e2e helper 报错，改动前就在，不算新增
 cd apps/desktop && npm run test:e2e   # mock UI E2E（自带 build）
+npm run test -w @jeff/mobile          # App 单测
 # 新增功能块的封闭 UI 测试（无需模型）：分组 / 定时任务 / 插件 / `/` 指令 / 内置浏览器
 cd apps/desktop && npx playwright test -c e2e/playwright.config.ts --project=v18
 # 定时任务分组下拉 / 并行 / 同目标多会话隔离（10 轮封闭，不依赖模型成功回复）
 cd apps/desktop && npx playwright test -c e2e/playwright.config.ts --project=cron
 ```
 
-三条全绿才能进入打包。单测红了先修，不许跳过或改断言凑绿。
+所有必跑项通过后才能构建正式软件。单测红了先修，不许跳过或改断言凑绿。按改动范围再跑对应的 mobile、desktop、relay 与真机/真链路验收；不能用打包成功替代测试。
 
 > `--project=v18`（`apps/desktop/e2e/v18.spec.ts`）是 v1.8.0 五大功能的封闭测试，用 `testAgent: true` 的 seed home；
 > `--project=cron`（`apps/desktop/e2e/cron.spec.ts`）是定时任务 10 轮：目标下拉按智能体/项目群分组、同一智能体/项目群多任务走独立会话且不抢用户当前窗口。
@@ -175,15 +180,22 @@ deb：`dpkg -l jeff-desktop` 版本正确 + `/opt/Jeff` 与 `linux-unpacked` 的
 - **真机**：`adb connect 192.168.3.161:5555`（用 `$ANDROID_HOME/platform-tools/adb`，不要用 apt 里的旧 adb）。装包 `adb install -r <apk>`，截图 `adb exec-out screencap -p > .tmp/screen.png`。本机 SDK 在 `~/Android/Sdk`（platforms android-34/35/36，build-tools 35.0.1，emulator 37.1.11）。Google 的下载域名在本机代理下经常握手失败，SDK 是从镜像拷出来的。日常验证用本机虚拟机，不要占真机：AVD 名 `jeff`（Android 14 / API 34，`emulator-5554`）。启动：`emulator -avd jeff -no-window -no-audio -gpu swiftshader_indirect -accel on -no-snapshot`。这台华为（ANA-AN00）的 iAware 会在熄屏约 20 分钟后杀掉前台服务，Doze 白名单挡不住；要在「设置 → 应用启动管理」里把 Jeff 改成手动管理，并允许后台活动。
 - **签名**：release keystore 在 `~/.jeff-android/release.keystore`，口令在 ZCode 记忆 `android-release-keystore.md`，禁止进仓库。调试包用 debug 签名即可。
 - **apk 版本**：`versionName` 与仓库版本号一致，`versionCode = major * 10000 + minor * 100 + patch`。
-- **收尾**：改了 App 就打出 debug 或 release apk，并用 `aapt dump badging` 核对 `versionName`。改了中转站就部署到 ECS `47.106.209.32:9443`（证书指纹写在 `packages/core/src/remote/protocol.ts` 的 `RELAY_CERT_SHA256`）。没有改桌面端行为时不打 deb/exe、不升版本号。
+- **正式 APK 验收**：交付必须是 `assembleRelease` 生成的签名 APK，debug APK 不能替代。使用 `~/Android/Sdk/build-tools/35.0.1/aapt dump badging <apk>` 核对包名、`versionName`、`versionCode`，并用同目录的 `apksigner verify --verbose --print-certs <apk>` 确认签名有效；在总结中记录 APK 路径和 SHA-256。需要设备验收时按下文 AVD / Windows 真机顺序执行。
+- **中转站部署**：只有用户要求部署 relay，或本次任务明确包含 relay 服务发布时，才部署到 ECS `47.106.209.32:9443`；证书指纹见 `packages/core/src/remote/protocol.ts` 的 `RELAY_CERT_SHA256`。构建 release APK 不代表需要部署 relay。
 - **中转站镜像**：`apps/relay/Dockerfile` 把服务打成 CJS（`ws` 有动态 `require`，ESM bundle 起不来）。ECS 直连 Docker Hub 会超时，默认基础镜像是 `docker.m.daocloud.io/library/node:22-alpine`。证书和私钥在服务器 `/opt/jeff-relay/certs/`，不要进仓库。
+
+## 双机自动部署与验收
+
+- 从 Ubuntu 开发机使用 `npm run deploy:windows -- --target win11 --android auto --suite <具名测试集>`；测试集必须存在于 `deploy/suites/`，不能以缺少测试集的部署冒充验收。
+- Android 验收固定顺序：先在 Ubuntu `jeff` AVD 对本次 APK 跑 instrumentation；通过后，Windows 端优先指定 USB serial，其次连接 `192.168.3.121:5555`。`auto` 下真机不可用时结果只能写“模拟器通过，真机待验收”；真机途中失败须留证并重跑/报告，不能覆盖失败原因。
+- 部署脚本不自动改版本。代码改动按本文件 SemVer 规则在该任务结束阶段统一 bump 一次，再构建 Ubuntu 与 Windows 安装包及签名 APK。
+- Windows 首次配置见 `deploy/windows/README.md`。密钥、relay 地址和手机 serial 只保存在忽略的 `.tmp/deploy/config.json` 或本机；不得提交凭据。
+- 远程验收必须从 Windows 实际安装目录启动 Jeff，使用隔离数据目录；产物 SHA-256、安装结果、截图与测试日志回传至 `.tmp/deploy/<运行编号>/`。Windows 不可达时仅报告已完成的 Ubuntu/本地产物验收，不得声称双机验收通过。
 
 ## 开发常用命令
 
 ```bash
 npm install
-npm test                    # @jeff/core 与 @jeff/relay 单测
-npm run typecheck           # 或分别 tsc core / desktop
 npm run dev -w jeff-desktop
 ```
 
