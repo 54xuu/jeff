@@ -10,7 +10,9 @@
       { "type": "expect-hidden", "selector": "[data-testid=settings-nav-providers]" },
       { "type": "click", "selector": "[data-testid=engine-path-manager] summary" },
       { "type": "expect-visible", "selector": "[data-testid=engine-path-opencode-system]" },
-      { "type": "expect-visible", "selector": "[data-testid=engine-path-save-opencode-system]" }
+      { "type": "expect-visible", "selector": "[data-testid=engine-path-save-opencode-system]" },
+      { "type": "expect-hidden", "selector": "[data-testid=engine-error]" },
+      { "type": "expect-engine-options" }
     ]
   },
   "androidTestClass": "MobileGroupSettingsBundleTest"

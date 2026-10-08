@@ -129,7 +129,11 @@ function scanProjectAssetCandidates(core: JeffCore, workspaceDir: string, direct
 export function registerIpc(core: JeffCore): Record<string, Handler> {
   const handlers: Record<string, Handler> = {
     [IPC.enginesList]: async () => {
-      const engines = await core.oc.engines()
+      // The window may be created while the first sidecar launch is still recovering.
+      // Do not turn that brief startup window into an opaque TypeError in Settings.
+      const client = core.oc
+      if (!client) throw new Error('引擎服务正在初始化，请稍后重试')
+      const engines = await client.engines()
       const oc = engines.find((engine) => engine.id === 'opencode')!
       oc.path = core.sidecar.resolveBinary(); oc.available = core.sidecar.status === 'running'
       oc.version = (await core.sidecar.version().catch(() => undefined)) || undefined

@@ -25,12 +25,35 @@ export default function EngineSettings(): React.JSX.Element {
   const [pendingEngine, setPendingEngine] = useState<PendingEngine>(null)
   const [providerSwitchBusy, setProviderSwitchBusy] = useState(false)
   const providerSave = useRef<() => Promise<boolean>>(async () => false)
+  const engineRequest = useRef(0)
+  const editedPaths = useRef(new Set<EngineId>())
   const refreshEngines = async () => {
-    const detected = await api.invoke<EngineStatus[]>(IPC.enginesList)
-    setEngines(detected)
-    setPaths((previous) => Object.fromEntries(detected.map((engine) => [engine.id, previous[engine.id] ?? engine.configuredPath ?? ''])))
+    const request = ++engineRequest.current
+    try {
+      const detected = await api.invoke<EngineStatus[]>(IPC.enginesList)
+      if (request !== engineRequest.current) return
+      setEngines(detected)
+      setPaths((previous) => Object.fromEntries(detected.map((engine) => [
+        engine.id,
+        editedPaths.current.has(engine.id) ? previous[engine.id] ?? '' : engine.configuredPath ?? '',
+      ])))
+      setEngineError('')
+    } catch (err) {
+      if (request === engineRequest.current) setEngineError(String((err as Error).message))
+      throw err
+    }
   }
-  useEffect(() => { void refreshEngines().catch((err) => setEngineError(String(err.message))) }, [])
+  useEffect(() => {
+    let active = true
+    const unsubscribe = api.onPush(({ what, payload }) => {
+      if (!active || what !== 'sidecar-status' || (payload as { status?: string } | undefined)?.status !== 'running') return
+      // A slow first launch can render Settings before EngineClient exists. Retry once the
+      // sidecar-ready event has rebound the client so the selector never stays empty.
+      void refreshEngines().catch(() => {})
+    })
+    void refreshEngines().catch(() => {})
+    return () => { active = false; unsubscribe() }
+  }, [])
   const selected = engines.find((engine) => engine.id === selectedEngine)
   const requestEngineSwitch = (next: EngineId) => {
     if (next === selectedEngine) return
@@ -51,7 +74,12 @@ export default function EngineSettings(): React.JSX.Element {
   }
   const configureEngine = async (engine: EngineId) => {
     setEngineBusy(engine); setEngineError('')
-    try { await api.invoke(IPC.enginesPathSave, { engine, path: paths[engine] || '' }); await refreshEngines() }
+    try {
+      const updated = await api.invoke<EngineStatus>(IPC.enginesPathSave, { engine, path: paths[engine] || '' })
+      editedPaths.current.delete(engine)
+      setPaths((previous) => ({ ...previous, [engine]: updated.configuredPath ?? '' }))
+      await refreshEngines()
+    }
     catch (err) { setEngineError(String((err as Error).message)) } finally { setEngineBusy(null) }
   }
   const [logs, setLogs] = useState<string[]>([])
@@ -125,7 +153,7 @@ export default function EngineSettings(): React.JSX.Element {
     <div className="settings-content" data-testid="engine-settings">
       <h2 className="settings-title">引擎服务</h2>
       <p className="settings-tip">每个 Agent 可独立选择本机可用的 CLI。选择一个引擎查看状态与配置；只有 OpenCode（Jeff）在此管理模型提供商。</p>
-      {engineError && <p role="alert">{engineError}</p>}
+      {engineError && <p role="alert" data-testid="engine-error">{engineError}</p>}
       <label className="field" style={{ maxWidth: 620 }}>
         <span>引擎服务</span>
         <select data-testid="engine-service-select" value={selectedEngine} onChange={(event) => requestEngineSwitch(event.target.value as EngineId)}>
@@ -160,7 +188,7 @@ export default function EngineSettings(): React.JSX.Element {
         <div style={{ maxHeight: 320, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 10 }}>
           {engines.filter((engine) => engine.id !== 'opencode').map((engine) => (
             <div className="group-settings" key={engine.id} data-testid={`engine-path-row-${engine.id}`}>
-              <label className="field"><span>{engine.label} 路径 · {engine.available ? '已检测到' : '未就绪'}</span><input aria-label={`${engine.label} 路径`} data-testid={`engine-path-${engine.id}`} placeholder={engine.path || '可执行文件绝对路径'} value={paths[engine.id] ?? ''} onChange={(event) => setPaths((previous) => ({ ...previous, [engine.id]: event.target.value }))} /></label>
+              <label className="field"><span>{engine.label} 路径 · {engine.available ? '已检测到' : '未就绪'}</span><input aria-label={`${engine.label} 路径`} data-testid={`engine-path-${engine.id}`} placeholder={engine.path || '可执行文件绝对路径'} value={paths[engine.id] ?? ''} onChange={(event) => { editedPaths.current.add(engine.id); setPaths((previous) => ({ ...previous, [engine.id]: event.target.value })) }} /></label>
               {engine.error && <p className="settings-error">{engine.error}</p>}
               <button type="button" className="btn" data-testid={`engine-path-save-${engine.id}`} disabled={engineBusy !== null} onClick={() => void configureEngine(engine.id)}>{engineBusy === engine.id ? '检测中…' : '保存并检测'}</button>
             </div>

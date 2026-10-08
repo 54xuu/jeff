@@ -35,6 +35,12 @@ async function main() {
         const actual = await locator.innerText()
         if (!actual.includes(action.value ?? '')) throw new Error(`${action.selector} did not contain expected text: ${action.value ?? ''}`)
       }
+      else if (action.type === 'expect-engine-options') {
+        const statuses = await page.evaluate(() => window.jeff.invoke('engines:list'))
+        const expected = statuses.filter((engine) => engine.id === 'opencode' || engine.available || !!engine.configuredPath).map((engine) => engine.id)
+        const actual = await page.getByTestId('engine-service-select').locator('option').evaluateAll((options) => options.map((option) => option.value))
+        if (JSON.stringify(actual) !== JSON.stringify(expected)) throw new Error(`Engine options mismatch: actual=${JSON.stringify(actual)} expected=${JSON.stringify(expected)}`)
+      }
       else throw new Error(`Unsupported desktop suite action: ${action.type}`)
     }
     const infoDeadline = Date.now() + 90_000
