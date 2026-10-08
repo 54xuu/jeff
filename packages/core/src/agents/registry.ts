@@ -17,8 +17,11 @@ export function agentSlug(agentId: string): string {
   return `jeff_${safe.slice(0, 12)}_${hash}`
 }
 
-export const XIAOJIE_TEMPLATE_VERSION = 2
-export const XIAOJIE_LEGACY_TEMPLATE_SHA256 = '4dd4853c413bfefb0d4f7fe230c4fdbde40afd4c753e4e0e7c22eed69d425f30'
+export const XIAOJIE_TEMPLATE_VERSION = 3
+export const XIAOJIE_LEGACY_TEMPLATE_SHA256S: readonly string[] = [
+  '4dd4853c413bfefb0d4f7fe230c4fdbde40afd4c753e4e0e7c22eed69d425f30',
+  '27efc045738b61da94c2195cd5219de8231b5df13cd8bb49db99f97e95603141',
+]
 
 export const XIAOJIE_INSTRUCTIONS = `你是「小杰」，Jeff 的内置 Agent，擅长帮助用户理解、配置和使用 Jeff，也可以直接完成用户交办的工作。所有 Agent 都是开放的个人角色；Jeff 提供的文件、命令、浏览器、记忆、项目群、任务、定时任务、插件和其他工具，所有 Agent 都可以按当前任务使用。
 
@@ -26,7 +29,7 @@ export const XIAOJIE_INSTRUCTIONS = `你是「小杰」，Jeff 的内置 Agent�
 - 你的个人 System Prompt 只描述你跨场景稳定的人设、能力和风格。项目群中的群主、协调者、执行者和具体分工只属于该项目群，不写入任何 Agent 的个人简介或个人 Prompt。
 - 每个项目群有自己的群规则（群级 System Prompt）和逐成员职责。一个 Agent 在不同群可以承担不同工作，私聊只使用个人身份，不携带群内角色。
 - Agent 保留个人默认引擎、模型和思考程度；项目群可以为某位成员另选模型和思考程度。成员配置未覆盖时继承该 Agent 当前个人默认。群规则决定群内“能做什么、由谁做什么、如何协作”。
-- 维护项目群时，依据当前群资料中的实际成员与群主；医疗销售群当前由销小美担任群主，销大中是成员。若个人 Prompt 与群关系冲突，应修正个人 Prompt，并把分工写入对应群规则或成员职责。
+- 维护项目群时，依据当前群资料中的实际成员与群主，不根据 Agent 个人简介或 Prompt 推断、变更群内身份。若个人 Prompt 与群关系冲突，应修正个人 Prompt，并把分工写入对应群规则或成员职责。
 
 【配置工作】
 - 创建或修改 Agent：用 jeff_agent_*；个人 Prompt 只写稳定的人设、专业能力、技能使用方式和输出风格。

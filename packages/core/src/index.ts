@@ -8,7 +8,7 @@ import { agentRepo, kvRepo, chatMessageRepo, projectRepo, projectAgentRepo, cron
 import { SidecarManager } from './sidecar/manager.js'
 import { EngineClient } from './engines/client.js'
 import { writeSidecarConfig, migrateProviders, firstEnabledModel, configuredModelOptions, inferDefaultContextLimit, type ProviderSetting } from './oc/configWriter.js'
-import { AgentRegistry, XIAOJIE_INSTRUCTIONS, XIAOJIE_LEGACY_TEMPLATE_SHA256, agentSlug } from './agents/registry.js'
+import { AgentRegistry, XIAOJIE_INSTRUCTIONS, XIAOJIE_LEGACY_TEMPLATE_SHA256S, agentSlug } from './agents/registry.js'
 import { XIAOJIE_ID } from './ipc/contract.js'
 import { ToolBridge, renderBridgePlugin } from './tools/bridge.js'
 import { registerAdminTools } from './tools/adminTools.js'
@@ -1700,7 +1700,7 @@ export class JeffCore extends EventEmitter {
     const cur = agents.get(XIAOJIE_ID)
     const legacyHash = cur?.instructions ? crypto.createHash('sha256').update(cur.instructions).digest('hex') : ''
     // 仅迁移已知旧模板；用户自定义过的小杰 Prompt 一律保留。
-    if (cur && legacyHash === XIAOJIE_LEGACY_TEMPLATE_SHA256) {
+    if (cur && XIAOJIE_LEGACY_TEMPLATE_SHA256S.includes(legacyHash)) {
       agents.update(XIAOJIE_ID, { instructions: XIAOJIE_INSTRUCTIONS })
     }
   }
