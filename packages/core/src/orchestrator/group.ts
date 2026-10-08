@@ -3,7 +3,7 @@ import { chatMessageRepo, projectAgentRepo, projectRepo, agentRepo, kvRepo, type
 import { agentSlug } from '../agents/registry.js'
 import { DEFAULT_SEND_TIMEOUT_MS, type OcClient, type AssistantInfo } from '../oc/client.js'
 import type { GroupMessage } from '../ipc/contract.js'
-import { agentPromptOpts } from '../util/modelKey.js'
+import { projectMemberPromptOpts } from '../util/modelKey.js'
 import { GroupThreadStore, groupMsgScope } from './groupThreads.js'
 import { decodePluginUserMessage } from '../plugins/invoke.js'
 import { wantsIndependentSubtasks, withSubtaskSteer } from './subtask.js'
@@ -208,40 +208,30 @@ export class GroupChat {
     if (!project) throw new Error(`项目不存在: ${projectId}`)
     const agents = agentRepo(this.db)
     const members = projectAgentRepo(this.db).listByProject(projectId)
-    const isLeaderBriefing = project.leader_agent_id === agentId
+    const currentMember = members.find((member) => member.agent_id === agentId)
 
     const roster = members
       .map((m) => {
         const a = agents.get(m.agent_id)
         const isLeader = m.agent_id === project.leader_agent_id
-        const roleLabel = isLeader ? '群主/leader' : '工作者/worker'
         const descParts: string[] = []
         if (a?.description?.trim()) descParts.push(a.description.trim())
-        if (a?.instructions?.trim()) descParts.push(`职责设定：${a.instructions.trim().slice(0, 150)}`)
+        if (m.duties?.trim()) descParts.push(`本群职责：${m.duties.trim()}`)
         const desc = descParts.length > 0 ? ` - ${descParts.join('；')}` : ''
-        return `- ${a?.name || m.agent_id}（${roleLabel}）id=${m.agent_id}${desc}`
+        return `- ${a?.name || m.agent_id}${isLeader ? '（本群群主）' : ''} id=${m.agent_id}${desc}`
       })
       .join('\n')
-
-    const roleLine = isLeaderBriefing
-      ? `你是本群群主（leader），负责统筹协调与任务派发：
-1. 简单打招呼、寒暄、纯信息问答或群内仅有你一人时，直接用清晰友好的语言回复用户；
-2. 凡涉及具体工作与执行任务（如写代码、查验文件、执行操作、排查问题等），【严禁自己包揽全部执行】！必须仔细分析上方《群成员名册与技能清单》，评估各项子任务最适合哪位 worker 执行；
-3. 将任务分解为具体子步骤，在回复中按执行顺序依次使用「@成员名 <具体子任务要求>」进行明确派发（例如：“@开发小李 请修改前端页面... @测试小王 请执行测试...”）；
-4. 系统调度器会严格按顺序驱动各 worker 串行执行并在群内向你汇报；待所有 worker 汇报完毕后，系统会自动触发你进行最终验收与向用户的汇总答复。`
-      : `你是本群工作者（worker）。
-1. 当群主 @ 你并指派任务时，请根据指派要求全力执行（结合工作空间完成代码编写、文件查验等）；
-2. 任务执行完成后，你【必须】在回复最后以「@我 汇报：<任务执行结果与结论总结>」的格式在群里公开汇报（「我」指发起任务的用户），以便群主验收与向用户汇总。`
-
     const bg = (project.description || '').trim()
+    const duties = currentMember?.duties?.trim() || '（本群未设置单独职责，按群规则和任务需要协作）'
     return [
       `【项目群上下文】群名：${project.title}`,
       `项目背景（群简介）：${bg || '（未填写，请在群资料补充）'}`,
       `工作空间目录：${project.workspace_dir || '默认工作区'}。用户没有指定输出位置时，产出的所有文件（代码、文档等）都保存到该目录。`,
-      `【群成员名册与技能清单】：`,
+      `【本群规则（群级 System Prompt）】\n${project.system_prompt?.trim() || '（尚未设置。根据项目目标与用户指令协作。）'}`,
+      `【你的本群职责】\n${duties}`,
+      `【群成员名册与本群职责】`,
       roster,
-      `【协作与执行规范】：`,
-      roleLine,
+      `群主身份只在本群有效。按本群规则决定由谁协调、执行和汇报；成员可以使用 Jeff 提供的工具完成任务。个人身份与个人默认模型仍由各自 Agent 设置决定。`,
       `群内所有沟通均使用简体中文，清晰、专业、可执行。`,
     ].join('\n')
   }
@@ -474,10 +464,10 @@ export class GroupChat {
     let reply: AssistantInfo
     const memoryBlock = this.hooks?.buildMemory?.(agentId, projectId)
     const systemBase = memoryBlock ? `${this.buildBriefing(projectId, agentId)}\n\n${memoryBlock}` : this.buildBriefing(projectId, agentId)
-    const builtin = !!target.builtin
-    const system = withSubtaskSteer(systemBase, { builtin })
-    if (!builtin && wantsIndependentSubtasks(text)) this.hooks?.onDebugLog?.('subtask-steer', { projectId, threadId, agentId, sessionId })
-    const opts = agentPromptOpts(target, this.hooks?.defaultModel?.() ?? null)
+    const system = withSubtaskSteer(systemBase)
+    if (wantsIndependentSubtasks(text)) this.hooks?.onDebugLog?.('subtask-steer', { projectId, threadId, agentId, sessionId })
+    const member = projectAgentRepo(this.db).listByProject(projectId).find((item) => item.agent_id === agentId)
+    const opts = projectMemberPromptOpts(target, member || {}, this.hooks?.defaultModel?.() ?? null)
     // 用户已点停止：不再发起本回合，直接按已停止收敛（流水线后续回合也会被取消标记拦下）
     if (input.runState?.cancelled) return { content: '', stopped: true }
     try {

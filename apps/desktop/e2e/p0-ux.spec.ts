@@ -244,7 +244,7 @@ test('P0：草稿 / 斜杠 / 试一下 / 回底 / 查找 / 定时状态 / 浏览
     await expect(page.getByTestId('command-palette')).toBeVisible()
     await page.locator('.palette-input').fill('模型供应商')
     await page.keyboard.press('Enter')
-    await expect(page.getByTestId('settings-nav-providers')).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByTestId('settings-nav-engine')).toBeVisible({ timeout: 15_000 })
     // Esc 也能关；关掉后不再拦按键
     await page.keyboard.press('Control+k')
     await expect(page.getByTestId('command-palette')).toBeVisible()

@@ -97,7 +97,7 @@ export default function ModelPickerCombo(props: {
             {props.placeholderEmpty || '跟随默认'}
           </button>
           {groups.length === 0 && (
-            <div className="model-menu-empty">{total === 0 ? '暂无模型：请到「设置 → 模型供应商」添加' : '没有匹配的模型'}</div>
+            <div className="model-menu-empty">{total === 0 ? '暂无模型：请到「设置 → 引擎服务 → OpenCode（Jeff）」添加' : '没有匹配的模型'}</div>
           )}
           {groups.map((c) => (
             <div key={c.id}>

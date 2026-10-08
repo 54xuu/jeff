@@ -10,10 +10,10 @@ interface PaletteCmd {
 }
 
 const SETTINGS_SECTIONS: Array<[SettingsSection, string]> = [
-  ['providers', '模型供应商'],
   ['mcp', 'MCP 连接器'],
   ['memory', '记忆'],
   ['engine', '引擎服务'],
+  ['engine', '模型供应商（OpenCode Jeff）'],
   ['sync', '同步与备份'],
   ['siyuan', '思源知识库'],
   ['notification', '通知'],

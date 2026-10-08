@@ -7,7 +7,6 @@ import { agentRepo } from '../src/db/repos.js'
 import { buildPaths } from '../src/paths.js'
 import { AgentRegistry, agentSlug } from '../src/agents/registry.js'
 import { XIAOJIE_ID } from '../src/ipc/contract.js'
-import { ADMIN_TOOL_NAMES } from '../src/tools/adminTools.js'
 import type { DB } from '../src/db/db.js'
 
 let tmp: string
@@ -30,7 +29,7 @@ afterEach(() => {
 })
 
 describe('AgentRegistry', () => {
-  it('为每个 agent 生成 md 文件，内置禁用管理工具', () => {
+  it('为每个 Agent 生成 md 文件，所有 Jeff 工具能力一致', () => {
     const agents = agentRepo(db)
     agents.create({ name: '开发', instructions: '写代码的' })
     registry.syncAll()
@@ -40,12 +39,11 @@ describe('AgentRegistry', () => {
     const xiaojieFile = files.find((f) => f.includes(agentSlug(XIAOJIE_ID)))!
     const content = fs.readFileSync(path.join(buildPaths(tmp).ocAgentsDir, xiaojieFile), 'utf8')
     expect(content).toContain('mode: all')
-    expect(content).not.toContain('jeff_agent_create: false') // 小杰保留管理工具
     expect(content).toContain('小杰')
 
     const devFile = files.find((f) => !f.includes(agentSlug(XIAOJIE_ID)))!
     const devContent = fs.readFileSync(path.join(buildPaths(tmp).ocAgentsDir, devFile), 'utf8')
-    for (const t of ADMIN_TOOL_NAMES) expect(devContent).toContain(`${t}: false`)
+    for (const t of ['jeff_agent_create', 'jeff_project_create', 'jeff_cron_create', 'jeff_plugin_create', 'jeff_self_update']) expect(devContent).not.toContain(`${t}: false`)
     expect(devContent).toContain('写代码的')
   })
 

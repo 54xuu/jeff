@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events'
+import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import { BUILTIN_SKILL_DIR, buildPaths, ensureDirs, jeffRoot, userSkillsDir, type JeffPaths } from './paths.js'
@@ -7,7 +8,7 @@ import { agentRepo, kvRepo, chatMessageRepo, projectRepo, projectAgentRepo, cron
 import { SidecarManager } from './sidecar/manager.js'
 import { EngineClient } from './engines/client.js'
 import { writeSidecarConfig, migrateProviders, firstEnabledModel, configuredModelOptions, inferDefaultContextLimit, type ProviderSetting } from './oc/configWriter.js'
-import { AgentRegistry, XIAOJIE_INSTRUCTIONS, agentSlug, agentDeniedTools } from './agents/registry.js'
+import { AgentRegistry, XIAOJIE_INSTRUCTIONS, XIAOJIE_LEGACY_TEMPLATE_SHA256, agentSlug } from './agents/registry.js'
 import { XIAOJIE_ID } from './ipc/contract.js'
 import { ToolBridge, renderBridgePlugin } from './tools/bridge.js'
 import { registerAdminTools } from './tools/adminTools.js'
@@ -120,7 +121,7 @@ export const WEB_SEARCH_SKILL_NAME = 'byted-web-search'
  * 无联网能力的专用 agent（子任务提取、纯代码 agent 等）不再每轮喂入该指南。
  */
 export function agentWebSearchCapable(agent: AgentRow | null | undefined, skillsDir?: string): boolean {
-  if (agent && agentDeniedTools(agent).has('skill')) return false
+  void agent
   const dir = skillsDir || userSkillsDir()
   try {
     return fs.existsSync(path.join(dir, WEB_SEARCH_SKILL_NAME, 'SKILL.md'))
@@ -319,11 +320,11 @@ export class JeffCore extends EventEmitter {
       }
       const resolved = __ctx?.sessionID ? this.resolveSession(__ctx.sessionID) : null
       if (!resolved || resolved.kind !== 'group') {
-        return { ok: false, error: 'jeff_delegate 只能在项目群里使用（且你必须是群主）' }
+        return { ok: false, error: 'jeff_delegate 只能在项目群里使用' }
       }
       if (!member_agent_id || !instruction) return { ok: false, error: 'member_agent_id 与 instruction 必填' }
       const r = await this.delegator.delegate(
-        { projectId: resolved.projectId, leaderAgentId: resolved.agentId, ...(resolved.threadId ? { threadId: resolved.threadId } : {}) },
+        { projectId: resolved.projectId, actorAgentId: resolved.agentId, ...(resolved.threadId ? { threadId: resolved.threadId } : {}) },
         member_agent_id,
         instruction,
         __ctx?.messageID,
@@ -341,8 +342,6 @@ export class JeffCore extends EventEmitter {
       if (!resolved) return { ok: false, error: '无法识别调用者身份（无会话上下文）' }
       if (resolved.kind === 'review') return { ok: false, error: '该场景不支持子任务' }
       if ((resolved as { isSubtask?: boolean }).isSubtask) return { ok: false, error: '子任务内部不能再调用 jeff_spawn_subtask（不支持嵌套）' }
-      const caller = agentRepo(this.db).get(resolved.agentId)
-      if (caller?.builtin) return { ok: false, error: '小杰不支持该工具' }
       if (!instruction?.trim()) return { ok: false, error: 'instruction 不能为空' }
       const directory = resolved.kind === 'group' ? projectRepo(this.db).get(resolved.projectId)?.workspace_dir || undefined : undefined
       const callKey = __ctx?.messageID || __ctx?.sessionID || 'unknown'
@@ -1678,7 +1677,7 @@ export class JeffCore extends EventEmitter {
     if (this.oc) {
       this.oc.port = this.sidecar.port
     } else {
-      this.oc = new EngineClient(this.sidecar.port, { db: this.db, root: this.paths.root, workspace: this.paths.workspaceDir, bridge: this.bridge, mcp: () => this.listMcp() }, this.debugLog.fn())
+      this.oc = new EngineClient(this.sidecar.port, { db: this.db, root: this.paths.root, workspace: this.paths.workspaceDir, bridge: this.bridge, mcp: () => this.listMcp(), bundledOpenCode: () => this.sidecar?.resolveBinary() || null }, this.debugLog.fn())
       this.wireOcClient()
     }
     this.oc.startEventStream()
@@ -1694,11 +1693,14 @@ export class JeffCore extends EventEmitter {
         name: '小杰',
         avatar: '🧑‍💻',
         description: 'Jeff 内置管家：问答、创建与管理一切',
+        instructions: XIAOJIE_INSTRUCTIONS,
         builtin: 1,
       })
     }
     const cur = agents.get(XIAOJIE_ID)
-    if (cur && cur.instructions !== XIAOJIE_INSTRUCTIONS) {
+    const legacyHash = cur?.instructions ? crypto.createHash('sha256').update(cur.instructions).digest('hex') : ''
+    // 仅迁移已知旧模板；用户自定义过的小杰 Prompt 一律保留。
+    if (cur && legacyHash === XIAOJIE_LEGACY_TEMPLATE_SHA256) {
       agents.update(XIAOJIE_ID, { instructions: XIAOJIE_INSTRUCTIONS })
     }
   }
@@ -1723,7 +1725,7 @@ export class JeffCore extends EventEmitter {
     fs.rmSync(path.join(this.paths.ocSkillsDir, BUILTIN_SKILL_DIR), { recursive: true, force: true })
     const content = `---
 name: jeff-usage
-description: Jeff 桌面应用的完整使用说明：智能体、项目群（leader 统筹）、任务看板、记忆、WebDAV 同步。当用户问「Jeff 怎么用 / 能做什么」时加载。
+description: Jeff 桌面应用的完整使用说明：智能体、项目群规则与成员职责、任务看板、记忆、WebDAV 同步。当用户问「Jeff 怎么用 / 能做什么」时加载。
 ---
 
 # Jeff 使用说明
@@ -1731,32 +1733,34 @@ description: Jeff 桌面应用的完整使用说明：智能体、项目群（le
 Jeff 把「开发 + 项目管理」组织成三个概念（微信心智模型）：
 
 ## 1. 智能体 = 聊天好友
-- 每个智能体是会话列表里的一个联系人，有自己的身份指令、默认模型、长期记忆。
+- 每个 Agent 是开放的个人角色，有自己的 System Prompt、技能、个人默认引擎/模型/思考程度和长期记忆；Jeff 提供的工具对所有 Agent 同等开放。
 - 私聊 = 和这个智能体一对一协作（它带编码/MCP/技能工具，可以直接干活）。
+- 个人 Prompt 只描述跨场景稳定的人设与能力；不要写任何群主、leader、worker 或某个群的分工。
 - 创建途径：\u2460 找小杰说「帮我创建一个智能体」；\u2461 「智能体」页手动新建。
 - **自修身份指令**：在对话里直接指出「你这点做得不对」，智能体可以修正自己的身份指令（自动快照可回滚，下一轮生效）；一次性的偏好让它写记忆就行。
 
 ## 2. 项目群 = 微信群
-- 一个项目就是一个群；群里有你 + 一个群主（leader）+ 若干工作者（worker）。工作者是统一角色，不做开发/UI/测试/产品等细分类。
-- **只有一个群主（leader）**，所有工作由它统筹：群消息默认给 leader，@成员名 直达该成员。
-- leader 用 jeff_delegate 工具把活儿委派给 worker，worker 独立执行后结果自动回群，leader 再汇总。
-- 群资料面板：成员管理 + 任务看板（拖拽改状态）。
+- 一个项目就是一个群；群规则是该群的 System Prompt，定义本群目标、分工、协作流程和边界。
+- 群主与成员职责只在该群有效，同一 Agent 在不同群可承担不同工作。默认消息由群主接收；按群规则用 @成员名 直达成员，任意群成员都能按群规则委派工作。
+- 群成员可设置本群专属模型与思考程度；未覆盖时继承其个人默认。私聊不注入群内身份。
+- 群资料面板管理群规则、群主与成员职责/配置；任务看板可拖拽改状态。
 
 ## 3. 任务 = JEF-n
 - 任务归属项目群，编号 JEF-n，状态：待办/进行中/待审/完成/已取消；优先级四级。
-- 创建途径：群里对话让 leader/小杰建（自动出现任务卡片）、或群资料看板手动建。
+- 创建途径：Agent 可使用 Jeff 项目工具，或从群资料看板手动建；任务自动出现在项目群。
 
 ## 其他能力
 - **记忆**：说「记住/忘记/整理记忆」后，jeff_memory 自动把保密内容存本机私有记忆，把公开信息写全局或项目 AGENTS.md。私有条目不参与同步；旧记忆保留。设置 → 记忆可搜索智能体和项目群、筛选范围、人工编辑，手机「我 → 记忆与公开规则」也可管理。
 - **AGENTS.md**：用户级（数据目录 AGENTS.md）与项目级规则文件，每轮对话自动注入；项目级按项目保存在数据目录 agents-md/ 下（设置 → 记忆页可编辑，随 WebDAV 同步）。旧版放在工作空间目录下的 AGENTS.md 仅在项目规则尚未创建时作为迁移来源，保存后即以数据目录为准。
 - **会话搜索**：所有历史对话全文可搜（jeff_session_search）。
-- **模型提供商**：设置页配置自定义提供商（Chat / Responses / Anthropic 三种 API 格式），每个模型可配上下文/最大输出/图片输入/思考档位（none/low/high/max）；模型与思考程度在智能体资料（通讯录 / 私聊「资料」）里配置，聊天输入框不再切换。新会话默认用第一个启用提供商的第一个模型。
-- **MCP**：设置页粘贴 JSON 导入（支持 mcpServers 包裹格式），可查看每个服务的连接状态与工具清单（请到设置配置，小杰无 MCP 工具）。
+- **执行引擎**：每个 Agent 独立选择本机可用 CLI；“设置 → 引擎服务”下拉查看与检测本机安装。OpenCode（系统）使用系统 CLI 配置，只有 OpenCode（Jeff）显示可编辑的模型提供商。
+- **模型与思考**：模型与思考程度在 Agent 资料中配置个人默认；群成员可另设群内覆盖，留空继承个人默认。
+- **MCP**：设置页粘贴 JSON 导入（支持 mcpServers 包裹格式），所有 Agent 都能调用已接入的 MCP 工具。
 - **图片消息**：聊天输入框支持上传/粘贴/拖拽图片（需模型支持图片输入），智能体能看图回答。
 - **项目群工作空间**：发起群聊可选工作空间目录，群内产出的文件默认保存到该目录。
 - **WebDAV 同步**：设置页配置；同步智能体/项目群/任务/设置（含 MCP）/记忆/AGENTS.md + 镜像备份 ~/.agents/skills（整目录对齐：本地删除远端也删，删前归档；恢复为整目录替换）；项目工作空间路径按设备保留；实体级双向合并。同步或恢复 skills 后可用菜单「重启 Jeff」整应用重开。
 - **亮/深夜模式**：左侧导航底部切换，或跟随系统。
-- **小杰能代操**：智能体 CRUD、项目群建改/解散、任务、记忆与会话搜索。须去设置的：模型供应商、MCP、WebDAV/skills、主题与引擎。
+- **Agent 工具**：所有 Agent 都可使用 Jeff 提供的配置、项目群、任务、记忆、插件、定时任务与浏览器工具；执行范围由真实调用者与资源关系校验。须去设置的：OpenCode（Jeff）模型提供商、MCP、WebDAV/skills、主题与引擎。
 `
     fs.writeFileSync(path.join(dir, 'SKILL.md'), content, 'utf8')
   }

@@ -5,7 +5,7 @@ import os from 'node:os'
 import { StringDecoder } from 'node:string_decoder'
 
 export function resolveExecutable(names: string[], explicit?: string): string | null {
-  const extensions = process.platform === 'win32' ? ['', '.exe', '.cmd', '.bat'] : ['']
+  const extensions = process.platform === 'win32' ? ['', '.exe', '.cmd', '.bat', '.ps1'] : ['']
   const dirs = [...(process.env.PATH || '').split(path.delimiter), path.join(os.homedir(), '.local', 'bin'), path.join(os.homedir(), '.opencode', 'bin')]
   if (process.platform === 'win32') {
     if (process.env.LOCALAPPDATA) dirs.push(path.join(process.env.LOCALAPPDATA, 'cursor-agent'), path.join(process.env.LOCALAPPDATA, 'Programs', 'OpenAI', 'Codex', 'bin'))
@@ -128,7 +128,9 @@ export async function capture(binary: string, args: string[], timeout = 5000): P
     return await Promise.race([
       new Promise<string>((resolve, reject) => {
         child.once('error', reject)
-        child.once('close', (code) => code === 0 ? resolve(output.trim()) : reject(new Error(`CLI 检测失败（退出码 ${code}）：${stderr.slice(0, 300)}`)))
+        child.once('close', (code) => code === 0
+          ? resolve([output, stderr].filter(Boolean).join('\n').trim())
+          : reject(new Error(`CLI 检测失败（退出码 ${code}）：${stderr.slice(0, 300)}`)))
       }),
       new Promise<string>((_, reject) => { timer = setTimeout(() => reject(new Error('CLI 检测超时')), timeout) }),
     ])

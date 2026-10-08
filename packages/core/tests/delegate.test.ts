@@ -61,13 +61,13 @@ afterEach(() => {
 describe('Delegator', () => {
   it('leader 委派成员 → 成员执行 → 结果回群 → 工具输出带结果', async () => {
     sentTo = []
-    const r = await delegator.delegate({ projectId, leaderAgentId: leaderId }, devId, '把首页 banner 改成新配色', 'msg_l1')
+    const r = await delegator.delegate({ projectId, actorAgentId: leaderId }, devId, '把首页 banner 改成新配色', 'msg_l1')
     expect(r.ok).toBe(true)
     expect(r.result).toContain('已处理')
     // 成员会话收到指派
     expect(sentTo).toHaveLength(1)
     expect(sentTo[0].agent).toBe(agentSlug(devId))
-    expect(sentTo[0].text).toContain('群主 架构师老王 指派')
+    expect(sentTo[0].text).toContain('【架构师老王 委派】')
     expect(sentTo[0].system).toContain('官网群')
     // 群记录：leader 普通气泡派发（@我 + @成员 + 完整指令）+ worker 普通气泡结果（@我）
     const history = group.history(projectId)
@@ -91,7 +91,7 @@ describe('Delegator', () => {
     sentTo = []
     const tail = '结尾标记-XYZ9'
     const instruction = `${'很长的任务说明。'.repeat(30)}${tail}`
-    await delegator.delegate({ projectId, leaderAgentId: leaderId }, devId, instruction, 'msg_long')
+    await delegator.delegate({ projectId, actorAgentId: leaderId }, devId, instruction, 'msg_long')
     const dispatch = group.history(projectId).find((m) => (m.meta as { phase?: string })?.phase === 'dispatch')
     expect(dispatch?.text).toContain(tail)
   })
@@ -106,7 +106,7 @@ describe('Delegator', () => {
       },
     } as unknown as OcClient
     const fd = new Delegator(db, () => failOc, group, () => {})
-    const r = await fd.delegate({ projectId, leaderAgentId: leaderId }, devId, '会失败的任务', 'msg_fail')
+    const r = await fd.delegate({ projectId, actorAgentId: leaderId }, devId, '会失败的任务', 'msg_fail')
     expect(r.ok).toBe(false)
     const failed = group.history(projectId).find((m) => (m.meta as { phase?: string })?.phase === 'failed')
     expect(failed?.role).toBe('assistant')
@@ -119,31 +119,35 @@ describe('Delegator', () => {
     sentTo = []
     const payloads: Array<{ projectId: string; threadId?: string }> = []
     const nid = new Delegator(db, () => ocStub, group, (pl) => payloads.push(pl))
-    await nid.delegate({ projectId, leaderAgentId: leaderId, threadId: 'thr_fixed' }, devId, '带 thread 的委派', 'msg_tid')
+    await nid.delegate({ projectId, actorAgentId: leaderId, threadId: 'thr_fixed' }, devId, '带 thread 的委派', 'msg_tid')
     expect(payloads).toEqual([
       { projectId, threadId: 'thr_fixed' },
       { projectId, threadId: 'thr_fixed' },
     ])
   })
 
-  it('非群主不可委派', async () => {
-    const r = await delegator.delegate({ projectId, leaderAgentId: devId }, XIAOJIE_ID, '试试')
-    expect(r.ok).toBe(false)
-    expect(r.error).toContain('群主')
+  it('任意群成员可按群规则委派；非成员仍不能调用', async () => {
+    projectAgentRepo(db).add(projectId, XIAOJIE_ID, 'worker')
+    const r = await delegator.delegate({ projectId, actorAgentId: devId }, XIAOJIE_ID, '试试')
+    expect(r.ok).toBe(true)
+    const outsider = agentRepo(db).create({ name: '群外成员' })
+    const denied = await delegator.delegate({ projectId, actorAgentId: outsider.id }, devId, '越权')
+    expect(denied.ok).toBe(false)
+    expect(denied.error).toContain('调用者不属于本项目群')
   })
 
   it('不能委派给自己 / 群外成员不可委派', async () => {
-    const r1 = await delegator.delegate({ projectId, leaderAgentId: leaderId }, leaderId, '自己')
+    const r1 = await delegator.delegate({ projectId, actorAgentId: leaderId }, leaderId, '自己')
     expect(r1.error).toContain('自己')
-    const r2 = await delegator.delegate({ projectId, leaderAgentId: leaderId }, XIAOJIE_ID, '小杰不在群')
+    const r2 = await delegator.delegate({ projectId, actorAgentId: leaderId }, XIAOJIE_ID, '小杰不在群')
     expect(r2.error).toContain('不在本群')
   })
 
   it('并发防重：相同 (群,成员,指令) 进行中会被拒', async () => {
     sentTo = []
     // 手动占位：直接调用两次，第一次还没完成时第二次进来（用两个 promise 模拟并发）
-    const p1 = delegator.delegate({ projectId, leaderAgentId: leaderId }, devId, '重复的指令', 'msg_x')
-    const p2 = delegator.delegate({ projectId, leaderAgentId: leaderId }, devId, '重复的指令', 'msg_x')
+    const p1 = delegator.delegate({ projectId, actorAgentId: leaderId }, devId, '重复的指令', 'msg_x')
+    const p2 = delegator.delegate({ projectId, actorAgentId: leaderId }, devId, '重复的指令', 'msg_x')
     const [r1, r2] = await Promise.all([p1, p2])
     // 其中一个成功，另一个被防重拒绝
     expect([r1.ok, r2.ok]).toContain(false)
@@ -154,22 +158,22 @@ describe('Delegator', () => {
   it('同一条消息最多委派 5 次（防失控循环）', async () => {
     sentTo = []
     for (let i = 0; i < 5; i++) {
-      const r = await delegator.delegate({ projectId, leaderAgentId: leaderId }, devId, `第 ${i} 个不同任务`, 'msg_loop')
+      const r = await delegator.delegate({ projectId, actorAgentId: leaderId }, devId, `第 ${i} 个不同任务`, 'msg_loop')
       expect(r.ok).toBe(true)
     }
-    const r6 = await delegator.delegate({ projectId, leaderAgentId: leaderId }, devId, '第六个任务', 'msg_loop')
+    const r6 = await delegator.delegate({ projectId, actorAgentId: leaderId }, devId, '第六个任务', 'msg_loop')
     expect(r6.ok).toBe(false)
     expect(r6.error).toContain('上限')
   })
 
-  it('resolveDelegateScope：群主会话可委派，成员会话不行', () => {
+  it('resolveDelegateScope：群主和本群成员会话均可委派', () => {
     const leaderSession = `ses_leader_${Date.now()}`
     db.prepare('INSERT INTO kv (key, value, updated_at) VALUES (?, ?, ?)').run(`session:group:${projectId}:${leaderId}`, leaderSession, Date.now())
     const devSession = `ses_dev_${Date.now()}`
     db.prepare('INSERT INTO kv (key, value, updated_at) VALUES (?, ?, ?)').run(`session:group:${projectId}:${devId}`, devSession, Date.now())
 
     expect(delegator.resolveDelegateScope(leaderSession, leaderId)).toMatchObject({ projectId })
-    expect(delegator.resolveDelegateScope(devSession, devId)).toBeNull()
+    expect(delegator.resolveDelegateScope(devSession, devId)).toMatchObject({ projectId, actorAgentId: devId })
   })
 
   it('委派回合注入规则/记忆（与普通群回合一致，briefing 在前）', async () => {
@@ -179,7 +183,7 @@ describe('Delegator', () => {
       expect(pid).toBe(projectId)
       return 'MEM-RULES-BLOCK'
     }
-    const r = await delegator.delegate({ projectId, leaderAgentId: leaderId }, devId, '带规则的委派', 'msg_m1')
+    const r = await delegator.delegate({ projectId, actorAgentId: leaderId }, devId, '带规则的委派', 'msg_m1')
     expect(r.ok).toBe(true)
     const system = sentTo[0].system as string
     expect(system).toContain('官网群') // 群 briefing
@@ -190,7 +194,7 @@ describe('Delegator', () => {
 
   it('未注入 buildMemory 时退化为仅 briefing（向后兼容）', async () => {
     sentTo = []
-    const r = await delegator.delegate({ projectId, leaderAgentId: leaderId }, devId, '不带规则的委派', 'msg_m2')
+    const r = await delegator.delegate({ projectId, actorAgentId: leaderId }, devId, '不带规则的委派', 'msg_m2')
     expect(r.ok).toBe(true)
     expect(sentTo[0].system).toContain('官网群')
     expect(sentTo[0].system).not.toContain('MEM-RULES-BLOCK')

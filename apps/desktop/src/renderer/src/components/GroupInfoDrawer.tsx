@@ -1,10 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useStore } from '../store'
 import { api } from '../api'
 import {
   IPC, currentWeekRange, projectRoleLabel, parseProjectWorkspaceState, serializeProjectWorkspaceState,
   canStartCampaignProduction,
-  type CampaignProposal, type CampaignKind, type ProjectWorkspaceState, type GroupMessage, type GroupThreadBrief, type ProjectInfo, type ProjectDocumentInfo,
+  type CampaignProposal, type CampaignKind, type ProjectWorkspaceState, type GroupMessage, type GroupThreadBrief, type ProjectInfo, type ProjectDocumentInfo, type ProjectMember,
 } from '@jeff/core'
 import Avatar from './Avatar'
 import { EmojiPickerButton } from './ui/EmojiPicker'
@@ -14,6 +14,7 @@ import SessionHistoryPanel from './SessionHistoryPanel'
 import ProjectTaskBoard from './ProjectTaskBoard'
 import ProjectReportsPanel from './ProjectReportsPanel'
 import { IconClose } from './ui/Icons'
+import ModelPickerCombo from './ModelPickerCombo'
 
 type GroupDrawerTab = 'settings' | 'workspace' | 'tasks' | 'members' | 'history' | 'files'
 
@@ -24,12 +25,16 @@ export default function GroupInfoDrawer(props: { project: ProjectInfo; busy?: bo
   const dataDir = useStore((s) => s.appInfo?.dataDir || '')
   const { refreshProjects, setActive, loadGroupHistory } = useStore()
   const [tab, setTab] = useState<GroupDrawerTab>('settings')
-  const [members, setMembers] = useState<Array<{ agent_id: string; role: string; name: string; avatar: string }>>([])
+  const [members, setMembers] = useState<ProjectMember[]>([])
+  const memberConfigBaseline = useRef('[]')
   const [addingMember, setAddingMember] = useState(false)
+  const [selectedMemberId, setSelectedMemberId] = useState('')
+  const [engineModels, setEngineModels] = useState<Array<{ id: string; label: string }>>([])
 
   const [title, setTitle] = useState(project.title)
   const [icon, setIcon] = useState(project.icon || '👥')
   const [description, setDescription] = useState(project.description || '')
+  const [groupRules, setGroupRules] = useState(project.system_prompt || '')
   const [workspaceDir, setWorkspaceDir] = useState(project.workspace_dir || '')
   const [workspaceState, setWorkspaceState] = useState<ProjectWorkspaceState>(() => parseProjectWorkspaceState(project.workspace_state))
   const [campaignKind, setCampaignKind] = useState<CampaignKind>('feature_video')
@@ -67,33 +72,50 @@ export default function GroupInfoDrawer(props: { project: ProjectInfo; busy?: bo
     setTitle(project.title)
     setIcon(project.icon || '👥')
     setDescription(project.description || '')
+    setGroupRules(project.system_prompt || '')
     setWorkspaceDir(project.workspace_dir || '')
     setWorkspaceState(parseProjectWorkspaceState(project.workspace_state))
     setLeaderId(project.leader_agent_id || '')
-  }, [project.id, project.title, project.icon, project.description, project.workspace_dir, project.workspace_state, project.leader_agent_id])
+  }, [project.id, project.title, project.icon, project.description, project.system_prompt, project.workspace_dir, project.workspace_state, project.leader_agent_id])
 
   const refreshMembers = async () => {
-    const list = await api.invoke<Array<{ agent_id: string; role: string; name: string; avatar: string }>>(IPC.projectMembers, { projectId: project.id })
+    const list = await api.invoke<ProjectMember[]>(IPC.projectMembers, { projectId: project.id })
     setMembers(list)
+    memberConfigBaseline.current = JSON.stringify(list.map(({ agent_id, duties, model_override, thinking_override }) => ({ agent_id, duties, model_override, thinking_override })))
+    setSelectedMemberId((current) => current && list.some((member) => member.agent_id === current) ? current : list[0]?.agent_id || '')
   }
 
   useEffect(() => {
     void refreshMembers()
   }, [project.id])
 
+  const selectedMember = members.find((member) => member.agent_id === selectedMemberId)
+  useEffect(() => {
+    let active = true
+    setEngineModels([])
+    if (selectedMember && selectedMember.execution_engine !== 'opencode') {
+      void api.invoke<{ models: Array<{ id: string; label: string }> }>(IPC.enginesModels, { engine: selectedMember.execution_engine })
+        .then((result) => { if (active) setEngineModels(result.models) }).catch(() => {})
+    }
+    return () => { active = false }
+  }, [selectedMember?.agent_id, selectedMember?.execution_engine])
+
   // 「工作区文件」与消息里的相对路径链接都以已保存的群工作空间为准（未配置 = Jeff 默认工作区）
   const workspaceForFiles = (project.workspace_dir || '').trim() || (dataDir ? `${dataDir}/workspace` : '')
 
   const candidateAgents = agents.filter((a) => !members.some((m) => m.agent_id === a.id))
+  const currentMemberConfigs = JSON.stringify(members.map(({ agent_id, duties, model_override, thinking_override }) => ({ agent_id, duties, model_override, thinking_override })))
 
   // 群设置表单脏检查：任一字段相对当前 project 有变化即视为脏（成员增删是即时保存的，不参与）
   const formDirty =
     title !== project.title ||
     icon !== (project.icon || '👥') ||
     description !== (project.description || '') ||
+    groupRules !== (project.system_prompt || '') ||
     workspaceDir !== (project.workspace_dir || '') ||
     leaderId !== (project.leader_agent_id || '') ||
-    serializeProjectWorkspaceState(workspaceState) !== serializeProjectWorkspaceState(parseProjectWorkspaceState(project.workspace_state))
+    serializeProjectWorkspaceState(workspaceState) !== serializeProjectWorkspaceState(parseProjectWorkspaceState(project.workspace_state)) ||
+    currentMemberConfigs !== memberConfigBaseline.current
   const { requestClose, guard } = useDirtyClose({ dirty: formDirty, onClose, disabled: addingMember })
 
   const persistWorkspace = async (nextState: ProjectWorkspaceState): Promise<boolean> => {
@@ -106,10 +128,12 @@ export default function GroupInfoDrawer(props: { project: ProjectInfo; busy?: bo
         title: title.trim(),
         icon: icon.trim() || '👥',
         description: description.trim(),
+        system_prompt: groupRules.trim(),
         leader_agent_id: leaderId,
         workspace_dir: workspaceDir.trim(),
         workspace_state: serializeProjectWorkspaceState(nextState),
         memberAgentIds: members.map((m) => m.agent_id),
+        memberConfigs: members.map(({ agent_id, duties, model_override, thinking_override }) => ({ agent_id, duties, model_override, thinking_override })),
       })
       setWorkspaceState(parseProjectWorkspaceState(updated.workspace_state))
       await refreshProjects()
@@ -419,6 +443,17 @@ export default function GroupInfoDrawer(props: { project: ProjectInfo; busy?: bo
               />
             </label>
             <label className="field">
+              <span>群规则（只在本群生效）</span>
+              <textarea
+                rows={8}
+                value={groupRules}
+                data-testid="group-settings-rules"
+                onChange={(e) => setGroupRules(e.target.value)}
+                placeholder="定义本群要达成的目标、协作流程、任务分配方式、验收口径和边界。群内身份与分工只在本群有效。"
+              />
+              <small className="settings-tip">这是群级 System Prompt；不会改写成员的个人身份指令。</small>
+            </label>
+            <label className="field">
               <span>工作空间目录（不选 = Jeff 默认工作区）</span>
               <div style={{ display: 'flex', gap: 8 }}>
                 <input
@@ -472,14 +507,15 @@ export default function GroupInfoDrawer(props: { project: ProjectInfo; busy?: bo
             {members.map((m) => {
               const isLeader = m.agent_id === (leaderId || project.leader_agent_id)
               return (
-                <div key={m.agent_id} className="member-row">
+                <div key={m.agent_id} className={`member-row ${selectedMemberId === m.agent_id ? 'selected' : ''}`} data-testid={`group-member-${m.agent_id}`}>
                   <Avatar emoji={m.avatar} size={30} agentId={m.agent_id} />
-                  <span className="member-name">{m.name}</span>
+                  <button className="text-btn member-name" onClick={() => setSelectedMemberId(m.agent_id)} aria-pressed={selectedMemberId === m.agent_id}>{m.name}</button>
                   <span className={`tag ${isLeader ? 'tag-green' : ''}`}>{projectRoleLabel(isLeader ? 'leader' : m.role)}</span>
                   {!isLeader && (
                     <button
                       className="text-btn danger"
                       onClick={async () => {
+                        if (!(await persistWorkspace(workspaceState))) return
                         await api.invoke(IPC.projectRemoveMember, { projectId: project.id, agentId: m.agent_id })
                         setMembers((prev) => prev.filter((x) => x.agent_id !== m.agent_id))
                         await refreshProjects()
@@ -492,6 +528,44 @@ export default function GroupInfoDrawer(props: { project: ProjectInfo; busy?: bo
               )
             })}
           </div>
+          {selectedMember && (
+            <section className="group-settings" data-testid="group-member-config">
+              <div className="drawer-sec">{selectedMember.name} · 本群配置</div>
+              <p className="settings-tip">这些覆盖只用于「{project.title}」；留空时继承该 Agent 的个人默认设置。个人 Prompt、其他群和私聊不会改变。</p>
+              <label className="field">
+                <span>本群职责</span>
+                <textarea rows={4} data-testid="group-member-duties" value={selectedMember.duties} onChange={(event) => setMembers((current) => current.map((member) => member.agent_id === selectedMember.agent_id ? { ...member, duties: event.target.value } : member))} placeholder="描述该成员在本群负责的工作；留空表示由群规则统一分配" />
+              </label>
+              <label className="field">
+                <span>本群模型 · {selectedMember.execution_engine === 'opencode' ? 'OpenCode（Jeff）' : selectedMember.execution_engine === 'opencode-system' ? 'OpenCode（系统）' : selectedMember.execution_engine}</span>
+                {selectedMember.execution_engine === 'opencode' ? (
+                  <ModelPickerCombo value={selectedMember.model_override || ''} onChange={(value) => setMembers((current) => current.map((member) => member.agent_id === selectedMember.agent_id ? { ...member, model_override: value || null } : member))} placeholderEmpty="继承个人默认模型" />
+                ) : (
+                  <>
+                    <input data-testid="group-member-model" value={selectedMember.model_override || ''} onChange={(event) => setMembers((current) => current.map((member) => member.agent_id === selectedMember.agent_id ? { ...member, model_override: event.target.value || null } : member))} list={`group-engine-models-${selectedMember.agent_id}`} placeholder="留空继承个人默认模型" />
+                    <datalist id={`group-engine-models-${selectedMember.agent_id}`}>{engineModels.map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}</datalist>
+                  </>
+                )}
+              </label>
+              {selectedMember.execution_engine !== 'cursor' && (
+                <label className="field">
+                  <span>本群思考程度</span>
+                  <select data-testid="group-member-thinking" value={selectedMember.thinking_override || ''} onChange={(event) => setMembers((current) => current.map((member) => member.agent_id === selectedMember.agent_id ? { ...member, thinking_override: event.target.value || null } : member))}>
+                    <option value="">继承个人默认</option>
+                    <option value="none">关闭思考</option>
+                    <option value="low">低</option>
+                    <option value="medium">中</option>
+                    <option value="high">高</option>
+                    <option value="max">最大</option>
+                  </select>
+                </label>
+              )}
+              <div className="settings-actions" style={{ justifyContent: 'flex-start', marginTop: 4 }}>
+                <button className="btn primary" data-testid="group-member-config-save" disabled={saving || !title.trim() || !leaderId} onClick={() => void saveSettings()}>{saving ? '保存中…' : '保存群规则与成员配置'}</button>
+                {saveMsg && <span className="settings-tip" role="status">{saveMsg}</span>}
+              </div>
+            </section>
+          )}
         </div>
 
         {/* 会话记录 Tab：与私聊「资料 → 聊天记录」共用同一面板（列表 + 预览，交互一致） */}
@@ -542,6 +616,7 @@ export default function GroupInfoDrawer(props: { project: ProjectInfo; busy?: bo
             candidates={candidateAgents}
             onClose={() => setAddingMember(false)}
             onPick={async (agentId) => {
+              if (!(await persistWorkspace(workspaceState))) return
               await api.invoke(IPC.projectAddMember, { projectId: project.id, agentId })
               setAddingMember(false)
               await refreshMembers()

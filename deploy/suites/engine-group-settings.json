@@ -1,0 +1,17 @@
+{
+  "description": "安装版回归：单一引擎选择器、OpenCode（Jeff）提供商归属、CLI 路径管理；Android release 包内包含群规则与逐成员职责/模型/思考配置界面。实际保存和作用域隔离由桌面 engines E2E 与 mobile 单测验证。",
+  "desktop": {
+    "visible": ["[data-testid=nav-rail]"],
+    "actions": [
+      { "type": "click", "selector": "[data-testid=nav-settings]" },
+      { "type": "click", "selector": "[data-testid=settings-nav-engine]" },
+      { "type": "expect-text", "selector": "[data-testid=engine-settings]", "value": "只有 OpenCode（Jeff）在此管理模型提供商" },
+      { "type": "expect-visible", "selector": "[data-testid=engine-service-select]" },
+      { "type": "expect-hidden", "selector": "[data-testid=settings-nav-providers]" },
+      { "type": "click", "selector": "[data-testid=engine-path-manager] summary" },
+      { "type": "expect-visible", "selector": "[data-testid=engine-path-opencode-system]" },
+      { "type": "expect-visible", "selector": "[data-testid=engine-path-save-opencode-system]" }
+    ]
+  },
+  "androidTestClass": "MobileGroupSettingsBundleTest"
+}

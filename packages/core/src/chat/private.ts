@@ -255,15 +255,14 @@ export class PrivateChat {
     if (flags.autoTitle) await this.maybeAutoTitle(sessionId, text)
     const agent = agentRepo(this.db).get(agentId)
     const opts = agentPromptOpts(agent, this.hooks?.defaultModel?.() ?? null)
-    const builtin = !!agent?.builtin
-    if (!builtin && wantsIndependentSubtasks(text)) this.hooks?.onDebugLog?.('subtask-steer', { agentId, sessionId })
+    if (wantsIndependentSubtasks(text)) this.hooks?.onDebugLog?.('subtask-steer', { agentId, sessionId })
     try {
       const reply = await this.getOc().sendMessage({
         sessionId,
         text,
         ...(images && images.length ? { images } : {}),
         agent: agentSlug(agentId),
-        system: withSubtaskSteer(this.hooks?.buildSystem?.(agentId), { builtin }),
+        system: withSubtaskSteer(this.hooks?.buildSystem?.(agentId)),
         timeoutMs: DEFAULT_SEND_TIMEOUT_MS,
         ...opts,
       })

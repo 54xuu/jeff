@@ -752,21 +752,29 @@ export class SyncEngine {
           const d = rec.data as { project: ProjectRow; members: ProjectAgentRow[] } | null
           if (!d) continue
           const exists = projectRepo(this.db).get(id)
+          const existingMembers = new Map(projectAgentRepo(this.db).listByProject(id).map((member) => [member.agent_id, member]))
           // workspace_dir 按设备保留：已有保留本机；新建留空（不拷贝远端路径）
           const workspaceDir = exists ? exists.workspace_dir || '' : ''
           if (!exists) {
             this.db
-              .prepare(`INSERT INTO project (id, title, description, icon, status, leader_agent_id, workspace_dir, workspace_state, created_at, updated_at, deleted_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)`)
-              .run(id, d.project.title, d.project.description, d.project.icon, d.project.status, d.project.leader_agent_id, workspaceDir, d.project.workspace_state || '{}', d.project.created_at, rec.updatedAt, rec.deletedAt)
+              .prepare(`INSERT INTO project (id, title, description, system_prompt, icon, status, leader_agent_id, workspace_dir, workspace_state, created_at, updated_at, deleted_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
+              .run(id, d.project.title, d.project.description, d.project.system_prompt || '', d.project.icon, d.project.status, d.project.leader_agent_id, workspaceDir, d.project.workspace_state || '{}', d.project.created_at, rec.updatedAt, rec.deletedAt)
           } else {
             this.db
-              .prepare(`UPDATE project SET title=?, description=?, icon=?, status=?, leader_agent_id=?, workspace_state=?, updated_at=?, deleted_at=? WHERE id=?`)
-              .run(d.project.title, d.project.description, d.project.icon, d.project.status, d.project.leader_agent_id, d.project.workspace_state || '{}', rec.updatedAt, rec.deletedAt, id)
+              .prepare(`UPDATE project SET title=?, description=?, system_prompt=?, icon=?, status=?, leader_agent_id=?, workspace_state=?, updated_at=?, deleted_at=? WHERE id=?`)
+              .run(d.project.title, d.project.description, d.project.system_prompt ?? exists.system_prompt ?? '', d.project.icon, d.project.status, d.project.leader_agent_id, d.project.workspace_state || '{}', rec.updatedAt, rec.deletedAt, id)
           }
-          this.db.prepare('DELETE FROM project_agent WHERE project_id = ?').run(id)
+          const incomingIds = new Set<string>()
           for (const m of d.members) {
-            this.db.prepare('INSERT INTO project_agent (project_id, agent_id, role, position, created_at) VALUES (?,?,?,?,?)').run(id, m.agent_id, m.role, m.position, m.created_at)
+            const current = existingMembers.get(m.agent_id)
+            const member = m as ProjectAgentRow & { duties?: string; model_override?: string | null; thinking_override?: string | null }
+            incomingIds.add(m.agent_id)
+            this.db.prepare(`INSERT INTO project_agent (project_id, agent_id, role, duties, model_override, thinking_override, position, created_at) VALUES (?,?,?,?,?,?,?,?)
+              ON CONFLICT(project_id, agent_id) DO UPDATE SET role=excluded.role, duties=excluded.duties, model_override=excluded.model_override, thinking_override=excluded.thinking_override, position=excluded.position, created_at=excluded.created_at`)
+              .run(id, m.agent_id, m.role, member.duties ?? current?.duties ?? '', member.model_override !== undefined ? member.model_override : current?.model_override ?? null,
+                member.thinking_override !== undefined ? member.thinking_override : current?.thinking_override ?? null, m.position, m.created_at)
           }
+          for (const current of existingMembers.values()) if (!incomingIds.has(current.agent_id)) projectAgentRepo(this.db).remove(id, current.agent_id)
           n += 1
           continue
         }

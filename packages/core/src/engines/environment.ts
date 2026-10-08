@@ -4,11 +4,112 @@ import os from 'node:os'
 import { parse, stringify } from 'smol-toml'
 import type { EngineId } from './contract.js'
 import type { McpServerCfg } from '../mcp/parse.js'
-import { userSkillsDir } from '../paths.js'
+import { skillsMount, userSkillsDir } from '../paths.js'
 
 const json = (file: string, value: unknown) => fs.writeFileSync(file, JSON.stringify(value, null, 2), { mode: 0o600 })
 function copy(source: string, target: string): void {
   if (fs.existsSync(source)) { fs.copyFileSync(source, target); fs.chmodSync(target, 0o600) }
+}
+
+function parseJsonc(text: string): Record<string, any> {
+  let clean = ''
+  let quoted = false
+  let escaped = false
+  let lineComment = false
+  let blockComment = false
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i]
+    const next = text[i + 1]
+    if (lineComment) { if (c === '\n' || c === '\r') { lineComment = false; clean += c } else clean += ' '; continue }
+    if (blockComment) { if (c === '*' && next === '/') { clean += '  '; i++; blockComment = false } else clean += c === '\n' || c === '\r' ? c : ' '; continue }
+    if (quoted) {
+      clean += c
+      if (escaped) escaped = false
+      else if (c === '\\') escaped = true
+      else if (c === '"') quoted = false
+      continue
+    }
+    if (c === '"') { quoted = true; clean += c; continue }
+    if (c === '/' && next === '/') { lineComment = true; clean += '  '; i++; continue }
+    if (c === '/' && next === '*') { blockComment = true; clean += '  '; i++; continue }
+    clean += c
+  }
+  let withoutTrailingCommas = ''
+  quoted = false
+  escaped = false
+  for (let i = 0; i < clean.length; i++) {
+    const c = clean[i]
+    if (quoted) {
+      withoutTrailingCommas += c
+      if (escaped) escaped = false
+      else if (c === '\\') escaped = true
+      else if (c === '"') quoted = false
+      continue
+    }
+    if (c === '"') { quoted = true; withoutTrailingCommas += c; continue }
+    if (c === ',') {
+      let next = i + 1
+      while (/\s/.test(clean[next] || '')) next++
+      if (clean[next] === '}' || clean[next] === ']') continue
+    }
+    withoutTrailingCommas += c
+  }
+  const parsed = JSON.parse(withoutTrailingCommas)
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('系统 OpenCode 配置根节点必须为对象')
+  return parsed
+}
+
+export function systemOpenCodePaths(env: NodeJS.ProcessEnv = process.env, home = os.homedir()): { config: string[]; auth: string[] } {
+  // XDG_*_HOME point to the base directory; OpenCode stores its own files in
+  // the `opencode` child directory. OpenCode uses ~/.config and ~/.local/share
+  // on Windows too, rather than roaming AppData.
+  const configBase = env.XDG_CONFIG_HOME
+    ? path.join(env.XDG_CONFIG_HOME, 'opencode')
+    : path.join(home, '.config', 'opencode')
+  const dataBase = env.XDG_DATA_HOME
+    ? path.join(env.XDG_DATA_HOME, 'opencode')
+    : path.join(home, '.local', 'share', 'opencode')
+  const customConfig = env.OPENCODE_CONFIG
+  const configDir = env.OPENCODE_CONFIG_DIR
+  const config = [
+    ...(customConfig ? [customConfig] : []),
+    ...(configDir ? [path.join(configDir, 'opencode.json'), path.join(configDir, 'opencode.jsonc')] : []),
+    path.join(configBase, 'opencode.json'), path.join(configBase, 'opencode.jsonc'),
+    path.join(home, '.opencode', 'opencode.json'), path.join(home, '.opencode', 'opencode.jsonc'),
+  ]
+  const auth = [
+    path.join(dataBase, 'auth.json'),
+  ]
+  return { config: [...new Set(config)], auth: [...new Set(auth)] }
+}
+
+export function readSystemOpenCodeProfile(env: NodeJS.ProcessEnv = process.env): { config: Record<string, any>; configPath?: string; authPath?: string } {
+  const paths = systemOpenCodePaths(env)
+  const configPath = paths.config.find((file) => fs.existsSync(file))
+  const authPath = paths.auth.find((file) => fs.existsSync(file))
+  let config: Record<string, any> = {}
+  if (env.OPENCODE_CONFIG_CONTENT) {
+    try { config = parseJsonc(env.OPENCODE_CONFIG_CONTENT) }
+    catch { throw new Error('系统 OpenCode 的 OPENCODE_CONFIG_CONTENT 无法解析') }
+  } else if (configPath) {
+    try { config = parseJsonc(fs.readFileSync(configPath, 'utf8')) }
+    catch { throw new Error('系统 OpenCode 配置无法解析；请检查 opencode.json / opencode.jsonc') }
+  }
+  return { config, ...(configPath ? { configPath } : {}), ...(authPath ? { authPath } : {}) }
+}
+
+export function systemOpenCodeModelOptions(env: NodeJS.ProcessEnv = process.env): Array<{ id: string; label: string }> {
+  const { config } = readSystemOpenCodeProfile(env)
+  const models: Array<{ id: string; label: string }> = []
+  for (const [providerId, provider] of Object.entries(config.provider || {})) {
+    if (!provider || typeof provider !== 'object') continue
+    for (const [modelId, model] of Object.entries((provider as any).models || {})) {
+      const qualified = `${providerId}/${modelId}`
+      models.push({ id: qualified, label: `${(model as any)?.name || modelId} · ${providerId}` })
+    }
+  }
+  if (typeof config.model === 'string' && config.model && !models.some((item) => item.id === config.model)) models.unshift({ id: config.model, label: `${config.model} · 系统默认` })
+  return models.sort((a, b) => a.id.localeCompare(b.id))
 }
 export function nativeMcp(servers: Record<string, McpServerCfg>, bridgeUrl: string): Record<string, unknown> {
   const result: Record<string, unknown> = { jeff: { type: 'http', url: bridgeUrl } }
@@ -17,6 +118,17 @@ export function nativeMcp(servers: Record<string, McpServerCfg>, bridgeUrl: stri
     result[name] = server.type === 'local'
       ? { type: 'stdio', command: server.command?.[0], args: server.command?.slice(1) || [], env: server.environment || {} }
       : { type: 'http', url: server.url, headers: server.headers || {} }
+  }
+  return result
+}
+
+function openCodeMcp(servers: Record<string, McpServerCfg>, bridgeUrl: string): Record<string, unknown> {
+  const result: Record<string, unknown> = { jeff: { type: 'remote', url: bridgeUrl, enabled: true } }
+  for (const [name, server] of Object.entries(servers)) {
+    if (!server.enabled || name === 'jeff') continue
+    result[name] = server.type === 'local'
+      ? { type: 'local', command: server.command || [], environment: server.environment || {}, enabled: true }
+      : { type: 'remote', url: server.url, headers: server.headers || {}, enabled: true }
   }
   return result
 }
@@ -32,6 +144,45 @@ export function prepareEnvironment(root: string, id: string, engine: EngineId, s
     .map((name) => `${name}: ${path.join(skills, name, 'SKILL.md')}`).join('\n') : ''
   const instructions = `${system}\n\n【工作目录】真实目标目录为 ${workspace}。文件操作使用该目录的绝对路径；所有命令先 cd 到该目录。当前运行目录仅用于 Jeff 会话配置。\n【技能】只使用以下技能；需要时读取对应 SKILL.md，不加载其它来源：\n${skillGuide}\n【提问】需要用户回答时用普通回复说明问题，不调用终端交互提问工具。`
   const mcp = nativeMcp(servers, bridgeUrl)
+  if (engine === 'opencode-system') {
+    const profile = readSystemOpenCodeProfile(process.env)
+    const configDir = path.join(cwd, 'config')
+    const dataHome = path.join(cwd, 'data')
+    const dataDir = path.join(dataHome, 'opencode')
+    const agentDir = path.join(configDir, 'agent')
+    fs.mkdirSync(agentDir, { recursive: true, mode: 0o700 })
+    fs.mkdirSync(dataDir, { recursive: true, mode: 0o700 })
+    const sourceConfig = profile.config
+    const providers = sourceConfig.provider && typeof sourceConfig.provider === 'object' ? sourceConfig.provider : {}
+    const config: Record<string, unknown> = {
+      '$schema': 'https://opencode.ai/config.json',
+      provider: providers,
+      mcp: openCodeMcp(servers, bridgeUrl),
+      skills: { paths: [skillsMount()] },
+      permission: { '*': 'allow', question: 'deny', plan_enter: 'deny', plan_exit: 'deny' },
+      snapshot: false,
+      autoupdate: false,
+      ...(typeof sourceConfig.model === 'string' ? { model: sourceConfig.model } : {}),
+      ...(typeof sourceConfig.small_model === 'string' ? { small_model: sourceConfig.small_model } : {}),
+    }
+    const configFile = path.join(configDir, 'opencode.json')
+    json(configFile, config)
+    fs.writeFileSync(path.join(agentDir, 'jeff-agent.md'), `---\ndescription: ${JSON.stringify('Jeff Agent')}\nmode: all\n---\n\n${instructions}\n`, { mode: 0o600 })
+    if (profile.authPath) copy(profile.authPath, path.join(dataDir, 'auth.json'))
+    for (const key of ['OPENCODE_CONFIG_CONTENT', 'OPENCODE_CONFIG', 'OPENCODE_CONFIG_DIR', 'OPENCODE_TUI_CONFIG']) delete env[key]
+    env.OPENCODE_CONFIG = configFile
+    env.OPENCODE_CONFIG_DIR = configDir
+    env.XDG_CONFIG_HOME = path.join(cwd, 'xdg-config')
+    env.XDG_DATA_HOME = dataHome
+    env.XDG_STATE_HOME = path.join(cwd, 'xdg-state')
+    if (process.platform === 'win32') {
+      env.APPDATA = path.join(cwd, 'appdata')
+      env.LOCALAPPDATA = path.join(cwd, 'local-appdata')
+    }
+    env.OPENCODE_DISABLE_AUTOUPDATE = '1'
+    env.OPENCODE_DISABLE_EXTERNAL_SKILLS = '1'
+    return { cwd, env, extraArgs: ['--agent', 'jeff-agent'] }
+  }
   if (engine === 'codex') {
     const home = path.join(cwd, 'codex-home')
     fs.mkdirSync(home, { recursive: true, mode: 0o700 })

@@ -116,7 +116,7 @@ export default function ContextDrawer(props: {
 
   const goProviders = () => {
     useStore.getState().setTab('settings')
-    useStore.getState().setSettingsSection('providers')
+    useStore.getState().setSettingsSection('engine')
     props.onClose()
   }
 

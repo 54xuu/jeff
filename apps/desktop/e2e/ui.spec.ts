@@ -59,7 +59,7 @@ test.describe('Jeff UI 封闭清单', () => {
       await page.getByTestId('nav-contacts').click()
       await expect(page.getByTestId('agents-page')).toBeVisible()
       await page.getByTestId('nav-settings').click()
-      await expect(page.getByTestId('settings-nav-providers')).toBeVisible()
+      await expect(page.getByTestId('settings-nav-engine')).toBeVisible()
       await page.getByTestId('settings-nav-siyuan').click()
       await expect(page.getByTestId('siyuan-settings')).toBeVisible()
       await expect(page.getByTestId('siyuan-base-url')).toBeVisible()
@@ -166,8 +166,10 @@ test.describe('Jeff UI 封闭清单', () => {
         await expect(page.getByTestId('mcp-import-json')).toHaveCount(0, { timeout: 90000 })
       }
 
-      // ---- 供应商保存复位 ----
-      await page.getByTestId('settings-nav-providers').click()
+      // ---- Jeff OpenCode 内编辑供应商 ----
+      await page.getByTestId('settings-nav-engine').click()
+      await page.getByTestId('engine-service-select').selectOption('opencode')
+      await expect(page.getByTestId('providers-save')).toBeVisible()
       const nameInput = page.locator('.pv-detail input').first()
       if ((await nameInput.count()) > 0) {
         const cur = await nameInput.inputValue()

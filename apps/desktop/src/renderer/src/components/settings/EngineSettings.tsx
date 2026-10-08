@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useStore } from '../../store'
 import { api } from '../../api'
 import { IPC, type EngineStatus, type EngineId } from '@jeff/core'
+import ProviderSettings from './ProviderSettings'
 
 const STATUS_LABELS: Record<string, string> = {
   stopped: '已停止',
@@ -10,19 +11,44 @@ const STATUS_LABELS: Record<string, string> = {
   crashed: '异常（自动重启中）',
 }
 
+type PendingEngine = { next: EngineId } | null
+
 /** 设置 → 引擎服务：opencode sidecar 状态 / 版本 / 重启 / 日志 / TLS 与调试开关 */
 export default function EngineSettings(): React.JSX.Element {
   const { appInfo, refreshAppInfo } = useStore()
   const [engines, setEngines] = useState<EngineStatus[]>([])
+  const [selectedEngine, setSelectedEngine] = useState<EngineId>('opencode')
   const [paths, setPaths] = useState<Partial<Record<EngineId, string>>>({})
   const [engineError, setEngineError] = useState('')
   const [engineBusy, setEngineBusy] = useState<EngineId | null>(null)
+  const [providerDirty, setProviderDirty] = useState(false)
+  const [pendingEngine, setPendingEngine] = useState<PendingEngine>(null)
+  const [providerSwitchBusy, setProviderSwitchBusy] = useState(false)
+  const providerSave = useRef<() => Promise<boolean>>(async () => false)
   const refreshEngines = async () => {
     const detected = await api.invoke<EngineStatus[]>(IPC.enginesList)
     setEngines(detected)
     setPaths((previous) => Object.fromEntries(detected.map((engine) => [engine.id, previous[engine.id] ?? engine.configuredPath ?? ''])))
   }
   useEffect(() => { void refreshEngines().catch((err) => setEngineError(String(err.message))) }, [])
+  const selected = engines.find((engine) => engine.id === selectedEngine)
+  const requestEngineSwitch = (next: EngineId) => {
+    if (next === selectedEngine) return
+    if (selectedEngine === 'opencode' && providerDirty) setPendingEngine({ next })
+    else setSelectedEngine(next)
+  }
+  const finishEngineSwitch = (next: EngineId) => {
+    setSelectedEngine(next)
+    setProviderDirty(false)
+    setPendingEngine(null)
+  }
+  const saveAndSwitchEngine = async () => {
+    if (!pendingEngine) return
+    setProviderSwitchBusy(true)
+    const saved = await providerSave.current()
+    setProviderSwitchBusy(false)
+    if (saved) finishEngineSwitch(pendingEngine.next)
+  }
   const configureEngine = async (engine: EngineId) => {
     setEngineBusy(engine); setEngineError('')
     try { await api.invoke(IPC.enginesPathSave, { engine, path: paths[engine] || '' }); await refreshEngines() }
@@ -98,20 +124,50 @@ export default function EngineSettings(): React.JSX.Element {
   return (
     <div className="settings-content" data-testid="engine-settings">
       <h2 className="settings-title">引擎服务</h2>
-      <p className="settings-tip">
-        OpenCode 是默认执行引擎（安装包内自带）。智能体资料中可选择本机已安装并登录的 Codex CLI、Cursor CLI 或 Claude Code。修改供应商 / MCP 配置后会自动重启引擎；如遇异常也可手动重启。
-      </p>
+      <p className="settings-tip">每个 Agent 可独立选择本机可用的 CLI。选择一个引擎查看状态与配置；只有 OpenCode（Jeff）在此管理模型提供商。</p>
       {engineError && <p role="alert">{engineError}</p>}
-      {engines.filter((engine) => engine.id !== 'opencode').map((engine) => (
-        <div className="pv-detail" key={engine.id} data-testid={`engine-${engine.id}`}>
-          <h3>{engine.label} · {engine.available ? '已检测到' : '未就绪'}</h3>
-          <p className="settings-tip">{engine.version || ''} {engine.error || ''}</p>
-          <input aria-label={`${engine.label} 路径`} placeholder={engine.path || '可执行文件绝对路径（留空自动检测）'} value={paths[engine.id] ?? ''} onChange={(event) => setPaths((previous) => ({ ...previous, [engine.id]: event.target.value }))} />
-          <button type="button" disabled={engineBusy !== null} onClick={() => void configureEngine(engine.id)}>{engineBusy === engine.id ? '检测中…' : '保存并检测'}</button>
-          <p className="settings-tip">安装与登录在电脑上完成；检测只核对路径、版本和协议。实际登录与模型可用性请在聊天中发送消息验证。留空保存恢复自动检测。</p>
+      <label className="field" style={{ maxWidth: 620 }}>
+        <span>引擎服务</span>
+        <select data-testid="engine-service-select" value={selectedEngine} onChange={(event) => requestEngineSwitch(event.target.value as EngineId)}>
+          {engines.filter((engine) => engine.id === 'opencode' || engine.available || !!engine.configuredPath || engine.id === selectedEngine).map((engine) => (
+            <option key={engine.id} value={engine.id}>{engine.label}{engine.available ? ' · 可用' : ' · 未就绪'}</option>
+          ))}
+        </select>
+        <small className="settings-tip">列表只显示已检测到或已配置路径的 CLI；要使用新 CLI，请先在本机安装并登录。</small>
+      </label>
+      {selectedEngine === 'opencode' && <ProviderSettings embedded onDirtyChange={setProviderDirty} onRegisterSave={(save) => { providerSave.current = save }} />}
+      {selectedEngine === 'opencode-system' && selected && (
+        <div className="pv-detail" data-testid="engine-opencode-system">
+          <h3>{selected.label} · {selected.available ? '已检测到' : '未就绪'}</h3>
+          <p className="settings-tip">这是本机单独安装的 OpenCode。Jeff 为它建立隔离会话目录，并使用该系统账号已配置的模型凭据；群聊与私聊记录仍保存在 Jeff。</p>
+          <p className="provider-sub">CLI：{selected.path || '未找到'}</p>
+          {selected.sourcePath && <p className="provider-sub">系统配置来源：{selected.sourcePath}</p>}
+          {selected.version && <p className="provider-sub">版本：{selected.version}</p>}
+          {selected.error && <p className="settings-error">{selected.error}</p>}
+          <p className="settings-tip">登录、模型和思考选项来自系统 OpenCode；模型提供商编辑只出现在 OpenCode（Jeff）中。</p>
         </div>
-      ))}
-      <div className="pv-detail">
+      )}
+      {selected && selectedEngine !== 'opencode' && selectedEngine !== 'opencode-system' && (
+        <div className="pv-detail" key={selected.id} data-testid={`engine-${selected.id}`}>
+          <h3>{selected.label} · {selected.available ? '已检测到' : '未就绪'}</h3>
+          <p className="settings-tip">{selected.version || ''} {selected.error || ''}</p>
+          <p className="settings-tip">安装与登录在电脑上完成；检测只核对路径、版本和 CLI 协议。登录与模型可用性请在聊天中实际验证。</p>
+        </div>
+      )}
+      <details className="pv-detail" data-testid="engine-path-manager">
+        <summary>管理 CLI 检测路径</summary>
+        <p className="settings-tip">通常无需手动指定。仅当 CLI 已安装但自动检测不到时使用；留空保存会恢复自动检测。</p>
+        <div style={{ maxHeight: 320, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {engines.filter((engine) => engine.id !== 'opencode').map((engine) => (
+            <div className="group-settings" key={engine.id} data-testid={`engine-path-row-${engine.id}`}>
+              <label className="field"><span>{engine.label} 路径 · {engine.available ? '已检测到' : '未就绪'}</span><input aria-label={`${engine.label} 路径`} data-testid={`engine-path-${engine.id}`} placeholder={engine.path || '可执行文件绝对路径'} value={paths[engine.id] ?? ''} onChange={(event) => setPaths((previous) => ({ ...previous, [engine.id]: event.target.value }))} /></label>
+              {engine.error && <p className="settings-error">{engine.error}</p>}
+              <button type="button" className="btn" data-testid={`engine-path-save-${engine.id}`} disabled={engineBusy !== null} onClick={() => void configureEngine(engine.id)}>{engineBusy === engine.id ? '检测中…' : '保存并检测'}</button>
+            </div>
+          ))}
+        </div>
+      </details>
+      {selectedEngine === 'opencode' && <div className="pv-detail">
         <div className="provider-row">
           <div className="provider-main">
             <div className="provider-name">
@@ -126,8 +182,9 @@ export default function EngineSettings(): React.JSX.Element {
           </div>
           <button className="text-btn" disabled={restarting} onClick={() => void restart()}>{restarting ? '重启中…' : '重启服务'}</button>
         </div>
-      </div>
-      <div className="pv-detail" style={{ marginTop: 8 }}>
+      </div>}
+      {selectedEngine === 'opencode' && <details className="pv-detail" style={{ marginTop: 8 }}>
+        <summary>服务诊断与高级选项</summary>
         <label className="field check-field">
           <input type="checkbox" disabled={toggling !== null} checked={skipTls} onChange={(e) => void toggleSkipTls(e.target.checked)} />
           <span>跳过 LLM 证书校验（企业代理 / 安全软件拦截导致「certificate verification error」时开启；保存后自动重启引擎）</span>
@@ -141,11 +198,22 @@ export default function EngineSettings(): React.JSX.Element {
           <span className="settings-tip" style={{ margin: 0 }}>反馈问题请附上该目录下最新的 debug-日期.log</span>
         </div>
         {toggleError && <p className="settings-error">⚠️ {toggleError}</p>}
-      </div>
-      <details className="mcp-tools" open={!!appInfo?.sidecarError}>
+      </details>}
+      {selectedEngine === 'opencode' && <details className="mcp-tools" open={!!appInfo?.sidecarError}>
         <summary>最近日志（{logs.length} 行）</summary>
         <pre className="engine-logs">{logs.length ? logs.join('\n') : '暂无日志'}</pre>
-      </details>
+      </details>}
+      {pendingEngine && <div className="modal-mask" data-testid="engine-switch-confirm">
+        <section className="modal" role="dialog" aria-modal="true" aria-labelledby="engine-switch-title">
+          <h3 id="engine-switch-title">模型提供商还有未保存更改</h3>
+          <p>切换引擎前请选择如何处理当前更改。</p>
+          <div className="settings-actions">
+            <button className="btn primary" data-testid="engine-switch-save" disabled={providerSwitchBusy} onClick={() => void saveAndSwitchEngine()}>{providerSwitchBusy ? '保存中…' : '保存并继续'}</button>
+            <button className="btn" data-testid="engine-switch-discard" disabled={providerSwitchBusy} onClick={() => finishEngineSwitch(pendingEngine.next)}>放弃更改</button>
+            <button className="btn" data-testid="engine-switch-cancel" disabled={providerSwitchBusy} onClick={() => setPendingEngine(null)}>取消</button>
+          </div>
+        </section>
+      </div>}
     </div>
   )
 }

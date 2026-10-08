@@ -7,13 +7,12 @@ import type { ToolBridge } from './bridge.js'
 import type { SessionScopeCtx, ToolCtx } from './memoryTools.js'
 
 /**
- * 自我维护工具（所有非内置 agent 可用；小杰被显式拒绝）。
+ * 自我维护工具：每个 agent 只能通过会话身份维护自己的指令。
  *
  * 设计要点：
  * - **没有 id 参数**：调用者身份只认 __ctx.sessionID → resolveSession，工具在物理上只能指向自己，
  *   「群主改别人指令」这类冲突从工具形状上就不存在（与 jeff_spawn_subtask 的调用者校验同一思路）。
- * - **只改 instructions**：不暴露 name/category——医护助手的读盘封禁按 category/name 判定
- *   （registry.ts），把它们开放给自改等于让模型自己解锁。
+ * - **只改 instructions**：不暴露 name/category，避免身份自维护顺带改动通讯录属性。
  * - **写前版本校验（fail-closed）**：expected_version 不匹配即拒绝，让 agent 先 get 重读，
  *   避免静默覆盖设置页 / 另一台设备的并发修改。版本号在 agent md 的固定页脚里声明。
  * - **空串一律视为未提供**（v1.8.2 / v1.8.3 两次实测模型爱补空串）。
@@ -93,9 +92,6 @@ export function registerSelfTools(reg: ToolBridge, deps: SelfToolDeps): void {
     const agents = agentRepo(deps.db)
     const agent = agents.get(resolved.agentId)
     if (!agent) return { ok: false, error: '调用者身份不存在' }
-    if (agent.builtin)
-      return { ok: false, error: '小杰的身份指令由应用内置管理，不可修改；纠正小杰的行为请让用户编辑用户级 AGENTS.md，或用 jeff_memory 写你的记忆' }
-
     const version = agent.instructions_version || 0
 
     if (action === 'get') {

@@ -63,6 +63,7 @@ export interface ProjectRow {
   id: string
   title: string
   description: string
+  system_prompt: string
   icon: string
   status: string
   leader_agent_id: string | null
@@ -78,6 +79,9 @@ export interface ProjectAgentRow {
   project_id: string
   agent_id: string
   role: string
+  duties: string
+  model_override: string | null
+  thinking_override: string | null
   position: number
   created_at: number
 }
@@ -254,11 +258,12 @@ export const projectRepo = (db: DB) => ({
   get(id: string): ProjectRow | undefined {
     return db.prepare('SELECT * FROM project WHERE id = ?').get(id) as unknown as ProjectRow | undefined
   },
-  create(data: { title: string; description?: string; icon?: string; leader_agent_id?: string | null; status?: string; workspace_dir?: string; workspace_state?: string }): ProjectRow {
+  create(data: { title: string; description?: string; system_prompt?: string; icon?: string; leader_agent_id?: string | null; status?: string; workspace_dir?: string; workspace_state?: string }): ProjectRow {
     const row: ProjectRow = {
       id: genId('prj'),
       title: data.title,
       description: data.description || '',
+      system_prompt: data.system_prompt || '',
       icon: data.icon || '👥',
       status: data.status || 'in_progress',
       leader_agent_id: data.leader_agent_id ?? null,
@@ -269,20 +274,21 @@ export const projectRepo = (db: DB) => ({
       deleted_at: null,
     }
     db.prepare(
-      `INSERT INTO project (id, title, description, icon, status, leader_agent_id, workspace_dir, workspace_state, created_at, updated_at, deleted_at)
-       VALUES (@id, @title, @description, @icon, @status, @leader_agent_id, @workspace_dir, @workspace_state, @created_at, @updated_at, @deleted_at)`,
+      `INSERT INTO project (id, title, description, system_prompt, icon, status, leader_agent_id, workspace_dir, workspace_state, created_at, updated_at, deleted_at)
+       VALUES (@id, @title, @description, @system_prompt, @icon, @status, @leader_agent_id, @workspace_dir, @workspace_state, @created_at, @updated_at, @deleted_at)`,
     ).run(row as unknown as Record<string, never>)
     return row
   },
-  update(id: string, patch: Partial<Pick<ProjectRow, 'title' | 'description' | 'icon' | 'status' | 'leader_agent_id' | 'workspace_dir' | 'workspace_state'>>): ProjectRow | undefined {
+  update(id: string, patch: Partial<Pick<ProjectRow, 'title' | 'description' | 'system_prompt' | 'icon' | 'status' | 'leader_agent_id' | 'workspace_dir' | 'workspace_state'>>): ProjectRow | undefined {
     const cur = this.get(id)
     if (!cur) return undefined
     const next = { ...cur, ...patch, updated_at: now() }
     db.prepare(
-      `UPDATE project SET title=@title, description=@description, icon=@icon, status=@status, leader_agent_id=@leader_agent_id, workspace_dir=@workspace_dir, workspace_state=@workspace_state, updated_at=@updated_at WHERE id=@id`,
+      `UPDATE project SET title=@title, description=@description, system_prompt=@system_prompt, icon=@icon, status=@status, leader_agent_id=@leader_agent_id, workspace_dir=@workspace_dir, workspace_state=@workspace_state, updated_at=@updated_at WHERE id=@id`,
     ).run({
       title: next.title,
       description: next.description,
+      system_prompt: next.system_prompt,
       icon: next.icon,
       status: next.status,
       leader_agent_id: next.leader_agent_id,
@@ -312,6 +318,13 @@ export const projectAgentRepo = (db: DB) => ({
       `INSERT INTO project_agent (project_id, agent_id, role, position, created_at) VALUES (?, ?, ?, ?, ?)
        ON CONFLICT(project_id, agent_id) DO UPDATE SET role = excluded.role, position = excluded.position`,
     ).run(projectId, agentId, normalized, position, now())
+  },
+  updateConfig(projectId: string, agentId: string, patch: Partial<Pick<ProjectAgentRow, 'duties' | 'model_override' | 'thinking_override'>>): void {
+    const current = db.prepare('SELECT * FROM project_agent WHERE project_id = ? AND agent_id = ?').get(projectId, agentId) as ProjectAgentRow | undefined
+    if (!current) throw new Error('该智能体不在项目群中')
+    db.prepare(`UPDATE project_agent SET duties=?, model_override=?, thinking_override=? WHERE project_id=? AND agent_id=?`)
+      .run(patch.duties ?? current.duties ?? '', patch.model_override !== undefined ? patch.model_override : current.model_override ?? null,
+        patch.thinking_override !== undefined ? patch.thinking_override : current.thinking_override ?? null, projectId, agentId)
   },
   remove(projectId: string, agentId: string): void {
     db.prepare('DELETE FROM project_agent WHERE project_id = ? AND agent_id = ?').run(projectId, agentId)

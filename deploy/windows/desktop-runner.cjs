@@ -30,6 +30,11 @@ async function main() {
       if (action.type === 'click') await locator.click()
       else if (action.type === 'fill') await locator.fill(action.value ?? '')
       else if (action.type === 'expect-visible') await locator.waitFor({ state: 'visible', timeout: 30_000 })
+      else if (action.type === 'expect-hidden') await locator.waitFor({ state: 'hidden', timeout: 30_000 })
+      else if (action.type === 'expect-text') {
+        const actual = await locator.innerText()
+        if (!actual.includes(action.value ?? '')) throw new Error(`${action.selector} did not contain expected text: ${action.value ?? ''}`)
+      }
       else throw new Error(`Unsupported desktop suite action: ${action.type}`)
     }
     const infoDeadline = Date.now() + 90_000

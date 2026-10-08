@@ -3,7 +3,6 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { agentWebSearchCapable, WEB_SEARCH_SKILL_NAME } from '../src/index.js'
-import { agentDeniedTools } from '../src/agents/registry.js'
 import type { AgentRow } from '../src/db/repos.js'
 
 function fakeAgent(partial: Partial<AgentRow>): AgentRow {
@@ -50,8 +49,15 @@ describe('联网指南按能力注入（2.3 省 Token）', () => {
     }
   })
 
-  it('智慧病房专用 agent 仍保留 skill 工具（禁的是文件与命令），不因能力判定误伤', () => {
-    const a = fakeAgent({ category: '智慧病房', name: '医护助手' })
-    expect(agentDeniedTools(a).has('skill')).toBe(false)
+  it('不按 Agent 名称、分类或 builtin 限制技能能力', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'jeff-skills-'))
+    try {
+      fs.mkdirSync(path.join(dir, WEB_SEARCH_SKILL_NAME))
+      fs.writeFileSync(path.join(dir, WEB_SEARCH_SKILL_NAME, 'SKILL.md'), '# byted-web-search\n')
+      expect(agentWebSearchCapable(fakeAgent({ category: '智慧病房', name: '医护助手' }), dir)).toBe(true)
+      expect(agentWebSearchCapable(fakeAgent({ builtin: 1 }), dir)).toBe(true)
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
   })
 })

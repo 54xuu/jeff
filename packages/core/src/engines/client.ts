@@ -4,15 +4,17 @@ import { randomUUID } from 'node:crypto'
 import { OcClient, DEFAULT_SEND_TIMEOUT_MS, type SessionInfo, type SessionMessage, type AssistantInfo } from '../oc/client.js'
 import { agentRepo, kvRepo, type AgentRow } from '../db/repos.js'
 import type { DB } from '../db/db.js'
-import { agentSlug, agentDeniedTools } from '../agents/registry.js'
+import { agentSlug } from '../agents/registry.js'
 import type { ToolBridge } from '../tools/bridge.js'
 import type { McpServerCfg } from '../mcp/parse.js'
 import type { DebugLogFn } from '../logger.js'
 import { ENGINE_IDS, ENGINE_LABELS, ENGINE_CAPABILITIES, engineId, assertAgentEngine, type EngineId, type EngineStatus } from './contract.js'
 import { capture, resolveExecutable } from './process.js'
 import { prepareEnvironment } from './environment.js'
-import { executeCodex, executeJsonCli, RpcProcess } from './backends.js'
+import { executeCodex, executeJsonCli, executeOpenCode, RpcProcess } from './backends.js'
+import { readSystemOpenCodeProfile, systemOpenCodeModelOptions } from './environment.js'
 import { ReplyCollector } from './stream.js'
+import { APP_VERSION } from '../version.js'
 
 interface Binding {
   id: string
@@ -36,7 +38,7 @@ export class EngineClient extends OcClient {
   private stopped = new Map<string, number>()
   private completions = new Map<string, Promise<void>>()
   constructor(port: number, private deps: {
-    db: DB; root: string; workspace: string; bridge: ToolBridge; mcp: () => Record<string, McpServerCfg>
+    db: DB; root: string; workspace: string; bridge: ToolBridge; mcp: () => Record<string, McpServerCfg>; bundledOpenCode?: () => string | null
   }, log?: DebugLogFn) { super(port, log) }
   private kv() { return kvRepo(this.deps.db) }
   private binding(id: string): Binding | null { return this.kv().getJSON<Binding | null>(bindingKey(id), null) }
@@ -60,22 +62,29 @@ export class EngineClient extends OcClient {
   async probe(id: EngineId): Promise<EngineStatus> {
     engineId(id)
     const configured = this.kv().get(`engine:path:${id}`) || undefined
-    const binary = id === 'opencode' ? configured || null : resolveExecutable(id === 'cursor' ? ['cursor-agent', 'agent'] : [id], configured)
+    const binary = id === 'opencode' ? configured || null : resolveExecutable(id === 'cursor' ? ['cursor-agent', 'agent'] : id === 'opencode-system' ? ['opencode'] : [id], configured)
     const base: EngineStatus = { id, label: ENGINE_LABELS[id], path: binary, available: false, capabilities: ENGINE_CAPABILITIES[id], configuredPath: configured }
     if (id === 'opencode') return { ...base, available: true }
+    if (id === 'opencode-system' && binary && this.sameExecutable(binary, this.deps.bundledOpenCode?.() || null)) {
+      return { ...base, path: null, error: '只找到 Jeff 安装包内的 OpenCode；系统模式需要独立安装的 OpenCode CLI' }
+    }
     if (!binary) return { ...base, error: '未找到 CLI；请在本机安装并登录，或指定可执行文件路径' }
     try {
       const version = await capture(binary, ['--version'])
-      const help = await capture(binary, id === 'codex' ? ['app-server', '--help'] : ['--help'])
-      const required = id === 'codex' ? ['stdio'] : id === 'cursor' ? ['stream-json', '--stream-partial-output', '--add-dir', '--approve-mcps'] : ['stream-json', '--include-partial-messages', '--strict-mcp-config', '--effort', '--bare', '--append-system-prompt']
+      const help = await capture(binary, id === 'codex' ? ['app-server', '--help'] : id === 'opencode-system' ? ['run', '--help'] : ['--help'])
+      const required = id === 'codex' ? ['stdio'] : id === 'cursor' ? ['stream-json', '--stream-partial-output', '--add-dir', '--approve-mcps'] : id === 'opencode-system' ? ['--format', '--agent', '--session', '--model', '--variant'] : ['stream-json', '--include-partial-messages', '--strict-mcp-config', '--effort', '--bare', '--append-system-prompt']
       if (required.some((flag) => !help.includes(flag))) throw new Error('该 CLI 版本不支持所需的执行协议')
+      if (id === 'opencode-system') {
+        const profile = readSystemOpenCodeProfile()
+        return { ...base, version: version.split('\n')[0], available: true, sourcePath: profile.configPath || profile.authPath }
+      }
       return { ...base, version: version.split('\n')[0], available: true }
     } catch (err) { return { ...base, error: String((err as Error).message) } }
   }
   async engines(): Promise<EngineStatus[]> { return Promise.all(ENGINE_IDS.map((id) => this.probe(id))) }
   async savePath(id: EngineId, value: string): Promise<EngineStatus> {
     engineId(id)
-    if (id === 'opencode') throw new Error('默认 OpenCode 使用 Jeff 内置引擎，无需配置外部路径')
+    if (id === 'opencode') throw new Error('OpenCode（Jeff）使用应用内引擎，无需配置外部路径')
     if (value.trim() && !path.isAbsolute(value.trim())) throw new Error('请填写 CLI 可执行文件的绝对路径')
     this.kv().set(`engine:path:${id}`, value.trim())
     return this.probe(id)
@@ -83,6 +92,7 @@ export class EngineClient extends OcClient {
   async models(id: EngineId): Promise<{ models: Array<{ id: string; label: string }>; manual: boolean }> {
     engineId(id)
     if (id === 'opencode') return { models: [], manual: false }
+    if (id === 'opencode-system') return { models: systemOpenCodeModelOptions(), manual: true }
     const status = await this.probe(id)
     if (!status.available || !status.path) throw new Error(status.error || 'CLI 不可用')
     if (id === 'cursor') {
@@ -95,7 +105,7 @@ export class EngineClient extends OcClient {
       const environment = prepareEnvironment(this.deps.root, 'model-catalog', id, '', this.deps.workspace, 'http://127.0.0.1:1', {})
       const rpc = new RpcProcess(status.path, ['app-server', '--listen', 'stdio://'], environment.cwd, environment.env)
       try {
-        await rpc.request('initialize', { clientInfo: { name: 'jeff', version: '1.12.0' } }); rpc.notify('initialized')
+        await rpc.request('initialize', { clientInfo: { name: 'jeff', version: APP_VERSION } }); rpc.notify('initialized')
         const result = await rpc.request('model/list', { limit: 100 }, 15000)
         return { models: (result.data || []).map((model: any) => ({ id: model.model || model.id, label: model.displayName || model.model || model.id })), manual: true }
       } finally { await rpc.close() }
@@ -190,7 +200,7 @@ export class EngineClient extends OcClient {
     const caps = ENGINE_CAPABILITIES[binding.engine]
     if (input.images?.length && !caps.images) throw new Error('该执行引擎不支持图片输入，请切换引擎后新建会话')
     const currentEngine = agent.execution_engine || 'opencode'
-    const thinking = currentEngine === binding.engine ? input.variant : binding.thinking || undefined
+    const thinking = currentEngine === binding.engine ? input.variant || agent.thinking || undefined : binding.thinking || undefined
     if (thinking && !caps.thinking) throw new Error('该执行引擎不支持独立思考档位，请在智能体资料中设为跟随引擎')
     const status = await this.probe(binding.engine)
     if (controller.signal.aborted) throw new Error('已停止生成 abort')
@@ -205,14 +215,16 @@ export class EngineClient extends OcClient {
     const reply = new ReplyCollector((part) => this.emit('event', { type: 'message.part.updated', properties: {
       sessionID: binding.id, part: { ...part, sessionID: binding.id, messageID: messageId },
     } }))
-    const mcp = this.deps.bridge.openMcpSession(binding.id, agentSlug(agent.id), agentDeniedTools(agent))
+    const mcp = this.deps.bridge.openMcpSession(binding.id, agentSlug(agent.id), new Set())
     try {
       const environment = prepareEnvironment(this.deps.root, binding.id, binding.engine, `${agent.instructions}\n${input.system || ''}`, binding.directory, mcp.url, this.deps.mcp())
-      if (currentEngine === binding.engine) { binding.model = agent.engine_model || ''; binding.thinking = thinking || ''; this.save(binding) }
+      const selectedModel = input.engineModel?.trim() || (input.model ? `${input.model.providerID}/${input.model.modelID}` : '')
+      const runtimeModel = currentEngine === binding.engine ? selectedModel || agent.engine_model || '' : binding.model || ''
+      if (currentEngine === binding.engine) { binding.model = runtimeModel; binding.thinking = thinking || ''; this.save(binding) }
       const options = { engine, binary: status.path, ...environment, text: input.text,
-        nativeSessionId: binding.nativeSessionId, model: (currentEngine === binding.engine ? agent.engine_model : binding.model) || undefined, thinking,
+        nativeSessionId: binding.nativeSessionId, model: runtimeModel || undefined, thinking,
         images: input.images, signal: controller.signal, reply, session: (nativeSessionId: string) => { binding.nativeSessionId = nativeSessionId; this.save(binding) } }
-      const result = await (binding.engine === 'codex' ? executeCodex(options) : executeJsonCli(options))
+      const result = await (binding.engine === 'codex' ? executeCodex(options) : binding.engine === 'opencode-system' ? executeOpenCode(options) : executeJsonCli(options))
       info.time!.completed = Date.now(); info.tokens = result.tokens
       info.parts = reply.values(); binding.updated = Date.now(); binding.configVersion = agent.instructions_version; this.save(binding)
       return info
@@ -226,5 +238,11 @@ export class EngineClient extends OcClient {
       mcp.close()
       this.emit('event', { type: 'session.idle', properties: { sessionID: binding.id } })
     }
+  }
+
+  private sameExecutable(left: string, right: string | null): boolean {
+    if (!right) return false
+    try { return fs.realpathSync(left).toLowerCase() === fs.realpathSync(right).toLowerCase() }
+    catch { return path.resolve(left).toLowerCase() === path.resolve(right).toLowerCase() }
   }
 }

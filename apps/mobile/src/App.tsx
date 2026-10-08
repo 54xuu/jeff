@@ -6,7 +6,7 @@ import {
   IPC, ENGINE_LABELS, XIAOJIE_ID, TOOL_ACTION_LABEL, extractThinkTags, mergeReasoning, sortedPinKeys, decodePluginUserMessage, currentWeekRange,
   parseProjectWorkspaceState, serializeProjectWorkspaceState, canStartCampaignProduction,
 } from '@jeff/core'
-import type { AgentInfo, AppInfo, ChatMsg, FileNode, FsDirEntry, GroupMessage, ProjectInfo, ContextPreviewInfo, PluginCommand, PluginInfo, CampaignKind, CampaignProposalInput, CampaignProposal, TaskInfo, ProjectDocumentInfo, ProjectReportInfo, SiYuanSearchResult } from '@jeff/core'
+import type { AgentInfo, AppInfo, ChatMsg, FileNode, FsDirEntry, GroupMessage, ProjectInfo, ProjectMember, ContextPreviewInfo, PluginCommand, PluginInfo, CampaignKind, CampaignProposalInput, CampaignProposal, TaskInfo, ProjectDocumentInfo, ProjectReportInfo, SiYuanSearchResult } from '@jeff/core'
 import type { RemoteStreamFrame } from '@jeff/core/remote'
 import { consumeBack } from './backstack'
 import Mascot from './Mascot'
@@ -17,7 +17,7 @@ import { type PairProgress, Native, PhoneLink, mergeStream, shrinkImage } from '
 type Tab = 'messages' | 'contacts' | 'me'
 type Screen = 'list' | 'chat' | 'dirs' | 'files' | 'file' | 'project'
 type ChatFilter = 'all' | 'agent' | 'group'
-type ProjectSection = 'overview' | 'profile' | 'reports' | 'tasks' | 'assets' | 'campaigns'
+type ProjectSection = 'overview' | 'profile' | 'members' | 'reports' | 'tasks' | 'assets' | 'campaigns'
 type ChatTarget =
   | { kind: 'agent'; id: string; name: string; avatar?: string }
   | { kind: 'group'; id: string; name: string; icon?: string }
@@ -498,6 +498,10 @@ export function App() {
   const [filePreview, setFilePreview] = useState<{ name: string; content: string; truncated?: boolean } | null>(null)
   const [filesTip, setFilesTip] = useState('')
   const [workspaceDraft, setWorkspaceDraft] = useState(() => parseProjectWorkspaceState('{}'))
+  const [groupRules, setGroupRules] = useState('')
+  const [projectMembers, setProjectMembers] = useState<ProjectMember[]>([])
+  const [selectedMemberId, setSelectedMemberId] = useState('')
+  const [projectMemberModels, setProjectMemberModels] = useState<Array<{ id: string; label: string }>>([])
   const [workspaceSaving, setWorkspaceSaving] = useState(false)
   const [workspaceSaved, setWorkspaceSaved] = useState('')
   const [projectTasks, setProjectTasks] = useState<TaskInfo[]>([])
@@ -1287,6 +1291,11 @@ export function App() {
     if (!project) return
     const state = parseProjectWorkspaceState(project.workspace_state)
     setWorkspaceDraft(state)
+    setGroupRules(project.system_prompt || '')
+    void phone.invoke<ProjectMember[]>(IPC.projectMembers, { projectId: project.id }).then((members) => {
+      setProjectMembers(members)
+      setSelectedMemberId((current) => current && members.some((member) => member.agent_id === current) ? current : members[0]?.agent_id || '')
+    }).catch(() => setProjectMembers([]))
     setProjectSection('overview')
     setFilesData(null)
     void (async () => {
@@ -1318,6 +1327,17 @@ export function App() {
     void phone.invoke<TaskInfo[]>(IPC.tasksList, { projectId: target.id }).then(setProjectTasks).catch((error) => setWorkspaceSaved(`无法加载项目任务：${error instanceof Error ? error.message : String(error)}`))
     setScreen('project')
   }
+
+  const selectedProjectMember = projectMembers.find((member) => member.agent_id === selectedMemberId)
+  useEffect(() => {
+    let active = true
+    setProjectMemberModels([])
+    if (screen === 'project' && selectedProjectMember && selectedProjectMember.execution_engine !== 'opencode') {
+      void phone.invoke<{ models: Array<{ id: string; label: string }> }>(IPC.enginesModels, { engine: selectedProjectMember.execution_engine })
+        .then((result) => { if (active) setProjectMemberModels(result.models) }).catch(() => {})
+    }
+    return () => { active = false }
+  }, [screen, selectedProjectMember?.agent_id, selectedProjectMember?.execution_engine])
 
   async function saveProjectTask(task?: TaskInfo, status?: string) {
     if (!target || target.kind !== 'group') return
@@ -1409,8 +1429,11 @@ export function App() {
         id: project.id,
         title: project.title,
         description: project.description,
+        system_prompt: groupRules,
         icon: project.icon,
         leader_agent_id: project.leader_agent_id,
+        memberAgentIds: projectMembers.map((member) => member.agent_id),
+        memberConfigs: projectMembers.map(({ agent_id, duties, model_override, thinking_override }) => ({ agent_id, duties, model_override, thinking_override })),
         workspace_dir: project.workspace_dir,
         workspace_state: serializeProjectWorkspaceState(state),
       })
@@ -2478,7 +2501,7 @@ export function App() {
               <span className="wechat-back-chevron">‹</span>
               <span className="wechat-back-text">{projectSection === 'overview' ? '返回聊天' : '项目概览'}</span>
             </button>
-            <b>{projectSection === 'overview' ? '项目工作区' : ({ profile: '项目资料', reports: '日报与报告', tasks: '任务看板', assets: '项目素材', campaigns: '宣传选题与成品' } as Record<ProjectSection, string>)[projectSection]}</b>
+            <b>{projectSection === 'overview' ? '项目工作区' : ({ profile: '项目资料与群规则', members: '群成员配置', reports: '日报与报告', tasks: '任务看板', assets: '项目素材', campaigns: '宣传选题与成品' } as Record<ProjectSection, string>)[projectSection]}</b>
             <span style={{ width: 48 }} />
           </header>
           <p className="wechat-file-hint">项目进度、待交付和最近文件集中在这里；具体资料按需打开。</p>
@@ -2496,6 +2519,7 @@ export function App() {
               </div>
               <div className="project-overview-links">
                 <button type="button" data-testid="project-section-profile" onClick={() => setProjectSection('profile')}><span>项目资料</span><small>目标、受众与项目文档</small><b>›</b></button>
+                <button type="button" data-testid="project-section-members" onClick={() => setProjectSection('members')}><span>群规则与成员配置</span><small>{projectMembers.length} 位成员 · 群内职责、模型与思考程度</small><b>›</b></button>
                 <button type="button" data-testid="project-section-reports" onClick={() => setProjectSection('reports')}><span>日报与报告</span><small>搜索来源、管理模板、生成草稿</small><b>›</b></button>
                 <button type="button" data-testid="project-section-tasks" onClick={() => setProjectSection('tasks')}><span>任务看板</span><small>{projectTasks.length} 项任务</small><b>›</b></button>
                 <button type="button" data-testid="project-section-assets" onClick={() => setProjectSection('assets')}><span>项目素材</span><small>{workspaceDraft.assets.length} 项素材</small><b>›</b></button>
@@ -2508,6 +2532,7 @@ export function App() {
             </div>
           ) : null}
           {projectSection === 'profile' && <div className="project-workspace-form">
+            <label><span>群规则（只在本群生效）</span><textarea rows={8} data-testid="mobile-group-rules" value={groupRules} onChange={(event) => setGroupRules(event.target.value)} placeholder="定义本群目标、协作流程、任务分配方式、验收口径和边界。群内身份与分工只在本群有效，不修改成员个人 Prompt。" /></label>
             <label><span>阶段目标</span><textarea rows={3} data-testid="mobile-workspace-goal" value={workspaceDraft.goal} onChange={(e) => setWorkspaceDraft((s) => ({ ...s, goal: e.target.value }))} placeholder="这个项目当前要达成什么结果？" /></label>
             <label><span>销售对象</span><input data-testid="mobile-workspace-sales-audience" value={workspaceDraft.salesAudience} onChange={(e) => setWorkspaceDraft((s) => ({ ...s, salesAudience: e.target.value }))} placeholder="例如：渠道商与集成商" /></label>
             <label><span>内容呈现对象</span><input data-testid="mobile-workspace-story-audience" value={workspaceDraft.storyAudience} onChange={(e) => setWorkspaceDraft((s) => ({ ...s, storyAudience: e.target.value }))} placeholder="例如：一线医护人员" /></label>
@@ -2524,6 +2549,20 @@ export function App() {
             </div>
             <div className="project-workspace-form"><label><span>周报统计开始日期</span><input data-testid="mobile-project-weekly-start" type="date" value={weeklyStartDate} onChange={(e) => setWeeklyStartDate(e.target.value)} /></label><label><span>周报统计结束日期</span><input data-testid="mobile-project-weekly-end" type="date" value={weeklyEndDate} onChange={(e) => setWeeklyEndDate(e.target.value)} /></label></div>
             <button type="button" disabled={workspaceSaving || !weeklyStartDate || !weeklyEndDate || weeklyStartDate > weeklyEndDate} data-testid="mobile-project-document-weekly" onClick={() => void generateProjectDocument('weekly_report')}>生成项目周报草稿</button>
+          </div>}
+          {projectSection === 'members' && <div className="project-workspace-form" data-testid="mobile-group-members">
+            <p className="project-workspace-result">每个 Agent 保留个人默认模型与思考程度。这里的职责和配置只在当前群生效；留空表示继承个人默认值。</p>
+            <label><span>群成员</span><select data-testid="mobile-group-member-select" value={selectedMemberId} onChange={(event) => setSelectedMemberId(event.target.value)}>{projectMembers.map((member) => <option key={member.agent_id} value={member.agent_id}>{member.name}{member.agent_id === projects.find((project) => project.id === target.id)?.leader_agent_id ? ' · 群主' : ''}</option>)}</select></label>
+            {selectedProjectMember ? <>
+              <p className="project-workspace-result">{selectedProjectMember.name} · {selectedProjectMember.execution_engine === 'opencode' ? 'OpenCode（Jeff）' : selectedProjectMember.execution_engine === 'opencode-system' ? 'OpenCode（系统）' : selectedProjectMember.execution_engine}</p>
+              <label><span>本群职责</span><textarea rows={5} data-testid="mobile-group-member-duties" value={selectedProjectMember.duties} onChange={(event) => setProjectMembers((members) => members.map((member) => member.agent_id === selectedProjectMember.agent_id ? { ...member, duties: event.target.value } : member))} placeholder="该成员在本群负责什么；留空时按群规则分配" /></label>
+              <label><span>本群模型（留空继承个人默认）</span><input data-testid="mobile-group-member-model" list="mobile-group-member-models" value={selectedProjectMember.model_override || ''} onChange={(event) => setProjectMembers((members) => members.map((member) => member.agent_id === selectedProjectMember.agent_id ? { ...member, model_override: event.target.value || null } : member))} placeholder={selectedProjectMember.execution_engine === 'opencode' ? 'provider/model，例如 openai/gpt-5' : 'CLI 模型 ID'} />
+                <datalist id="mobile-group-member-models">{projectMemberModels.map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}</datalist>
+              </label>
+              {selectedProjectMember.execution_engine !== 'cursor' && <label><span>本群思考程度</span><select data-testid="mobile-group-member-thinking" value={selectedProjectMember.thinking_override || ''} onChange={(event) => setProjectMembers((members) => members.map((member) => member.agent_id === selectedProjectMember.agent_id ? { ...member, thinking_override: event.target.value || null } : member))}><option value="">继承个人默认</option><option value="none">关闭</option><option value="low">低</option><option value="medium">中</option><option value="high">高</option><option value="max">最大</option></select></label>}
+              <button type="button" className="btn-primary" data-testid="mobile-group-member-save" disabled={workspaceSaving} onClick={() => void saveProjectWorkspace()}>{workspaceSaving ? '保存中…' : '保存群规则与成员配置'}</button>
+              {workspaceSaved ? <p className="project-workspace-result" role="status">{workspaceSaved}</p> : null}
+            </> : <p className="project-workspace-result">这个群还没有可编辑成员。</p>}
           </div>}
           {projectSection === 'reports' && <div className="project-workspace-form">
             <h3 className="campaign-mobile-title">思源日报与报告模板</h3>

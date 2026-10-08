@@ -176,7 +176,9 @@ export function registerIpc(core: JeffCore): Record<string, Handler> {
       }
       let row
       if (d.id === XIAOJIE_ID) {
-        // 小杰可配模型/思考/指令/分类外的一切（名称头像锁定），指令保持内置
+        // 小杰固定名称/头像；个人简介、个人 Prompt 与引擎配置可由用户维护。
+        const current = core.agents.get(XIAOJIE_ID)
+        if (current && typeof d.instructions === 'string' && d.instructions !== current.instructions) snapshotInstructions(core.paths, XIAOJIE_ID, current.instructions)
         row = core.agents.update(XIAOJIE_ID, {
           execution_engine: patch.execution_engine,
           engine_model: patch.engine_model,
@@ -184,6 +186,7 @@ export function registerIpc(core: JeffCore): Record<string, Handler> {
           model_id: patch.model_id,
           thinking: patch.thinking,
           description: patch.description,
+          instructions: patch.instructions,
           category: patch.category,
         })
       } else if (d.id) {
@@ -592,15 +595,36 @@ export function registerIpc(core: JeffCore): Record<string, Handler> {
       return projects.map((p) => toProjectInfo(core, p))
     },
     [IPC.projectSave]: async (p): Promise<ProjectInfo> => {
-      const d = p as { id?: string; title: string; description?: string; icon?: string; leader_agent_id?: string | null; memberAgentIds?: string[]; workspace_dir?: string; workspace_state?: string }
+      const d = p as { id?: string; title: string; description?: string; system_prompt?: string; icon?: string; leader_agent_id?: string | null; memberAgentIds?: string[]; memberConfigs?: Array<{ agent_id: string; duties?: string; model_override?: string | null; thinking_override?: string | null }>; workspace_dir?: string; workspace_state?: string }
       if (!d.leader_agent_id) throw new Error('必须选择群主（leader）')
       // 成员快照语义：memberAgentIds 是完整集合，群主自动并入
-      const memberIds = Array.from(new Set([...(d.memberAgentIds || []), d.leader_agent_id]))
+      const existingMemberIds = d.id ? projectAgentRepo(core.db).listByProject(d.id).map((member) => member.agent_id) : []
+      // 不带成员快照的项目资料更新（如移动端改工作区）必须保留现有成员。
+      const memberIds = Array.from(new Set([...(d.memberAgentIds ?? existingMemberIds), d.leader_agent_id]))
       for (const mid of memberIds) {
         const a = agentRepo(core.db).get(mid)
         if (!a || a.deleted_at) throw new Error(`成员智能体不存在或已删除: ${mid}`)
       }
-      let row
+      const normalizedMemberConfigs = (d.memberConfigs || []).map((config) => {
+        if (!memberIds.includes(config.agent_id)) throw new Error(`成员配置对象不属于本群: ${config.agent_id}`)
+        const patch: { duties?: string; model_override?: string | null; thinking_override?: string | null } = {}
+        if (config.duties !== undefined) {
+          if (config.duties.length > 12000) throw new Error('成员职责不能超过 12000 个字符')
+          patch.duties = config.duties
+        }
+        if (config.model_override !== undefined) {
+          const model = config.model_override?.trim() || null
+          if (model && model.length > 500) throw new Error('模型覆盖不能超过 500 个字符')
+          patch.model_override = model
+        }
+        if (config.thinking_override !== undefined) {
+          const thinking = config.thinking_override?.trim() || null
+          if (thinking && !['none', 'low', 'medium', 'high', 'max'].includes(thinking)) throw new Error('不支持的思考程度')
+          patch.thinking_override = thinking
+        }
+        return { agent_id: config.agent_id, patch }
+      })
+      let row: import('@jeff/core').ProjectRow | undefined
       if (d.id) {
         const existing = projectRepo(core.db).get(d.id)
         if (!existing) throw new Error('项目不存在')
@@ -615,7 +639,7 @@ export function registerIpc(core: JeffCore): Record<string, Handler> {
               reportSources: parseProjectWorkspaceState(existing.workspace_state).reportSources,
             })
         row = projectRepo(core.db).update(d.id, {
-          title: d.title, description: d.description, icon: d.icon, leader_agent_id: d.leader_agent_id,
+          title: d.title, description: d.description, system_prompt: d.system_prompt, icon: d.icon, leader_agent_id: d.leader_agent_id,
           ...(d.workspace_dir !== undefined ? { workspace_dir: d.workspace_dir } : {}),
           ...(d.workspace_state !== undefined ? { workspace_state: workspace } : {}),
         })
@@ -628,10 +652,11 @@ export function registerIpc(core: JeffCore): Record<string, Handler> {
           reportTemplates: [],
           reportSources: [],
         })
-        row = projectRepo(core.db).create({ title: d.title, description: d.description, icon: d.icon, leader_agent_id: d.leader_agent_id, workspace_dir: d.workspace_dir || '', workspace_state: workspace })
+        row = projectRepo(core.db).create({ title: d.title, description: d.description, system_prompt: d.system_prompt, icon: d.icon, leader_agent_id: d.leader_agent_id, workspace_dir: d.workspace_dir || '', workspace_state: workspace })
       }
       // 事务化成员快照：差集删除 + 群主唯一（直接用 create/update 返回的 row，不按可重复的 title 回查）
       projectAgentRepo(core.db).replaceMembers(row.id, d.leader_agent_id, memberIds)
+      for (const config of normalizedMemberConfigs) projectAgentRepo(core.db).updateConfig(row.id, config.agent_id, config.patch)
       core.bus.emit('data-changed', 'projects')
       return toProjectInfo(core, row)
     },
@@ -904,7 +929,10 @@ export function registerIpc(core: JeffCore): Record<string, Handler> {
       const { projectId } = p as { projectId: string }
       return projectAgentRepo(core.db).listByProject(projectId).map((m) => {
         const a = agentRepo(core.db).get(m.agent_id)
-        return { agent_id: m.agent_id, role: m.role, name: a?.name || m.agent_id, avatar: a?.avatar || '🤖' }
+        return { agent_id: m.agent_id, role: m.role, name: a?.name || m.agent_id, avatar: a?.avatar || '🤖',
+          duties: m.duties || '', model_override: m.model_override ?? null, thinking_override: m.thinking_override ?? null,
+          execution_engine: a?.execution_engine || 'opencode', engine_model: a?.engine_model || '',
+          model_provider: a?.model_provider || '', model_id: a?.model_id || '', thinking: a?.thinking || '' }
       })
     },
     [IPC.projectAddMember]: async (p): Promise<{ ok: boolean }> => {
@@ -1178,6 +1206,7 @@ function toProjectInfo(core: JeffCore, row: import('@jeff/core').ProjectRow): Pr
     id: row.id,
     title: row.title,
     description: row.description,
+    system_prompt: row.system_prompt || '',
     icon: row.icon,
     status: row.status,
     leader_agent_id: row.leader_agent_id,

@@ -151,21 +151,21 @@ describe('SessionIndex', () => {
 })
 
 describe('resolveMemoryScope', () => {
-  it('user 仅小杰可写；project 需要成员身份', () => {
+  it('每个 Agent 可维护用户级记忆；项目记忆仍要求群成员身份', () => {
     db.exec(`INSERT INTO agent (id,name,avatar,builtin,created_at,updated_at) VALUES ('agt_xj','小杰','🧑',1,1,1),('agt_dev','开发','💻',0,1,1)`)
     db.exec(`INSERT INTO project (id,title,leader_agent_id,created_at,updated_at) VALUES ('prj_1','群','agt_xj',1,1)`)
     db.exec(`INSERT INTO project_agent (project_id,agent_id,role,created_at) VALUES ('prj_1','agt_dev','worker',1)`)
 
-    const okUser = resolveMemoryScope(db, { agentId: 'agt_xj', resolved: null, explicit: 'user', builtin: true })
+    const okUser = resolveMemoryScope(db, { agentId: 'agt_xj', resolved: null, explicit: 'user' })
     expect(okUser).toMatchObject({ scope: { kind: 'user' } })
-    const denyUser = resolveMemoryScope(db, { agentId: 'agt_dev', resolved: null, explicit: 'user', builtin: false })
-    expect('error' in denyUser && denyUser.error).toContain('小杰')
-    const okProject = resolveMemoryScope(db, { agentId: 'agt_dev', resolved: null, explicit: 'project:prj_1', builtin: false })
+    const okUserByOtherAgent = resolveMemoryScope(db, { agentId: 'agt_dev', resolved: null, explicit: 'user' })
+    expect(okUserByOtherAgent).toMatchObject({ scope: { kind: 'user' } })
+    const okProject = resolveMemoryScope(db, { agentId: 'agt_dev', resolved: null, explicit: 'project:prj_1' })
     expect(okProject).toMatchObject({ scope: { kind: 'project' } })
-    const denyProject = resolveMemoryScope(db, { agentId: 'agt_stranger', resolved: null, explicit: 'project:prj_1', builtin: false })
+    const denyProject = resolveMemoryScope(db, { agentId: 'agt_stranger', resolved: null, explicit: 'project:prj_1' })
     expect('error' in denyProject).toBe(true)
     // 群会话默认写项目记忆
-    const groupDefault = resolveMemoryScope(db, { agentId: 'agt_dev', resolved: { kind: 'group', projectId: 'prj_1', agentId: 'agt_dev' }, builtin: false })
+    const groupDefault = resolveMemoryScope(db, { agentId: 'agt_dev', resolved: { kind: 'group', projectId: 'prj_1', agentId: 'agt_dev' } })
     expect(groupDefault).toMatchObject({ scope: { kind: 'project', projectId: 'prj_1' } })
   })
 })
@@ -208,7 +208,7 @@ describe('自动记忆分流', () => {
   })
 
   it('群自省保持项目范围，非法项目不写文件', () => {
-    expect(resolveMemoryScope(db, { agentId: 'a', resolved: { kind: 'review', agentId: 'a', projectId: 'p' }, builtin: false })).toMatchObject({ scope: { kind: 'project', projectId: 'p' } })
-    expect(resolveMemoryScope(db, { agentId: 'a', resolved: null, explicit: 'project:../../outside', builtin: true })).toMatchObject({ error: '项目不存在' })
+    expect(resolveMemoryScope(db, { agentId: 'a', resolved: { kind: 'review', agentId: 'a', projectId: 'p' } })).toMatchObject({ scope: { kind: 'project', projectId: 'p' } })
+    expect(resolveMemoryScope(db, { agentId: 'a', resolved: null, explicit: 'project:../../outside' })).toMatchObject({ error: '项目不存在' })
   })
 })

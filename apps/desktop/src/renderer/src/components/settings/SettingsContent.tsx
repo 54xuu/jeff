@@ -1,5 +1,4 @@
 import { useStore } from '../../store'
-import ProviderSettings from './ProviderSettings'
 import McpSettings from './McpSettings'
 import MemorySettings from './MemorySettings'
 import EngineSettings from './EngineSettings'
@@ -15,7 +14,6 @@ export default function SettingsContent(): React.JSX.Element {
   const settingsSection = useStore((s) => s.settingsSection)
   return (
     <div className="settings-pane" key={settingsSection}>
-      {settingsSection === 'providers' && <ProviderSettings />}
       {settingsSection === 'mcp' && <McpSettings />}
       {settingsSection === 'memory' && <MemorySettings />}
       {settingsSection === 'engine' && <EngineSettings />}

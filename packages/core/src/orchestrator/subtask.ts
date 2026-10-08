@@ -9,7 +9,7 @@ import { DEFAULT_SEND_TIMEOUT_MS } from '../oc/client.js'
 export const SUBTASK_TOOL = 'jeff_spawn_subtask'
 
 /**
- * 独立子任务硬指令。**固定拼接在非内置智能体的 system 末尾**，不随单轮文本有无触发词来回增删——
+ * 独立子任务硬指令。**固定拼接在每个智能体的 system 末尾**，不随单轮文本有无触发词来回增删——
  * 动态增删会击穿供应商 Prompt Caching 的前缀命中（触发轮整段历史无缓存重发，长对话反而多花几十倍 token）。
  * 文案因此写成中性条件式：用户没提独立处理时本节自然不生效。
  * 只给模型看，不写进用户气泡。子任务会话本身不走这条（它直接调 oc.sendMessage）。
@@ -33,9 +33,8 @@ export function wantsIndependentSubtasks(text: string): boolean {
   return INDEPENDENCE_RE.test(t) && BATCH_RE.test(t)
 }
 
-/** 非内置智能体的 system 末尾固定拼接子任务规范（前缀稳定，保 KV-Cache）；小杰没有该工具，不注入。 */
-export function withSubtaskSteer(system: string | undefined, opts?: { builtin?: boolean }): string | undefined {
-  if (opts?.builtin) return system
+/** 所有智能体的 system 末尾固定拼接子任务规范（前缀稳定，保 KV-Cache）。 */
+export function withSubtaskSteer(system: string | undefined): string | undefined {
   return system ? `${system}\n\n${SUBTASK_STEER}` : SUBTASK_STEER
 }
 

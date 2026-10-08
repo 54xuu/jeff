@@ -54,7 +54,7 @@ export function registerMemoryTools(reg: ToolBridge, deps: MemoryToolDeps): void
     const agentId = resolved?.agentId || (ctx.agent ? agents.list().find((a) => a.name === ctx.agent)?.id : undefined)
     if (!agentId) return { ok: false, error: '无法识别调用者身份（无会话上下文）' }
 
-    const target = resolveMemoryScope(deps.db, { agentId, resolved, explicit: scope, builtin: !!agents.get(agentId)?.builtin })
+    const target = resolveMemoryScope(deps.db, { agentId, resolved, explicit: scope })
     if ('error' in target) return { ok: false, error: target.error }
     const memScope = target.scope
     if (privacy && !['auto', 'private', 'public'].includes(privacy)) return { ok: false, error: '未知 privacy' }
@@ -114,25 +114,22 @@ interface MemoryOpLike {
 
 type ScopeResolveResult = { scope: MemoryScope } | { error: string }
 
-/** 记忆写入域解析：默认 agent 自身；group 会话默认项目共享记忆；user 仅小杰可写 */
+/** 记忆写入域解析：默认 agent 自身；group 会话默认项目共享记忆；共享项目记忆仍校验成员关系 */
 export function resolveMemoryScope(
   db: DB,
-  input: { agentId: string; resolved: SessionScopeCtx | null; explicit?: string; builtin: boolean },
+  input: { agentId: string; resolved: SessionScopeCtx | null; explicit?: string },
 ): ScopeResolveResult {
   const agents = agentRepo(db)
   if (input.explicit) {
     if (input.explicit === 'self') return { scope: { kind: 'agent', agentId: input.agentId } }
     if (input.explicit === 'user') {
-      if (!input.builtin) return { error: '用户画像记忆（user）只能由管家小杰维护' }
       return { scope: { kind: 'user' } }
     }
     if (input.explicit.startsWith('project:')) {
       const projectId = input.explicit.slice(8)
       if (!projectRepo(db).get(projectId)) return { error: '项目不存在' }
-      if (!input.builtin) {
-        const inProject = projectAgentRepo(db).getRole(projectId, input.agentId)
-        if (!inProject) return { error: `你不属于项目 ${projectId}，不能写它的共享记忆` }
-      }
+      const inProject = projectAgentRepo(db).getRole(projectId, input.agentId)
+      if (!inProject) return { error: `你不属于项目 ${projectId}，不能写它的共享记忆` }
       return { scope: { kind: 'project', projectId } }
     }
     return { error: `未知 scope: ${input.explicit}` }

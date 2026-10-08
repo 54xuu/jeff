@@ -249,6 +249,8 @@ export class OcClient extends EventEmitter {
     images?: Array<{ mime: string; dataUrl: string }>
     agent?: string
     model?: { providerID: string; modelID: string }
+    /** CLI engines use a provider-specific model identifier rather than the OpenCode model object. */
+    engineModel?: string
     /** 思考档位（模型 variants 的 key；opencode PromptInput.variant 原生支持） */
     variant?: string
     system?: string

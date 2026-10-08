@@ -51,23 +51,24 @@ describe('GroupChat', () => {
     expect(group.parseMention('没有提及', members)).toBeNull()
   })
 
-  it('briefing 包含名册与 leader 指示', () => {
+  it('briefing 注入群规则与逐成员职责，不读取成员个人 Prompt', () => {
     const p = projectRepo(db).list()[0]
     const leaderId = projectRepo(db).list()[0].leader_agent_id as string
+    const devId = agentRepo(db).list().find((agent) => agent.name === '开发')!.id
+    projectRepo(db).update(p.id, { system_prompt: '本群规则：先由产品成员确认需求，再由开发成员实现。' })
+    projectAgentRepo(db).updateConfig(p.id, devId, { duties: '负责本群代码实现' })
+    agentRepo(db).update(devId, { instructions: 'PERSONAL-PROMPT-ONLY' })
     const briefing = group.buildBriefing(p.id, leaderId)
     expect(briefing).toContain('官网项目')
     expect(briefing).toContain('项目背景（群简介）')
     expect(briefing).toContain('架构师')
-    expect(briefing).toContain('群主/leader')
-    expect(briefing).toContain('工作者/worker')
-    expect(briefing).toContain('@')
-    // 新版协作规范：技能清单 + 串行派发指示
-    expect(briefing).toContain('群成员名册与技能清单')
-    expect(briefing).toContain('写代码')
-    expect(briefing).toContain('画图')
-    expect(briefing).toContain('按执行顺序')
+    expect(briefing).toContain('本群规则：先由产品成员确认需求，再由开发成员实现。')
+    expect(briefing).toContain('负责本群代码实现')
+    expect(briefing).toContain('本群群主')
+    expect(briefing).not.toContain('PERSONAL-PROMPT-ONLY')
     const workerBriefing = group.buildBriefing(p.id, agentRepo(db).list().find((a) => a.name === '开发')!.id)
-    expect(workerBriefing).toContain('@我 汇报')
+    expect(workerBriefing).toContain('负责本群代码实现')
+    expect(workerBriefing).toContain('本群规则：')
   })
 
   it('briefing 空简介时仍写入项目背景占位', () => {
@@ -144,6 +145,13 @@ describe('GroupChat', () => {
     expect(sent[1].model).toEqual({ providerID: 'prov-dev', modelID: 'model-d' })
     expect(sent[1].variant).toBe('high')
     expect(sent[1].agent).toBe(agentSlug(dev.id))
+
+    projectAgentRepo(db).updateConfig(p.id, dev.id, { model_override: 'group-provider/group/model', thinking_override: 'max' })
+    await group.send({ projectId: p.id, text: '@开发 在本群用更强模型复核' })
+    const devCalls = sent.filter((input) => input.agent === agentSlug(dev.id))
+    expect(devCalls.at(-1)?.model).toEqual({ providerID: 'group-provider', modelID: 'group/model' })
+    expect(devCalls.at(-1)?.variant).toBe('max')
+    expect(agentRepo(db).get(dev.id)).toMatchObject({ model_provider: 'prov-dev', model_id: 'model-d', thinking: 'high' })
   })
 
   it('send：未设 leader 报错', async () => {

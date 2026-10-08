@@ -5,7 +5,7 @@ import type { JeffPaths } from '../paths.js'
 import { snapshotInstructions } from './selfTools.js'
 import type { ToolBridge } from './bridge.js'
 
-/** 管理工具名（小杰独占；其他 agent 的 opencode 定义里显式禁用） */
+/** Jeff Agent 与项目群管理工具；所有 Agent 共享能力，具体数据范围由工具校验。 */
 export const ADMIN_TOOL_NAMES = [
   'jeff_agent_create',
   'jeff_agent_update',
@@ -66,7 +66,9 @@ export function registerAdminTools(reg: ToolBridge, deps: AdminDeps): void {
 
   reg.register(T_UPDATE, async (args: { id?: string; name?: string; description?: string; instructions?: string; avatar?: string; model_provider?: string; model_id?: string; thinking?: string; category?: string; execution_engine?: import('../engines/contract.js').EngineId; engine_model?: string; archived?: boolean }) => {
     if (!args.id) throw new Error('id 不能为空')
-    if (args.id === XIAOJIE_ID) throw new Error('小杰是内置管家，不可编辑')
+    if (args.id === XIAOJIE_ID && ([args.name, args.avatar, args.category].some((value) => nonBlank(value) !== undefined) || args.archived !== undefined)) {
+      throw new Error('小杰的内置名称、头像与分类不可修改；个人简介、Prompt 和模型配置可修改')
+    }
     const patch = onlyProvided({
       name: nonBlank(args.name),
       description: nonBlank(args.description),

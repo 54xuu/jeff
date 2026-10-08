@@ -256,7 +256,7 @@ function notifyTurnDoneInner(key: string, kind: 'agent' | 'group', threadId?: st
 export const useStore = create<JeffState>((set, get) => ({
   tab: 'chats',
   active: null,
-  settingsSection: 'providers',
+  settingsSection: 'engine',
   agents: [],
   projects: [],
   messages: {},
@@ -283,7 +283,7 @@ export const useStore = create<JeffState>((set, get) => ({
     if (active) get().clearUnread(active.kind === 'agent' ? `agent:${active.id}` : `group:${active.id}`)
     if (opts?.echo !== false && active) void api.invoke(IPC.remoteFocus, { kind: active.kind, id: active.id }).catch(() => {})
   },
-  setSettingsSection: (settingsSection) => set({ settingsSection }),
+  setSettingsSection: (settingsSection) => set({ settingsSection: settingsSection === 'providers' ? 'engine' : settingsSection }),
   setBrowser: (patch) => set((s) => ({ browser: { ...s.browser, ...patch } })),
   setBrowserViewport: (viewport) => {
     set((s) => ({ browser: { ...s.browser, viewport } }))

@@ -4,7 +4,7 @@ import path from 'node:path'
 import { openDb, type DB } from '../src/db/db.js'
 import { agentRepo, kvRepo, projectRepo } from '../src/db/repos.js'
 import { buildPaths } from '../src/paths.js'
-import { JsonLines, executableCommand, launch, stopProcess } from '../src/engines/process.js'
+import { JsonLines, capture, executableCommand, launch, stopProcess } from '../src/engines/process.js'
 import { JsonStreamParser, ReplyCollector } from '../src/engines/stream.js'
 import { EngineClient } from '../src/engines/client.js'
 import { ToolBridge } from '../src/tools/bridge.js'
@@ -13,7 +13,8 @@ import { GroupChat } from '../src/orchestrator/group.js'
 import { PrivateChat } from '../src/chat/private.js'
 import { REMOTE_POLICY } from '../src/remote/whitelist.js'
 import { IPC } from '../src/ipc/contract.js'
-import { executeJsonCli, RpcProcess } from '../src/engines/backends.js'
+import { executeJsonCli, executeOpenCode, RpcProcess } from '../src/engines/backends.js'
+import { prepareEnvironment, readSystemOpenCodeProfile, systemOpenCodeModelOptions, systemOpenCodePaths } from '../src/engines/environment.js'
 
 let root: string
 let db: DB
@@ -77,12 +78,13 @@ describe('执行引擎会话与工具契约', () => {
     claude.receive({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'call-1', is_error: true, content: '读盘失败' }] } })
     expect(reply.values()[0]).toMatchObject({ state: { status: 'error', output: '读盘失败' } })
   })
-  it('旧智能体默认 OpenCode，限制智能体不能绕过权限选择外部引擎', () => {
+  it('旧智能体默认 OpenCode，Agent 姓名与分类不限制可选引擎', () => {
     const ordinary = agentRepo(db).create({ name: '开发' })
     expect(ordinary.execution_engine).toBe('opencode')
-    expect(() => agentRepo(db).create({ name: '医护助手', execution_engine: 'codex' })).toThrow('禁用规则')
-    expect(() => agentRepo(db).update(ordinary.id, { execution_engine: 'claude', category: '智慧病房' })).toThrow('禁用规则')
-    expect(agentRepo(db).get(ordinary.id)?.execution_engine).toBe('opencode')
+    const medical = agentRepo(db).create({ name: '医护助手', category: '智慧病房', execution_engine: 'codex' })
+    expect(medical.execution_engine).toBe('codex')
+    expect(agentRepo(db).update(ordinary.id, { execution_engine: 'claude', category: '智慧病房' })?.execution_engine).toBe('claude')
+    expect(agentRepo(db).get(ordinary.id)?.execution_engine).toBe('claude')
     expect(REMOTE_POLICY[IPC.enginesPathSave].policy).toBe('deny')
   })
   it('MCP 身份来自会话；隐藏的管理工具、伪造身份与关闭后凭证都被拒绝', async () => {
@@ -103,7 +105,7 @@ describe('执行引擎会话与工具契约', () => {
   it('外部会话本地历史、改名、引擎切换与旧会话激活保持归属', async () => {
     const agent = agentRepo(db).create({ name: '开发', execution_engine: 'claude' })
     const client = new EngineClient(0, { db, root, workspace: root, bridge, mcp: () => ({}) })
-    client.probe = async (id) => ({ id, label: id, path: '/fake', available: true, capabilities: { images: true, thinking: true, compression: false, contextStats: false, restrictedAgents: false } })
+    client.probe = async (id) => ({ id, label: id, path: '/fake', available: true, capabilities: { images: true, thinking: true, compression: false, contextStats: false } })
     const chat = new PrivateChat(db, () => client)
     const first = await chat.ensureSession(agent.id, agent.name)
     const cron = await chat.ensureDedicatedSession(agent.id, 'session:cron:one')
@@ -124,7 +126,7 @@ describe('执行引擎会话与工具契约', () => {
     const b = agentRepo(db).create({ name: '成员B', execution_engine: 'claude' })
     const project = projectRepo(db).create({ title: '混合群', leader_agent_id: a.id })
     const client = new EngineClient(0, { db, root, workspace: root, bridge, mcp: () => ({}) })
-    client.probe = async (id) => ({ id, path: '/fake', label: id, available: true, capabilities: { images: true, thinking: true, compression: false, contextStats: false, restrictedAgents: false } })
+    client.probe = async (id) => ({ id, path: '/fake', label: id, available: true, capabilities: { images: true, thinking: true, compression: false, contextStats: false } })
     const group = new GroupChat(db, () => client)
     const first = await group.ensureSession(project.id, a.id)
     const second = await group.ensureSession(project.id, b.id)
@@ -141,6 +143,15 @@ describe('执行引擎会话与工具契约', () => {
     fs.mkdirSync(path.dirname(entry), { recursive: true }); fs.writeFileSync(entry, '')
     const shim = path.join(root, 'cli.cmd'); fs.writeFileSync(shim, '@"%dp0%/node_modules/cli/index.js" %*')
     expect(executableCommand(shim).prefix).toEqual([entry])
+  })
+  it('CLI 检测会读取写到 stderr 的帮助文本', async () => {
+    const binary = path.join(root, 'stderr-help-cli.cjs')
+    fs.writeFileSync(binary, `#!/usr/bin/env node
+if (process.argv.includes('--version')) console.log('fixture 1.0')
+else process.stderr.write('run options --format --agent --session --model --variant\\n')
+`, { mode: 0o700 })
+    expect(await capture(binary, ['--version'])).toBe('fixture 1.0')
+    expect(await capture(binary, ['run', '--help'])).toContain('--format --agent --session --model --variant')
   })
   it('Windows Cursor 官方启动器选择最新完整版本，不经过 PowerShell 解析提示词', () => {
     const shim = path.join(root, 'cursor-agent.cmd')
@@ -173,7 +184,7 @@ let input=''; process.stdin.on('data', b=>input+=b); process.stdin.on('end', asy
     const received: any[] = []
     bridge.register('jeff_memory', async (args) => { received.push(args); return '服务端已保存' })
     const client = new EngineClient(0, { db, root, workspace: root, bridge, mcp: () => ({}) })
-    client.probe = async (id) => ({ id, path: binary, label: id, available: true, capabilities: { images: true, thinking: true, compression: false, contextStats: false, restrictedAgents: false } })
+    client.probe = async (id) => ({ id, path: binary, label: id, available: true, capabilities: { images: true, thinking: true, compression: false, contextStats: false } })
     const session = await client.createSession({ agent: agentSlug(agent.id) })
     await client.sendMessage({ sessionId: session.id, text: '第一轮' })
     await client.sendMessage({ sessionId: session.id, text: '第二轮' })
@@ -196,6 +207,22 @@ let input=''; process.stdin.on('data', b=>input+=b); process.stdin.on('end', asy
     const pending = executeJsonCli({ ...input, signal: controller.signal })
     setTimeout(() => controller.abort(), 100)
     await expect(pending).rejects.toThrow('已停止')
+  })
+  it('系统 OpenCode 的单轮命令关闭 stdin 后正常结束并保存最终文本', async () => {
+    const binary = path.join(root, 'opencode-fixture.cjs')
+    fs.writeFileSync(binary, `#!/usr/bin/env node
+process.stdin.resume()
+process.stdin.on('end', () => {
+  console.log(JSON.stringify({ type: 'text', sessionID: 'system-session', part: { id: 'reply', text: '系统 OpenCode 已完成' } }))
+  console.log(JSON.stringify({ type: 'step-finish', sessionID: 'system-session', part: { tokens: { input: 12, output: 4 } } }))
+})
+`, { mode: 0o700 })
+    const reply = new ReplyCollector(() => {})
+    const result = await executeOpenCode({ engine: 'opencode-system', binary, cwd: root, env: process.env, extraArgs: [], text: '测试',
+      signal: new AbortController().signal, reply, session: () => {} })
+    expect(result.nativeSessionId).toBe('system-session')
+    expect(result.tokens).toEqual({ input: 12, output: 4 })
+    expect(reply.values()).toContainEqual({ id: 'reply', type: 'text', text: '系统 OpenCode 已完成' })
   })
   it.skipIf(process.platform === 'win32')('CLI 主进程异常退出后仍清理其遗留子进程组', async () => {
     const file = path.join(root, 'orphan.cjs')
@@ -232,6 +259,69 @@ it('Cursor MCP 配置位于 Jeff 私有工作目录，保持真实项目配置�
   expect(injected.mcpServers.jeff.url).toBe('http://127.0.0.1:1234/mcp/session')
   expect(injected.mcpServers.plugin.headers).toEqual({ 'X-Test': 'fixture' })
   expect(fs.readFileSync(original, 'utf8')).toBe('{"mcpServers":{"original":{}}}')
+})
+
+it('系统 OpenCode 读取 XDG 配置与认证，并为 Jeff 会话生成隔离配置', () => {
+  const sourceRoot = path.join(root, 'system-opencode')
+  const configHome = path.join(sourceRoot, 'xdg-config')
+  const dataHome = path.join(sourceRoot, 'xdg-data')
+  const sourceConfig = path.join(configHome, 'opencode', 'opencode.jsonc')
+  const sourceAuth = path.join(dataHome, 'opencode', 'auth.json')
+  fs.mkdirSync(path.dirname(sourceConfig), { recursive: true })
+  fs.mkdirSync(path.dirname(sourceAuth), { recursive: true })
+  const originalText = `{
+    // User provider config is copied into a private runtime profile.
+    "model": "demo/main",
+    "provider": { "demo": { "models": {
+      "main": { "name": "Main", "description": "literal ,} stays in the string", },
+      "fast": { "name": "Fast" },
+    }, }, },
+  }`
+  fs.writeFileSync(sourceConfig, originalText)
+  fs.writeFileSync(sourceAuth, '{"demo":{"key":"fixture-secret"}}', { mode: 0o600 })
+
+  const env = { XDG_CONFIG_HOME: configHome, XDG_DATA_HOME: dataHome }
+  const paths = systemOpenCodePaths(env, sourceRoot)
+  expect(paths.config).toContain(sourceConfig)
+  expect(paths.auth).toContain(sourceAuth)
+  const profile = readSystemOpenCodeProfile(env)
+  expect(profile.configPath).toBe(sourceConfig)
+  expect(profile.authPath).toBe(sourceAuth)
+  expect(profile.config.provider.demo.models.main.description).toBe('literal ,} stays in the string')
+  expect(systemOpenCodeModelOptions(env).map((model) => model.id)).toEqual(['demo/fast', 'demo/main'])
+
+  const envKeys = ['XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'APPDATA', 'OPENCODE_CONFIG', 'OPENCODE_CONFIG_DIR', 'OPENCODE_CONFIG_CONTENT', 'OPENCODE_TUI_CONFIG'] as const
+  const before = Object.fromEntries(envKeys.map((key) => [key, process.env[key]]))
+  try {
+    for (const [key, value] of Object.entries(env)) process.env[key] = value
+    delete process.env.APPDATA
+    delete process.env.OPENCODE_CONFIG
+    delete process.env.OPENCODE_CONFIG_DIR
+    delete process.env.OPENCODE_CONFIG_CONTENT
+    delete process.env.OPENCODE_TUI_CONFIG
+    const workspace = path.join(root, 'real-system-workspace')
+    const runtime = prepareEnvironment(root, 'system-opencode-session', 'opencode-system', '群聊规则与个人 Prompt', workspace,
+      'http://127.0.0.1:1234/mcp/session', {})
+    const runtimeConfigPath = runtime.env.OPENCODE_CONFIG!
+    const runtimeConfig = JSON.parse(fs.readFileSync(runtimeConfigPath, 'utf8'))
+    const runtimeAuth = path.join(runtime.env.XDG_DATA_HOME!, 'opencode', 'auth.json')
+    expect(runtime.env.OPENCODE_CONFIG_DIR).toBe(path.dirname(runtimeConfigPath))
+    expect(runtime.env.XDG_CONFIG_HOME).toBe(path.join(runtime.cwd, 'xdg-config'))
+    expect(runtime.env.XDG_DATA_HOME).toBe(path.join(runtime.cwd, 'data'))
+    expect(runtimeConfig.provider).toEqual(profile.config.provider)
+    expect(runtimeConfig.mcp.jeff).toMatchObject({ type: 'remote', url: 'http://127.0.0.1:1234/mcp/session', enabled: true })
+    expect(fs.readFileSync(path.join(path.dirname(runtimeConfigPath), 'agent', 'jeff-agent.md'), 'utf8')).toContain('群聊规则与个人 Prompt')
+    expect(fs.readFileSync(runtimeAuth, 'utf8')).toContain('fixture-secret')
+    expect(fs.statSync(runtimeAuth).mode & 0o777).toBe(0o600)
+    expect(fs.readFileSync(sourceConfig, 'utf8')).toBe(originalText)
+    expect(runtime.extraArgs).toEqual(['--agent', 'jeff-agent'])
+  } finally {
+    for (const key of envKeys) {
+      const value = before[key]
+      if (value === undefined) delete process.env[key]
+      else process.env[key] = value
+    }
+  }
 })
 
 

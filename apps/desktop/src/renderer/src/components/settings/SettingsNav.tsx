@@ -2,17 +2,6 @@ import { useStore, type SettingsSection } from '../../store'
 
 const SECTIONS: Array<{ id: SettingsSection; label: string; desc: string; icon: React.JSX.Element }> = [
   {
-    id: 'providers',
-    label: '模型供应商',
-    desc: '添加模型与密钥',
-    icon: (
-      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-        <rect x="4" y="4" width="16" height="16" rx="2" />
-        <path d="M9 4v16M4 9h16" />
-      </svg>
-    ),
-  },
-  {
     id: 'mcp',
     label: 'MCP 连接器',
     desc: '扩展工具能力',
@@ -35,7 +24,7 @@ const SECTIONS: Array<{ id: SettingsSection; label: string; desc: string; icon: 
   {
     id: 'engine',
     label: '引擎服务',
-    desc: 'opencode 状态与重启',
+    desc: 'CLI 选择与运行状态',
     icon: (
       <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
         <path d="M5 12a7 7 0 0 1 12-4.9M19 12a7 7 0 0 1-12 4.9" />
@@ -122,7 +111,7 @@ export default function SettingsNav(): React.JSX.Element {
         {SECTIONS.map((s) => (
           <button
             key={s.id}
-            className={`settings-nav-item ${settingsSection === s.id ? 'on' : ''}`}
+            className={`settings-nav-item ${(settingsSection === 'providers' ? 'engine' : settingsSection) === s.id ? 'on' : ''}`}
             data-testid={`settings-nav-${s.id}`}
             onClick={() => setSettingsSection(s.id)}
           >

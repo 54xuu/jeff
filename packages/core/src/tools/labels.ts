@@ -16,7 +16,7 @@ export const TOOL_ACTION_LABEL: Record<string, string> = {
   todoread: '读取待办',
   webfetch: '抓取网页',
   task: '派发子任务',
-  // 小杰代操
+  // Jeff 管理工具
   jeff_agent_create: '创建智能体',
   jeff_agent_update: '更新智能体',
   jeff_agent_delete: '删除智能体',

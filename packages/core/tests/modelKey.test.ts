@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatModelKey, parseModelKey, modelDisplayLabel, agentPromptOpts } from '../src/util/modelKey.js'
+import { formatModelKey, parseModelKey, modelDisplayLabel, agentPromptOpts, projectMemberPromptOpts } from '../src/util/modelKey.js'
 
 describe('modelKey', () => {
   it('format + parse round-trip with slash in modelID', () => {
@@ -35,5 +35,16 @@ describe('modelKey', () => {
       model: { providerID: 'fallback', modelID: 'fb' },
     })
     expect(agentPromptOpts(null, null)).toEqual({})
+  })
+
+  it('群成员覆盖只影响该成员，并兼容未显式写入引擎的旧 Agent', () => {
+    expect(projectMemberPromptOpts(
+      { model_provider: 'personal', model_id: 'expensive', thinking: 'low' },
+      { model_override: 'group/efficient/model', thinking_override: 'high' },
+    )).toEqual({ model: { providerID: 'group', modelID: 'efficient/model' }, variant: 'high' })
+    expect(projectMemberPromptOpts(
+      { model_provider: 'personal', model_id: 'expensive', thinking: 'low', execution_engine: 'codex', engine_model: 'personal-cli' },
+      { model_override: 'group-cli', thinking_override: null },
+    )).toEqual({ engineModel: 'group-cli', variant: 'low' })
   })
 })

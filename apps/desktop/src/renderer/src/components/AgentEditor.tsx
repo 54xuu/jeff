@@ -52,7 +52,7 @@ export default function AgentEditor(props: {
   onDirtyChange?: (dirty: boolean) => void
 }): React.JSX.Element {
   const a = props.initial
-  const locked = !!a.builtin && !a.isNew
+  const identityLocked = !!a.builtin && !a.isNew
   const section = props.section || 'all'
   const showBasic = section !== 'model'
   const showModel = section !== 'basic'
@@ -92,7 +92,6 @@ export default function AgentEditor(props: {
   const dirty = useMemo(() => {
     if (engine !== (a.execution_engine || 'opencode') || engineModel !== (a.engine_model || '')) return true
     if (modelKey !== initialModelKey || thinking !== initialThinking) return true
-    if (locked) return false
     return (
       (name || '') !== (a.name || '') ||
       (avatar || '') !== (a.avatar || '🤖') ||
@@ -101,7 +100,7 @@ export default function AgentEditor(props: {
       (category || '') !== (a.category || '')
     )
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [locked, modelKey, thinking, name, avatar, description, instructions, category, engine, engineModel])
+  }, [identityLocked, modelKey, thinking, name, avatar, description, instructions, category, engine, engineModel])
 
   useEffect(() => {
     props.onDirtyChange?.(dirty)
@@ -109,7 +108,7 @@ export default function AgentEditor(props: {
   }, [dirty])
 
   const submit = async () => {
-    if (!locked && !name.trim()) return
+    if (!identityLocked && !name.trim()) return
     setSaving(true)
     setError(null)
     setSavedAt(null)
@@ -117,16 +116,16 @@ export default function AgentEditor(props: {
       const parsed = parseModelKey(modelKey)
       await props.onSave({
         ...(a.id ? { id: a.id } : {}),
-        name: locked ? a.name || '小杰' : name.trim(),
-        avatar: locked ? a.avatar || '🧑‍💻' : avatar.trim() || '🤖',
-        description: locked ? a.description || '' : description.trim(),
-        instructions: locked ? a.instructions || '' : instructions,
+        name: identityLocked ? a.name || '小杰' : name.trim(),
+        avatar: identityLocked ? a.avatar || '🧑‍💻' : avatar.trim() || '🤖',
+        description: description.trim(),
+        instructions,
         execution_engine: engine,
         engine_model: engineModel.trim(),
         model_provider: parsed?.providerID || '',
         model_id: parsed?.modelID || '',
         thinking,
-        category: locked ? a.category || '' : category.trim(),
+        category: identityLocked ? a.category || '' : category.trim(),
       })
       setSavedAt(Date.now())
     } catch (e) {
@@ -139,9 +138,9 @@ export default function AgentEditor(props: {
   return (
     <div className="agents-editor" data-testid="agent-editor">
       <div className="agents-editor-head">
-        <Avatar emoji={locked ? a.avatar || '🧑‍💻' : avatar} size={44} agentId={locked ? a.id : undefined} />
+        <Avatar emoji={identityLocked ? a.avatar || '🧑‍💻' : avatar} size={44} agentId={identityLocked ? a.id : undefined} />
         <div>
-          <div className="contact-name big">{a.isNew ? '新建智能体' : `${a.name} ${locked ? '（内置 · 名称与指令锁定）' : ''}`}</div>
+          <div className="contact-name big">{a.isNew ? '新建智能体' : `${a.name} ${identityLocked ? '（内置身份）' : ''}`}</div>
           <div className="contact-desc">{a.isNew ? '创建后可在聊天列表直接对话' : a.description || '（无简介）'}</div>
         </div>
         <div className="settings-actions" style={{ marginLeft: 'auto', margin: 0 }}>
@@ -159,12 +158,12 @@ export default function AgentEditor(props: {
       </div>
 
       <div className="pv-grid">
-        {showBasic && locked && (
+        {showBasic && identityLocked && (
           <p className="settings-tip" style={{ gridColumn: '1 / -1' }}>
-            内置小杰：名称、头像与身份指令由 Jeff 内置，仅可调整模型与思考设置。
+            小杰的名字和头像用于标识内置管家；个人简介与 System Prompt 可编辑，群内角色只在对应项目群设置。
           </p>
         )}
-        {showBasic && !locked && (
+        {showBasic && !identityLocked && (
           <>
             <Field label="名字 *">
               <input value={name} onChange={(e) => setName(e.target.value)} placeholder="如：架构师阿伟" data-testid="agent-name" />
@@ -177,7 +176,7 @@ export default function AgentEditor(props: {
             </Field>
           </>
         )}
-        {showBasic && !locked && (
+        {showBasic && (
           <Field label="简介" span>
             <input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="一句话说明它是干嘛的" />
           </Field>
@@ -190,7 +189,7 @@ export default function AgentEditor(props: {
               placeholder="如：项目管理 / 医疗场景 / 项目开发（留空 = 默认分组）"
               list="jeff-agent-categories"
               data-testid="agent-category"
-              disabled={locked}
+              disabled={identityLocked}
             />
             <datalist id="jeff-agent-categories">
               {(props.categories || []).map((c) => (
@@ -202,7 +201,7 @@ export default function AgentEditor(props: {
         {showModel && (
           <Field label="执行引擎" span>
             <select data-testid="agent-engine" value={engine} onChange={(event) => { setEngine(event.target.value as EngineId); setEngineModel(''); setThinking('') }}>
-              {ENGINE_IDS.map((id) => <option key={id} value={id} disabled={id !== 'opencode' && (locked || category === '智慧病房' || name === '医护助手')}>{ENGINE_LABELS[id]}{id !== 'opencode' && engines.find((item) => item.id === id)?.available === false ? '（未就绪）' : ''}</option>)}
+              {engines.filter((item) => item.id === 'opencode' || item.id === engine || item.available).map((item) => <option key={item.id} value={item.id}>{ENGINE_LABELS[item.id]}{item.available ? '' : '（未就绪）'}</option>)}
             </select>
             <p className="settings-tip">切换引擎会新建会话，原聊天记录保留。外部 CLI 使用电脑上已有的登录。</p>
           </Field>
@@ -231,7 +230,7 @@ export default function AgentEditor(props: {
             </select>
           </Field>
         )}
-        {showBasic && !locked && (
+        {showBasic && (
           <Field label="身份指令（system prompt）" span>
             <textarea rows={7} value={instructions} onChange={(e) => setInstructions(e.target.value)} placeholder="它擅长什么、行为规矩、输出格式…" data-testid="agent-instructions" />
           </Field>
@@ -241,7 +240,7 @@ export default function AgentEditor(props: {
       {error && <Toast kind="error" message={error} onClose={() => setError(null)} />}
 
       <div className="settings-actions" style={{ justifyContent: 'flex-start' }}>
-        <Button variant="primary" disabled={saving || (!locked && !name.trim())} data-testid="agent-save" onClick={() => void submit()}>
+        <Button variant="primary" disabled={saving || (!identityLocked && !name.trim())} data-testid="agent-save" onClick={() => void submit()}>
           {saving ? '保存中…' : '保存'}
         </Button>
         <Button onClick={props.onCancel}>取消</Button>

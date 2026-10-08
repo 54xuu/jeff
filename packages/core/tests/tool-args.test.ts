@@ -61,6 +61,12 @@ describe('工具定义与实现的一致性', () => {
   it('项目工作台结构化配置必须在项目更新工具参数中声明', () => {
     const d = allToolDefs().find((x) => x.name === 'jeff_project_update')
     expect(d?.args.workspace_state?.type).toBe('string')
+    expect(d?.args.system_prompt?.type).toBe('string')
+    const member = allToolDefs().find((x) => x.name === 'jeff_project_member_config')
+    expect(member?.args).toMatchObject({
+      duties: { type: 'string' }, model_override: { type: 'string' }, thinking_override: { type: 'string' },
+      reset_model: { type: 'boolean' }, reset_thinking: { type: 'boolean' },
+    })
   })
 
   it('会改数据的工具都要声明 id/必填参数说明（防止「模型看不到字段」这类漂移）', () => {
@@ -88,15 +94,49 @@ describe('小杰改智能体：空值不抹字段', () => {
     await expect(call('jeff_agent_update', { id: a.id, name: '  ', thinking: '' })).rejects.toThrow(/没有要修改的字段/)
   })
 
-  it('小杰不可编辑/删除（内置管家身份）', async () => {
+  it('小杰的保留身份固定，但个人 Prompt 可编辑且不可删除', async () => {
     const call = adminCall()
-    const xj = agentRepo(db).create({ name: '小杰', builtin: 1, id: 'agt_xiaojie' })
-    await expect(call('jeff_agent_update', { id: xj.id, name: '老杰' })).rejects.toThrow(/不可编辑/)
+    const xj = agentRepo(db).create({ name: '小杰', builtin: 1, id: 'agt_xiaojie', instructions: '旧 Prompt' })
+    await expect(call('jeff_agent_update', { id: xj.id, name: '老杰' })).rejects.toThrow(/内置名称/)
+    await call('jeff_agent_update', { id: xj.id, instructions: '新的个人 Prompt' })
+    expect(agentRepo(db).get(xj.id)?.instructions).toBe('新的个人 Prompt')
     await expect(call('jeff_agent_delete', { id: xj.id })).rejects.toThrow(/不可删除/)
   })
 })
 
 describe('小杰改项目群 / 任务：空值不抹字段', () => {
+  it('群规则和成员模型覆盖属于项目群；恢复个人默认不会改 Agent 个人配置', async () => {
+    const call = projCall()
+    const leader = agentRepo(db).create({ name: '销小美', model_provider: 'personal-provider', model_id: 'personal-model', thinking: 'low' })
+    const member = agentRepo(db).create({ name: '销大中', model_provider: 'member-provider', model_id: 'member-model', thinking: 'medium' })
+    const project = await call<{ id: string }>('jeff_project_create', {
+      title: '推广协作群', leader_agent_id: leader.id, members: [{ agentId: member.id }],
+      system_prompt: '销小美负责统筹，其他成员按职责执行；此分工仅在本群有效。',
+    })
+    await call('jeff_project_member_config', {
+      project_id: project.id, agent_id: leader.id, duties: '拆解需求、协调成员并验收',
+      model_override: 'openai/gpt-5.1', thinking_override: 'high',
+    })
+    await call('jeff_project_member_config', {
+      project_id: project.id, agent_id: member.id, duties: '负责渠道资料与文案执行',
+      model_override: 'openai/gpt-5.1-mini', thinking_override: 'low',
+    })
+
+    expect(projectRepo(db).get(project.id)?.system_prompt).toContain('仅在本群有效')
+    expect(projectAgentRepo(db).listByProject(project.id)).toMatchObject([
+      { agent_id: leader.id, role: 'leader', duties: '拆解需求、协调成员并验收', model_override: 'openai/gpt-5.1', thinking_override: 'high' },
+      { agent_id: member.id, role: 'worker', duties: '负责渠道资料与文案执行', model_override: 'openai/gpt-5.1-mini', thinking_override: 'low' },
+    ])
+    await expect(call('jeff_project_member_config', { project_id: project.id, agent_id: member.id, duties: '', model_override: '' })).rejects.toThrow(/请提供要修改的字段/)
+    await call('jeff_project_member_config', { project_id: project.id, agent_id: member.id, reset_model: true, reset_thinking: true })
+    expect(projectAgentRepo(db).listByProject(project.id).find((row) => row.agent_id === member.id)).toMatchObject({ model_override: null, thinking_override: null, duties: '负责渠道资料与文案执行' })
+    expect(agentRepo(db).get(leader.id)).toMatchObject({ model_provider: 'personal-provider', model_id: 'personal-model', thinking: 'low' })
+    expect(agentRepo(db).get(member.id)).toMatchObject({ model_provider: 'member-provider', model_id: 'member-model', thinking: 'medium' })
+
+    await call('jeff_project_update', { id: project.id, clear_system_prompt: true })
+    expect(projectRepo(db).get(project.id)?.system_prompt).toBe('')
+  })
+
   it('项目工作台只接受完整的对象 JSON，非法配置不改变已保存资料', async () => {
     const call = projCall()
     const leader = agentRepo(db).create({ name: '项目统筹' })

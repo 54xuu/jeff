@@ -1928,6 +1928,9 @@ body.composer-resizing * {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  max-height: 300px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .member-row {
@@ -1942,9 +1945,14 @@ body.composer-resizing * {
   background: color-mix(in srgb, var(--text) 5%, transparent);
 }
 
+.member-row.selected {
+  background: color-mix(in srgb, var(--accent, var(--green)) 12%, transparent);
+}
+
 .member-name {
   flex: 1;
   font-size: 13px;
+  text-align: left;
 }
 
 .kanban {

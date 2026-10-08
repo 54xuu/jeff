@@ -5,14 +5,8 @@ import type { PluginCommand, PluginMcp } from '../ipc/contract.js'
 import type { ToolBridge } from './bridge.js'
 
 /**
- * 插件开发工具（管家小杰"对话式开发插件"的能力面）。
- *
- * 为什么这些工具**只给小杰**（注册进 XIAOJIE_ONLY_TOOLS，非内置 agent 的 md 里被禁用）：
- * 插件的 mcp.command 会被引擎当子进程拉起、mcp.url 会把内网地址接进模型工具面——
- * 这等于把「写一个能执行命令的配置」的能力交给了模型。管家是用户直接对话的可信角色，
- * 与 jeff_agent_* 同级；项目群里的 worker agent（可能处理不可信内容）不应拥有。
- *
- * 再叠一道闸：**带本地命令的插件只能由人在插件页启用**，agent 调 enable 会被拒绝并提示去点开关。
+ * 插件开发工具向所有 Agent 开放。新增插件默认停用；带本地命令的插件仍要求用户在 UI 确认启用，
+ * 避免模型或不可信插件内容在没有用户确认时启动本机子进程。
  *
  * 参数形状上刻意**只用标量与标量数组**：实测（live12 R7）把 MCP 声明写成 `type:'object'` 时，
  * 模型侧会把整个对象丢成空串，插件就落成了「没有 MCP、没有附带文件」的半成品。

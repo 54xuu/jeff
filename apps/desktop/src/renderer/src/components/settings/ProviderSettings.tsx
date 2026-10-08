@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useStore } from '../../store'
 import { api } from '../../api'
 import { IPC, API_FORMATS, THINKING_TIERS, type ProviderSetting, type ProviderModelCfg, type ProviderProbeResult, type ThinkingTier } from '@jeff/core'
 import { useDirtyClose } from '../ui/useDirtyClose'
 
 /** 设置 → 模型供应商：横向 tabs + 每个提供商独立详情（无内置，专注自定义供应商） */
-export default function ProviderSettings(): React.JSX.Element {
+export default function ProviderSettings(props: { embedded?: boolean; onDirtyChange?: (dirty: boolean) => void; onRegisterSave?: (save: () => Promise<boolean>) => void } = {}): React.JSX.Element {
   const { refreshCatalog, refreshSettings, appInfo } = useStore()
   const [providers, setProviders] = useState<ProviderSetting[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
@@ -13,6 +13,8 @@ export default function ProviderSettings(): React.JSX.Element {
   const [saving, setSaving] = useState(false)
   const [savedAt, setSavedAt] = useState<number | null>(null)
   const [adding, setAdding] = useState(false)
+  const [saveError, setSaveError] = useState('')
+  const saveRef = useRef<() => Promise<boolean>>(async () => false)
 
   const load = async () => {
     const data = await api.invoke<{ providers: ProviderSetting[] }>(IPC.providersList)
@@ -30,14 +32,22 @@ export default function ProviderSettings(): React.JSX.Element {
 
   const save = async () => {
     setSaving(true)
+    setSaveError('')
     try {
       await api.invoke(IPC.providersSave, { providers })
       await load()
       setSavedAt(Date.now())
+      return true
+    } catch (error) {
+      setSaveError(`保存失败：${String((error as Error).message).slice(0, 160)}`)
+      return false
     } finally {
       setSaving(false)
     }
   }
+  saveRef.current = save
+  useEffect(() => { props.onRegisterSave?.(() => saveRef.current()) }, [props.onRegisterSave])
+  useEffect(() => { props.onDirtyChange?.(dirty) }, [dirty, props.onDirtyChange])
 
   const active = providers.find((p) => p.id === activeId) ?? null
   const update = (fn: (arr: ProviderSetting[]) => ProviderSetting[]) => {
@@ -47,8 +57,8 @@ export default function ProviderSettings(): React.JSX.Element {
 
   return (
     <div className="settings-content">
-      <h2 className="settings-title">模型供应商</h2>
-      <p className="settings-tip">配置自定义模型提供商（Chat / Responses / Anthropic 格式）。保存后自动重启后台引擎生效；每次新会话默认使用第一个启用提供商的第一个模型。</p>
+      {!props.embedded && <h2 className="settings-title">模型供应商</h2>}
+      <p className="settings-tip">仅 OpenCode（Jeff）使用这里的自定义模型提供商。保存后自动重启 Jeff 引擎；系统 OpenCode 与其它 CLI 沿用各自的系统配置。</p>
 
       {/* 横向 tabs：提供商列表 + 永远在最后的【+】 */}
       <div className="pv-tabs">
@@ -89,6 +99,7 @@ export default function ProviderSettings(): React.JSX.Element {
         {savedAt && !dirty && <span className="settings-tip" style={{ alignSelf: 'center' }}>✅ 已保存（{new Date(savedAt).toLocaleTimeString()}）</span>}
         {appInfo && <span className="settings-tip" style={{ marginLeft: 'auto', alignSelf: 'center' }}>引擎状态：{appInfo.sidecarStatus}</span>}
       </div>
+      {saveError && <p className="settings-error" role="alert">{saveError}</p>}
 
       {adding && (
         <AddProvider

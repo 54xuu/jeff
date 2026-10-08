@@ -12,7 +12,7 @@ import { PluginManager } from '../src/plugins/manager.js'
 import { ToolBridge } from '../src/tools/bridge.js'
 import { PLUGIN_TOOL_NAMES, registerPluginTools } from '../src/tools/pluginTools.js'
 import { registerCronTools } from '../src/tools/cronTools.js'
-import { XIAOJIE_DISABLED_TOOLS, XIAOJIE_ONLY_TOOLS, renderAgentMd } from '../src/agents/registry.js'
+import { renderAgentMd } from '../src/agents/registry.js'
 import type { CronTaskRow } from '../src/db/repos.js'
 import { PrivateChat } from '../src/chat/private.js'
 import { GroupChat } from '../src/orchestrator/group.js'
@@ -869,28 +869,15 @@ describe('plugin tools（小杰对话式开发插件）', () => {
   })
 })
 
-describe('XIAOJIE 工具隔离', () => {
-  it('非内置 agent 的 md 里禁用全部小杰专属工具；内置小杰禁子代理与自改、放开文件/命令工具（v1.10.0）', () => {
+describe('Agent 工具能力一致', () => {
+  it('普通 Agent 与小杰都不按身份禁用 Jeff 工具', () => {
     const a = agentRepo(db).create({ name: '项目开发' })
     const md = renderAgentMd(agentRepo(db).get(a.id)!)
-    for (const t of XIAOJIE_ONLY_TOOLS) expect(md).toContain(`${t}: false`)
-    expect(md).toContain('jeff_plugin_create: false')
-    expect(md).toContain('jeff_cron_create: false')
+    for (const t of ['jeff_plugin_create', 'jeff_cron_create', 'jeff_spawn_subtask', 'jeff_self_update', 'bash', 'edit', 'write', 'patch']) expect(md).not.toContain(`${t}: false`)
 
     const x = agentRepo(db).create({ name: '小杰', builtin: 1 })
     const xmd = renderAgentMd(agentRepo(db).get(x.id)!)
-    expect(xmd).not.toContain('jeff_plugin_create: false')
-    expect(xmd).toContain('jeff_plugin_create')
-    // 小杰有全套文件/命令工具（v1.10.0 起不再禁 bash/edit/write/patch）
-    for (const t of ['bash', 'edit', 'write', 'patch']) expect(xmd).not.toContain(`${t}: false`)
-    // task 仍禁：控制并行与成本，批量知识类工作不是管家的职责
-    expect(XIAOJIE_DISABLED_TOOLS).toContain('task')
-    expect(xmd).toContain('task: false')
-    // jeff_spawn_subtask 同禁；jeff_self_update 也禁（小杰身份指令内置管理，写 DB 是静默空操作）
-    expect(XIAOJIE_DISABLED_TOOLS).toContain('jeff_spawn_subtask')
-    expect(xmd).toContain('jeff_spawn_subtask: false')
-    expect(XIAOJIE_DISABLED_TOOLS).toContain('jeff_self_update')
-    expect(xmd).toContain('jeff_self_update: false')
+    for (const t of ['jeff_plugin_create', 'jeff_cron_create', 'jeff_spawn_subtask', 'jeff_self_update', 'bash', 'edit', 'write', 'patch']) expect(xmd).not.toContain(`${t}: false`)
   })
 })
 

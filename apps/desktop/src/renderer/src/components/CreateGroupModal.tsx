@@ -87,7 +87,7 @@ export default function CreateGroupModal(props: { onClose: () => void }): React.
           </div>
         </label>
         <label className="field">
-          <span>群主（leader，统筹一切）*</span>
+          <span>群主（本群协调者）*</span>
           <select value={leaderId} data-testid="group-leader" onChange={(e) => setLeaderId(e.target.value)}>
             <option value="">选择智能体…</option>
             {agents.map((a) => (
@@ -99,7 +99,7 @@ export default function CreateGroupModal(props: { onClose: () => void }): React.
           </select>
         </label>
         <div className="field">
-          <span>工作者（worker，可多选；群主自动入群，角色统一为 worker）</span>
+          <span>群成员（可多选；每位成员的本群职责可在群资料中设置）</span>
           <div className="member-picker">
             {agents
               .filter((a) => a.id !== leaderId)

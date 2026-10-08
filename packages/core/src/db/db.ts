@@ -26,7 +26,7 @@ CREATE TABLE IF NOT EXISTS agent (
   instructions  TEXT NOT NULL DEFAULT '',        -- 身份指令，每次执行注入 system prompt
   model_provider TEXT NOT NULL DEFAULT '',       -- 默认模型 provider id（空=跟随全局默认）
   model_id      TEXT NOT NULL DEFAULT '',        -- 默认模型 id
-  builtin       INTEGER NOT NULL DEFAULT 0,      -- 1=内置不可编辑（小杰）
+  builtin       INTEGER NOT NULL DEFAULT 0,      -- 1=内置 Agent（保留名称/头像等系统标识）
   archived      INTEGER NOT NULL DEFAULT 0,      -- 1=已归档（保留历史）
   created_at    INTEGER NOT NULL,                -- 创建时间（ms）
   updated_at    INTEGER NOT NULL,                -- 更新时间（ms）
@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS project (
   id              TEXT PRIMARY KEY,              -- 项目唯一 id（prj_*；= 微信群）
   title           TEXT NOT NULL,                 -- 群名
   description     TEXT NOT NULL DEFAULT '',      -- 群简介
+  system_prompt   TEXT NOT NULL DEFAULT '',       -- 项目群规则（仅注入该群）
   icon            TEXT NOT NULL DEFAULT '👥',    -- 群图标
   status          TEXT NOT NULL DEFAULT 'in_progress', -- 状态：planned/in_progress/paused/completed/cancelled
   leader_agent_id TEXT,                          -- 群主（leader）agent id，统筹一切
@@ -49,7 +50,10 @@ CREATE TABLE IF NOT EXISTS project (
 CREATE TABLE IF NOT EXISTS project_agent (
   project_id TEXT NOT NULL,                      -- 项目 id
   agent_id   TEXT NOT NULL,                      -- 智能体 id
-  role       TEXT NOT NULL DEFAULT 'worker',     -- 群内角色：仅 leader（群主）| worker（工作者）；不做开发/产品等细分类
+  role       TEXT NOT NULL DEFAULT 'worker',     -- 群关系：leader 表示该群群主，其余成员的职责写入 duties
+  duties     TEXT NOT NULL DEFAULT '',           -- 该 Agent 在本群的职责说明
+  model_override TEXT,                           -- 本群模型覆盖；NULL=继承 Agent 个人默认
+  thinking_override TEXT,                        -- 本群思考覆盖；NULL=继承 Agent 个人默认
   position   INTEGER NOT NULL DEFAULT 0,         -- 排序
   created_at INTEGER NOT NULL,                   -- 加入时间（ms）
   PRIMARY KEY (project_id, agent_id)
@@ -144,6 +148,10 @@ CREATE INDEX IF NOT EXISTS idx_cron_run_task ON cron_run(task_id, started_at);
   addColumn(db, 'agent', 'instructions_version', 'INTEGER NOT NULL DEFAULT 0', '身份指令版本号：仅 instructions 实际变更时 +1（jeff_self_update 写前校验用，随同步携带）')
   addColumn(db, 'project', 'workspace_dir', "TEXT NOT NULL DEFAULT ''", '工作空间目录（空=全局 workspace，输出文件默认落这里）')
   addColumn(db, 'project', 'workspace_state', "TEXT NOT NULL DEFAULT '{}'", '工作台结构化资料（目标、大纲、内容规划；随项目同步）')
+  addColumn(db, 'project', 'system_prompt', "TEXT NOT NULL DEFAULT ''", '项目群规则 System Prompt；旧项目默认空')
+  addColumn(db, 'project_agent', 'duties', "TEXT NOT NULL DEFAULT ''", '成员在该项目群内的职责；旧成员默认空')
+  addColumn(db, 'project_agent', 'model_override', 'TEXT', '群内成员模型覆盖；NULL=继承 Agent 个人默认')
+  addColumn(db, 'project_agent', 'thinking_override', 'TEXT', '群内成员思考覆盖；NULL=继承 Agent 个人默认')
   addColumn(db, 'cron_task', 'run_at', 'INTEGER', '一次性任务的绝对触发时间（ms，本机时区）；NULL=按 cron 重复')
   addColumn(db, 'task', 'due_at', 'INTEGER', '任务截止时间（ms；null=未设）')
   addColumn(db, 'task', 'depends_on', "TEXT NOT NULL DEFAULT '[]'", '依赖任务 id 数组 JSON')

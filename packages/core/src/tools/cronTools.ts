@@ -3,7 +3,7 @@ import { agentRepo, cronRunRepo, cronTaskRepo, projectRepo } from '../db/repos.j
 import { cronExprForOnce, describeSchedule, isValidCron, nextRunAt, parseRunAt } from '../cron/expr.js'
 import type { ToolBridge } from './bridge.js'
 
-/** 定时任务工具名（小杰代操用：「每天早上 8 点帮我问 AI 资讯助手」→ jeff_cron_create） */
+/** 定时任务工具名；所有 Agent 可根据真实会话目标创建和管理任务。 */
 export const CRON_TOOL_NAMES = ['jeff_cron_create', 'jeff_cron_list', 'jeff_cron_update', 'jeff_cron_delete'] as const
 
 /**

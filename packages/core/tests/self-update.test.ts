@@ -8,7 +8,7 @@ import { buildPaths, type JeffPaths } from '../src/paths.js'
 import type { DB } from '../src/db/db.js'
 import { ToolBridge } from '../src/tools/bridge.js'
 import { registerSelfTools, snapshotInstructions, MAX_INSTRUCTIONS_CHARS } from '../src/tools/selfTools.js'
-import { renderAgentMd, XIAOJIE_ONLY_TOOLS, XIAOJIE_DISABLED_TOOLS } from '../src/agents/registry.js'
+import { renderAgentMd } from '../src/agents/registry.js'
 import { allToolDefs } from '../src/tools/definitions.js'
 import type { SessionScopeCtx } from '../src/tools/memoryTools.js'
 
@@ -64,34 +64,23 @@ describe('jeff_self_update：定义与注册', () => {
     expect(Object.keys(d!.args)).not.toContain('category')
   })
 
-  it('非内置 agent 的 md 不禁用本工具且页脚带版本号；小杰禁用', () => {
+  it('所有 Agent 的 md 都保留自我维护工具与版本提示', () => {
     const a = agentRepo(db).create({ name: '开发小李', instructions: '你是开发' })
     const md = renderAgentMd(agentRepo(db).get(a.id)!, undefined, paths)
     expect(md).not.toContain('jeff_self_update: false')
     expect(md).toContain('【自我维护（Jeff）】')
     expect(md).toContain('你的当前指令版本：v0')
     expect(md).toContain('jeff_self_update')
-    for (const t of XIAOJIE_ONLY_TOOLS) expect(md).toContain(`${t}: false`)
-
-    const x = agentRepo(db).create({ name: '小杰', builtin: 1, id: 'agt_xiaojie' })
+    const x = agentRepo(db).create({ name: '小杰', builtin: 1, id: 'agt_xiaojie', instructions: '个人 Prompt 与群角色无关' })
     const xmd = renderAgentMd(agentRepo(db).get(x.id)!, undefined, paths)
-    expect(xmd).toContain('jeff_self_update: false')
-    expect(xmd).toContain('你的身份指令由应用内置管理')
-    for (const t of XIAOJIE_DISABLED_TOOLS) expect(xmd).toContain(`${t}: false`)
-    // 小杰放开文件工具后，bash/edit/write/patch 不再出现在禁用清单
-    for (const t of ['bash', 'edit', 'write', 'patch']) expect(xmd).not.toContain(`${t}: false`)
+    expect(xmd).not.toContain('jeff_self_update: false')
+    expect(xmd).toContain('个人 Prompt 与群角色无关')
   })
 
-  it('小杰 md 带 agent 级 permission：密钥文件 read/edit 用 glob deny（绝对路径 pattern 在 opencode 1.18.30 永远不命中，实测）、bash 提及即 deny', () => {
+  it('Agent md 不按内置身份注入单独的 permission 限制', () => {
     const x = agentRepo(db).create({ name: '小杰', builtin: 1, id: 'agt_xiaojie' })
     const xmd = renderAgentMd(agentRepo(db).get(x.id)!, undefined, paths)
-    for (const p of ['*jeff.db', '*jeff.db-wal', '*jeff.db-shm', '*jeff.db-journal', '*auth.json']) {
-      expect(xmd).toContain(`"${p}": deny`)
-    }
-    expect(xmd).toMatch(/permission:[\s\S]*read:[\s\S]*'\*': allow/)
-    expect(xmd).toContain('"*jeff.db*": deny')
-    expect(xmd).toContain('"*auth.json*": deny')
-    // 非内置 agent 不带 permission 块（技能写权放开、记忆/AGENTS.md 洞口按决定不堵）
+    expect(xmd).not.toContain('permission:')
     const a = agentRepo(db).create({ name: '普通' })
     expect(renderAgentMd(agentRepo(db).get(a.id)!, undefined, paths)).not.toContain('permission:')
   })
@@ -122,14 +111,13 @@ describe('jeff_self_update：身份边界', () => {
     expect(agentRepo(db).get(worker.id)!.instructions).toBe('工作者指令 v1')
   })
 
-  it('内置小杰被拒绝', async () => {
+  it('小杰也能读取和维护自己的个人 Prompt', async () => {
     const call = callFactory()
-    agentRepo(db).create({ name: '小杰', builtin: 1, id: 'agt_xiaojie' })
+    const x = agentRepo(db).create({ name: '小杰', builtin: 1, id: 'agt_xiaojie', instructions: '旧个人 Prompt' })
     sessions["ses-1"] = 'agt_xiaojie'
-    await expect(call('jeff_self_update', { action: 'get', __ctx: { sessionID: 'ses-1' } })).resolves.toMatchObject({ ok: false, error: expect.stringMatching(/内置管理/) })
-    await expect(
-      call('jeff_self_update', { action: 'set', instructions: 'x', expected_version: '0', __ctx: { sessionID: 'ses-1' } }),
-    ).resolves.toMatchObject({ ok: false })
+    await expect(call('jeff_self_update', { action: 'get', __ctx: { sessionID: 'ses-1' } })).resolves.toMatchObject({ ok: true, instructions: '旧个人 Prompt' })
+    await expect(call('jeff_self_update', { action: 'set', instructions: '新个人 Prompt', expected_version: '0', __ctx: { sessionID: 'ses-1' } })).resolves.toMatchObject({ ok: true })
+    expect(agentRepo(db).get(x.id)?.instructions).toBe('新个人 Prompt')
   })
 })
 

@@ -30,7 +30,7 @@ export function allToolDefs(): ToolDef[] {
     },
     {
       name: ADMIN_TOOL_NAMES[1], // jeff_agent_update
-      description: '修改智能体信息（名字/头像/简介/指令/默认模型/思考程度/分组分类/归档）。内置管家小杰不可修改。没传或传空串的字段保持不变。',
+      description: '修改智能体的个人资料、Prompt、个人默认执行引擎/模型/思考程度与分类。项目群职责和分工请用群规则及成员配置管理；没传或传空串的字段保持不变。',
       args: {
         id: { type: 'string', description: '智能体 id' },
         name: { type: 'string', description: '新名字（可选）' },
@@ -67,7 +67,7 @@ export function allToolDefs(): ToolDef[] {
         '修正你自己的身份指令（用户当面指出「你的行为和你的设定不符」时用）。action=get 读取当前全文与版本；' +
         'set 用完整新文本**整篇替换**（只放长期人格/职责；一次性的偏好和事实改写 jeff_memory，不要动指令）；' +
         'revert 回滚到最近一次快照。set/revert 必须传 expected_version=当前版本（先 get）。' +
-        '本工具只能改你自己的指令——没有 id 参数，也改不了名字/头像/模型（那请用户去「资料」页）。每次修改前会自动快照，可 revert。',
+        '本工具只能改你自己的个人 Prompt——没有 id 参数；模型、思考程度和群内覆盖由 Agent 资料/群成员配置管理。每次修改前会自动快照，可 revert。',
       args: {
         action: { type: 'string', description: '操作', enum: ['get', 'set', 'revert'] },
         instructions: { type: 'string', description: 'set 必传：修改后的完整身份指令全文（整篇替换，不是增量描述）' },
@@ -78,27 +78,26 @@ export function allToolDefs(): ToolDef[] {
     {
       name: 'jeff_project_create',
       description:
-        '创建项目群（= 微信群）：需要群名、群主 leader（某个智能体 id，统筹一切）和工作者列表（统一 worker，不做开发/产品等细分类）。返回项目 id。',
+        '创建项目群（= 微信群）：设置群名、群主、初始成员、群规则和工作空间目录。群主与成员职责仅属于这个群；Agent 个人 Prompt 不写群内身份。返回项目 id。',
       args: {
         title: { type: 'string', description: '群名' },
         icon: { type: 'string', description: '群图标 emoji' },
         description: { type: 'string', description: '群简介' },
+        system_prompt: { type: 'string', description: '本群规则 System Prompt：定义目标、群内分工、协作流程和边界；仅本群有效' },
         leader_agent_id: { type: 'string', description: '群主智能体 id（必须已存在）' },
         workspace_dir: { type: 'string', description: '工作空间目录（可选；空=Jeff 默认工作区；群内产出默认落此目录）' },
-        members: {
-          type: 'array',
-          description: '工作者列表（role 忽略，一律存为 worker），每项 {agentId}',
-          items: { type: 'object' },
-        },
+        members: { type: 'array', description: '初始群成员 Agent id 列表（字符串数组）', items: { type: 'string' } },
       },
     },
     {
       name: 'jeff_project_update',
-      description: '修改项目群（名称/简介/图标/状态/群主/工作空间目录/工作台 JSON 配置）。没传或传空串的字段保持不变（工作空间目录例外：明确传空串 = 清除为默认工作区）。workspace_state 是完整 JSON 字符串，只保存结构化项目事实和大纲，不放素材正文或密钥。',
+      description: '修改项目群规则或资料（名称/简介/群级 System Prompt/图标/状态/群主/工作空间目录/工作台 JSON 配置）。群规则和成员分工只在这个群生效，不写入 Agent 个人 Prompt。没传或传空串的字段保持不变；clear_system_prompt=true 可清除群规则。',
       args: {
         id: { type: 'string', description: '项目 id' },
         title: { type: 'string', description: '新群名（可选）' },
         description: { type: 'string', description: '新简介（可选）' },
+        system_prompt: { type: 'string', description: '新的本群规则 System Prompt（可选）' },
+        clear_system_prompt: { type: 'boolean', description: 'true 时清空群规则；与 system_prompt 二选一' },
         icon: { type: 'string', description: '新图标（可选）' },
         status: { type: 'string', description: '状态', enum: [...PROJECT_STATUSES] },
         leader_agent_id: { type: 'string', description: '新群主 id（可选）' },
@@ -108,20 +107,34 @@ export function allToolDefs(): ToolDef[] {
     },
     {
       name: 'jeff_project_list',
-      description: '列出所有项目群（含群主与工作者）。',
+      description: '列出所有项目群、群规则、群主和成员职责/模型覆盖（不返回个人 Prompt）。',
       args: {},
     },
     {
       name: 'jeff_project_add_member',
-      description: '向项目群添加工作者智能体（角色固定为 worker）。',
+      description: '把 Agent 加入项目群；具体职责由该成员在群内的职责字段和群规则决定。',
       args: {
         project_id: { type: 'string', description: '项目 id' },
         agent_id: { type: 'string', description: '智能体 id' },
       },
     },
     {
+      name: 'jeff_project_member_config',
+      description: '设置某位群成员在当前群的职责、模型或思考程度。覆盖只在该群生效，留空字段不改；通过 reset_model=true / reset_thinking=true 恢复继承个人默认。',
+      args: {
+        project_id: { type: 'string', description: '项目群 id' },
+        agent_id: { type: 'string', description: '群成员 Agent id' },
+        duties: { type: 'string', description: '该成员在本群的职责说明（可选）' },
+        model_override: { type: 'string', description: '本群模型覆盖。OpenCode（Jeff）用 provider/model；其它 CLI 用模型 ID' },
+        thinking_override: { type: 'string', description: '本群思考档位：none/low/medium/high/max' },
+        reset_model: { type: 'boolean', description: 'true 时清除模型覆盖，恢复个人默认' },
+        reset_thinking: { type: 'boolean', description: 'true 时清除思考覆盖，恢复个人默认' },
+        clear_duties: { type: 'boolean', description: 'true 时清空该成员本群职责' },
+      },
+    },
+    {
       name: 'jeff_project_remove_member',
-      description: '把工作者智能体移出项目群（不能移除群主；请先改群主）。',
+      description: '把成员 Agent 移出项目群（不能移除当前群主；请先改群主）。',
       args: { project_id: { type: 'string', description: '项目 id' }, agent_id: { type: 'string', description: '智能体 id' } },
     },
     {
@@ -211,7 +224,7 @@ export function allToolDefs(): ToolDef[] {
     {
       name: 'jeff_delegate',
       description:
-        '（仅群主 leader）把一项具体工作委派给群成员智能体执行：它会带着群上下文在独立会话里干完并把结果回帖到群里。' +
+        '在项目群中把一项具体工作委派给群成员智能体执行：任何群成员都可按群规则发起；目标成员会带着群上下文在独立会话里干完并把结果回帖到群里。' +
         '委派后你会被唤醒看到结果，再决定是否汇总或继续委派。instruction 要具体：做什么、产出什么、何时算完成。',
       args: {
         member_agent_id: { type: 'string', description: '成员智能体 id' },
@@ -286,7 +299,7 @@ export function allToolDefs(): ToolDef[] {
     {
       name: 'jeff_plugin_create',
       description:
-        '（仅小杰）把一项能力做成插件（对话式开发插件）。插件 = 目录 + plugin.json：可声明 MCP 接入、聊天框 / 快捷指令、内置浏览器打开的首页，还可附写说明文档等文件。' +
+        '把一项能力做成插件。插件 = 目录 + plugin.json：可声明 MCP 接入、聊天框 / 快捷指令、内置浏览器打开的首页，还可附写说明文档等文件。' +
         '新建的插件**默认不启用**（不会接入引擎）；确认无误后再用 jeff_plugin_enable 启用。带本地命令（mcp_command）的插件你无法启用，必须请用户去「插件」页手动点开关。' +
         'MCP 支持两种：远程服务填 mcp_url（http(s) 的 /mcp 端点）；本地命令填 mcp_command。',
       args: {
@@ -321,7 +334,7 @@ export function allToolDefs(): ToolDef[] {
     {
       name: 'jeff_plugin_update',
       description:
-        '（仅小杰）修改已有插件的清单（名称/简介/首页/指令/MCP/附带文件）。只传要改的字段，没传的保持原样；改 MCP 后若插件已启用会自动重注入。',
+        '修改已有插件的清单（名称/简介/首页/指令/MCP/附带文件）。只传要改的字段，没传的保持原样；改 MCP 后若插件已启用会自动重注入。',
       args: {
         id: { type: 'string', description: '插件 id（必填）' },
         name: { type: 'string', description: '新显示名（可选）' },
@@ -343,13 +356,13 @@ export function allToolDefs(): ToolDef[] {
     },
     {
       name: 'jeff_plugin_read',
-      description: '（仅小杰）读取某个插件的原始 plugin.json 文本与目录文件清单，便于在修改前确认现状。',
+      description: '读取某个插件的原始 plugin.json 文本与目录文件清单，便于在修改前确认现状。',
       args: { id: { type: 'string', description: '插件 id' } },
     },
     {
       name: 'jeff_plugin_enable',
       description:
-        '（仅小杰）启用/停用插件。启用后其 MCP 会注入引擎（引擎重启后可用）、指令进入 / 菜单。' +
+        '启用/停用插件。启用后其 MCP 会注入引擎（引擎重启后可用）、指令进入 / 菜单。' +
         '带本地命令的插件会被拒绝——那类插件必须由用户在「插件」页手动启用。启用前先和用户确认。',
       args: {
         id: { type: 'string', description: '插件 id' },
@@ -358,7 +371,7 @@ export function allToolDefs(): ToolDef[] {
     },
     {
       name: 'jeff_plugin_delete',
-      description: '（仅小杰）卸载插件：删除插件目录、启用状态与密钥。删除前必须先跟用户确认（可从「设置 → 同步」的插件备份恢复）。',
+      description: '卸载插件：删除插件目录、启用状态与密钥。删除前必须先跟用户确认（可从「设置 → 同步」的插件备份恢复）。',
       args: { id: { type: 'string', description: '插件 id' } },
     },
     // M4 追加：内置浏览器（任意 agent 可用，模拟人操作网页）

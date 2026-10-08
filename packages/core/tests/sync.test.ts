@@ -47,12 +47,15 @@ function seed(side: Side): void {
   const dev = agents.create({ name: '开发', instructions: '前端' })
   const p = projectRepo(side.db).create({
     title: '同步测试群',
+    system_prompt: '群规则：销小美协调；成员按本群职责执行。',
     leader_agent_id: leader.id,
     workspace_dir: '/home/linux/project-a',
     workspace_state: JSON.stringify({ goal: '项目级宣传计划', systemOutline: ['整体方案', '腕表呼叫'] }),
   })
   projectAgentRepo(side.db).add(p.id, leader.id, 'leader')
   projectAgentRepo(side.db).add(p.id, dev.id, 'worker')
+  projectAgentRepo(side.db).updateConfig(p.id, leader.id, { duties: '本群协调、拆解和验收', model_override: 'openai/gpt-5.1', thinking_override: 'high' })
+  projectAgentRepo(side.db).updateConfig(p.id, dev.id, { duties: '本群按分配提交实现', model_override: 'openai/gpt-5.1-mini', thinking_override: 'low' })
   taskRepo(side.db).create({ project_id: p.id, title: '任务一', priority: 'high' })
   side.memory.add({ kind: 'agent', agentId: dev.id }, '用户偏好 vite')
   side.memory.add({ kind: 'user' }, '称呼：Jeff 老师们')
@@ -143,8 +146,12 @@ describe('SyncEngine（实体级双向合并）', () => {
     expect(projects).toHaveLength(1)
     // 新建项目：workspace_dir 按设备留空，不拷贝 Linux 路径
     expect(projects[0].workspace_dir).toBe('')
+    expect(projects[0].system_prompt).toBe('群规则：销小美协调；成员按本群职责执行。')
     expect(JSON.parse(projects[0].workspace_state)).toEqual({ goal: '项目级宣传计划', systemOutline: ['整体方案', '腕表呼叫'] })
-    expect(projectAgentRepo(B.db).listByProject(projects[0].id)).toHaveLength(2)
+    expect(projectAgentRepo(B.db).listByProject(projects[0].id)).toMatchObject([
+      { duties: '本群协调、拆解和验收', model_override: 'openai/gpt-5.1', thinking_override: 'high' },
+      { duties: '本群按分配提交实现', model_override: 'openai/gpt-5.1-mini', thinking_override: 'low' },
+    ])
     expect(taskRepo(B.db).listByProject(projects[0].id)).toHaveLength(1)
     const syncedTask = taskRepo(A.db).listByProject(projects[0].id)[0]
     taskRepo(A.db).update(syncedTask.id, { status: 'in_progress' })
@@ -184,6 +191,33 @@ describe('SyncEngine（实体级双向合并）', () => {
     expect(after.workspace_dir).toBe('C:\\Users\\win\\proj')
     fs.rmSync(A.home, { recursive: true, force: true })
     fs.rmSync(B.home, { recursive: true, force: true })
+  })
+
+  it('旧客户端项目 payload 缺少群规则和成员覆盖时保留本机已有配置', async () => {
+    const A = makeSide('legacy-project-a', 'legacy-project-config')
+    const B = makeSide('legacy-project-b', 'legacy-project-config')
+    try {
+      seed(A)
+      expect((await A.engine.sync()).ok).toBe(true)
+      expect((await B.engine.sync()).ok).toBe(true)
+      const project = projectRepo(B.db).list()[0]
+      expect(project.system_prompt).toContain('销小美协调')
+      const membersBefore = projectAgentRepo(B.db).listByProject(project.id)
+      const file = path.join(davRoot, 'dav/legacy-project-config/projects.json')
+      const rows = JSON.parse(fs.readFileSync(file, 'utf8'))
+      const row = rows.find((item: any) => item.id === project.id)
+      delete row.data.project.system_prompt
+      for (const member of row.data.members) {
+        delete member.duties
+        delete member.model_override
+        delete member.thinking_override
+      }
+      row.updatedAt = Date.now() + 1000
+      fs.writeFileSync(file, JSON.stringify(rows))
+      expect((await B.engine.sync()).ok).toBe(true)
+      expect(projectRepo(B.db).get(project.id)?.system_prompt).toContain('销小美协调')
+      expect(projectAgentRepo(B.db).listByProject(project.id)).toMatchObject(membersBefore.map(({ duties, model_override, thinking_override }) => ({ duties, model_override, thinking_override })))
+    } finally { A.db.close(); B.db.close(); fs.rmSync(A.home, { recursive: true, force: true }); fs.rmSync(B.home, { recursive: true, force: true }) }
   })
 
   it('GET agents.json 500 → sync 失败且不回推空数组覆盖远端', async () => {

@@ -28,17 +28,37 @@ export function modelDisplayLabel(
 
 /** 发消息用：智能体绑定模型（否则兜底）+ thinking 非空则作为 variant */
 export function agentPromptOpts(
-  agent: { model_provider?: string; model_id?: string; thinking?: string } | null | undefined,
+  agent: { execution_engine?: string; engine_model?: string; model_provider?: string; model_id?: string; thinking?: string } | null | undefined,
   defaultModel?: { providerID: string; modelID: string } | null,
-): { model?: { providerID: string; modelID: string }; variant?: string } {
+): { model?: { providerID: string; modelID: string }; engineModel?: string; variant?: string } {
+  const variant = (agent?.thinking || '').trim() || undefined
+  if (agent?.execution_engine && agent.execution_engine !== 'opencode') {
+    return { ...(agent.engine_model?.trim() ? { engineModel: agent.engine_model.trim() } : {}), ...(variant ? { variant } : {}) }
+  }
   const bound =
     agent?.model_provider && agent?.model_id
       ? { providerID: agent.model_provider, modelID: agent.model_id }
       : null
   const model = bound || (defaultModel?.providerID && defaultModel?.modelID ? defaultModel : null)
-  const variant = (agent?.thinking || '').trim() || undefined
   return {
     ...(model ? { model } : {}),
     ...(variant ? { variant } : {}),
+  }
+}
+
+export function projectMemberPromptOpts(
+  agent: { execution_engine?: string; engine_model?: string; model_provider?: string; model_id?: string; thinking?: string },
+  member: { model_override?: string | null; thinking_override?: string | null },
+  defaultModel?: { providerID: string; modelID: string } | null,
+): { model?: { providerID: string; modelID: string }; engineModel?: string; variant?: string } {
+  const inherited = agentPromptOpts(agent, defaultModel)
+  const override = member.model_override?.trim()
+  const modelFields = (!agent.execution_engine || agent.execution_engine === 'opencode')
+    ? (() => { const parsed = override ? parseModelKey(override) : null; return parsed ? { model: parsed } : {} })()
+    : override ? { engineModel: override } : {}
+  return {
+    ...(override ? modelFields : inherited.model ? { model: inherited.model } : {}),
+    ...(override ? modelFields : inherited.engineModel ? { engineModel: inherited.engineModel } : {}),
+    ...((member.thinking_override ?? '').trim() ? { variant: member.thinking_override!.trim() } : inherited.variant ? { variant: inherited.variant } : {}),
   }
 }

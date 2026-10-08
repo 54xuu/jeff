@@ -32,9 +32,48 @@ export class JsonStreamParser {
   private blockTypes = new Map<string, Map<number, string>>()
   private thinkingBlock = 0
   private cursorDeltaSeen = false
-  constructor(private reply: ReplyCollector, private engine: 'claude' | 'cursor') {}
+  constructor(private reply: ReplyCollector, private engine: 'claude' | 'cursor' | 'opencode') {}
   receive(event: Record<string, any>): void {
-    if (event.session_id) this.sessionId = event.session_id
+    if (event.session_id || event.sessionID) this.sessionId = event.session_id || event.sessionID
+    if (this.engine === 'opencode') {
+      const part = event.part || event
+      const id = String(part.id || part.partID || event.messageID || `opencode-${this.messageSequence++}`)
+      if (event.type === 'text' || event.type === 'text_delta') {
+        const value = String(part.text ?? event.text ?? event.delta ?? '')
+        this.reply.text(id, 'text', value, event.type === 'text_delta' || typeof event.delta === 'string')
+      }
+      if (event.type === 'reasoning' || event.type === 'reasoning_delta') {
+        const value = String(part.text ?? event.text ?? event.delta ?? '')
+        this.reply.text(id, 'reasoning', value, event.type === 'reasoning_delta' || typeof event.delta === 'string')
+      }
+      if (event.type === 'tool_use' || event.type === 'tool_call' || event.type === 'tool') {
+        const callId = String(part.callID || part.callId || part.id || id)
+        this.reply.tool(callId, String(part.tool || part.name || 'tool'), {
+          status: part.state?.status || event.status || 'running', input: part.state?.input ?? part.input ?? part.args,
+          output: part.state?.output ?? part.output, error: part.state?.error ?? part.error,
+        })
+      }
+      if (event.type === 'tool_result') {
+        const callId = String(part.callID || part.callId || part.id || id)
+        this.reply.tool(callId, String(part.tool || part.name || (this.reply.parts.get(callId) as any)?.tool || 'tool'), {
+          status: part.isError || part.error ? 'error' : 'completed', input: part.input, output: typeof part.output === 'string' ? part.output : JSON.stringify(part.output ?? part.result),
+          ...(part.error ? { error: String(part.error) } : {}),
+        })
+      }
+      if (event.type === 'step_finish' || event.type === 'step-finish') {
+        const usage = part.tokens || event.tokens
+        if (usage) this.tokens = { input: usage.input || usage.total?.input || 0, output: usage.output || usage.total?.output || 0 }
+        if (part.error || event.error) { this.error = String(part.error?.message || part.error || event.error?.message || event.error); this.terminal = true }
+      }
+      if (event.type === 'error') { this.error = String(event.error?.message || event.message || 'OpenCode 执行失败'); this.terminal = true }
+      if (event.type === 'result') {
+        this.terminal = true
+        this.success = event.subtype === 'success' && event.is_error !== true
+        if (!this.success) this.error = event.result || event.errors?.join('\n') || 'OpenCode 返回执行失败'
+        if (typeof event.result === 'string' && !this.reply.values().some((item) => item.type === 'text' && (item as { text?: string }).text)) this.reply.text('opencode-result', 'text', event.result)
+      }
+      return
+    }
     if (this.engine === 'cursor' && event.type === 'thinking') {
       if (event.subtype === 'delta') this.reply.text(`cursor-thinking:${this.thinkingBlock}`, 'reasoning', event.text || '', true)
       if (event.subtype === 'completed') this.thinkingBlock++

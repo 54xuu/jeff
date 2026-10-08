@@ -2,6 +2,7 @@ import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import type { EngineId } from './contract.js'
 import { launch, JsonLines, stopProcess } from './process.js'
 import { JsonStreamParser, ReplyCollector } from './stream.js'
+import { APP_VERSION } from '../version.js'
 
 export interface ExecutionInput {
   engine: Exclude<EngineId, 'opencode'>
@@ -116,7 +117,7 @@ export async function executeCodex(input: ExecutionInput): Promise<ExecutionResu
   input.signal.addEventListener('abort', abort, { once: true })
   try {
     if (input.signal.aborted) throw stoppedError(input.signal)
-    await rpc.request('initialize', { clientInfo: { name: 'jeff', title: 'Jeff', version: '1.12.0' } })
+    await rpc.request('initialize', { clientInfo: { name: 'jeff', title: 'Jeff', version: APP_VERSION } })
     rpc.notify('initialized')
     const thread = await rpc.request(native ? 'thread/resume' : 'thread/start', {
       ...(native ? { threadId: native } : {}), cwd: input.cwd, model: input.model || undefined,
@@ -172,4 +173,51 @@ export async function executeJsonCli(input: ExecutionInput): Promise<ExecutionRe
     if (!parser.sessionId) throw new Error('CLI 没有返回会话 ID，无法保证续接')
     return { nativeSessionId: parser.sessionId, tokens: parser.tokens }
   } finally { input.signal.removeEventListener('abort', abort); await stopProcess(child) }
+}
+
+/** Run the installed system OpenCode CLI with a private XDG/config/data profile. */
+export async function executeOpenCode(input: ExecutionInput): Promise<ExecutionResult> {
+  const args = ['run', '--format', 'json', '--dir', input.cwd, ...input.extraArgs]
+  if (input.nativeSessionId) args.push('--session', input.nativeSessionId)
+  if (input.model) args.push('--model', input.model)
+  if (input.thinking) args.push('--variant', input.thinking)
+  args.push('--', input.text)
+  const child = launch(input.binary, args, input.cwd, input.env)
+  const parser = new JsonStreamParser(input.reply, 'opencode')
+  let parseError: Error | undefined
+  let stderr = ''
+  const lines = new JsonLines((event) => {
+    parser.receive(event)
+    if (parser.sessionId) input.session(parser.sessionId)
+  })
+  child.stdout.on('data', (chunk) => {
+    try { lines.push(chunk) } catch (error) { parseError = error as Error; void stopProcess(child) }
+  })
+  child.stderr.on('data', (chunk) => { stderr = (stderr + chunk.toString()).slice(-1600) })
+  child.stdin.on('error', (error) => { parseError ||= error; void stopProcess(child) })
+  const abort = () => { void stopProcess(child) }
+  input.signal.addEventListener('abort', abort, { once: true })
+  // The prompt is passed as a positional argument. Close stdin so the CLI's
+  // one-shot run can finish instead of waiting forever for additional input.
+  child.stdin.end()
+  try {
+    const code = await new Promise<number | null>((resolve, reject) => {
+      child.once('error', reject)
+      child.once('close', resolve)
+    })
+    if (input.signal.aborted) throw stoppedError(input.signal)
+    if (parseError) throw parseError
+    lines.end()
+    if (parser.error) throw new Error(parser.error)
+    if (code !== 0) {
+      const auth = /authentication|unauthorized|not logged in|api key/i.test(stderr)
+      throw new Error(auth ? '系统 OpenCode 请求未通过认证；请检查系统 CLI 的账号登录状态' : `系统 OpenCode 执行失败（退出码 ${code}）；请检查系统配置与模型连接`)
+    }
+    if (!parser.sessionId) throw new Error('系统 OpenCode 没有返回会话 ID，无法安全续接')
+    parser.success = true
+    return { nativeSessionId: parser.sessionId, tokens: parser.tokens }
+  } finally {
+    input.signal.removeEventListener('abort', abort)
+    await stopProcess(child)
+  }
 }

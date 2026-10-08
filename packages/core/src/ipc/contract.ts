@@ -189,6 +189,8 @@ export interface ProjectInfo {
   id: string
   title: string
   description: string
+  /** 该群的 System Prompt；不影响 Agent 私聊或其他群 */
+  system_prompt: string
   icon: string
   status: string
   leader_agent_id: string | null
@@ -230,6 +232,14 @@ export interface ProjectMember {
   role: string
   name: string
   avatar: string
+  duties: string
+  model_override: string | null
+  thinking_override: string | null
+  execution_engine: EngineId
+  engine_model: string
+  model_provider: string
+  model_id: string
+  thinking: string
 }
 
 export interface TaskInfo {
@@ -658,7 +668,7 @@ export type InvokeMap = {
   [IPC.chatNew]: { agentId: string }
   [IPC.chatStop]: { agentId: string }
   [IPC.projectsList]: void
-  [IPC.projectSave]: { id?: string; title: string; description?: string; icon?: string; leader_agent_id?: string | null; memberAgentIds?: string[]; workspace_dir?: string; workspace_state?: string }
+  [IPC.projectSave]: { id?: string; title: string; description?: string; system_prompt?: string; icon?: string; leader_agent_id?: string | null; memberAgentIds?: string[]; memberConfigs?: Array<{ agent_id: string; duties?: string; model_override?: string | null; thinking_override?: string | null }>; workspace_dir?: string; workspace_state?: string }
   [IPC.projectCampaign]: ProjectCampaignCommand
   [IPC.projectDocument]: ProjectDocumentCommand
   [IPC.siyuanConfigGet]: void
