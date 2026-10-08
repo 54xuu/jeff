@@ -5,7 +5,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   IPC, ENGINE_LABELS, XIAOJIE_ID, TOOL_ACTION_LABEL, extractThinkTags, mergeReasoning, sortedPinKeys, decodePluginUserMessage,
 } from '@jeff/core'
-import type { AgentInfo, AppInfo, ChatMsg, FileNode, FsDirEntry, GroupMessage, ProjectInfo, ProjectMember, ContextPreviewInfo, PluginCommand, PluginInfo, TaskInfo, GroupThreadBrief, TaskRunInfo } from '@jeff/core'
+import type { AgentInfo, AppInfo, ChatMsg, FileNode, FsDirEntry, GroupMessage, ProjectInfo, ProjectMember, ContextPreviewInfo, PluginCommand, PluginInfo, TaskInfo, GroupThreadBrief, TaskRunInfo, BrowserHandoffInfo } from '@jeff/core'
 import type { RemoteStreamFrame } from '@jeff/core/remote'
 import { consumeBack } from './backstack'
 import Mascot from './Mascot'
@@ -521,6 +521,8 @@ export function App() {
   const dataDirRef = useRef('')
   const [computers, setComputers] = useState(phone.desktops)
   const [activeId, setActiveId] = useState('')
+  const [browserHandoff, setBrowserHandoff] = useState<BrowserHandoffInfo | null>(null)
+  const lastHandoffNotice = useRef('')
   const [, bump] = useState(0)
   const [recentMap, setRecentMap] = useState<Record<string, { text: string; time: number }>>({})
   const [copied, setCopied] = useState(false)
@@ -772,6 +774,19 @@ export function App() {
 
   useEffect(() => {
     const off = phone.onPush((ev) => {
+      if (ev.what === 'browser-handoff-updated') {
+        const handoff = (ev.p || null) as BrowserHandoffInfo | null
+        setBrowserHandoff(handoff)
+        if (handoff?.status === 'waiting_user' && lastHandoffNotice.current !== handoff.id && Capacitor.isNativePlatform()) {
+          lastHandoffNotice.current = handoff.id
+          void Native.notify({
+            title: '需要接管内置浏览器',
+            body: `${handoff.site || '网站'} · ${handoff.taskLabel || '任务等待你登录或验证'}`,
+            kind: handoff.kind,
+            id: handoff.kind === 'group' ? handoff.projectId || '' : handoff.agentId,
+          })
+        }
+      }
       if (ev.what === 'presence' || ev.what === 'unbound') {
         refreshPeers()
         const p = (ev.p || {}) as { desktopId?: string; online?: boolean }
@@ -902,6 +917,7 @@ export function App() {
     refreshPeers()
     if (phone.activeId) {
       void loadLists()
+      void phone.invoke<BrowserHandoffInfo | null>(IPC.browserHandoffGet).then((state) => setBrowserHandoff(state)).catch(() => {})
     }
 
     if (Capacitor.isNativePlatform()) {
@@ -1088,6 +1104,30 @@ export function App() {
     await loadHistory(t)
   }
 
+  async function openHandoffConversation() {
+    const handoff = await phone.invoke<BrowserHandoffInfo | null>(IPC.browserHandoffOpen).catch(() => null)
+    if (!handoff) return
+    setBrowserHandoff(handoff)
+    await ensureLists()
+    const nextTarget: ChatTarget = handoff.kind === 'group' && handoff.projectId
+      ? { kind: 'group', id: handoff.projectId, name: projectsRef.current.find((project) => project.id === handoff.projectId)?.title || handoff.taskLabel || '项目群' }
+      : { kind: 'agent', id: handoff.agentId, name: agentsRef.current.find((agent) => agent.id === handoff.agentId)?.name || handoff.taskLabel || '智能体' }
+    await openChat(nextTarget)
+  }
+
+  async function cancelBrowserHandoff() {
+    const handoff = browserHandoff
+    if (!handoff || !window.confirm(`取消「${handoff.taskLabel || '当前任务'}」并释放浏览器？`)) return
+    try {
+      await phone.invoke(IPC.browserHandoffCancel)
+      setBrowserHandoff(null)
+      lastHandoffNotice.current = ''
+      if (targetRef.current?.kind === 'group') await refreshProjectTasks(targetRef.current.id)
+    } catch (err) {
+      setError((err as Error).message || '取消浏览器等待失败')
+    }
+  }
+
   function doSendText(t: ChatTarget, text: string, images?: Array<{ mime: string; dataUrl: string }>, plugin?: { id: string; name: string; command: string; at: number }) {
     const now = Date.now()
     const localId = `local-${now}`
@@ -1097,8 +1137,13 @@ export function App() {
     setBusy(true)
     void (async () => {
       try {
-        if (t.kind === 'agent') await phone.invoke(IPC.chatSend, { agentId: t.id, text, ...(images ? { images } : {}), ...(plugin ? { plugin } : {}) })
-        else await phone.invoke(IPC.groupSend, { projectId: t.id, text, ...(images ? { images } : {}), ...(plugin ? { plugin } : {}) })
+        const result = t.kind === 'agent'
+          ? await phone.invoke<{ waitingBrowser?: boolean }>(IPC.chatSend, { agentId: t.id, text, ...(images ? { images } : {}), ...(plugin ? { plugin } : {}) })
+          : await phone.invoke<{ waitingBrowser?: boolean }>(IPC.groupSend, { projectId: t.id, text, ...(images ? { images } : {}), ...(plugin ? { plugin } : {}) })
+        if (result?.waitingBrowser) {
+          const handoff = await phone.invoke<BrowserHandoffInfo | null>(IPC.browserHandoffGet).catch(() => null)
+          setBrowserHandoff(handoff)
+        }
         if (targetRef.current?.id === t.id && targetRef.current?.kind === t.kind) {
           setFailedLocal(null)
           await loadHistory(t)
@@ -1748,6 +1793,20 @@ export function App() {
     )
   }
 
+  const browserHandoffBanner = browserHandoff ? (
+    <section className="mobile-browser-handoff" data-testid="browser-handoff" role="status" aria-live="polite">
+      <div className="mobile-browser-handoff-copy">
+        <strong>{browserHandoff.status === 'resuming' ? 'AI 正在重新检查网页' : '电脑浏览器需要你接管'}</strong>
+        <span>{browserHandoff.site || '网站'} · {browserHandoff.taskLabel || '原任务等待中'}</span>
+        <small>请在桌面 Jeff 完成登录或验证；手机仅显示状态。</small>
+      </div>
+      <div className="mobile-browser-handoff-actions">
+        <button type="button" data-testid="browser-handoff-open" onClick={() => void openHandoffConversation()}>打开原会话</button>
+        <button type="button" data-testid="browser-handoff-cancel" onClick={() => void cancelBrowserHandoff()}>取消任务</button>
+      </div>
+    </section>
+  ) : null
+
   return (
     <main className={`shell${screen === 'chat' && target ? ' has-landscape-chat' : ''}${screen === 'list' && tab !== 'me' ? ' has-landscape-list' : ''}${screen === 'list' && tab === 'me' ? ' has-landscape-me' : ''}`}>
       {(screen === 'list' || (screen === 'chat' && !!target)) && tab !== 'me' && (
@@ -1786,6 +1845,7 @@ export function App() {
               <span>电脑离线，当前为本地只读缓存{syncedAt ? '（同步于 ' + new Date(syncedAt).toLocaleTimeString() + '）' : ''} · 点击重新连接</span>
             </button>
           ) : null}
+          {browserHandoffBanner}
           <div className="mobile-list-heading">
             <div>
               <h1>{tab === 'messages' ? '聊天' : '通讯录'}</h1>
@@ -1926,6 +1986,7 @@ export function App() {
               <svg viewBox="0 0 24 24" width="21" height="21" fill="currentColor"><circle cx="5" cy="12" r="1.7" /><circle cx="12" cy="12" r="1.7" /><circle cx="19" cy="12" r="1.7" /></svg>
             </button>
           </header>
+          {browserHandoffBanner}
           {chatMenuOpen ? (
             <div className="mobile-chat-menu" data-testid="chat-menu">
               <button type="button" data-testid="chat-find" onClick={() => { setChatMenuOpen(false); haptic(10); setFindOpen(true); setFindQuery('') }}>查找聊天内容</button>
@@ -2455,7 +2516,7 @@ export function App() {
               <div className="mobile-task-title"><small>{selectedProjectTask.key} · {selectedProjectTask.status === 'in_review' ? '待验收' : selectedProjectTask.status === 'done' ? '已完成' : selectedProjectTask.status === 'in_progress' ? '进行中' : '待办'}</small><h3>{selectedProjectTask.title}</h3></div>
               <div className="mobile-task-requirements"><strong>目标</strong><p>{selectedProjectTask.goal || '未填写'}</p><strong>任务描述</strong><p>{selectedProjectTask.description || '未填写'}</p><strong>验收标准</strong><p>{selectedProjectTask.acceptance_criteria || '未填写'}</p></div>
               {selectedProjectTask.review_feedback && <div className="project-workspace-result"><b>退回意见</b><p>{selectedProjectTask.review_feedback}</p></div>}
-              <section className="mobile-task-runs"><h4>执行记录</h4>{taskRuns.length ? taskRuns.map((run) => <article key={run.id}><b>{({ queued: '排队中', running: '执行中', succeeded: '已提交', failed: '执行失败', cancelled: '已停止', interrupted: '意外中断', needs_input: '需要补充' } as Record<string, string>)[run.status]}</b><small>{new Date(run.started_at).toLocaleString('zh-CN')}</small>{run.error && <p>{run.error}</p>}{run.thread_id && <button type="button" onClick={() => void openProjectThread(run.thread_id)}>查看执行话题</button>}</article>) : <p>尚无执行记录。</p>}</section>
+              <section className="mobile-task-runs"><h4>执行记录</h4>{taskRuns.length ? taskRuns.map((run) => <article key={run.id}><b>{({ queued: '排队中', running: '执行中', waiting_browser: '等待你完成浏览器验证', succeeded: '已提交', failed: '执行失败', cancelled: '已停止', interrupted: '意外中断', needs_input: '需要补充' } as Record<string, string>)[run.status]}</b><small>{new Date(run.started_at).toLocaleString('zh-CN')}</small>{run.error && <p>{run.error}</p>}{run.thread_id && <button type="button" onClick={() => void openProjectThread(run.thread_id)}>查看执行话题</button>}</article>) : <p>尚无执行记录。</p>}</section>
               {selectedProjectTask.status === 'in_review' && <section className="mobile-task-review" data-testid="mobile-project-task-submission"><h4>执行结果 · 等待验收</h4><p>{selectedProjectTask.result_summary}</p>{selectedProjectTask.evidence_paths.map((path) => <code key={path}>{path}</code>)}<label><span>退回意见</span><textarea rows={3} value={taskReviewFeedback} onChange={(event) => setTaskReviewFeedback(event.target.value)} placeholder="退回时说明还需要补充的内容。" /></label><div><button type="button" disabled={workspaceSaving || !taskReviewFeedback.trim()} onClick={() => void runProjectTask('return')}>退回继续执行</button><button type="button" className="btn-primary" data-testid="mobile-project-task-approve" disabled={workspaceSaving} onClick={() => void runProjectTask('approve')}>验收通过</button></div></section>}
               {workspaceSaved && <p className="project-workspace-result" role="status">{workspaceSaved}</p>}
               <div className="mobile-task-actions">

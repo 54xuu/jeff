@@ -29,6 +29,15 @@ function dbQuery<T = Record<string, unknown>>(sql: string, ...params: unknown[])
   }
 }
 
+function countDebugEvents(event: string): number {
+  const dir = path.join(HOME, 'logs')
+  if (!fs.existsSync(dir)) return 0
+  return fs.readdirSync(dir)
+    .filter((file) => file.startsWith('debug-') && file.endsWith('.log'))
+    .flatMap((file) => fs.readFileSync(path.join(dir, file), 'utf8').split(/\r?\n/))
+    .filter((line) => line.includes(`[${event}]`)).length
+}
+
 /** 预置插件目录（含首页 MCP 与一条快捷指令） */
 const E2E_PLUGIN_ICON = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
   <rect x="4" y="4" width="16" height="16" rx="3" fill="#6366F1"/>
@@ -324,7 +333,7 @@ test('v1.8.3：定时任务工具边界 / 插件校验 / 内置浏览器点击·
     await expect.poll(async () => (await page.getByTestId('browser-address').inputValue()).includes('127.0.0.1')).toBe(true)
 
     // 读页面：正文 + 可交互元素清单（agent 找按钮/输入框靠它）
-    const content = await callToolOk<{ title: string; text: string; interactive: Array<{ id: string; tag: string }>; page_errors?: number }>(
+    const content = await callToolOk<{ title: string; text: string; interactive: Array<{ id: string; tag: string; element_ref?: string }>; page_errors?: number }>(
       bridge,
       'jeff_browser_get_content',
       {},
@@ -332,6 +341,98 @@ test('v1.8.3：定时任务工具边界 / 插件校验 / 内置浏览器点击·
     expect(content.text).toContain('站首页已就绪')
     expect(content.interactive.some((el) => el.tag === 'a')).toBe(true)
     expect(content.page_errors ?? 0).toBe(0)
+
+    // ---------- 1b. 稳定元素引用、歧义拒绝、动态内容等待与认证隐私 ----------
+    await callToolOk(bridge, 'jeff_browser_navigate', { url: new URL('dynamic', site.url).toString() })
+    const dynamic = await callToolOk<{ interactive: Array<{ id: string; label: string; element_ref: string }> }>(bridge, 'jeff_browser_get_content', {})
+    const sameButtons = dynamic.interactive.filter((el) => el.label === '打开详情')
+    expect(sameButtons).toHaveLength(2)
+    const ambiguous = await b('jeff_browser_click', { text: '打开详情' })
+    expect(ambiguous.ok).toBe(false)
+    expect(ambiguous.error).toContain('多个可点击元素')
+    await callToolOk(bridge, 'jeff_browser_click', { element_ref: sameButtons[1].element_ref })
+    expect((await callToolOk<{ text: string }>(bridge, 'jeff_browser_get_content', { selector: '#chosen' })).text).toContain('第二个按钮')
+    const waitStarted = Date.now()
+    await callToolOk<{ ok: boolean; condition: string; elapsed_ms: number }>(bridge, 'jeff_browser_wait_for', {
+      selector: '#delayed-action', condition: 'actionable', timeout_ms: 5000,
+    })
+    expect(Date.now() - waitStarted).toBeGreaterThanOrEqual(350)
+    await callToolOk(bridge, 'jeff_browser_click', { selector: '#delayed-action' })
+    expect((await callToolOk<{ text: string }>(bridge, 'jeff_browser_get_content', { selector: '#chosen' })).text).toContain('动态控件已执行')
+    const staleRefPage = await callToolOk<{ interactive: Array<{ element_ref: string }> }>(bridge, 'jeff_browser_get_content', {})
+    await callToolOk(bridge, 'jeff_browser_navigate', { url: site.url })
+    const staleRef = await b('jeff_browser_click', { element_ref: staleRefPage.interactive[0].element_ref })
+    expect(staleRef.ok).toBe(false)
+    expect(staleRef.error).toContain('引用已过期')
+
+    await callToolOk(bridge, 'jeff_browser_navigate', { url: new URL('auth?profile=demo&code=AUTH_CODE_SHOULD_NOT_LEAK&state=AUTH_STATE_SHOULD_NOT_LEAK#access_token=AUTH_FRAGMENT_SHOULD_NOT_LEAK&id_token=AUTH_ID_TOKEN_SHOULD_NOT_LEAK', site.url).toString() })
+    const authPage = await callToolOk<{ auth_required: boolean; text: string; url: string; interactive: unknown[] }>(bridge, 'jeff_browser_get_content', {})
+    expect(authPage.auth_required).toBe(true)
+    expect(authPage.url).toContain('profile=demo')
+    expect(authPage.url).not.toContain('AUTH_CODE_SHOULD_NOT_LEAK')
+    expect(authPage.url).not.toContain('AUTH_STATE_SHOULD_NOT_LEAK')
+    expect(authPage.url).not.toContain('AUTH_FRAGMENT_SHOULD_NOT_LEAK')
+    expect(authPage.url).not.toContain('AUTH_ID_TOKEN_SHOULD_NOT_LEAK')
+    expect(JSON.stringify(authPage)).not.toContain('JEFF_SECRET_SHOULD_NOT_LEAK')
+    expect(JSON.stringify(authPage)).not.toContain('123456')
+    const typePassword = await b('jeff_browser_type', { selector: '#auth-password', text: 'should-not-type' })
+    expect(typePassword.ok).toBe(false)
+    expect(typePassword.error).toContain('手动完成验证')
+    const authShot = await b('jeff_browser_screenshot', {})
+    expect(authShot.ok).toBe(false)
+    expect(authShot.error).toContain('不会截取此页面')
+    await callToolOk(bridge, 'jeff_browser_navigate', { url: site.url })
+
+    // ---------- 1c. 用户接管 / AI 请求接管 / 封锁浏览器 / 取消释放 ----------
+    const handoffAgent = await page.evaluate(() => window.jeff.invoke('agents:upsert', { name: '浏览器接管 E2E' })) as { id: string; name: string }
+    const handoffSession = await page.evaluate((agentId) => window.jeff.invoke('chat:new', { agentId }), handoffAgent.id) as { sessionId: string }
+    const ownedRead = await callToolOk<{ title: string }>(bridge, 'jeff_browser_get_content', { __ctx: { sessionID: handoffSession.sessionId, agent: handoffAgent.name } })
+    expect(ownedRead.title).toBeTruthy()
+    const queuedAgent = await page.evaluate(() => window.jeff.invoke('agents:upsert', { name: '浏览器排队 E2E' })) as { id: string; name: string }
+    const queuedSession = await page.evaluate((agentId) => window.jeff.invoke('chat:new', { agentId }), queuedAgent.id) as { sessionId: string }
+    let queuedSettled = false
+    const queuedRead = bridge.call('jeff_browser_get_content', { __ctx: { sessionID: queuedSession.sessionId, agent: queuedAgent.name } }).then(
+      (result) => { queuedSettled = true; return result },
+      (error) => { queuedSettled = true; return { ok: false, error: String(error) } },
+    )
+    await expect.poll(async () => (await page.evaluate(() => window.jeff.invoke('browser:queueGet')) as unknown[]).length).toBe(1)
+    const queue = await page.evaluate(() => window.jeff.invoke('browser:queueGet')) as Array<{ id: string; taskLabel: string }>
+    expect(queue[0].taskLabel).toBe('浏览器排队 E2E')
+    expect(queuedSettled).toBe(false)
+    expect(await page.evaluate((id) => window.jeff.invoke('browser:queuePrioritize', { id }), queue[0].id)).toMatchObject({ ok: true })
+    expect((await page.evaluate(() => window.jeff.invoke('browser:queueGet')) as Array<{ id: string }>)[0].id).toBe(queue[0].id)
+    await page.getByTestId('browser-handoff-takeover').click()
+    await expect(page.getByTestId('browser-handoff-banner')).toContainText('等待你完成验证')
+    const publicHandoff = await page.evaluate(() => window.jeff.invoke('browser:handoffGet')) as Record<string, unknown>
+    expect(publicHandoff).toMatchObject({ status: 'waiting_user' })
+    expect(publicHandoff.site).toBe(new URL(site.url).host)
+    expect(publicHandoff).not.toHaveProperty('sessionId')
+    await page.getByTestId('browser-address').fill(new URL('auth', site.url).toString())
+    await page.getByTestId('browser-address').press('Enter')
+    await expect.poll(async () => (await page.getByTestId('browser-address').inputValue()).endsWith('/auth')).toBe(true)
+    await page.evaluate(async () => {
+      const view = document.querySelector('webview') as unknown as { executeJavaScript: (code: string) => Promise<unknown> }
+      await view.executeJavaScript("console.error('USER_AUTH_SECRET_SHOULD_NOT_LEAK')")
+    })
+    await page.waitForTimeout(150)
+    const blockedDuringTakeover = await bridge.call('jeff_browser_get_content', { __ctx: { sessionID: handoffSession.sessionId, agent: handoffAgent.name } })
+    expect(blockedDuringTakeover.ok).toBe(false)
+    expect(blockedDuringTakeover.error).toContain('由你接管')
+    await page.evaluate(() => window.jeff.invoke('browser:handoffCancel'))
+    await expect(page.getByTestId('browser-handoff-banner')).toHaveCount(0)
+    expect((await queuedRead).ok).toBe(true)
+    const consoleAfterTakeover = await callToolOk<{ error_count: number; entries: Array<{ message: string }> }>(bridge, 'jeff_browser_get_console', {
+      __ctx: { sessionID: queuedSession.sessionId, agent: queuedAgent.name },
+    })
+    expect(consoleAfterTakeover.error_count).toBe(0)
+    expect(JSON.stringify(consoleAfterTakeover)).not.toContain('USER_AUTH_SECRET_SHOULD_NOT_LEAK')
+    const aiRequest = await bridge.call('jeff_browser_request_handoff', {
+      reason_category: 'login', __ctx: { sessionID: queuedSession.sessionId, agent: queuedAgent.name },
+    })
+    expect(aiRequest.ok).toBe(true)
+    await expect(page.getByTestId('browser-handoff-banner')).toContainText('网站登录')
+    await page.evaluate(() => window.jeff.invoke('browser:handoffCancel'))
+    await callToolOk(bridge, 'jeff_browser_get_content', { __ctx: { sessionID: queuedSession.sessionId, agent: queuedAgent.name } })
 
     // ---------- 2. 三步向导：点击 → 填表（含下拉框）→ 提交，服务端真的收到数据 ----------
     await callToolOk(bridge, 'jeff_browser_navigate', { url: new URL('wizard', site.url).toString() })
@@ -961,6 +1062,72 @@ test('v1.8.7：内置浏览器分辨率（4:3 / 自定义）+ 视口与整页截
     await page.screenshot({ path: path.join(EVIDENCE, '24-browser-resolution-auto.png') })
   } finally {
     await closeJeff(app)
+    await site.close()
+  }
+})
+
+test('浏览器接管跨重启保留等待状态、本机登录会话和显式继续边界', async () => {
+  test.setTimeout(180_000)
+  const env = loadE2eEnv()
+  const site = await startTestSite()
+  let firstApp: Awaited<ReturnType<typeof launchJeff>>['app'] | null = null
+  let secondApp: Awaited<ReturnType<typeof launchJeff>>['app'] | null = null
+  try {
+    const first = await launchJeff({ home: HOME, seed: { apiKey: env.SILICONFLOW_API_KEY || '', testAgent: true } })
+    firstApp = first.app
+    const bridge = readBridge(HOME)
+    await first.page.getByTestId('nav-browser').click()
+    await expect(first.page.getByTestId('browser-panel')).toBeVisible()
+    await first.page.getByTestId('browser-address').fill(site.url)
+    await first.page.getByTestId('browser-address').press('Enter')
+    await expect.poll(async () => (await first.page.getByTestId('browser-address').inputValue()).includes('127.0.0.1')).toBe(true)
+
+    const agent = await first.page.evaluate(() => window.jeff.invoke('agents:upsert', { name: '重启接管 E2E' })) as { id: string; name: string }
+    const session = await first.page.evaluate((agentId) => window.jeff.invoke('chat:new', { agentId }), agent.id) as { sessionId: string }
+    await callToolOk(bridge, 'jeff_browser_get_content', { __ctx: { sessionID: session.sessionId, agent: agent.name } })
+    await first.page.evaluate(async () => {
+      const view = document.querySelector('webview') as unknown as { executeJavaScript: (code: string) => Promise<unknown> }
+      // Chromium clears session-only cookies on a full app restart; real persistent
+      // login cookies carry an expiry/Max-Age, which is what this fixture models.
+      await view.executeJavaScript("document.cookie='jeff-browser-persisted=ok; Max-Age=86400; Path=/'")
+    })
+    await expect.poll(async () => first.page.evaluate(async () => {
+      const view = document.querySelector('webview') as unknown as { executeJavaScript: (code: string) => Promise<string> }
+      return view.executeJavaScript('document.cookie')
+    })).toContain('jeff-browser-persisted=ok')
+    await first.page.getByTestId('browser-handoff-takeover').click()
+    await expect(first.page.getByTestId('browser-handoff-banner')).toContainText('等待你完成验证')
+    const startsBeforeRestart = countDebugEvents('send-start')
+    await first.app.evaluate(async ({ session }) => session.fromPartition('persist:jeff-browser').cookies.flushStore())
+    await closeJeff(first.app)
+    firstApp = null
+
+    const second = await launchJeff({ home: HOME })
+    secondApp = second.app
+    const recovered = await second.page.evaluate(() => window.jeff.invoke('browser:handoffGet')) as { status: string; site: string; taskLabel: string } | null
+    expect(recovered).toMatchObject({ status: 'waiting_user', site: new URL(site.url).host, taskLabel: '重启接管 E2E' })
+    const browserPanel = second.page.getByTestId('browser-panel')
+    if (!(await browserPanel.isVisible().catch(() => false))) await second.page.getByTestId('nav-browser').click()
+    await expect(browserPanel).toBeVisible()
+    await second.page.getByTestId('browser-address').fill(site.url)
+    await second.page.getByTestId('browser-address').press('Enter')
+    await expect.poll(async () => second.page.evaluate(async () => {
+      const view = document.querySelector('webview') as unknown as { executeJavaScript: (code: string) => Promise<string> } | null
+      return view ? view.executeJavaScript('document.cookie') : ''
+    }), { timeout: 20_000 }).toContain('jeff-browser-persisted=ok')
+    await expect(second.page.getByTestId('browser-handoff-banner')).toContainText('等待你完成验证')
+    const secondBridge = readBridge(HOME)
+    const blocked = await secondBridge.call('jeff_browser_get_content', { __ctx: { sessionID: session.sessionId, agent: agent.name } })
+    expect(blocked.ok).toBe(false)
+    expect(blocked.error).toContain('由你接管')
+    await second.page.waitForTimeout(1000)
+    expect(countDebugEvents('send-start')).toBe(startsBeforeRestart)
+    await second.page.screenshot({ path: path.join(EVIDENCE, '25-browser-handoff-restart.png'), fullPage: true })
+    await second.page.evaluate(() => window.jeff.invoke('browser:handoffCancel'))
+    await expect(second.page.getByTestId('browser-handoff-banner')).toHaveCount(0)
+  } finally {
+    if (firstApp) await closeJeff(firstApp)
+    if (secondApp) await closeJeff(secondApp)
     await site.close()
   }
 })

@@ -1,6 +1,7 @@
 import type { DB } from '../db/db.js'
 import { agentRepo, cronRunRepo, cronTaskRepo, projectRepo, type CronTaskRow } from '../db/repos.js'
 import { nextRunAt } from './expr.js'
+import { BrowserHandoffPausedError } from '../browser/handoff.js'
 
 /** 调度器依赖：触发动作由 JeffCore 注入（保持调度逻辑与聊天链路解耦，便于单测） */
 export interface CronSchedulerDeps {
@@ -73,6 +74,7 @@ export class CronScheduler {
     // 上次进程被关闭/强杀时会留下 running 记录（回合被打断）：先收尾成失败，否则界面永远显示「执行中」
     const stale = this.runs.failStale()
     if (stale > 0) this.deps.log?.('cron-stale-runs', { count: stale })
+    for (const run of this.runs.listWaitingBrowser()) this.inFlight.add(run.task_id)
     for (const task of this.tasks.listEnabled()) {
       if (task.run_at != null) {
         this.alignOnce(task, now)
@@ -159,6 +161,7 @@ export class CronScheduler {
 
   private async execute(item: { task: CronTaskRow; isCatchup: boolean; runId: string }): Promise<void> {
     const { task, isCatchup, runId } = item
+    let waitingForBrowser = false
     try {
       // 目标失效（智能体/项目群被删）→ 停用任务并把原因写进运行记录，避免每次到点都空跑失败
       const missing = this.targetMissingReason(task)
@@ -179,10 +182,18 @@ export class CronScheduler {
       }
     } catch (err) {
       const message = String((err as Error)?.message || err)
+      if (err instanceof BrowserHandoffPausedError) {
+        waitingForBrowser = this.runs.waitForBrowser(runId)
+        if (waitingForBrowser) {
+          this.inFlight.add(task.id)
+          this.deps.log?.('cron-waiting-browser', { id: task.id, name: task.name, runId })
+        }
+        return
+      }
       this.runs.finish(runId, 'failed', message)
       this.deps.log?.('cron-run-failed', { id: task.id, name: task.name, error: message, isCatchup })
     } finally {
-      this.inFlight.delete(task.id)
+      if (!waitingForBrowser) this.inFlight.delete(task.id)
       try {
         this.tasks.setLastRun(task.id, Date.now())
         this.runs.prune(50)
@@ -191,6 +202,23 @@ export class CronScheduler {
       }
       this.deps.onChanged?.()
     }
+  }
+
+  /** Complete or cancel a durable waiting-browser run after user handoff. */
+  completeBrowserHandoff(
+    taskId: string,
+    runId: string,
+    status: 'ok' | 'cancelled',
+    ctx?: { threadId?: string; sessionId?: string },
+  ): void {
+    const task = this.tasks.get(taskId)
+    if (!task) return
+    this.runs.finish(runId, status, status === 'cancelled' ? '用户取消了浏览器接管任务' : '')
+    this.inFlight.delete(taskId)
+    this.tasks.setLastRun(taskId, Date.now())
+    if (status === 'ok') this.deps.onTurnDone?.(task, ctx)
+    this.deps.onChanged?.()
+    this.pump()
   }
 
   private targetMissingReason(task: CronTaskRow): string | null {

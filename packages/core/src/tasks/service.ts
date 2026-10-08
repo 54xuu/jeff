@@ -8,6 +8,7 @@ import {
 import type { GroupChat, GroupTaskSnapshot } from '../orchestrator/group.js'
 import type { GroupThreadStore } from '../orchestrator/groupThreads.js'
 import { genId } from '../util/id.js'
+import { BrowserHandoffPausedError } from '../browser/handoff.js'
 
 export interface TaskSessionIdentity {
   kind: 'private' | 'group' | 'review' | 'subtask'
@@ -120,10 +121,10 @@ export class TaskService {
     return toRunInfo(runs.get(runId)!)
   }
 
-  private async execute(runId: string): Promise<void> {
+  private async execute(runId: string, continuation?: string): Promise<void> {
     const runs = taskRunRepo(this.db)
     const run = runs.get(runId)
-    if (!run || run.status !== 'queued') return
+    if (!run || (run.status !== 'queued' && !(continuation && run.status === 'running'))) return
     const task = taskRepo(this.db).get(run.task_id)
     try {
       if (!task || task.deleted_at || taskSpecHash(task) !== run.spec_hash) throw new Error('任务要求已变化，请重新开始以创建新的执行快照')
@@ -138,7 +139,7 @@ export class TaskService {
         taskRunId: runId,
         targetAgentId: run.agent_id,
         taskSnapshot: snapshot,
-        text: `请开始执行项目任务 ${snapshot.key}「${snapshot.title}」。完成后提交实际结果和可核验的产物位置。`,
+        text: continuation || `请开始执行项目任务 ${snapshot.key}「${snapshot.title}」。完成后提交实际结果和可核验的产物位置。`,
       })
       const latest = runs.get(runId)
       if (!latest || latest.status === 'cancelled') return
@@ -160,15 +161,45 @@ export class TaskService {
     } catch (error) {
       const latest = runs.get(runId)
       if (!latest || latest.status === 'cancelled') return
+      if (error instanceof BrowserHandoffPausedError) {
+        runs.update(runId, { status: 'waiting_browser', finished_at: null, error: '等待用户完成浏览器验证' })
+        this.hooks.onChanged(run.project_id, run.task_id)
+        return
+      }
       const message = String((error as Error)?.message || error).slice(0, 500)
       runs.update(runId, { status: 'failed', finished_at: Date.now(), error: message })
       this.hooks.onChanged(run.project_id, run.task_id)
     }
   }
 
+  /** Resume the same project-task run after the user returns browser control. */
+  async resumeBrowserHandoff(runId: string, continuation: string): Promise<void> {
+    const runs = taskRunRepo(this.db)
+    const run = runs.get(runId)
+    if (!run || run.status !== 'waiting_browser') throw new Error('项目任务当前没有等待浏览器验证的运行。')
+    runs.update(runId, { status: 'running', finished_at: null, error: '' })
+    this.hooks.onChanged(run.project_id, run.task_id)
+    await this.execute(runId, continuation)
+    const latest = runs.get(runId)
+    if (latest?.status === 'waiting_browser') throw new BrowserHandoffPausedError('')
+    if (latest?.status === 'failed') throw new Error(latest.error || '项目任务续接失败')
+  }
+
+  cancelBrowserHandoff(runId: string): void {
+    const run = taskRunRepo(this.db).get(runId)
+    if (!run || (run.status !== 'waiting_browser' && run.status !== 'running')) return
+    taskRunRepo(this.db).update(runId, { status: 'cancelled', finished_at: Date.now(), error: '用户取消了浏览器接管任务' })
+    this.hooks.onChanged(run.project_id, run.task_id)
+  }
+
   stop(taskId: string, runId: string): TaskRunInfo {
     const run = taskRunRepo(this.db).get(runId)
     if (!run || run.task_id !== taskId) throw new Error('任务运行记录不存在')
+    if (run.status === 'waiting_browser') {
+      const cancelled = taskRunRepo(this.db).update(runId, { status: 'cancelled', finished_at: Date.now(), error: '用户停止了等待浏览器的任务' })
+      this.hooks.onChanged(run.project_id, run.task_id)
+      return toRunInfo(cancelled)
+    }
     if (run.status !== 'queued' && run.status !== 'running') throw new Error('任务当前没有可停止的运行')
     if (run.status === 'queued') {
       const cancelled = taskRunRepo(this.db).update(runId, { status: 'cancelled', finished_at: Date.now(), error: '用户停止了排队任务' })
@@ -189,13 +220,13 @@ export class TaskService {
       const task = taskRepo(this.db).get(meta.taskId)
       if (task && !task.deleted_at) return this.snapshot(task)
     }
-    const run = this.db.prepare("SELECT * FROM task_run WHERE project_id=? AND thread_id=? AND status IN ('queued', 'running') ORDER BY started_at DESC LIMIT 1")
+    const run = this.db.prepare("SELECT * FROM task_run WHERE project_id=? AND thread_id=? AND status IN ('queued', 'running', 'waiting_browser') ORDER BY started_at DESC LIMIT 1")
       .get(projectId, threadId) as unknown as TaskRunRow | undefined
     return run ? JSON.parse(run.task_snapshot) as GroupTaskSnapshot : undefined
   }
 
   activeRunForThread(projectId: string, threadId: string): TaskRunRow | null {
-    return (this.db.prepare("SELECT * FROM task_run WHERE project_id=? AND thread_id=? AND status IN ('queued', 'running') ORDER BY started_at DESC LIMIT 1")
+    return (this.db.prepare("SELECT * FROM task_run WHERE project_id=? AND thread_id=? AND status IN ('queued', 'running', 'waiting_browser') ORDER BY started_at DESC LIMIT 1")
       .get(projectId, threadId) as unknown as TaskRunRow | undefined) || null
   }
 

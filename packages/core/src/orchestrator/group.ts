@@ -8,6 +8,7 @@ import { GroupThreadStore, groupMsgScope } from './groupThreads.js'
 import { decodePluginUserMessage } from '../plugins/invoke.js'
 import { SUBTASK_STEER, wantsIndependentSubtasks } from './subtask.js'
 import { composePromptContext, makePromptBlock, type PromptContext, type PromptContextBlock } from '../prompt/context.js'
+import { BrowserHandoffPausedError } from '../browser/handoff.js'
 
 /** 单次用户消息触发的串行协作流水线最大步数（防死循环） */
 const MAX_PIPELINE_HOPS = 5
@@ -82,6 +83,7 @@ export interface GroupChatHooks {
   defaultModel?: () => { providerID: string; modelID: string } | null
   /** 调试日志（消息处理失败等现场） */
   onDebugLog?: (tag: string, detail: unknown) => void
+  isBrowserHandoffPaused?: (sessionId: string) => boolean
   /** 单次群发送流水线完全结束（含锁内清理）后回调；用于 sidecar 待重启的延迟落闸 */
   onPipelineIdle?: () => void
 }
@@ -179,6 +181,11 @@ export class GroupChat {
     const p = this.doEnsureSession(projectId, agentId, tid, key).finally(() => this.sessionEnsureInflight.delete(key))
     this.sessionEnsureInflight.set(key, p)
     return p
+  }
+
+  /** Continue the interrupted member session after the user returns control of the browser. */
+  async resumeBrowserHandoff(projectId: string, threadId: string, agentId: string, text: string): Promise<void> {
+    await this.runTurn({ projectId, threadId, agentId, text })
   }
 
   private sessionEnsureInflight = new Map<string, Promise<string>>()
@@ -569,6 +576,10 @@ export class GroupChat {
       })
     } catch (err) {
       const msg = String((err as Error)?.message || err)
+      if (this.hooks?.isBrowserHandoffPaused?.(sessionId)) {
+        this.hooks?.onDebugLog?.('group-send-browser-handoff', { projectId, threadId, agentId, sessionId })
+        throw new BrowserHandoffPausedError(sessionId)
+      }
       // 只有最近确实点过停止才算「已停止生成」；provider 超时/中断等也含 abort 字样，须暴露真实错误
       const stopped = /abort/i.test(msg) && this.getOc().isAbortRequested(sessionId)
       this.hooks?.onDebugLog?.(stopped ? 'group-send-stop' : 'group-send-fail', {

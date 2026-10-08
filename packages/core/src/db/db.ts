@@ -101,7 +101,7 @@ CREATE TABLE IF NOT EXISTS task_run (
   project_id    TEXT NOT NULL,                   -- 项目快照
   thread_id     TEXT NOT NULL,                   -- 本机独立任务话题
   agent_id      TEXT NOT NULL,                   -- 本次实际执行的 Agent
-  status        TEXT NOT NULL,                   -- queued/running/succeeded/failed/cancelled/interrupted/needs_input
+  status        TEXT NOT NULL,                   -- queued/running/waiting_browser/succeeded/failed/cancelled/interrupted/needs_input
   spec_hash     TEXT NOT NULL,                   -- 开始执行时任务要求的 SHA-256
   task_snapshot TEXT NOT NULL,                   -- 开始执行时任务字段 JSON
   started_at    INTEGER NOT NULL,                -- 请求创建时间（ms）
@@ -148,7 +148,7 @@ CREATE TABLE IF NOT EXISTS cron_run (
   task_id     TEXT NOT NULL,                     -- 所属定时任务 id（任务删除后记录保留，便于排障）
   started_at  INTEGER NOT NULL,                  -- 开始时间（ms）
   finished_at INTEGER,                           -- 结束时间（ms，null=进行中）
-  status      TEXT NOT NULL DEFAULT 'running',   -- running/ok/failed/missed/skipped
+  status      TEXT NOT NULL DEFAULT 'running',   -- running/waiting_browser/ok/failed/cancelled/missed/skipped
   is_catchup  INTEGER NOT NULL DEFAULT 0,        -- 1=本次为错过后补跑
   error       TEXT NOT NULL DEFAULT ''           -- 失败原因（status=failed 时）
 );
@@ -158,7 +158,7 @@ CREATE INDEX IF NOT EXISTS idx_task_project ON task(project_id, status);
 CREATE INDEX IF NOT EXISTS idx_task_activity_project ON task_activity(project_id, at);
 CREATE INDEX IF NOT EXISTS idx_task_run_task ON task_run(task_id, started_at);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_task_run_active_unique ON task_run(task_id)
-  WHERE status IN ('queued', 'running');
+  WHERE status IN ('queued', 'running', 'waiting_browser');
 CREATE INDEX IF NOT EXISTS idx_msg_scope ON chat_message(scope, created_at);
 CREATE INDEX IF NOT EXISTS idx_cron_next ON cron_task(enabled, next_run_at);
 CREATE INDEX IF NOT EXISTS idx_cron_run_task ON cron_run(task_id, started_at);
@@ -212,6 +212,11 @@ CREATE INDEX IF NOT EXISTS idx_cron_run_task ON cron_run(task_id, started_at);
         WHERE p.id = project_agent.project_id AND p.leader_agent_id = project_agent.agent_id
       )
   `)
+
+  // 已有库的同名索引不会被 CREATE IF NOT EXISTS 更新；等待浏览器的任务也必须独占该任务。
+  db.exec(`DROP INDEX IF EXISTS idx_task_run_active_unique;
+    CREATE UNIQUE INDEX idx_task_run_active_unique ON task_run(task_id)
+    WHERE status IN ('queued', 'running', 'waiting_browser');`)
 }
 
 /** 若表缺列则 ALTER TABLE ADD COLUMN（幂等） */

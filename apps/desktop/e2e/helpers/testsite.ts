@@ -14,6 +14,8 @@ import http from 'node:http'
  *   /react     受控输入（value 被自定义存取器接管）：验证「原生 setter + input 事件」这条路
  *   /broken    故意坏掉：console.error + 未捕获异常 + 404 子资源（验证「分析错误」）
  *   /slow      3 秒后才渲染内容（验证 navigate 会等到页面可用）
+ *   /dynamic   两个同名按钮与延迟启用控件（验证元素引用、歧义拒绝与条件等待）
+ *   /auth      含密码和一次性口令字段（验证认证值不回传、截图前置保护）
  *   /viewport  自报视口尺寸（window.innerWidth x innerHeight，随窗口变化实时更新）+ 可选高页面
  *              （?h=5200 撑出 5200px 高 + 底部标记）与懒加载图片（?lazy=3，图片延迟 800ms 才回来）
  *              —— 验证「设分辨率 / 视口截图尺寸 = 视口 / 全页截图含滚动部分」这三条契约
@@ -273,6 +275,30 @@ export async function startTestSite(): Promise<TestSite> {
             '慢页面',
             `<h1>慢页面</h1><div id="slow-out">加载中…</div>
              <script>setTimeout(function () { document.getElementById('slow-out').textContent = 'SLOW_DONE 内容已就绪'; }, 3000);</script>`,
+          ),
+        )
+        return
+      case '/dynamic':
+        res.end(
+          PAGE(
+            '动态内容与相似控件',
+            `<h1>动态内容测试</h1>
+             <button class="same" onclick="document.getElementById('chosen').textContent='第一个按钮'">打开详情</button>
+             <button class="same" onclick="document.getElementById('chosen').textContent='第二个按钮'">打开详情</button>
+             <div id="chosen">尚未选择</div>
+             <button id="delayed-action" disabled onclick="document.getElementById('chosen').textContent='动态控件已执行'">稍后可用</button>
+             <script>setTimeout(function () { var b = document.getElementById('delayed-action'); b.disabled = false; b.dataset.ready = 'yes'; }, 700);</script>`,
+          ),
+        )
+        return
+      case '/auth':
+        res.end(
+          PAGE(
+            '账号验证',
+            `<h1>需要登录</h1><label>账号 <input id="auth-user" value="示例账号" /></label>
+             <label>密码 <input id="auth-password" type="password" value="JEFF_SECRET_SHOULD_NOT_LEAK" /></label>
+             <label>验证码 <input id="auth-code" autocomplete="one-time-code" value="123456" /></label>
+             <button id="auth-submit">验证</button>`,
           ),
         )
         return

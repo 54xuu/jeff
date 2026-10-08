@@ -6,7 +6,7 @@ type TaskFilter = 'all' | 'todo' | 'in_progress' | 'in_review' | 'done'
 const STATUS: Record<string, string> = { todo: '待办', in_progress: '进行中', in_review: '待验收', done: '已完成', cancelled: '已取消' }
 const RUN_STATUS: Record<TaskRunInfo['status'], string> = {
   queued: '排队中', running: '执行中', succeeded: '已提交', failed: '执行失败',
-  cancelled: '已停止', interrupted: '意外中断', needs_input: '需要补充',
+  cancelled: '已停止', interrupted: '意外中断', needs_input: '需要补充', waiting_browser: '等待你完成浏览器验证',
 }
 
 interface TaskDraft {

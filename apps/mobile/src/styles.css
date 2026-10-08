@@ -239,6 +239,30 @@ html[data-theme='dark'] .banner { color: #fbbf24; }
 
 .banner svg { flex-shrink: 0; }
 
+.mobile-browser-handoff {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 8px 12px;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--line));
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg));
+  color: var(--text);
+}
+.mobile-browser-handoff-copy { display: grid; gap: 3px; min-width: 0; }
+.mobile-browser-handoff-copy strong { font-size: 13px; }
+.mobile-browser-handoff-copy span { overflow: hidden; color: var(--text-2); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.mobile-browser-handoff-copy small { color: var(--text-3); font-size: 11px; }
+.mobile-browser-handoff-actions { display: flex; flex: 0 0 auto; gap: 6px; }
+.mobile-browser-handoff-actions button { min-height: 44px; padding: 0 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--text); font-size: 12px; }
+.mobile-browser-handoff-actions button:first-child { border-color: var(--accent); background: var(--accent); color: var(--accent-contrast, #fff); }
+@media (max-width: 390px) {
+  .mobile-browser-handoff { align-items: stretch; flex-direction: column; }
+  .mobile-browser-handoff-actions button { flex: 1; }
+}
+
 .err {
   color: var(--danger);
   font-weight: 500;

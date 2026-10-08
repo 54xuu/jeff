@@ -107,6 +107,17 @@ describe('工具定义与实现的一致性（新参数必须对模型可见）'
     expect(Object.keys(d!.args)).toContain('full_page')
   })
 
+  it('暴露稳定元素引用、动态等待与接管请求，且参数保持扁平标量', () => {
+    const content = allToolDefs().find((x) => x.name === 'jeff_browser_get_content')
+    const click = allToolDefs().find((x) => x.name === 'jeff_browser_click')
+    const wait = allToolDefs().find((x) => x.name === 'jeff_browser_wait_for')
+    const handoff = allToolDefs().find((x) => x.name === 'jeff_browser_request_handoff')
+    expect(content?.description).toMatch(/element_ref/)
+    expect(Object.keys(click!.args)).toContain('element_ref')
+    expect(Object.keys(wait!.args).sort()).toEqual(['condition', 'element_ref', 'selector', 'text', 'timeout_ms'])
+    expect(Object.keys(handoff!.args)).toEqual(['reason_category'])
+  })
+
   it('给模型的浏览器工具参数只用标量（嵌套对象会被模型丢成空串）', () => {
     for (const d of allToolDefs()) {
       if (!d.name.startsWith('jeff_browser_')) continue

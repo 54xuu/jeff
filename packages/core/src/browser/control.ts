@@ -16,6 +16,8 @@ export interface BrowserControl {
   available(): boolean
   /** 当前状态（url/title/是否可见），供 agent 判断上下文 */
   state(): { visible: boolean; url: string; title: string; loading: boolean }
+  setUserControl?(enabled: boolean): void
+  cancelPending?(): void
 }
 
 /** 无浏览器实现（headless / 面板未打开前） */
@@ -39,6 +41,7 @@ export class UnavailableBrowser implements BrowserControl {
 export class BridgeBrowserControl implements BrowserControl {
   private pending = new Map<string, { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: NodeJS.Timeout }>()
   private lastState = { visible: false, url: '', title: '', loading: false }
+  private userControl = false
 
   constructor(
     private send: (req: { id: string; action: BrowserAction; args: Record<string, unknown> }) => void,
@@ -49,6 +52,7 @@ export class BridgeBrowserControl implements BrowserControl {
 
   /** 按动作取超时：截图（分片 + 等图）与改视口（等页面重排）都给足时间 */
   private limitFor(action: BrowserAction): number {
+    if (action === 'wait_for') return Math.max(this.timeoutMs, 40_000)
     return action === 'screenshot' || action === 'set_viewport' ? this.slowTimeoutMs : this.timeoutMs
   }
 
@@ -60,12 +64,26 @@ export class BridgeBrowserControl implements BrowserControl {
     return this.lastState
   }
 
+  setUserControl(enabled: boolean): void {
+    this.userControl = enabled
+  }
+
+  cancelPending(): void {
+    try { this.send({ id: randomToken(12), action: 'cancel_wait', args: {} }) } catch { /* panel may already be closed */ }
+    for (const [id, pending] of this.pending) {
+      clearTimeout(pending.timer)
+      pending.reject(new Error('浏览器控制权已交给用户，当前 AI 操作已中止。'))
+      this.pending.delete(id)
+    }
+  }
+
   /** 渲染层回报状态（面板开着时持续同步，供 agent 读取当前页面） */
   updateState(s: Partial<{ visible: boolean; url: string; title: string; loading: boolean }>): void {
     this.lastState = { ...this.lastState, ...s }
   }
 
   async request(action: BrowserAction, args: Record<string, unknown>): Promise<unknown> {
+    if (this.userControl && action !== 'cancel_wait') throw new Error('内置浏览器正由你操作；AI 已暂停访问页面，交还 AI 后才能继续。')
     const id = randomToken(12)
     const limit = this.limitFor(action)
     return new Promise<unknown>((resolve, reject) => {

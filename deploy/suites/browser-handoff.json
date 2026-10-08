@@ -1,0 +1,13 @@
+{
+  "description": "Installed browser handoff acceptance: Windows verifies the browser panel and user takeover control are present; Android verifies the release bundle contains the waiting status, original conversation action, and cancel action.",
+  "desktop": {
+    "visible": ["[data-testid=nav-rail]"],
+    "actions": [
+      { "type": "click", "selector": "[data-testid=nav-browser]" },
+      { "type": "expect-visible", "selector": "[data-testid=browser-panel]" },
+      { "type": "expect-visible", "selector": "[data-testid=browser-address]" },
+      { "type": "expect-visible", "selector": "[data-testid=browser-handoff-takeover]" }
+    ]
+  },
+  "androidTestClass": "MobileBrowserHandoffBundleTest"
+}

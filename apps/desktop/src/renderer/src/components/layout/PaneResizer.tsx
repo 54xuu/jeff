@@ -29,6 +29,7 @@ export interface PaneResizerProps {
   onReset: () => void
   /** 点箭头：收起这一栏 */
   onCollapse: () => void
+  collapseDisabled?: boolean
   collapseTitle: string
   testId: string
 }
@@ -37,7 +38,7 @@ export interface PaneResizerProps {
 const CLICK_SLOP = 3
 
 export default function PaneResizer(props: PaneResizerProps): React.JSX.Element {
-  const { side, width, clamp, onResize, onCommit, onReset, onCollapse, collapseTitle, testId } = props
+  const { side, width, clamp, onResize, onCommit, onReset, onCollapse, collapseDisabled, collapseTitle, testId } = props
   const [dragging, setDragging] = useState(false)
   const dragRef = useRef<{ startX: number; startWidth: number } | null>(null)
   const frameRef = useRef<number | null>(null)
@@ -47,8 +48,8 @@ export default function PaneResizer(props: PaneResizerProps): React.JSX.Element 
   const movedRef = useRef(false)
   const clickGuardRef = useRef(false)
   // 回调每次渲染都是新闭包，放进 ref 里，window 监听器就只挂一次
-  const cbRef = useRef({ clamp, onResize, onCommit, onCollapse })
-  cbRef.current = { clamp, onResize, onCommit, onCollapse }
+  const cbRef = useRef({ clamp, onResize, onCommit, onCollapse, collapseDisabled })
+  cbRef.current = { clamp, onResize, onCommit, onCollapse, collapseDisabled }
 
   const flush = useCallback(() => {
     frameRef.current = null
@@ -88,7 +89,7 @@ export default function PaneResizer(props: PaneResizerProps): React.JSX.Element 
       if (wasClickOnButton) {
         // 鼠标路径下 click 会被指针捕获吃掉（不会再触发按钮的 onClick），这里补上收起动作
         clickGuardRef.current = true
-        cbRef.current.onCollapse()
+        if (!cbRef.current.collapseDisabled) cbRef.current.onCollapse()
       } else {
         cbRef.current.onCommit()
       }
@@ -129,13 +130,14 @@ export default function PaneResizer(props: PaneResizerProps): React.JSX.Element 
         data-testid={`${testId}-toggle`}
         aria-label={collapseTitle}
         title={`${collapseTitle}（拖动分隔条可调宽度，双击恢复默认）`}
+        disabled={collapseDisabled}
         onClick={() => {
           // 键盘激活走这里；鼠标点击已由上面的拖拽判定处理，别重复收起又展开
           if (clickGuardRef.current) {
             clickGuardRef.current = false
             return
           }
-          onCollapse()
+          if (!cbRef.current.collapseDisabled) cbRef.current.onCollapse()
         }}
       >
         {side === 'left' ? <IconChevronLeft size={13} /> : <IconChevronRight size={13} />}

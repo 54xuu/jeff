@@ -117,6 +117,7 @@ describe('远程白名单', () => {
       expect(REMOTE_POLICY[channel]).toEqual({ policy: 'allow' })
     }
     expect(REMOTE_POLICY[IPC.siyuanSearch]).toEqual({ policy: 'allow' })
+    expect(REMOTE_POLICY[IPC.browserHandoffOpen]).toEqual({ policy: 'allow' })
     expect(REMOTE_POLICY[IPC.contextPromptDetails]).toMatchObject({ policy: 'deny', note: expect.stringContaining('本机记忆与规则') })
   })
   it('每个 IPC 通道恰好一条规则', () => {
@@ -137,6 +138,9 @@ describe('远程白名单', () => {
         'browser:pageShot',
         'browser:result',
         'browser:state',
+        'browser:handoffTakeover',
+        'browser:handoffReturn',
+        'browser:queuePrioritize',
         'context:prompt-details',
         'debugLog:openDir',
         'notify:desktop',

@@ -300,6 +300,7 @@ const TOOL_STATUS_LABEL: Record<string, string> = {
   completed: '完成',
   error: '出错',
   pending: '等待',
+  waiting_user: '等待你接管',
 }
 
 /** 进度卡步骤状态图标：✓ 完成 / 旋转圈 运行中 / ✗ 出错 / 空心点 等待 */
@@ -471,7 +472,8 @@ export function AssistantExtras(props: {
   const reasonPreview = thinking ? tailPreview(reasonText) : ''
   const runningTool = live ? (tools || []).find((t) => t.status === 'running') : undefined
   const failedTool = (tools || []).find((t) => t.status === 'error')
-  const summaryTool = failedTool || runningTool
+  const waitingUserTool = (tools || []).find((t) => t.status === 'waiting_user')
+  const summaryTool = failedTool || runningTool || waitingUserTool
   // 进度卡：用户展开时窗口内部跟随最新一步滚动（窗口本身限高，不撑爆气泡）
   const [toolsOpen, setToolsOpen] = useState(false)
   const toolsRef = useRef<HTMLDivElement>(null)
@@ -513,7 +515,8 @@ export function AssistantExtras(props: {
             <span className="extra-label">工具调用 {tools!.length}</span>
             {failedTool && <span className="extra-live danger">失败 · {TOOL_ACTION_LABEL[failedTool.tool] || failedTool.tool}</span>}
             {!failedTool && runningTool && <span className="extra-live">运行中…</span>}
-            {!failedTool && summaryTool && <span className="extra-preview">{TOOL_ACTION_LABEL[summaryTool.tool] || summaryTool.tool}</span>}
+            {!failedTool && !runningTool && waitingUserTool && <span className="extra-preview">等待你完成浏览器验证</span>}
+            {!failedTool && !waitingUserTool && summaryTool && <span className="extra-preview">{TOOL_ACTION_LABEL[summaryTool.tool] || summaryTool.tool}</span>}
           </summary>
           <div className="extra-tools" ref={toolsRef}>
             {tools!.map((t, i) => {

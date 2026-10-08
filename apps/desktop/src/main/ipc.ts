@@ -17,7 +17,7 @@ import type {
 } from '@jeff/core'
 import {
   IPC, XIAOJIE_ID, engineId, agentRepo, projectRepo, projectAgentRepo, taskRepo, taskCardMessage, snapshotInstructions, APP_VERSION,
-  PrivateChatStoppedError, resolveSendText, resolveScreenshotScale,
+  PrivateChatStoppedError, BrowserHandoffPausedError, resolveSendText, resolveScreenshotScale,
   type ThinkingTier, type ChatPluginInvoke, type RemoteStatus,
 } from '@jeff/core'
 import { listDirs, makeDir } from '../../../../packages/core/src/remote/dirs.js'
@@ -146,7 +146,7 @@ export function registerIpc(core: JeffCore): Record<string, Handler> {
       const { agentId, limit } = p as { agentId: string; limit?: number }
       return core.privateChat.history(agentId, limit)
     },
-    [IPC.chatSend]: async (p): Promise<{ ok: boolean; stopped?: boolean; cancelled?: boolean }> => {
+    [IPC.chatSend]: async (p): Promise<{ ok: boolean; stopped?: boolean; cancelled?: boolean; waitingBrowser?: boolean }> => {
       const { agentId, text, images, plugin } = p as { agentId: string; text: string; images?: Array<{ mime: string; dataUrl: string }>; plugin?: ChatPluginInvoke }
       const row = core.agents.get(agentId)
       if (!row) throw new Error('智能体不存在')
@@ -155,6 +155,7 @@ export function registerIpc(core: JeffCore): Record<string, Handler> {
         await core.privateChat.send(agentId, row.name, resolveSendText(text, plugin), undefined, images)
         return { ok: true }
       } catch (err) {
+        if (err instanceof BrowserHandoffPausedError) return { ok: true, waitingBrowser: true }
         // 用户主动停止是预期结果：返回 stopped，UI 不弹「发送失败」
         // cancelled=true 表示请求从未发出（引擎历史里没有这条用户消息），界面需保留本地记录
         if (err instanceof PrivateChatStoppedError) return { ok: true, stopped: true, cancelled: err.cancelled }
@@ -691,10 +692,15 @@ export function registerIpc(core: JeffCore): Record<string, Handler> {
       const { projectId, limit } = p as { projectId: string; limit?: number }
       return core.historyActive(projectId, limit)
     },
-    [IPC.groupSend]: async (p): Promise<{ routedTo: string; summaryFailed?: boolean; summaryError?: string }> => {
+    [IPC.groupSend]: async (p): Promise<{ routedTo?: string; summaryFailed?: boolean; summaryError?: string; waitingBrowser?: boolean }> => {
       const { projectId, text, images, plugin } = p as { projectId: string; text: string; images?: Array<{ mime: string; dataUrl: string }>; plugin?: ChatPluginInvoke }
       // 模型/思考由路由目标智能体资料决定，忽略前端覆盖
-      return core.groupChat.send({ projectId, text: resolveSendText(text, plugin), images })
+      try {
+        return await core.groupChat.send({ projectId, text: resolveSendText(text, plugin), images })
+      } catch (err) {
+        if (err instanceof BrowserHandoffPausedError) return { waitingBrowser: true }
+        throw err
+      }
     },
     [IPC.groupStop]: async (p): Promise<{ ok: boolean }> => {
       const { projectId } = p as { projectId: string }
@@ -762,6 +768,13 @@ export function registerIpc(core: JeffCore): Record<string, Handler> {
       setBrowserState(p as import('@jeff/core').BrowserState)
       return { ok: true }
     },
+    [IPC.browserHandoffGet]: async () => core.browserHandoffInfo(),
+    [IPC.browserHandoffOpen]: async () => core.openBrowserHandoffConversation(),
+    [IPC.browserQueueGet]: async () => core.browserQueueInfo(),
+    [IPC.browserQueuePrioritize]: async (p) => ({ ok: core.prioritizeBrowserWaiter((p as { id: string }).id) }),
+    [IPC.browserHandoffTakeover]: async () => core.takeOverBrowser(),
+    [IPC.browserHandoffReturn]: async () => core.returnBrowserToAI(),
+    [IPC.browserHandoffCancel]: async () => { await core.cancelBrowserHandoff(); return { ok: true } },
     /**
      * 页面截图：走 Chrome DevTools Protocol 的 Page.captureScreenshot，按「请求的矩形」重新栅格化。
      *
@@ -774,6 +787,7 @@ export function registerIpc(core: JeffCore): Record<string, Handler> {
      * 拿到的尺寸与请求不符就如实报错，绝不用拉伸把「没截到」伪装成「截到了」。
      */
     [IPC.browserPageShot]: async (p): Promise<import('@jeff/core').BrowserPageShot> => {
+      if (core.browserHandoffInfo()?.status === 'waiting_user') throw new Error('你正在接管内置浏览器；为保护认证信息，AI 截图已暂停。')
       const { webContentsId, width, height, beyondViewport, y } = p as {
         webContentsId: number
         width: number

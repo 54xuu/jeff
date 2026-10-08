@@ -55,7 +55,7 @@ export interface CronRunRow {
   task_id: string
   started_at: number
   finished_at: number | null
-  status: 'running' | 'ok' | 'failed' | 'missed' | 'skipped'
+  status: 'running' | 'waiting_browser' | 'ok' | 'failed' | 'cancelled' | 'missed' | 'skipped'
   is_catchup: number
   error: string
 }
@@ -132,7 +132,7 @@ export interface TaskRunRow {
   project_id: string
   thread_id: string
   agent_id: string
-  status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'interrupted' | 'needs_input'
+  status: 'queued' | 'running' | 'waiting_browser' | 'succeeded' | 'failed' | 'cancelled' | 'interrupted' | 'needs_input'
   spec_hash: string
   task_snapshot: string
   started_at: number
@@ -600,7 +600,7 @@ export const taskRunRepo = (db: DB) => ({
     return db.prepare('SELECT * FROM task_run WHERE id = ?').get(id) as unknown as TaskRunRow | undefined
   },
   getActive(taskId: string): TaskRunRow | undefined {
-    return db.prepare("SELECT * FROM task_run WHERE task_id = ? AND status IN ('queued', 'running') ORDER BY started_at DESC LIMIT 1").get(taskId) as unknown as TaskRunRow | undefined
+    return db.prepare("SELECT * FROM task_run WHERE task_id = ? AND status IN ('queued', 'running', 'waiting_browser') ORDER BY started_at DESC LIMIT 1").get(taskId) as unknown as TaskRunRow | undefined
   },
   list(taskId: string): TaskRunRow[] {
     return db.prepare('SELECT * FROM task_run WHERE task_id = ? ORDER BY started_at DESC').all(taskId) as unknown as TaskRunRow[]
@@ -787,8 +787,15 @@ export const cronRunRepo = (db: DB) => ({
     )
     return row
   },
-  finish(id: string, status: 'ok' | 'failed', error = ''): void {
+  finish(id: string, status: 'ok' | 'failed' | 'cancelled', error = ''): void {
     db.prepare('UPDATE cron_run SET finished_at = ?, status = ?, error = ? WHERE id = ?').run(now(), status, String(error).slice(0, 2000), id)
+  },
+  waitForBrowser(id: string, error = '等待用户完成浏览器验证'): boolean {
+    const result = db.prepare("UPDATE cron_run SET finished_at = NULL, status = 'waiting_browser', error = ? WHERE id = ? AND status = 'running'").run(String(error).slice(0, 2000), id)
+    return Number(result.changes || 0) > 0
+  },
+  listWaitingBrowser(): CronRunRow[] {
+    return db.prepare("SELECT * FROM cron_run WHERE status = 'waiting_browser'").all() as unknown as CronRunRow[]
   },
   /** 不进执行的终态记录（missed/skipped） */
   log(taskId: string, status: 'missed' | 'skipped', error = ''): void {

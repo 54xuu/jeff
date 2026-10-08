@@ -3,7 +3,7 @@ import { api } from './api'
 import { playNotifySound, showDesktopNotify, summarize, windowFocused } from './notify'
 import { readLayout, writeLayout, defaultBrowserWidth, LIST_DEFAULT_WIDTH, type PaneLayout } from './layout/panes'
 import { parseViewport, serializeViewport, VIEWPORT_STORE_KEY, type BrowserViewportRequest } from './browserViewport'
-import type { AgentInfo, ChatMsg, AppInfo, AppSettings, ProviderCatalogItem, ProjectInfo, ProjectMember, TaskInfo, GroupMessage, ChatImage, CronTaskInfo, CronRunInfo, PluginInfo, ChatPluginInvoke } from '@jeff/core'
+import type { AgentInfo, ChatMsg, AppInfo, AppSettings, ProviderCatalogItem, ProjectInfo, ProjectMember, TaskInfo, GroupMessage, ChatImage, CronTaskInfo, CronRunInfo, PluginInfo, ChatPluginInvoke, BrowserHandoffInfo, BrowserQueueInfo } from '@jeff/core'
 import { IPC, PIN_STORAGE_KEY, UNREAD_STORAGE_KEY, pinKey, readIdList, readPins, shouldShowDesktopNotify, unpinKey, withId, withoutId } from '@jeff/core'
 import type { ComposerSeed } from './components/composerState'
 
@@ -74,12 +74,19 @@ interface JeffState {
   plugins: PluginInfo[]
   /** 内置浏览器面板状态 */
   browser: BrowserUiState
+  browserHandoff: BrowserHandoffInfo | null
+  browserQueue: BrowserQueueInfo[]
   /** 三栏布局（会话列表 / 内置浏览器）的显隐与宽度偏好 */
   layout: PaneLayout
   setTab: (t: Tab) => void
   setActive: (a: ActiveChat, opts?: { echo?: boolean }) => void
   setSettingsSection: (s: SettingsSection) => void
   setBrowser: (patch: Partial<BrowserUiState>) => void
+  refreshBrowserHandoff: () => Promise<void>
+  prioritizeBrowserWaiter: (id: string) => Promise<boolean>
+  takeOverBrowser: () => Promise<void>
+  returnBrowserToAI: () => Promise<void>
+  cancelBrowserHandoff: () => Promise<void>
   /** 改内置浏览器视口分辨率（人机共用入口：工具栏菜单与 jeff_browser_set_viewport 都走它） */
   setBrowserViewport: (viewport: BrowserViewportRequest) => void
   /** 改布局；persist:false 用于拖拽过程中的逐帧更新（松手再由 persistLayout 落盘） */
@@ -271,6 +278,8 @@ export const useStore = create<JeffState>((set, get) => ({
   cronTasks: [],
   plugins: [],
   browser: { visible: false, url: '', title: '', loading: false, address: '', errorCount: 0, viewport: parseViewport(localStorage.getItem(VIEWPORT_STORE_KEY)) },
+  browserHandoff: null,
+  browserQueue: [],
   layout: readLayout(),
   unread: readIdList(localStorage, UNREAD_STORAGE_KEY),
   pins: readPins(localStorage),
@@ -285,6 +294,33 @@ export const useStore = create<JeffState>((set, get) => ({
   },
   setSettingsSection: (settingsSection) => set({ settingsSection: settingsSection === 'providers' ? 'engine' : settingsSection }),
   setBrowser: (patch) => set((s) => ({ browser: { ...s.browser, ...patch } })),
+  refreshBrowserHandoff: async () => {
+    const [state, queue] = await Promise.all([
+      api.invoke<BrowserHandoffInfo | null>(IPC.browserHandoffGet),
+      api.invoke<BrowserQueueInfo[]>(IPC.browserQueueGet),
+    ])
+    set((s) => ({
+      browserHandoff: state,
+      browserQueue: queue || [],
+      ...(state ? { browser: { ...s.browser, visible: true, url: state.siteUrl, address: state.siteUrl || s.browser.address } } : {}),
+    }))
+  },
+  prioritizeBrowserWaiter: async (id) => {
+    const result = await api.invoke<{ ok: boolean }>(IPC.browserQueuePrioritize, { id })
+    return !!result?.ok
+  },
+  takeOverBrowser: async () => {
+    const state = await api.invoke<BrowserHandoffInfo | null>(IPC.browserHandoffTakeover)
+    if (state) set({ browserHandoff: state })
+  },
+  returnBrowserToAI: async () => {
+    const state = await api.invoke<BrowserHandoffInfo | null>(IPC.browserHandoffReturn)
+    set({ browserHandoff: state })
+  },
+  cancelBrowserHandoff: async () => {
+    await api.invoke(IPC.browserHandoffCancel)
+    set({ browserHandoff: null })
+  },
   setBrowserViewport: (viewport) => {
     set((s) => ({ browser: { ...s.browser, viewport } }))
     try {
@@ -378,7 +414,7 @@ export const useStore = create<JeffState>((set, get) => ({
     set((s) => ({ sending: { ...s.sending, [key]: true } }))
     set((s) => ({ messages: { ...s.messages, [key]: [...(s.messages[key] || []), localUser] } }))
     try {
-      const r = await api.invoke<{ ok: boolean; stopped?: boolean; cancelled?: boolean }>(IPC.chatSend, { agentId, text, ...(images && images.length ? { images } : {}), ...(plugin ? { plugin } : {}) })
+      const r = await api.invoke<{ ok: boolean; stopped?: boolean; cancelled?: boolean; waitingBrowser?: boolean }>(IPC.chatSend, { agentId, text, ...(images && images.length ? { images } : {}), ...(plugin ? { plugin } : {}) })
       // 先重拉历史（整段替换）再补提示，否则刚插入的提示会被冲掉
       await get().loadHistory(key)
       if (r?.stopped) {
@@ -390,7 +426,7 @@ export const useStore = create<JeffState>((set, get) => ({
           const base = r.cancelled && !cur.some((m) => m.id === localUser.id) ? [...cur, localUser] : cur
           return { messages: { ...s.messages, [key]: [...base, { id: `stop-${now}`, role: 'system', text: '⏹️ 已停止生成', time: Date.now() }] } }
         })
-      } else {
+      } else if (!r?.waitingBrowser) {
         // 正常回复完成：此刻历史已重拉，摘要取的就是刚落库的正文
         notifyTurnDone(key, 'agent')
       }
@@ -425,11 +461,11 @@ export const useStore = create<JeffState>((set, get) => ({
       },
     }))
     try {
-      await api.invoke(IPC.groupSend, { projectId, text, ...(images && images.length ? { images } : {}), ...(plugin ? { plugin } : {}) })
+      const r = await api.invoke<{ waitingBrowser?: boolean }>(IPC.groupSend, { projectId, text, ...(images && images.length ? { images } : {}), ...(plugin ? { plugin } : {}) })
       await get().loadGroupHistory(key)
       await get().loadTasks(key)
       // 整条协作流水线跑完（await 返回）才提醒一次，中间每一跳的流式 done 不响
-      notifyTurnDone(key, 'group', threadId)
+      if (!r?.waitingBrowser) notifyTurnDone(key, 'group', threadId)
       return true
     } catch (err) {
       // 同私聊：失败时保留本地气泡与失败原因，不用历史刷新覆盖
@@ -500,6 +536,18 @@ export const useStore = create<JeffState>((set, get) => ({
       const key = `${kind}:${id}`
       if (viewing(kind, id)) get().clearUnread(key)
       else get().markUnread(key)
+    }
+    if (what === 'browser-handoff-updated') {
+      const handoff = (payload as BrowserHandoffInfo | null) ?? null
+      set((s) => ({
+        browserHandoff: handoff,
+        ...(handoff && handoff.status === 'waiting_user' ? { browser: { ...s.browser, visible: true, url: handoff.siteUrl, address: handoff.siteUrl || s.browser.address } } : {}),
+      }))
+      return
+    }
+    if (what === 'browser-queue-updated') {
+      set({ browserQueue: Array.isArray(payload) ? payload as BrowserQueueInfo[] : [] })
+      return
     }
     if (what === 'chat-stream') {
       const p = (payload || {}) as { kind: 'private' | 'group'; agentId: string; projectId?: string; threadId?: string; text: string; reasoning?: string; tools?: Array<{ tool: string; status?: string }>; done: boolean }

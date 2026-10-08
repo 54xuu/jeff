@@ -25,6 +25,39 @@ const IMAGE_WAIT_MS = 10_000
 
 /** 全页截图最多分多少片（FULL_PAGE_MAX / 最小视口高，留足余量；正常页面十几片） */
 const MAX_SLICES = 40
+const HANDOFF_REASON_LABEL: Record<string, string> = { login: '网站登录', captcha: '验证码', qr: '扫码验证', verification: '人工验证', other: '页面需要人工处理' }
+const SENSITIVE_URL_PARAM = /^(?:access[_-]?token|refresh[_-]?token|id[_-]?token|token|secret|client[_-]?secret|password|passwd|authorization|auth|code(?:[_-]?(?:verifier|challenge))?|ticket|session(?:id)?|jwt|signature|credential|otp|one[_-]?time[_-]?code|state|saml(?:response|request)?|oauth|api[_-]?key|key|sig|assertion|bearer)$/i
+const NESTED_SENSITIVE_URL_PARAM = /(?:[?&#]|%3f|%26|%23)(?:access[_-]?token|refresh[_-]?token|id[_-]?token|token|secret|client[_-]?secret|password|passwd|authorization|auth|code(?:[_-]?(?:verifier|challenge))?|ticket|session(?:id)?|jwt|signature|credential|otp|one[_-]?time[_-]?code|state|saml(?:response|request)?|oauth|api[_-]?key|key|sig|assertion|bearer)(?:=|%3d)/i
+
+function hasSensitiveUrlParameter(value: string): boolean {
+  let decoded = value
+  try { decoded = decodeURIComponent(value) } catch { /* inspect the raw value as well */ }
+  const params = new URLSearchParams(decoded.replace(/^[#?]+/, ''))
+  return [...params.keys()].some((key) => SENSITIVE_URL_PARAM.test(key)) || NESTED_SENSITIVE_URL_PARAM.test(decoded)
+}
+
+/** Tool results omit callback credentials while the address bar keeps the user's full URL. */
+function safeUrlForAgent(value: string): string {
+  try {
+    const url = new URL(value)
+    url.username = ''
+    url.password = ''
+    for (const key of [...url.searchParams.keys()]) {
+      const value = url.searchParams.get(key) || ''
+      if (SENSITIVE_URL_PARAM.test(key) || hasSensitiveUrlParameter(value)) {
+        url.searchParams.delete(key)
+      }
+    }
+    if (hasSensitiveUrlParameter(url.hash)) url.hash = ''
+    return url.toString()
+  } catch {
+    return value
+  }
+}
+
+function safeTextForAgent(value: string): string {
+  return value.replace(/https?:\/\/[^\s"'<>]+/gi, (url) => safeUrlForAgent(url))
+}
 
 /** 两个地址是否指向同一页（忽略结尾斜杠与 query/hash；信息不全时保守判为「是」） */
 function samePage(a: string, b: string): boolean {
@@ -52,7 +85,14 @@ function samePage(a: string, b: string): boolean {
 export default function BrowserPanel(): React.JSX.Element {
   const browser = useStore((s) => s.browser)
   const browserBusy = useStore((s) => s.browserBusy)
+  const handoff = useStore((s) => s.browserHandoff)
+  const browserQueue = useStore((s) => s.browserQueue)
   const setBrowser = useStore((s) => s.setBrowser)
+  const refreshBrowserHandoff = useStore((s) => s.refreshBrowserHandoff)
+  const takeOverBrowser = useStore((s) => s.takeOverBrowser)
+  const returnBrowserToAI = useStore((s) => s.returnBrowserToAI)
+  const cancelBrowserHandoff = useStore((s) => s.cancelBrowserHandoff)
+  const prioritizeBrowserWaiter = useStore((s) => s.prioritizeBrowserWaiter)
   const layout = useStore((s) => s.layout)
   const setLayout = useStore((s) => s.setLayout)
   const persistLayout = useStore((s) => s.persistLayout)
@@ -79,11 +119,15 @@ export default function BrowserPanel(): React.JSX.Element {
   const loadErrorRef = useRef<{ url: string; message: string } | null>(null)
   const [showConsole, setShowConsole] = useState(false)
   const [quoteToast, setQuoteToast] = useState<string | null>(null)
+  const [handoffBusy, setHandoffBusy] = useState(false)
   // 宽度分两层：store 里是偏好值（落盘），这里按窗口与左栏实时夹出「当前生效宽度」
   const listWidth = clampListWidth(layout.listWidth, winWidth)
   const width = clampBrowserWidth(layout.browserWidth, winWidth, layout.listVisible, listWidth)
   const viewportReq = browser.viewport
   const setBrowserViewport = useStore((s) => s.setBrowserViewport)
+  useEffect(() => {
+    void refreshBrowserHandoff().catch(() => {})
+  }, [refreshBrowserHandoff])
   /**
    * 最新的视口偏好（渲染期同步进 ref）。
    * 为什么要 ref：面板重开时 webview 是新建的，而「应用视口」的 effect 声明在创建 webview 的 effect
@@ -98,6 +142,13 @@ export default function BrowserPanel(): React.JSX.Element {
   const [vpInput, setVpInput] = useState('')
   const [vpError, setVpError] = useState('')
   const vpMenuRef = useRef<HTMLDivElement | null>(null)
+  useEffect(() => {
+    if (handoff?.status !== 'waiting_user') return
+    // Do not carry errors produced while the user enters credentials into the next AI turn.
+    consoleRef.current = []
+    loadErrorRef.current = null
+    setBrowser({ errorCount: 0 })
+  }, [handoff?.id, handoff?.status, setBrowser])
 
   /**
    * 把视口设置应用到 webview 元素。
@@ -172,6 +223,7 @@ export default function BrowserPanel(): React.JSX.Element {
   /** 采集一条记录并同步错误数给工具栏（导航开始时清空：上一页的报错不该算到下一页头上） */
   const pushConsole = useCallback(
     (entry: Omit<BrowserConsoleEntry, 'at'>) => {
+      if (useStore.getState().browserHandoff?.status === 'waiting_user') return
       const list = consoleRef.current
       list.push({ ...entry, at: Date.now() })
       if (list.length > CONSOLE_KEEP) list.splice(0, list.length - CONSOLE_KEEP)
@@ -277,7 +329,7 @@ export default function BrowserPanel(): React.JSX.Element {
       try {
         await wv.loadURL(url)
       } catch (err) {
-        const msg = String((err as Error)?.message || err)
+        const msg = safeTextForAgent(String((err as Error)?.message || err))
         // 只有「未就绪」才退回 src；真实网络/URL 错误照实抛出，不能把自己的失败说成成功
         if (!/must be attached|dom-ready|not attached|GUEST_VIEW_MANAGER/i.test(msg) || /ERR_INVALID_URL|ERR_NAME|ERR_CONNECTION|ERR_ABORTED/.test(msg)) {
           throw new Error(msg.replace(/^Error invoking remote method '[^']+':\s*/, ''))
@@ -515,8 +567,18 @@ export default function BrowserPanel(): React.JSX.Element {
         }
       }
       switch (action) {
+        case 'cancel_wait': {
+          return page(`(() => {
+            const pending = window.__jeffBrowserWaitCancels;
+            if (pending) for (const cancel of Array.from(pending)) cancel();
+            return { ok: true, cancelled: pending?.size || 0 };
+          })()`)
+        }
         case 'navigate': {
-          return await navigateTo(sameOriginGuard(String(args.url || '')))
+          const result = await navigateTo(sameOriginGuard(String(args.url || '')))
+          return result && typeof result === 'object' && 'url' in result
+            ? { ...result, url: safeUrlForAgent(String((result as { url: string }).url)) }
+            : result
         }
       case 'back':
         if (!wv.canGoBack()) throw new Error('已经是第一页，无法后退')
@@ -530,7 +592,7 @@ export default function BrowserPanel(): React.JSX.Element {
         wv.reload()
         return { ok: true }
       case 'state':
-        return { url: wv.getURL(), title: wv.getTitle(), loading: wv.isLoading() }
+        return { url: safeUrlForAgent(wv.getURL()), title: wv.getTitle(), loading: wv.isLoading() }
       /**
        * 设置视口分辨率（人用工具栏菜单、agent 用 jeff_browser_set_viewport，都落到同一份 store）。
        * 精确像素模式下页面里 window.innerWidth/innerHeight 就是请求的那两个数——这是「按指定分辨率截图」的地基。
@@ -567,8 +629,10 @@ export default function BrowserPanel(): React.JSX.Element {
       }
       case 'screenshot': {
         const fullPage = args.full_page === true || /^(true|1|yes|full)$/i.test(String(args.full_page ?? '').trim())
+        const authFields = await page(`(() => Array.from(document.querySelectorAll('input[type="password"], input[autocomplete="one-time-code"], input[name*="otp" i], input[name*="captcha" i]')).some((el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 }))()`)
+        if (authFields) throw new Error('当前页面含可见密码、验证码或一次性口令输入框。为保护认证信息，Jeff 不会截取此页面；请由你在桌面完成验证后交还浏览器。')
         const title = wv.getTitle()
-        const url = wv.getURL()
+        const url = safeUrlForAgent(wv.getURL())
         if (fullPage) return await captureFullPage(title, url)
         // 可视区截图：尺寸 = 页面视口（innerWidth/innerHeight），与 set_viewport 报的生效分辨率一致
         const m = await measureGuest()
@@ -592,9 +656,12 @@ export default function BrowserPanel(): React.JSX.Element {
         const selector = args.selector ? String(args.selector) : ''
         const out = (await page(`(() => {
           const sel = ${JSON.stringify(selector)};
-          const root = sel ? document.querySelector(sel) : document.body;
-          if (!root) return { error: '选择器没匹配到元素: ' + sel };
+          const roots = sel ? document.querySelectorAll(sel) : [document.body];
+          if (!roots.length) return { error: '选择器没匹配到元素: ' + sel };
+          if (roots.length > 1) return { error: '选择器匹配到多个区域，请提供更具体的选择器: ' + sel };
+          const root = roots[0];
           const text = (root.innerText || '').replace(/\\n{3,}/g, '\\n\\n').trim();
+          const refState = window.__jeffBrowserRefs = { current: new Map() };
           const interactive = [];
           const nodes = root.querySelectorAll('a,button,input,textarea,select,[role=button],[onclick]');
           for (const el of nodes) {
@@ -602,38 +669,58 @@ export default function BrowserPanel(): React.JSX.Element {
             const r = el.getBoundingClientRect();
             const visible = r.width > 0 && r.height > 0;
             if (!visible) continue;
-            const label = (el.innerText || el.value || el.getAttribute('placeholder') || el.getAttribute('aria-label') || '').trim().slice(0, 60);
+            const labels = el.labels ? Array.from(el.labels).map((x) => x.innerText || '').join(' ') : '';
+            const label = (el.getAttribute('aria-label') || el.getAttribute('title') || el.getAttribute('placeholder') || labels || (el.tagName === 'INPUT' && ['button','submit'].includes(el.type) ? el.getAttribute('value') : el.innerText) || '').trim().slice(0, 60);
+            const element_ref = 'el_' + (crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2));
+            refState.current.set(element_ref, el);
             interactive.push({
               tag: el.tagName.toLowerCase(),
               type: el.getAttribute('type') || '',
               label,
               id: el.id || '',
               name: el.getAttribute('name') || '',
+              element_ref,
+              visible: true,
+              disabled: !!el.disabled,
               selector: el.id ? '#' + el.id : (el.tagName.toLowerCase() + (el.getAttribute('type') ? '[type=' + el.getAttribute('type') + ']' : '')),
             });
           }
-          return { title: document.title, url: location.href, text: text.slice(0, ${maxChars}), interactive, truncated: text.length > ${maxChars} };
+          const auth_required = Array.from(document.querySelectorAll('input[type="password"], input[autocomplete="one-time-code"], input[name*="otp" i], input[name*="captcha" i]')).some((el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 });
+          return { title: document.title, url: location.href, text: text.slice(0, ${maxChars}), interactive, auth_required, truncated: text.length > ${maxChars} };
         })()`)) as Record<string, unknown>
+        if (typeof out.url === 'string') out.url = safeUrlForAgent(out.url)
         // 页面自己在报错时，正文里看不出来（错误只进控制台）——这里带上提示，让 agent 知道该去读谁
         const errs = consoleRef.current.filter((e) => e.level === 'error' || e.level === 'load').length
         return errs > 0 ? { ...out, page_errors: errs, hint: `该页面有 ${errs} 条错误（控制台/加载失败），用 jeff_browser_get_console 读详情。` } : out
       }
       case 'click': {
+        const elementRef = args.element_ref ? String(args.element_ref) : ''
         const selector = args.selector ? String(args.selector) : ''
         const text = args.text ? String(args.text) : ''
         const r = (await page(`(() => {
+          const ref = ${JSON.stringify(elementRef)};
           const sel = ${JSON.stringify(selector)};
           const txt = ${JSON.stringify(text)};
-          let el = sel ? document.querySelector(sel) : null;
-          if (!el && txt) {
-            const cands = Array.from(document.querySelectorAll('a,button,[role=button],input[type=submit],input[type=button],[onclick],li,span,div'));
-            el = cands.find((c) => (c.innerText || c.value || '').trim() === txt)
-              || cands.find((c) => (c.innerText || c.value || '').trim().includes(txt))
-              || null;
+          let el = null;
+          if (ref) {
+            el = window.__jeffBrowserRefs?.current?.get(ref) || null;
+            if (!el || !el.isConnected) return { ok: false, error: '页面元素引用已过期，请重新调用 jeff_browser_get_content' };
+          } else if (sel) {
+            const matches = document.querySelectorAll(sel);
+            if (matches.length > 1) return { ok: false, error: '选择器匹配到多个元素，请重新读取页面并使用 element_ref' };
+            el = matches[0] || null;
+          } else if (txt) {
+            const cands = Array.from(document.querySelectorAll('a,button,[role=button],input[type=submit],input[type=button],[onclick]'));
+            const label = (c) => (c.getAttribute('aria-label') || c.innerText || (c.type === 'submit' || c.type === 'button' ? c.getAttribute('value') : '') || '').trim();
+            const exact = cands.filter((c) => label(c) === txt);
+            const matches = exact.length ? exact : cands.filter((c) => label(c).includes(txt));
+            if (matches.length > 1) return { ok: false, error: '文字匹配到多个可点击元素，请重新读取页面并使用 element_ref', candidates: matches.slice(0, 8).map(label) };
+            el = matches[0] || null;
           }
           if (!el) return { ok: false, error: '没找到可点击的元素（selector=' + sel + ', text=' + txt + '）' };
+          if (el.disabled) return { ok: false, error: '目标元素当前不可操作（已禁用）' };
           el.scrollIntoView({ block: 'center' });
-          const label = (el.innerText || el.value || el.tagName).trim().slice(0, 60);
+          const label = (el.getAttribute('aria-label') || el.innerText || el.tagName).trim().slice(0, 60);
           el.click();
           return { ok: true, clicked: label };
         })()`)) as { ok: boolean; error?: string; clicked?: string }
@@ -641,14 +728,26 @@ export default function BrowserPanel(): React.JSX.Element {
         return r
       }
       case 'type': {
+        const elementRef = String(args.element_ref || '')
         const selector = String(args.selector || '')
         const text = String(args.text ?? '')
         const clear = args.clear !== false
         const submit = !!args.submit
         const nextExpr = clear ? 'String(TEXT)' : '(el.value || "") + String(TEXT)'
         const code = `(() => {
-          const el = document.querySelector(${JSON.stringify(selector)});
-          if (!el) return { ok: false, error: '没找到输入框: ' + ${JSON.stringify(selector)} };
+          const ref = ${JSON.stringify(elementRef)};
+          const sel = ${JSON.stringify(selector)};
+          let el = null;
+          if (ref) {
+            el = window.__jeffBrowserRefs?.current?.get(ref) || null;
+            if (!el || !el.isConnected) return { ok: false, error: '页面元素引用已过期，请重新调用 jeff_browser_get_content' };
+          } else {
+            const matches = document.querySelectorAll(sel);
+            if (matches.length > 1) return { ok: false, error: '选择器匹配到多个元素，请重新读取页面并使用 element_ref' };
+            el = matches[0] || null;
+          }
+          if (!el) return { ok: false, error: '没找到输入框: ' + sel };
+          if (el.disabled || el.readOnly) return { ok: false, error: '目标输入框当前不可操作（已禁用或只读）' };
           const TEXT = ${JSON.stringify(text)};
           el.scrollIntoView({ block: 'center' });
           el.focus();
@@ -668,6 +767,9 @@ export default function BrowserPanel(): React.JSX.Element {
             el.dispatchEvent(new Event('change', { bubbles: true }));
             return { ok: true, value: el.value, selected: (hit.textContent || '').trim() };
           }
+          if (el.type === 'password' || el.autocomplete === 'one-time-code' || /otp|captcha|verification/i.test(el.name || '')) {
+            return { ok: false, error: '检测到密码、验证码或一次性口令输入框；请你在桌面手动完成验证后交还浏览器。' };
+          }
           const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
           const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
           const next = ${nextExpr};
@@ -680,9 +782,9 @@ export default function BrowserPanel(): React.JSX.Element {
             }
             if (el.form && typeof el.form.requestSubmit === 'function') { try { el.form.requestSubmit(); } catch (e) {} }
           }
-          return { ok: true, value: el.value };
+          return { ok: true };
         })()`
-        const r = (await page(code)) as { ok: boolean; error?: string; value?: string }
+        const r = (await page(code)) as { ok: boolean; error?: string; selected?: string }
         if (!r?.ok) throw new Error(r?.error || '输入失败')
         return r
       }
@@ -695,15 +797,26 @@ export default function BrowserPanel(): React.JSX.Element {
        * 文件内容由主进程读盘后以 base64 下发（见 core 的 jeff_browser_upload）。
        */
       case 'upload': {
+        const elementRef = String(args.element_ref || '')
         const selector = String(args.selector || '').trim()
         const name = String(args.name || 'upload.bin')
         const mime = String(args.mime || 'application/octet-stream')
         const b64 = String(args.base64 || '')
-        if (!selector) throw new Error('selector 不能为空（要放进哪个 <input type=file>）')
+        if (!elementRef && !selector) throw new Error('element_ref 或 selector 不能为空（要放进哪个 <input type=file>）')
         if (!b64) throw new Error('文件内容为空（base64 为空）')
         const r = (await page(`(() => {
-          const el = document.querySelector(${JSON.stringify(selector)});
-          if (!el) return { ok: false, error: '没找到文件输入框: ' + ${JSON.stringify(selector)} };
+          const ref = ${JSON.stringify(elementRef)};
+          const sel = ${JSON.stringify(selector)};
+          let el = null;
+          if (ref) {
+            el = window.__jeffBrowserRefs?.current?.get(ref) || null;
+            if (!el || !el.isConnected) return { ok: false, error: '页面元素引用已过期，请重新调用 jeff_browser_get_content' };
+          } else {
+            const matches = document.querySelectorAll(sel);
+            if (matches.length > 1) return { ok: false, error: '选择器匹配到多个元素，请重新读取页面并使用 element_ref' };
+            el = matches[0] || null;
+          }
+          if (!el) return { ok: false, error: '没找到文件输入框: ' + sel };
           if (el.tagName !== 'INPUT' || el.type !== 'file') {
             return { ok: false, error: '目标不是 <input type="file">：<' + el.tagName.toLowerCase() + (el.getAttribute('type') ? ' type=' + el.getAttribute('type') : '') + '>（文件只能放进 file 类型的输入框）' };
           }
@@ -722,6 +835,62 @@ export default function BrowserPanel(): React.JSX.Element {
         if (!r?.ok) throw new Error(r?.error || '上传文件失败')
         return { ...r, note: '文件只是「选中」了：要让服务端真的收到，还得提交表单（jeff_browser_click 点提交按钮，或 jeff_browser_type 带 submit）。' }
       }
+      case 'wait_for': {
+        const elementRef = String(args.element_ref || '')
+        const selector = String(args.selector || '')
+        const text = String(args.text || '')
+        const condition = String(args.condition || 'appears')
+        const timeoutMs = Math.min(Math.max(Number(args.timeout_ms) || 10_000, 100), 30_000)
+        return page(`(() => new Promise((resolve, reject) => {
+          const ref = ${JSON.stringify(elementRef)};
+          const sel = ${JSON.stringify(selector)};
+          const txt = ${JSON.stringify(text)};
+          const condition = ${JSON.stringify(condition)};
+          const timeout = ${timeoutMs};
+          const started = Date.now();
+          let observer;
+          let poll;
+          let timer;
+          let settled = false;
+          const finish = (error, value) => {
+            if (settled) return;
+            settled = true;
+            observer?.disconnect(); clearInterval(poll); clearTimeout(timer);
+            window.__jeffBrowserWaitCancels?.delete(cancelWait);
+            error ? reject(new Error(error)) : resolve(value);
+          };
+          const cancelWait = () => finish('浏览器控制权正在交接，动态等待已中止');
+          window.__jeffBrowserWaitCancels ||= new Set();
+          window.__jeffBrowserWaitCancels.add(cancelWait);
+          const inspect = () => {
+            let el = null;
+            if (ref) {
+              el = window.__jeffBrowserRefs?.current?.get(ref) || null;
+              if ((!el || !el.isConnected) && condition !== 'disappears') return finish('页面元素引用已过期，请重新调用 jeff_browser_get_content');
+            } else if (sel) {
+              const found = document.querySelectorAll(sel);
+              if (found.length > 1) return finish('选择器匹配到多个元素，请重新读取页面并使用 element_ref');
+              el = found[0] || null;
+            }
+            const textExists = txt ? (document.body?.innerText || '').includes(txt) : false;
+            const rect = el?.getBoundingClientRect();
+            const visible = !!el && !!rect && rect.width > 0 && rect.height > 0;
+            const enabled = !!el && !el.disabled && !el.readOnly;
+            const exists = txt ? textExists : !!el;
+            const ready = condition === 'disappears' ? !exists
+              : condition === 'visible' ? visible
+              : condition === 'actionable' ? visible && enabled
+              : exists;
+            if (ready) finish(null, { ok: true, condition, elapsed_ms: Date.now() - started });
+          };
+          try { inspect(); } catch (error) { finish(String(error?.message || error)); }
+          if (settled) return;
+          observer = new MutationObserver(() => { try { inspect(); } catch (error) { finish(String(error?.message || error)); } });
+          observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true, characterData: true });
+          poll = setInterval(() => { try { inspect(); } catch (error) { finish(String(error?.message || error)); } }, 100);
+          timer = setTimeout(() => finish('等待条件超时（' + timeout + 'ms）：页面未满足「' + condition + '」'), timeout);
+        }))()`)
+      }
       /** 读取当前页面采集到的错误（agent「分析错误」用；与工具栏红点同一份数据） */
       case 'console': {
         const level = String(args.level || 'error').toLowerCase()
@@ -730,15 +899,15 @@ export default function BrowserPanel(): React.JSX.Element {
         const isErr = (e: BrowserConsoleEntry): boolean => e.level === 'error' || e.level === 'load'
         const want = level === 'all' ? all : level === 'warning' ? all.filter((e) => e.level !== 'info') : all.filter(isErr)
         return {
-          url: wv.getURL(),
+          url: safeUrlForAgent(wv.getURL()),
           title: wv.getTitle(),
           filtered_by: level,
           error_count: all.filter(isErr).length,
           total_collected: all.length,
           entries: want.slice(-limit).map((e) => ({
             level: e.level,
-            message: e.message.slice(0, 600),
-            ...(e.source ? { source: e.source } : {}),
+            message: safeTextForAgent(e.message).slice(0, 600),
+            ...(e.source ? { source: safeUrlForAgent(e.source) } : {}),
             ...(e.line ? { line: e.line } : {}),
           })),
           note:
@@ -867,10 +1036,10 @@ export default function BrowserPanel(): React.JSX.Element {
       sync()
       // ERR_ABORTED = 导航被后续操作取代（很常见），不是真失败，不进错误列表
       if (ev.errorDescription && ev.errorDescription !== 'ERR_ABORTED') {
-        console.warn('[jeff-browser] 加载失败:', ev.errorDescription, ev.validatedURL)
+        console.warn('[jeff-browser] 加载失败:', ev.errorDescription, safeUrlForAgent(ev.validatedURL || ''))
         // 记下来：loadURL 的 Promise 在「连接被拒」这类失败上仍会 resolve（Chromium 是异步报失败的），
         // 不给 navigate 留这个标志的话工具会回 ok:true —— agent 于是以为自己打开了页面。
-        const message = `页面加载失败：${ev.errorDescription}${ev.validatedURL ? `（${ev.validatedURL}）` : ''}`
+        const message = `页面加载失败：${ev.errorDescription}${ev.validatedURL ? `（${safeUrlForAgent(ev.validatedURL)}）` : ''}`
         loadErrorRef.current = { url: ev.validatedURL || '', message }
         pushConsole({ level: 'load', message })
       }
@@ -904,6 +1073,39 @@ export default function BrowserPanel(): React.JSX.Element {
     if (!url) return
     if (!/^https?:\/\//i.test(url)) url = `https://${url}`
     void navigateTo(url).catch((e: unknown) => console.warn('[jeff-browser] 打开失败:', e))
+  }
+
+  const onTakeOver = async (): Promise<void> => {
+    try {
+      await takeOverBrowser()
+      if (!useStore.getState().browserHandoff) setQuoteToast('当前没有正在操作浏览器的 AI 任务')
+    } catch (error) {
+      setQuoteToast(String((error as Error)?.message || error))
+    }
+  }
+
+  const onReturnToAI = async (): Promise<void> => {
+    setHandoffBusy(true)
+    try {
+      await returnBrowserToAI()
+    } catch (error) {
+      setQuoteToast(String((error as Error)?.message || error))
+    } finally {
+      setHandoffBusy(false)
+    }
+  }
+
+  const onCancelHandoff = async (): Promise<void> => {
+    if (!window.confirm(`取消「${handoff?.taskLabel || '当前任务'}」并释放浏览器？`)) return
+    try {
+      await cancelBrowserHandoff()
+    } catch (error) {
+      setQuoteToast(String((error as Error)?.message || error))
+    }
+  }
+
+  const onPrioritizeBrowserWaiter = async (id: string): Promise<void> => {
+    if (!(await prioritizeBrowserWaiter(id))) setQuoteToast('该等待任务已结束，请刷新会话状态')
   }
 
   const quoteSelection = async (): Promise<void> => {
@@ -949,7 +1151,8 @@ export default function BrowserPanel(): React.JSX.Element {
         onCommit={persistLayout}
         onReset={() => setLayout({ browserWidth: defaultBrowserWidth(winWidth) })}
         onCollapse={() => setBrowser({ visible: false })}
-        collapseTitle="收起内置浏览器"
+        collapseDisabled={!!handoff}
+        collapseTitle={handoff ? '请先交还 AI 或取消浏览器任务' : '收起内置浏览器'}
         testId="browser-resizer"
       />
       <div className="browser-panel" data-testid="browser-panel" style={{ width }}>
@@ -983,6 +1186,26 @@ export default function BrowserPanel(): React.JSX.Element {
               if (e.key === 'Enter') go()
             }}
           />
+          {handoff ? (
+            <>
+              <button
+                type="button"
+                className="browser-handoff-button"
+                data-testid="browser-handoff-return"
+                disabled={handoff.status !== 'waiting_user' || handoffBusy}
+                onClick={() => void onReturnToAI()}
+              >
+                {handoff.status === 'resuming' || handoffBusy ? '正在续接' : '交还 AI'}
+              </button>
+              <button type="button" className="browser-handoff-cancel" data-testid="browser-handoff-cancel" onClick={() => void onCancelHandoff()}>
+                取消任务
+              </button>
+            </>
+          ) : (
+            <button type="button" className="browser-handoff-button browser-handoff-button--takeover" data-testid="browser-handoff-takeover" onClick={() => void onTakeOver()}>
+              接管
+            </button>
+          )}
           <div className="combo browser-resolution" ref={vpMenuRef}>
             <button
               type="button"
@@ -1084,14 +1307,34 @@ export default function BrowserPanel(): React.JSX.Element {
               </span>
             </button>
           )}
-          <button className="icon-btn" title="关闭浏览器面板" data-testid="browser-close" onClick={() => setBrowser({ visible: false })}>
+          <button className="icon-btn" title={handoff ? '请先交还 AI 或取消浏览器任务' : '关闭浏览器面板'} data-testid="browser-close" disabled={!!handoff} onClick={() => setBrowser({ visible: false })}>
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
               <path d="M18 6L6 18M6 6l12 12" />
             </svg>
           </button>
         </div>
+        {handoff && (
+          <div className={`browser-handoff-banner ${handoff.status}`} data-testid="browser-handoff-banner" role="status" aria-live="polite">
+            <div className="browser-handoff-copy">
+              <strong>{handoff.status === 'waiting_user' ? '等待你完成验证' : 'AI 正在从当前页面续接'}</strong>
+              <span>{handoff.site || '内置浏览器'} · {handoff.taskLabel} · {HANDOFF_REASON_LABEL[handoff.reason] || '需要人工处理'}</span>
+              {handoff.error && <span className="browser-handoff-error">续接未完成：{handoff.error}</span>}
+            </div>
+          </div>
+        )}
+        {browserQueue.length > 0 && (
+          <div className="browser-queue-banner" data-testid="browser-queue-banner" role="status" aria-live="polite">
+            <div className="browser-queue-heading"><strong>等待使用浏览器（{browserQueue.length}）</strong><span>当前任务结束或取消后按顺序继续，可调整下一位</span></div>
+            <ul>{browserQueue.map((item) => (
+              <li key={item.id}>
+                <span>{item.taskLabel}{item.site ? ` · ${item.site}` : ''}</span>
+                <button type="button" data-testid={`browser-queue-prioritize-${item.id}`} onClick={() => void onPrioritizeBrowserWaiter(item.id)}>设为下一位</button>
+              </li>
+            ))}</ul>
+          </div>
+        )}
         <div className="browser-view" ref={hostRef} data-testid="browser-view">
-          {browserBusy > 0 && (
+          {browserBusy > 0 && !handoff && (
             <div className="browser-busy" data-testid="browser-agent-busy">
               小杰正在操作这个页面
             </div>

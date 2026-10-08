@@ -4715,6 +4715,101 @@ body.pane-resizing {
   color: var(--text);
 }
 
+.browser-handoff-button,
+.browser-handoff-cancel {
+  flex: none;
+  min-height: 28px;
+  padding: 4px 9px;
+  border-radius: var(--radius-xs);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.browser-handoff-button {
+  color: var(--bg-panel);
+  background: var(--green);
+}
+
+.browser-handoff-button:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+.browser-handoff-button:disabled {
+  opacity: 0.72;
+  cursor: default;
+}
+
+.browser-handoff-button--takeover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--green) 14%, var(--bg-panel));
+  border: 1px solid color-mix(in srgb, var(--green) 42%, var(--border));
+}
+
+.browser-handoff-cancel {
+  color: var(--text-2);
+  background: transparent;
+  border: 1px solid var(--border);
+}
+
+.browser-handoff-banner {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  color: var(--text);
+  background: color-mix(in srgb, var(--green) 9%, var(--bg-panel));
+  border-bottom: 1px solid var(--border);
+}
+
+.browser-handoff-banner.resuming {
+  background: color-mix(in srgb, var(--blue, var(--green)) 8%, var(--bg-panel));
+}
+
+.browser-handoff-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.browser-handoff-copy strong {
+  font-size: 13px;
+}
+
+.browser-handoff-copy span {
+  color: var(--text-2);
+}
+
+.browser-handoff-copy .browser-handoff-error {
+  color: var(--danger, #c44);
+}
+
+.browser-queue-banner {
+  flex: none;
+  padding: 8px 12px;
+  color: var(--text);
+  background: color-mix(in srgb, var(--blue, var(--green)) 6%, var(--bg-panel));
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+.browser-queue-heading { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
+.browser-queue-heading span { color: var(--text-2); }
+.browser-queue-banner ul { display: grid; gap: 4px; margin: 6px 0 0; padding: 0; list-style: none; }
+.browser-queue-banner li { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
+.browser-queue-banner li span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.browser-queue-banner button { flex: none; min-height: 32px; padding: 0 9px; border: 1px solid var(--border); border-radius: var(--radius-xs); background: var(--bg-panel); color: var(--text); }
+.browser-queue-banner button:hover { background: color-mix(in srgb, var(--text) 7%, var(--bg-panel)); }
+
+.browser-bar .icon-btn:disabled {
+  opacity: 0.48;
+  cursor: default;
+}
+
 .browser-address {
   flex: 1;
   min-width: 0;

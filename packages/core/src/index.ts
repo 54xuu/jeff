@@ -4,7 +4,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { BUILTIN_SKILL_DIR, buildPaths, ensureDirs, jeffRoot, userSkillsDir, type JeffPaths } from './paths.js'
 import { openDb, type DB } from './db/db.js'
-import { agentRepo, kvRepo, chatMessageRepo, projectRepo, projectAgentRepo, cronTaskRepo, cronRunRepo, type AgentRow, type CronTaskRow } from './db/repos.js'
+import { agentRepo, kvRepo, chatMessageRepo, projectRepo, projectAgentRepo, cronTaskRepo, cronRunRepo, taskRepo, type AgentRow, type CronTaskRow } from './db/repos.js'
 import { SidecarManager } from './sidecar/manager.js'
 import { EngineClient } from './engines/client.js'
 import { writeSidecarConfig, migrateProviders, firstEnabledModel, configuredModelOptions, inferDefaultContextLimit, type ProviderSetting } from './oc/configWriter.js'
@@ -23,9 +23,10 @@ import { allToolDefs } from './tools/definitions.js'
 import { normalizeViewportArgs, parseFullPageFlag, shotName } from './tools/browserArgs.js'
 import { PluginManager } from './plugins/manager.js'
 import { CronScheduler } from './cron/scheduler.js'
-import { dispatchCronTask } from './cron/dispatch.js'
+import { cronGroupThreadKey, cronPrivateSessionKey, dispatchCronTask } from './cron/dispatch.js'
 import { cronExprForOnce, describeSchedule, nextRunAt, resolveOnceTarget } from './cron/expr.js'
 import { UnavailableBrowser, type BrowserControl } from './browser/control.js'
+import { BrowserHandoffManager, BrowserHandoffPausedError, publicBrowserHandoff, type BrowserHandoffRecord } from './browser/handoff.js'
 import { PrivateChat, autoTitleKey } from './chat/private.js'
 import { GroupChat, formatGroupTaskContext } from './orchestrator/group.js'
 import { Delegator } from './orchestrator/delegate.js'
@@ -35,7 +36,7 @@ import { SessionIndex } from './memory/indexer.js'
 import type { McpServerCfg } from './mcp/parse.js'
 import { probeMcpAll } from './mcp/probe.js'
 import { probeProviderModel } from './providers/probe.js'
-import type { SkillsBackupReport, SkillsRestoreStage, SkillsRestoreApply, ContextPreviewInfo, GroupMessage } from './ipc/contract.js'
+import type { SkillsBackupReport, SkillsRestoreStage, SkillsRestoreApply, ContextPreviewInfo, GroupMessage, BrowserHandoffInfo, BrowserQueueInfo } from './ipc/contract.js'
 import { SyncEngine, type WebdavConfig, type SyncReport, normalizeWebdavBasePath } from './sync/engine.js'
 import { compactionThreshold, splitContextMessages } from './chat/context.js'
 import { DebugLogger, type DebugLogFn } from './logger.js'
@@ -192,6 +193,13 @@ export class JeffCore extends EventEmitter {
   cron!: CronScheduler
   /** 内置浏览器控制（桌面主进程注入到渲染层 webview；headless 场景为 UnavailableBrowser） */
   browser: BrowserControl = new UnavailableBrowser()
+  private browserHandoffs!: BrowserHandoffManager
+  private browserLeaseWaiters = new Map<string, {
+    sessionId: string
+    info: BrowserQueueInfo
+    resolve: () => void
+    reject: (error: Error) => void
+  }[]>()
   /** 调试日志（设置 → 引擎服务 开启；写 ~/.jeff/logs/debug-YYYYMMDD.log） */
   debugLog!: DebugLogger
   promptSnapshots!: PromptSnapshotStore
@@ -210,6 +218,16 @@ export class JeffCore extends EventEmitter {
     if (this.started) return
     ensureDirs(this.paths)
     this.db = openDb(this.paths)
+    this.browserHandoffs = new BrowserHandoffManager(
+      () => this.kv().getJSON<BrowserHandoffRecord | null>('browser:handoff', null),
+      (record) => record ? this.kv().setJSON('browser:handoff', record) : this.kv().delete('browser:handoff'),
+    )
+    const recoveredHandoff = this.browserHandoffs.current()
+    if (recoveredHandoff?.status === 'resuming') {
+      this.browserHandoffs.markWaiting(recoveredHandoff.id, 'Jeff 已重启；请先检查页面，再明确点击“交还 AI”继续。')
+    }
+    if (!this.browserHandoffs.current()) this.kv().delete('browser:owner-session')
+    if (this.browserHandoffs.current()) this.browser.setUserControl?.(true)
     this.promptSnapshots = new PromptSnapshotStore(this.paths.root)
     this.seedXiaojie()
     this.debugLog = new DebugLogger(this.paths)
@@ -543,6 +561,7 @@ export class JeffCore extends EventEmitter {
         this.onReplyDone(scope)
       },
       onDebugLog: (tag: string, detail: unknown) => this.debugLog.log(tag, detail),
+      isBrowserHandoffPaused: (sessionId: string) => this.browserHandoffs?.current()?.sessionId === sessionId,
     }
   }
 
@@ -1195,25 +1214,39 @@ export class JeffCore extends EventEmitter {
   // ---------- 内置浏览器工具 ----------
   /** 把 jeff_browser_* 工具注册到工具桥（实现委托给 this.browser，桌面主进程注入） */
   private registerBrowserTools(): void {
-    const need = (action: import('./ipc/contract.js').BrowserAction) => async (args: Record<string, unknown> = {}) => {
+    const need = (action: import('./ipc/contract.js').BrowserAction) => async (raw: Record<string, unknown> = {}) => {
       if (!this.browser.available()) {
         // 面板没打开时给出可操作指引，而不是让 agent 干等
         throw new Error('内置浏览器面板未打开：请先在 Jeff 顶部菜单「显示 → 内置浏览器」打开面板，再让我操作网页。')
       }
+      const { __ctx, ...args } = raw
+      const sessionId = String((__ctx as { sessionID?: string } | undefined)?.sessionID || '')
+      const handoff = this.browserHandoffs?.current()
+      if (handoff?.status === 'waiting_user' && sessionId === handoff.sessionId) throw new Error('浏览器正在由你接管；原任务等待你交还控制权。')
+      if (sessionId) await this.acquireBrowserLease(sessionId)
       return this.browser.request(action, args || {})
     }
-    this.bridge.register('jeff_browser_navigate', async (args: { url?: string }) => {
+    this.bridge.register('jeff_browser_navigate', async (args: { url?: string; __ctx?: unknown }) => {
       const url = String(args?.url || '').trim()
       if (!/^https?:\/\//i.test(url)) throw new Error('url 必须是以 http:// 或 https:// 开头的地址')
-      return need('navigate')({ url })
+      return need('navigate')({ url, __ctx: args.__ctx })
     })
     this.bridge.register('jeff_browser_get_content', need('get_content'))
-    this.bridge.register('jeff_browser_click', async (args: { selector?: string; text?: string }) => {
-      if (!args?.selector && !args?.text) throw new Error('selector 与 text 至少提供一个')
-      return need('click')(args as Record<string, unknown>)
+    this.bridge.register('jeff_browser_request_handoff', async (raw: { reason_category?: string; __ctx?: { sessionID?: string } }) => {
+      const sessionId = String(raw?.__ctx?.sessionID || '')
+      if (!sessionId) throw new Error('当前调用缺少真实会话身份，无法暂停原任务。')
+      const rawReason = String(raw.reason_category || 'other').trim().toLowerCase()
+      const reason = (['login', 'captcha', 'qr', 'verification', 'other'].includes(rawReason) ? rawReason : 'other') as BrowserHandoffRecord['reason']
+      return this.requestBrowserHandoff(sessionId, reason)
     })
-    this.bridge.register('jeff_browser_type', async (args: { selector?: string; text?: string; clear?: boolean; submit?: boolean }) => {
-      if (!args?.selector) throw new Error('selector 不能为空')
+    this.bridge.register('jeff_browser_click', async (args: { element_ref?: string; selector?: string; text?: string; __ctx?: unknown }) => {
+      if (!args?.element_ref && !args?.selector && !args?.text) throw new Error('element_ref、selector 与 text 至少提供一个')
+      const result = await need('click')(args as Record<string, unknown>) as { ok?: boolean; error?: string }
+      if (result?.ok === false) throw new Error(result.error || '点击失败')
+      return result
+    })
+    this.bridge.register('jeff_browser_type', async (args: { element_ref?: string; selector?: string; text?: string; clear?: boolean; submit?: boolean; __ctx?: unknown }) => {
+      if (!args?.element_ref && !args?.selector) throw new Error('element_ref 或 selector 至少提供一个')
       if (args.text === undefined) throw new Error('text 不能为空')
       return need('type')(args as Record<string, unknown>)
     })
@@ -1221,9 +1254,10 @@ export class JeffCore extends EventEmitter {
      * 上传文件：文件由**主进程读盘**再以 base64 下发给渲染层（webview 没有「设置选中文件」的接口，
      * 只能由页面用 DataTransfer 组装 input.files；见 BrowserPanel 的 upload 动作）。
      */
-    this.bridge.register('jeff_browser_upload', async (args: { selector?: string; path?: string; name?: string }) => {
+    this.bridge.register('jeff_browser_upload', async (args: { element_ref?: string; selector?: string; path?: string; name?: string; __ctx?: unknown }) => {
+      const elementRef = String(args?.element_ref || '').trim()
       const selector = String(args?.selector || '').trim()
-      if (!selector) throw new Error('selector 不能为空（要放进哪个 <input type=file>）')
+      if (!elementRef && !selector) throw new Error('element_ref 或 selector 不能为空（要放进哪个 <input type=file>）')
       const filePath = String(args?.path || '').trim()
       if (!filePath) throw new Error('path 不能为空（要上传的本机文件绝对路径）')
       if (!path.isAbsolute(filePath)) throw new Error(`path 必须是绝对路径：${filePath}`)
@@ -1237,30 +1271,44 @@ export class JeffCore extends EventEmitter {
       const maxBytes = 8 * 1024 * 1024
       if (buf.length > maxBytes) throw new Error(`文件太大（${(buf.length / 1048576).toFixed(1)}MB），上限 ${maxBytes / 1048576}MB：${filePath}`)
       const name = String(args?.name || '').trim() || path.basename(filePath)
-      return need('upload')({ selector, name, mime: mimeOf(name), base64: buf.toString('base64') })
+      return need('upload')({ ...(elementRef ? { element_ref: elementRef } : { selector }), name, mime: mimeOf(name), base64: buf.toString('base64'), __ctx: args.__ctx })
+    })
+    this.bridge.register('jeff_browser_wait_for', async (args: { element_ref?: string; selector?: string; text?: string; condition?: string; timeout_ms?: number; __ctx?: unknown }) => {
+      const elementRef = String(args?.element_ref || '').trim()
+      const selector = String(args?.selector || '').trim()
+      const text = String(args?.text || '').trim()
+      if (!elementRef && !selector && !text) throw new Error('element_ref、selector 与 text 至少提供一个')
+      const rawCondition = String(args?.condition || 'appears').trim().toLowerCase()
+      const aliases: Record<string, string> = { appear: 'appears', exists: 'appears', disappear: 'disappears', hidden: 'disappears', visible: 'visible', actionable: 'actionable', enabled: 'actionable' }
+      const condition = aliases[rawCondition] || rawCondition
+      if (!['appears', 'disappears', 'visible', 'actionable'].includes(condition)) {
+        throw new Error('condition 仅支持 appears、disappears、visible、actionable')
+      }
+      const timeoutMs = Math.min(Math.max(Number(args?.timeout_ms) || 10_000, 100), 30_000)
+      return need('wait_for')({ ...(elementRef ? { element_ref: elementRef } : {}), ...(selector ? { selector } : {}), ...(text ? { text } : {}), condition, timeout_ms: timeoutMs, __ctx: args.__ctx })
     })
     /** 页面错误现场（控制台 error / 未捕获异常 / 加载失败）：与面板红点读同一份采集结果 */
-    this.bridge.register('jeff_browser_get_console', async (args: { level?: string; limit?: number }) => {
+    this.bridge.register('jeff_browser_get_console', async (args: { level?: string; limit?: number; __ctx?: unknown }) => {
       const raw = String(args?.level || 'error').trim().toLowerCase()
       const level = ['warning', 'warn', 'info', 'all'].includes(raw) ? (raw === 'warn' ? 'warning' : raw) : 'error'
       const limit = Number(args?.limit) > 0 ? Math.min(Number(args.limit), 200) : 50
-      return need('console')({ level, limit })
+      return need('console')({ level, limit, __ctx: args.__ctx })
     })
     /**
      * 设置视口分辨率。参数按「平铺标量 + 空串视为未传」规范化（见 browserArgs.ts，规则有单测钉住）：
      * 模型一次「全字段补空」的调用不能把已经设好的分辨率打回默认。
      */
-    this.bridge.register('jeff_browser_set_viewport', async (args: { preset?: string; width?: string | number; height?: string | number }) => {
+    this.bridge.register('jeff_browser_set_viewport', async (args: { preset?: string; width?: string | number; height?: string | number; __ctx?: unknown }) => {
       const spec = normalizeViewportArgs(args || {})
-      return need('set_viewport')({ ...spec })
+      return need('set_viewport')({ ...spec, __ctx: args.__ctx })
     })
     /**
      * 截图存成工作空间里的 PNG：视觉模型可以直接读图，比在文本里塞 base64 有用得多。
      * 文件名带上页面标题（清洗过），便于人和 agent 事后按标题找图；同名靠时间戳区分。
      */
-    this.bridge.register('jeff_browser_screenshot', async (args: { full_page?: string | boolean } = {}) => {
+    this.bridge.register('jeff_browser_screenshot', async (args: { full_page?: string | boolean; __ctx?: unknown } = {}) => {
       const fullPage = parseFullPageFlag(args?.full_page)
-      const data = (await need('screenshot')({ full_page: fullPage })) as {
+      const data = (await need('screenshot')({ full_page: fullPage, __ctx: args.__ctx })) as {
         dataUrl?: string
         title?: string
         url?: string
@@ -1292,6 +1340,234 @@ export class JeffCore extends EventEmitter {
           : '已保存可视区截图（尺寸 = 当前视口分辨率）。要整页就带 full_page="true" 再截一次；若你的模型不支持看图，请改用 jeff_browser_get_content。',
       }
     })
+  }
+
+  /** Current handoff state contains only safe task/site metadata; the native session id stays local. */
+  browserHandoffInfo(): BrowserHandoffInfo | null {
+    return publicBrowserHandoff(this.browserHandoffs?.current())
+  }
+
+  /** Activate the exact private session or group thread that owns the browser handoff. */
+  openBrowserHandoffConversation(): BrowserHandoffInfo | null {
+    const record = this.browserHandoffs?.current()
+    if (!record) return null
+    if (record.kind === 'group') {
+      if (!record.projectId || !record.threadId) throw new Error('原项目群话题已不存在，无法打开对应会话。')
+      this.activateGroupThread(record.projectId, record.threadId)
+      this.bus.emit('group-updated', { projectId: record.projectId, threadId: record.threadId })
+    } else {
+      this.activateSession('private', record.agentId, record.sessionId)
+    }
+    return publicBrowserHandoff(record)
+  }
+
+  browserQueueInfo(): BrowserQueueInfo[] {
+    return [...this.browserLeaseWaiters.values()].map((entries) => entries[0]?.info).filter((entry): entry is BrowserQueueInfo => !!entry)
+  }
+
+  prioritizeBrowserWaiter(id: string): boolean {
+    const entry = [...this.browserLeaseWaiters.entries()].find(([, waiters]) => waiters[0]?.info.id === id)
+    if (!entry) return false
+    const [sessionId, waiters] = entry
+    const reordered = new Map([[sessionId, waiters], ...[...this.browserLeaseWaiters.entries()].filter(([key]) => key !== sessionId)])
+    this.browserLeaseWaiters = reordered
+    this.emitBrowserQueue()
+    return true
+  }
+
+  private async acquireBrowserLease(sessionId: string): Promise<void> {
+    const owner = this.kv().get('browser:owner-session')
+    if (!owner || owner === sessionId) {
+      if (!owner) this.kv().set('browser:owner-session', sessionId)
+      return
+    }
+    const scope = this.resolveSession(sessionId)
+    let taskLabel = '浏览器任务'
+    if (scope?.kind === 'private') taskLabel = agentRepo(this.db).get(scope.agentId)?.name || taskLabel
+    else if (scope?.kind === 'group') {
+      const project = projectRepo(this.db).get(scope.projectId)
+      const thread = scope.threadId ? this.groupChat.threads.getMeta(scope.projectId, scope.threadId) : undefined
+      taskLabel = [project?.title, thread?.title].filter(Boolean).join(' · ') || taskLabel
+      const run = scope.threadId ? this.tasks.activeRunForThread(scope.projectId, scope.threadId) : null
+      if (run) {
+        const task = taskRepo(this.db).get(run.task_id)
+        if (task) taskLabel = `${task.title}（JEF-${task.number}）`
+      }
+    }
+    let site = ''
+    try { site = new URL(this.browser.state().url).host } catch { /* browser has no page yet */ }
+    return new Promise<void>((resolve, reject) => {
+      const current = this.browserLeaseWaiters.get(sessionId) || []
+      current.push({ sessionId, info: { id: crypto.randomUUID(), taskLabel, site, requestedAt: Date.now() }, resolve, reject })
+      this.browserLeaseWaiters.set(sessionId, current)
+      this.emitBrowserQueue()
+    })
+  }
+
+  private emitBrowserQueue(): void {
+    this.bus.emit('browser-queue', this.browserQueueInfo())
+  }
+
+  private promoteBrowserWaiter(): void {
+    const next = this.browserLeaseWaiters.entries().next().value as [string, Array<{ sessionId: string; resolve: () => void; reject: (error: Error) => void; info: BrowserQueueInfo }>] | undefined
+    if (!next) {
+      this.emitBrowserQueue()
+      return
+    }
+    const [sessionId, waiters] = next
+    this.browserLeaseWaiters.delete(sessionId)
+    this.kv().set('browser:owner-session', sessionId)
+    this.emitBrowserQueue()
+    for (const waiter of waiters) waiter.resolve()
+  }
+
+  private releaseBrowserLease(sessionId: string): void {
+    if (this.kv().get('browser:owner-session') !== sessionId) return
+    if (this.browserHandoffs.current()?.sessionId === sessionId) return
+    this.kv().delete('browser:owner-session')
+    this.promoteBrowserWaiter()
+  }
+
+  private discardBrowserWaiter(sessionId: string): void {
+    const waiters = this.browserLeaseWaiters.get(sessionId)
+    if (!waiters) return
+    this.browserLeaseWaiters.delete(sessionId)
+    for (const waiter of waiters) waiter.reject(new Error('等待浏览器期间，原会话已结束。'))
+    this.emitBrowserQueue()
+  }
+
+  /** User takeover from the toolbar. A current browser-owning model run is paused first. */
+  async takeOverBrowser(): Promise<BrowserHandoffInfo | null> {
+    const current = this.browserHandoffs.current()
+    if (current) return publicBrowserHandoff(current)
+    const sessionId = this.kv().get('browser:owner-session')
+    if (!sessionId) return null
+    return this.requestBrowserHandoff(sessionId, 'other')
+  }
+
+  /** Agent-requested or user-requested browser handoff. */
+  private async requestBrowserHandoff(sessionId: string, reason: BrowserHandoffRecord['reason']): Promise<BrowserHandoffInfo> {
+    const scope = this.resolveSession(sessionId)
+    if (!scope || scope.kind === 'review' || scope.isSubtask) throw new Error('无法确认当前浏览器任务所属会话，已拒绝接管。')
+    const groupThreadId = scope.kind === 'group'
+      ? scope.threadId || this.groupChat.activeThreadId(scope.projectId)
+      : undefined
+    await this.acquireBrowserLease(sessionId)
+    const browserUrl = this.browser.state().url
+    let site = ''
+    let siteUrl = ''
+    try { const parsed = new URL(browserUrl); site = parsed.host; siteUrl = parsed.origin } catch { /* page not navigated yet */ }
+    const rows = this.db.prepare("SELECT key, value FROM kv WHERE key LIKE 'session:cron:%' OR key LIKE 'cron:thread:%'").all() as Array<{ key: string; value: string }>
+    let cronTaskId: string | undefined
+    if (scope.kind === 'private') {
+      const row = rows.find((r) => r.key.startsWith('session:cron:') && r.value === sessionId)
+      if (row) cronTaskId = row.key.slice('session:cron:'.length)
+    } else if (groupThreadId) {
+      const row = rows.find((r) => r.key.startsWith('cron:thread:') && r.value === groupThreadId)
+      if (row) cronTaskId = row.key.slice('cron:thread:'.length)
+    }
+    let taskRunId: string | undefined
+    let cronRunId: string | undefined
+    let taskLabel = ''
+    if (scope.kind === 'group') {
+      const run = this.db.prepare("SELECT id, task_id FROM task_run WHERE project_id=? AND thread_id=? AND status='running' ORDER BY started_at DESC LIMIT 1")
+        .get(scope.projectId, groupThreadId || '') as { id: string; task_id: string } | undefined
+      if (run) {
+        taskRunId = run.id
+        const task = taskRepo(this.db).get(run.task_id)
+        taskLabel = task ? `${task.title}（JEF-${task.number}）` : '项目任务'
+      }
+    }
+    if (cronTaskId) taskLabel = cronTaskRepo(this.db).get(cronTaskId)?.name || '定时任务'
+    if (cronTaskId) {
+      const run = cronRunRepo(this.db).listByTask(cronTaskId, 10).find((item) => item.status === 'running' || item.status === 'waiting_browser')
+      cronRunId = run?.id
+    }
+    if (!taskLabel && scope.kind === 'group') {
+      const project = projectRepo(this.db).get(scope.projectId)
+      const thread = groupThreadId ? this.groupChat.threads.getMeta(scope.projectId, groupThreadId) : undefined
+      taskLabel = [project?.title, thread?.title].filter(Boolean).join(' · ') || '项目群会话'
+    }
+    if (!taskLabel) taskLabel = agentRepo(this.db).get(scope.agentId)?.name || '私聊会话'
+
+    const record = this.browserHandoffs.begin({
+      sessionId,
+      kind: scope.kind,
+      agentId: scope.agentId,
+      ...(scope.kind === 'group' ? { projectId: scope.projectId, ...(groupThreadId ? { threadId: groupThreadId } : {}) } : {}),
+      ...(cronTaskId ? { cronTaskId } : {}),
+      ...(cronRunId ? { cronRunId } : {}),
+      ...(taskRunId ? { taskRunId } : {}),
+      taskLabel,
+      site,
+      siteUrl,
+      reason,
+    })
+    this.kv().set('browser:owner-session', sessionId)
+    this.browser.setUserControl?.(true)
+    this.browser.cancelPending?.()
+    this.bus.emit('browser-handoff', publicBrowserHandoff(record))
+    this.debugLog?.log('browser-handoff-start', { id: record.id, kind: record.kind, agentId: record.agentId, site: record.site, reason })
+    await this.oc.abortSession(sessionId).catch((error) => this.debugLog?.log('browser-handoff-abort-failed', String((error as Error)?.message || error)))
+    return publicBrowserHandoff(record)!
+  }
+
+  /** Re-read the live page in the original engine session and continue without replaying old browser actions. */
+  async returnBrowserToAI(): Promise<BrowserHandoffInfo | null> {
+    const record = this.browserHandoffs.current()
+    if (!record) return null
+    this.browserHandoffs.markResuming(record.id)
+    this.browser.setUserControl?.(false)
+    this.bus.emit('browser-handoff', publicBrowserHandoff(this.browserHandoffs.current()))
+    const continuation = [
+      '【用户已完成内置浏览器接管并交还控制权】',
+      '请先重新读取当前页面状态，再从暂停位置继续原任务。不要重放已经发出的点击、表单提交、上传或其他外部副作用；如果结果不确定，先核实服务端/页面现状。',
+    ].join('\n')
+    try {
+      if (record.taskRunId) {
+        await this.tasks.resumeBrowserHandoff(record.taskRunId, continuation)
+      } else if (record.kind === 'private') {
+        await this.privateChat.resumeBrowserHandoff(record.agentId, record.sessionId, continuation)
+      } else {
+        if (!record.projectId || !record.threadId) throw new Error('原项目群话题已不存在，无法安全续接。')
+        await this.groupChat.resumeBrowserHandoff(record.projectId, record.threadId, record.agentId, continuation)
+      }
+      this.browserHandoffs.clear(record.id)
+      this.browser.setUserControl?.(false)
+      this.releaseBrowserLease(record.sessionId)
+      this.bus.emit('browser-handoff', null)
+      if (record.cronTaskId && record.cronRunId) {
+        this.cron?.completeBrowserHandoff(record.cronTaskId, record.cronRunId, 'ok', {
+          ...(record.threadId ? { threadId: record.threadId } : {}),
+          sessionId: record.sessionId,
+        })
+      }
+      return null
+    } catch (error) {
+      const message = String((error as Error)?.message || error).slice(0, 300)
+      const current = this.browserHandoffs.current()
+      if (current?.id === record.id) {
+        this.browserHandoffs.markWaiting(record.id, message)
+        this.browser.setUserControl?.(true)
+        this.browser.cancelPending?.()
+        this.bus.emit('browser-handoff', publicBrowserHandoff(this.browserHandoffs.current()))
+      }
+      throw error
+    }
+  }
+
+  /** Cancel a waiting/resuming browser task and release the page for the next user action. */
+  async cancelBrowserHandoff(): Promise<void> {
+    const record = this.browserHandoffs.current()
+    if (!record) return
+    if (record.taskRunId) this.tasks.cancelBrowserHandoff(record.taskRunId)
+    if (record.status === 'resuming') await this.oc.abortSession(record.sessionId).catch(() => {})
+    this.browserHandoffs.clear(record.id)
+    this.browser.setUserControl?.(false)
+    this.browser.cancelPending?.()
+    this.releaseBrowserLease(record.sessionId)
+    this.bus.emit('browser-handoff', null)
+    if (record.cronTaskId && record.cronRunId) this.cron?.completeBrowserHandoff(record.cronTaskId, record.cronRunId, 'cancelled')
   }
 
   /** 回复完成：索引本轮内容 + 计数 nudge */
@@ -1493,6 +1769,10 @@ export class JeffCore extends EventEmitter {
     const props = (evt.properties || {}) as Record<string, unknown>
     const sessionId = props.sessionID as string | undefined
     if (!sessionId) return
+    if (evt.type === 'session.idle') {
+      this.discardBrowserWaiter(sessionId)
+      this.releaseBrowserLease(sessionId)
+    }
 
     // 兜底：正常情况下配置已全量放行、走不到这里；一旦出现（agent 级规则覆盖 / opencode 改版），
     // opencode 会 publish 后无限等待用户应答 —— Jeff 没有对应 UI，必须自动放行/拒绝，否则卡到请求超时。
@@ -1986,6 +2266,7 @@ export { DebugLogger, type DebugLogFn } from './logger.js'
 export { ToolBridge } from './tools/bridge.js'
 export { GroupChat } from './orchestrator/group.js'
 export { PrivateChatStoppedError } from './chat/private.js'
+export { BrowserHandoffPausedError } from './browser/handoff.js'
 export { Delegator } from './orchestrator/delegate.js'
 export { registerProjectTools, taskCardMessage } from './tools/projectTools.js'
 export { snapshotInstructions } from './tools/selfTools.js'

@@ -57,4 +57,5 @@ export const TOOL_ACTION_LABEL: Record<string, string> = {
   jeff_browser_set_viewport: '设置分辨率',
   jeff_browser_get_console: '读取报错',
   jeff_browser_get_content: '读取网页',
+  jeff_browser_request_handoff: '请求你接管浏览器',
 }

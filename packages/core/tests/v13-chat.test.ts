@@ -62,6 +62,19 @@ describe('mapSessionMessages（v1.3 思考/工具提取）', () => {
     expect(out).toHaveLength(1)
     expect(out[0].reasoning).toBeUndefined()
   })
+
+  it('浏览器接管触发的引擎中止显示为等待用户，不显示工具失败', async () => {
+    const chat = new PrivateChat({} as never, () => fakeClient([assistantMsg([
+      { type: 'tool', tool: 'jeff_browser_request_handoff', state: { status: 'error', error: 'Tool execution aborted' } },
+    ])]))
+    const out = await chat.mapSessionMessages('s1')
+    expect(out[0].tools).toEqual([{
+      tool: 'jeff_browser_request_handoff',
+      status: 'waiting_user',
+      output: '等待你完成浏览器接管后继续。',
+      error: undefined,
+    }])
+  })
 })
 
 describe('configuredModelOptions（模型目录只来自供应商配置）', () => {

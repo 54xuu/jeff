@@ -15,6 +15,9 @@ const DENY: Record<string, string> = {
   [IPC.browserResult]: '内置浏览器渲染层回传，不是用户操作',
   [IPC.browserState]: '内置浏览器渲染层回传，不是用户操作',
   [IPC.browserPageShot]: '截图走电脑上的 webview，手机不能直接调',
+  [IPC.browserHandoffTakeover]: '网页只能在电脑上接管',
+  [IPC.browserHandoffReturn]: '网页只能在电脑上交还 AI',
+  [IPC.browserQueuePrioritize]: '浏览器任务切换只在电脑上操作',
   [IPC.smokeShot]: '冒烟钩子',
   [IPC.smokeDone]: '冒烟钩子',
   [IPC.remoteStatus]: '远程控制设置只在电脑上操作',
@@ -46,7 +49,7 @@ const PUSH = new Set<string>([
 ])
 
 // 通用任务执行和验收通过现有加密 IPC 链路；运行历史只含本地诊断信息，远端仅查询状态。
-const ALLOW = new Set<string>([IPC.siyuanSearch, IPC.tasksList, IPC.taskSave, IPC.taskDelete, IPC.taskStart, IPC.taskStop, IPC.taskRuns, IPC.taskReview])
+const ALLOW = new Set<string>([IPC.siyuanSearch, IPC.tasksList, IPC.taskSave, IPC.taskDelete, IPC.taskStart, IPC.taskStop, IPC.taskRuns, IPC.taskReview, IPC.browserHandoffGet, IPC.browserHandoffOpen, IPC.browserQueueGet, IPC.browserHandoffCancel])
 
 function build(): Record<string, RemoteRule> {
   const out: Record<string, RemoteRule> = {}
@@ -76,4 +79,4 @@ export function remoteRule(channel: string): RemoteRule {
  * （见 apps/desktop/src/main/index.ts）。一期网关要转发的是短名，不是 IPC.ev*。
  * data-changed 更特殊：what 直接是 'agents' | 'projects' 等，没有统一前缀。
  */
-export const DESKTOP_PUSH_WHAT = ['chat-stream', 'chat-updated', 'group-updated', 'cron-updated', 'cron-turn-done', 'sidecar-status', 'sidecar-log'] as const
+export const DESKTOP_PUSH_WHAT = ['chat-stream', 'chat-updated', 'group-updated', 'cron-updated', 'cron-turn-done', 'sidecar-status', 'sidecar-log', 'browser-handoff-updated', 'browser-queue-updated'] as const

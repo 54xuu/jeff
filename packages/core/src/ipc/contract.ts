@@ -142,6 +142,13 @@ export const IPC = {
   browserState: 'browser:state',
   // 页面截图：渲染层 → 主进程（capturePage 拿的是「可见帧」，尺寸不可控；改由主进程走 CDP 按矩形重新栅格化）
   browserPageShot: 'browser:pageShot',
+  browserHandoffGet: 'browser:handoffGet',
+  browserHandoffOpen: 'browser:handoffOpen',
+  browserQueueGet: 'browser:queueGet',
+  browserQueuePrioritize: 'browser:queuePrioritize',
+  browserHandoffTakeover: 'browser:handoffTakeover',
+  browserHandoffReturn: 'browser:handoffReturn',
+  browserHandoffCancel: 'browser:handoffCancel',
   // 工作空间文件浏览（资料抽屉「工作区文件」Tab + Markdown 预览器）
   fsListFiles: 'fs:listFiles',
   fsReadFile: 'fs:readFile',
@@ -253,7 +260,7 @@ export interface TaskRunInfo {
   project_id: string
   thread_id: string
   agent_id: string
-  status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'interrupted' | 'needs_input'
+  status: 'queued' | 'running' | 'waiting_browser' | 'succeeded' | 'failed' | 'cancelled' | 'interrupted' | 'needs_input'
   started_at: number
   finished_at: number | null
   error: string
@@ -601,6 +608,10 @@ export type BrowserAction =
   | 'screenshot'
   | 'get_content'
   | 'console'
+  /** 等待目标元素状态满足（仅由工具桥调用） */
+  | 'wait_for'
+  /** 中断页面内的动态等待（主进程内部，不暴露为 agent 工具） */
+  | 'cancel_wait'
   /** 设置视口分辨率（比例自适应 / 精确像素），渲染层回报实际生效尺寸 */
   | 'set_viewport'
   | 'back'
@@ -638,6 +649,32 @@ export interface BrowserState {
   url: string
   title: string
   loading: boolean
+}
+
+export interface BrowserHandoffInfo {
+  id: string
+  status: 'waiting_user' | 'resuming'
+  kind: 'private' | 'group'
+  agentId: string
+  projectId?: string
+  threadId?: string
+  cronTaskId?: string
+  cronRunId?: string
+  taskRunId?: string
+  taskLabel: string
+  site: string
+  siteUrl: string
+  reason: 'login' | 'captcha' | 'qr' | 'verification' | 'other'
+  requestedAt: number
+  error?: string
+}
+
+/** Metadata-only queue entries for other sessions waiting for the shared browser lease. */
+export interface BrowserQueueInfo {
+  id: string
+  taskLabel: string
+  site: string
+  requestedAt: number
 }
 
 /**
@@ -794,6 +831,13 @@ export type InvokeMap = {
   [IPC.browserResult]: BrowserResult
   [IPC.browserState]: BrowserState
   [IPC.browserPageShot]: { webContentsId: number; width: number; height: number; beyondViewport: boolean; y?: number }
+  [IPC.browserHandoffGet]: void
+  [IPC.browserHandoffOpen]: void
+  [IPC.browserQueueGet]: void
+  [IPC.browserQueuePrioritize]: { id: string }
+  [IPC.browserHandoffTakeover]: void
+  [IPC.browserHandoffReturn]: void
+  [IPC.browserHandoffCancel]: void
   [IPC.smokeShot]: { name: string }
   [IPC.smokeDone]: void
 }

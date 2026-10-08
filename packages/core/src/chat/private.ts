@@ -7,6 +7,7 @@ import { composeAutoTitle, placeholderTitle } from '../util/title.js'
 import { decodePluginUserMessage, type ChatPluginInvoke } from '../plugins/invoke.js'
 import { SUBTASK_STEER, wantsIndependentSubtasks } from '../orchestrator/subtask.js'
 import { composePromptContext, makePromptBlock, type PromptContext } from '../prompt/context.js'
+import { BrowserHandoffPausedError } from '../browser/handoff.js'
 
 /** UI 侧聊天消息（私聊与群聊共用形状） */
 export interface ChatMsg {
@@ -46,6 +47,7 @@ export interface PrivateChatHooks {
   defaultModel?: () => { providerID: string; modelID: string } | null
   /** 调试日志（消息处理失败等现场） */
   onDebugLog?: (tag: string, detail: unknown) => void
+  isBrowserHandoffPaused?: (sessionId: string) => boolean
 }
 
 /** 用户主动停止生成的可辨识错误（IPC 层映射为 stopped 结果，不与 provider 失败混同） */
@@ -200,6 +202,14 @@ export class PrivateChat {
     return this.deliverToSession(agentId, sessionId, text, undefined, { checkPendingStop: false, autoTitle: !title })
   }
 
+  /** Continue the native conversation after the user returns control of the built-in browser. */
+  async resumeBrowserHandoff(agentId: string, sessionId: string, text: string): Promise<AssistantInfo> {
+    await this.hooks?.beforeEnsure?.(agentId)
+    if (this.getOc().sessionCompatible?.(sessionId, agentId) === false) throw new Error('原会话的执行引擎已变化，无法安全续接。')
+    await this.getOc().getSession(sessionId)
+    return this.deliverToSession(agentId, sessionId, text, undefined, { checkPendingStop: false, autoTitle: false })
+  }
+
   /** 取或创建 kvKey 指向的专属会话；并发同 key 只建一次 */
   async ensureDedicatedSession(agentId: string, kvKey: string, title?: string): Promise<string> {
     const inflight = this.ensureInflight.get(kvKey)
@@ -283,6 +293,10 @@ export class PrivateChat {
       return reply
     } catch (err) {
       const msg = String((err as Error)?.message || err)
+      if (this.hooks?.isBrowserHandoffPaused?.(sessionId)) {
+        this.hooks?.onDebugLog?.('private-send-browser-handoff', { agentId, sessionId })
+        throw new BrowserHandoffPausedError(sessionId)
+      }
       // 只有最近确实点过停止才算「已停止」；provider 超时/中断等也含 abort 字样，须落日志留现场
       const stopped = /abort/i.test(msg) && this.getOc().isAbortRequested(sessionId)
       this.hooks?.onDebugLog?.(stopped ? 'private-send-stop' : 'private-send-fail', {
@@ -342,7 +356,16 @@ export class PrivateChat {
           images.push({ mime: String(p.mime || 'image/png'), dataUrl: p.url })
         } else if (p.type === 'tool') {
           const st = (p.state || {}) as { status?: string; output?: string; error?: string }
-          tools.push({ tool: String(p.tool || ''), status: st.status, output: (st.output || '').slice(0, 2000), error: st.error })
+          const tool = String(p.tool || '')
+          // OpenCode reports the intentional abort used to pause a handoff as a failed tool call.
+          // Present that transport-level abort as a waiting state; real handoff errors remain errors.
+          const handoffPause = tool === 'jeff_browser_request_handoff' && st.status === 'error' && st.error === 'Tool execution aborted'
+          tools.push({
+            tool,
+            status: handoffPause ? 'waiting_user' : st.status,
+            output: handoffPause ? '等待你完成浏览器接管后继续。' : (st.output || '').slice(0, 2000),
+            error: handoffPause ? undefined : st.error,
+          })
         }
       }
       if (role === 'assistant' && !text.trim() && tools.length === 0) continue

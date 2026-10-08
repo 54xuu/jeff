@@ -393,7 +393,7 @@ export function allToolDefs(): ToolDef[] {
     },
     {
       name: 'jeff_browser_get_content',
-      description: '读取内置浏览器当前页面的可见文本与结构信息（标题、URL、主要文本、可交互元素清单）。分析页面、找按钮/输入框时先调它。',
+      description: '读取内置浏览器当前页面的可见文本与结构信息（标题、URL、主要文本、可交互元素清单）。分析页面、找按钮/输入框时先调它。每个元素会返回本次观察的 element_ref；优先用它操作。登录/验证码输入值不会返回。',
       args: {
         max_chars: {
           type: 'number',
@@ -403,9 +403,17 @@ export function allToolDefs(): ToolDef[] {
       },
     },
     {
-      name: 'jeff_browser_click',
-      description: '在内置浏览器里点击元素（模拟真人点击）：优先用 CSS 选择器；也可用文字匹配（点击包含该文字的可点击元素）。',
+      name: 'jeff_browser_request_handoff',
+      description: '当当前页面要求登录、验证码、扫码验证或其他必须由人完成的认证时，请求用户接管内置浏览器。Jeff 会立即暂停当前会话并封锁所有 Agent 的页面读取、截图和操作；用户完成后会从当前页面继续，不会自动重放旧提交。只选择原因类别，不要把密码、验证码或认证信息写入参数。',
       args: {
+        reason_category: { type: 'string', description: 'login / captcha / qr / verification / other' },
+      },
+    },
+    {
+      name: 'jeff_browser_click',
+      description: '在内置浏览器里点击元素（模拟真人点击）：优先传最近一次 jeff_browser_get_content 返回的 element_ref；也可传唯一 CSS 选择器或唯一文字匹配。匹配有歧义时会拒绝操作并要求重新定位。',
+      args: {
+        element_ref: { type: 'string', description: '最近一次页面观察返回的元素引用（优先）' },
         selector: { type: 'string', description: 'CSS 选择器（可选，优先）' },
         text: { type: 'string', description: '要点击的元素文字（选择器为空时按文字查找按钮/链接）' },
       },
@@ -416,6 +424,7 @@ export function allToolDefs(): ToolDef[] {
         '在内置浏览器里填写表单控件：输入框/文本域用原生 setter + input 事件写入（兼容 React 等受控组件）；' +
         '<select> 下拉框按选项文字或 value 选中。',
       args: {
+        element_ref: { type: 'string', description: '最近一次页面观察返回的元素引用（优先）' },
         selector: { type: 'string', description: '控件 CSS 选择器' },
         text: { type: 'string', description: '要输入的文字（下拉框里写要选的选项文字或 value）' },
         clear: { type: 'boolean', description: '是否先清空原有内容（默认 true；下拉框不适用）' },
@@ -428,6 +437,7 @@ export function allToolDefs(): ToolDef[] {
         '在内置浏览器里把本机文件放进页面的 <input type="file"> 输入框（等于用户点「选择文件」选了这个文件），' +
         '之后点提交按钮就能真的把文件传给网站。注意：本工具只完成「选中文件」这一步。',
       args: {
+        element_ref: { type: 'string', description: '最近一次页面观察返回的文件输入框引用（优先）' },
         selector: { type: 'string', description: '文件输入框的 CSS 选择器，如 #up-file 或 input[type=file]' },
         path: { type: 'string', description: '要上传的本机文件绝对路径（≤8MB）' },
         name: { type: 'string', description: '页面上显示的文件名（可选，默认用原文件名）' },
@@ -457,6 +467,17 @@ export function allToolDefs(): ToolDef[] {
         preset: { type: 'string', description: '"4:3"（按比例自适应）或 "auto"（恢复铺满；默认）' },
         width: { type: 'string', description: '精确分辨率宽度（与 height 同时传；320-5120）' },
         height: { type: 'string', description: '精确分辨率高度（与 width 同时传；240-5120）' },
+      },
+    },
+    {
+      name: 'jeff_browser_wait_for',
+      description: '等待内置浏览器中的目标达到指定状态后再继续，不使用固定长睡眠。可等待出现、消失、可见或可操作；默认 10 秒，最长 30 秒。优先使用最近一次页面观察返回的 element_ref。',
+      args: {
+        element_ref: { type: 'string', description: '最近一次页面观察返回的元素引用（可选）' },
+        selector: { type: 'string', description: '唯一 CSS 选择器（element_ref 未提供时使用）' },
+        text: { type: 'string', description: '页面文字（element_ref / selector 均未提供时使用）' },
+        condition: { type: 'string', description: '出现（默认）、消失、可见或可操作' },
+        timeout_ms: { type: 'number', description: '等待毫秒数，默认 10000，范围 100-30000' },
       },
     },
     {
