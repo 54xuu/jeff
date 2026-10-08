@@ -27,7 +27,7 @@
 
 ### 核心原则：默认 PATCH，MINOR 要克制
 
-版本号是**用户可见的发版信号**，不是每次改代码的进度条。当前版本线为 `1.12.x`，后续优先慢升。
+版本号是**用户可见的发版信号**，不是每次改代码的进度条。当前版本线为 `2.0.x`，后续优先慢升。
 
 判定顺序（从上往下，命中即停）：
 
@@ -78,14 +78,18 @@ npm run package:win     # → apps/desktop/release/jeff-Setup-<version>.exe
 `/home/xujian/.zcode/cli/memories/projects/jeff-1d2f0b1cdfcc2a44/memory/sudo-password.md`
 （用户要求永久记住）。Agent 必须先读该文件，再用 `sudo -S` 从 stdin 传入，**禁止**把密码写进仓库或回复用户；也不要裸跑交互式 `sudo`（Cursor 没有 TTY，会卡在密码提示）。
 
+**密码文件是 Markdown，不是纯密码文件。** 文件含说明文字，密码被 Markdown 行内反引号包住。禁止把整份文件或整行直接管道给 `sudo`；必须只解析密码标签后反引号内部的值，并在同一管道中交给 `sudo -S`，不可打印、复制到命令参数、日志或回复。Shell 命令中的反引号还会触发命令替换；构造含反引号的命令时使用单引号包住脚本或使用带引号的 heredoc，不能把它放进 Bash 双引号里。
+
 ```bash
-# 从 sudo-password.md 取出密码后：
-printf '%s\n' "$PASS" | sudo -S dpkg -i apps/desktop/release/jeff-desktop_<version>_amd64.deb
+set -o pipefail
+node -e 'const fs=require("node:fs");const p="/home/xujian/.zcode/cli/memories/projects/jeff-1d2f0b1cdfcc2a44/memory/sudo-password.md";const lines=fs.readFileSync(p,"utf8").split(/\r?\n/).filter(line=>/用户本机.*sudo 密码/.test(line)&&/：\s*`[^`]+`/.test(line));const m=lines.length===1?lines[0].match(/：\s*`([^`]*)`/):null;if(!m)process.exit(2);process.stdout.write(m[1]+"\n")' | sudo -S -p '' dpkg -i apps/desktop/release/jeff-desktop_<version>_amd64.deb
 dpkg -l jeff-desktop                        # 应显示新版本号
 md5sum /opt/Jeff/resources/app.asar apps/desktop/release/linux-unpacked/resources/app.asar
 # 两者 md5 一致，才说明装上去的确实是刚打的包（不是残留旧版）
 # 然后退出并重新打开 Jeff，在「设置 → 关于」确认版本号
 ```
+
+若 sudo 报认证失败，立即停止盲目重试；先检查记忆文件路径、密码标签是否唯一、解析是否去掉行内反引号及管道退出码。只验证“匹配到一行且格式正确”，不要把解析结果打印到终端。确认解析逻辑后才允许再试一次；仍失败就报告凭据/系统状态问题，不把秘密写入仓库或命令历史。
 
 ### 本机打 Windows 安装包（无需 GitHub Actions）
 
@@ -110,7 +114,7 @@ node scripts/verify-asar.mjs apps/desktop/release/win-unpacked/resources/app.asa
 
 ⚠️ **不要再用「`wine` 弹出 Jeff Setup 向导」当验收门**：本机 wine 6.0.3 下安装包会直接以退出码 1 结束、不弹窗、也不在 prefix 留痕；历史版本（`jeff-Setup-1.7.17/1.7.18.exe`）同样如此，属**本机 wine 状态问题而非包的问题**。注意包是 **32 位 PE**（NSIS 自解压），必须用 `wine` 而不是 `wine64`（`wine64` 必退出码 1，容易误判成包坏了）。Windows 包最终以**在 Windows 机器上真装一次**为准。
 
-推送 `v*` tag 会触发 GitHub Actions 构建 Windows / Linux 安装包并发布到 Releases。Tag 应与三处 `package.json` 版本一致（如 `v1.7.1`）。
+本项目的 GitHub Actions workflow 已移除。推送分支或 `v*` tag 不会自动构建或发布安装包；正式包按上文在本机完成三平台构建、校验和安装验收，再由维护者按需手动发布。旧版 Actions 的历史记录不代表当前仍会运行。
 
 ## 任务收尾测试（硬性约定）
 

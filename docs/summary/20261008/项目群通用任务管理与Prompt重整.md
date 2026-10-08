@@ -46,3 +46,10 @@ Linux/Windows `app.asar` 均逐文件校验 13,802 项、0 失败，SHA-256 均�
 - 真实模型矩阵截图、数据和 Prompt 快照：`.tmp/live-matrix/evidence/`。
 
 构建产物与验收材料均来自最终 2.0.0 源码。未部署 Relay；本任务没有改变 Relay 发布目标。
+
+## GitHub 与协作规则收尾
+
+- 删除 `.github/workflows/release.yml`，移除本仓库自动编译/发布 workflow；已有 GitHub Actions 历史记录保留，后续分支或 tag 不再触发该构建。
+- 新增 [`CONTRIBUTORS.md`](../../CONTRIBUTORS.md) 列出 Codex，并从 README 链接。GitHub 自动生成的贡献图仍按关联到账户的提交作者统计。
+- 更新 `AGENTS.md`：当前版本线改为 2.0.x；明确 sudo 记忆是 Markdown、必须只解析标签后的行内代码值、校验唯一匹配并通过 stdin 传递；失败时先检查解析，不盲目重试。没有在仓库保存或展示密码。
+- 功能分支相对 `origin/main` 仅领先且远端 main 为其祖先，本次以 fast-forward 将已审查提交合入 main；不改写远端历史。

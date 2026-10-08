@@ -73,3 +73,5 @@
 ---
 
 代码与设计说明见本仓库 [`docs/`](docs/)。
+
+贡献者列表见 [`CONTRIBUTORS.md`](CONTRIBUTORS.md)。
