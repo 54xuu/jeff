@@ -20,9 +20,9 @@ OpenCode 继续作为开箱即用的默认引擎；新增 Codex CLI、Cursor CLI
 
 OpenCode 与 Codex 真实模型界面、文本落库对账通过。Codex 三轮原生会话续接、文件产物、Jeff 会话 MCP、插件 MCP 服务端请求头与参数通过；混合引擎群协作及到点 Codex 定时任务会话隔离通过。证据：`.tmp/engine-live/codex-managed/evidence.json`、`.tmp/engine-evidence/extended-live.json`、真实界面截图及对应日志。截图已人工检查。
 
-Ubuntu 的 Claude 模型服务返回 AgentPlan 订阅错误，Cursor 返回 Authentication required，故这两条 Ubuntu 真实模型链路未验证。Windows 原始 NSIS 包安装后 UI runner 无法启动应用。Windows ChatGPT 随后通过 ASAR 逐文件检查确认包内归档损坏：`node_modules/@jeff/core/src/chat/private.ts` 条目声明长度 16,168 字节，数据实际只有 16,155 字节，导致之后 13,663 个文件的 offset 错 13 字节；13,802 个条目中 13,646 个 SHA-256 不匹配，根 `package.json` 也无法解析。Windows 安装包本身逐文件解包对比正确，损坏已在安装包的 `app.asar` 内。Windows ChatGPT 仅重写 ASAR 元数据及对应 offset，校验所有数据区字节不变后替换本机 `app.asar`；修复后 13,802 条目全部校验通过，Jeff 进程与主窗口启动成功。Windows `.jeff` 的数据库和 AGENTS.md 修复前后哈希完全一致，SQLite 只读完整性检查返回 `ok`。Windows 当前锁屏，窗口版本/视觉人工验收尚待解锁；原始 NSIS 安装包仍损坏，重装会覆盖本机修复，不能作为正式产物分发。安装包源头为何写出长度与内容不一致仍未查明。
+Ubuntu 的 Claude 模型服务返回 AgentPlan 订阅错误，Cursor 返回 Authentication required，故这两条 Ubuntu 真实模型链路未验证。Windows 原始 NSIS 包安装后 UI runner 无法启动应用。Windows ChatGPT 随后通过 ASAR 逐文件检查确认包内归档损坏：`node_modules/@jeff/core/src/chat/private.ts` 条目声明长度 16,168 字节，数据实际只有 16,155 字节，导致后续条目 offset 错 13 字节；13,802 个条目中 13,646 个 SHA-256 不匹配，根 `package.json` 也无法解析。安装包中的所有文件与安装目录逐项一致，故损坏已在打包产物内部。Windows ChatGPT 仅重写 ASAR 元数据及对应 offset，校验所有数据区字节不变后替换本机 `app.asar`；修复后 13,802 条目全部校验通过，Jeff 进程和主窗口启动成功。Windows `.jeff` 数据库与 AGENTS.md 修复前后哈希完全一致，SQLite 只读完整性检查返回 `ok`。Windows 当前锁屏，版本和视觉人工验收尚待解锁。损坏如何在构建期间产生仍未查明，不能把这次本机手工修复当作发布包。
 
-已经新增 ASAR 逐文件完整性校验 `scripts/verify-asar.mjs`，Linux 和 Windows electron-builder 打包命令在产出后自动校验，遇到错误直接终止。回归测试覆盖了这种“一个条目短 13 字节、后续 offset 连锁错位”的故障。实际检查本轮本地包时，Linux ASAR 13,802 个条目全通过，Windows ASAR 发现同样的损坏；因此原 Windows 产物 SHA-256 `8d94ba83c284ff6a0c2d0b4031fe1cee3e6d79055739ad64e2ed5d0d4b867fbf` 明确标记为**损坏、不可重装或分发**，并须从经验证源码重新构建。部署清单提交号与实际提交号也需要在新构建中一并核对。详细故障字节、修复步骤及哈希见 Windows 工作区 `D:\P_xujian\workspace\jeff\Jeff-1.12.0-Windows-启动故障修复结果.md`。
+已新增 ASAR 逐文件完整性校验 `scripts/verify-asar.mjs`，Windows/Linux electron-builder 打包后自动核对全部条目的大小、SHA-256、数据边界和 `package.json` 版本/入口；失败时退出并阻止安装器生成成功。回归测试模拟首个条目短 13 字节及后续 offset 错位。重建后 Linux 和 Windows ASAR 均有 13,802 个有效条目且哈希一致（`4c440dcf675b238f6e7f57072f355ca58496220f9bb46bf74ff92b9ecf1e0620`）；新 Windows 安装包通过门禁。原始 Windows 安装包 SHA-256 `8d94ba83c284ff6a0c2d0b4031fe1cee3e6d79055739ad64e2ed5d0d4b867fbf` 仍标记为**损坏，禁止重装/分发**。校验门禁改动提交 `ac2e791`；本次正式产物由该提交构建。部署 manifest 中的提交号须与源码提交一致。详细事故证据见 Windows 工作区 `D:\P_xujian\workspace\jeff\Jeff-1.12.0-Windows-启动故障修复结果.md`。
 
 ## 安全与兼容
 
@@ -34,14 +34,14 @@ Ubuntu 的 Claude 模型服务返回 AgentPlan 订阅错误，Cursor 返回 Auth
 
 | 正式产物 | SHA-256 |
 |---|---|
-| `apps/desktop/release/jeff-desktop_1.12.0_amd64.deb` | `898047ececa705601514b9e9061d4a38c100af673caf1163470bdf9a10cf555f` |
-| `apps/desktop/release/Jeff-1.12.0.AppImage` | `d8aec8bffd6411af956081124207e329e294c4d8b5f7eea7fdfb19de3def91d4` |
-| `apps/desktop/release/jeff-Setup-1.12.0.exe` | `8d94ba83c284ff6a0c2d0b4031fe1cee3e6d79055739ad64e2ed5d0d4b867fbf` |
+| `apps/desktop/release/jeff-desktop_1.12.0_amd64.deb` | `1dc3113afce0ce1781d9335691f0f981dc0039570bc1017204be38b4e962b3df` |
+| `apps/desktop/release/Jeff-1.12.0.AppImage` | `8142b33e34ce65320c5b0475033f799cedcf3b782a780153bf344f4debcc6875` |
+| `apps/desktop/release/jeff-Setup-1.12.0.exe` | `eff1cbc71f142e8daf0e049bfcd43f3e93e02e6e910095ae169821f940397974` |
 | `apps/mobile/android/release/jeff-1.12.0.apk` | `3a6a5e28bb218de04081440e3cdaaaed8dbaf3f7e94794fc81d3a05bbb3964f0` |
 
-三个平台均为 1.12.0、同一份最终源码。Ubuntu 已安装，`dpkg-query` 为 1.12.0；安装后的 `/opt/Jeff/resources/app.asar` 与 `linux-unpacked` MD5 均为 `6545ce718d55c0162de765dece3399c6`。实际安装版「关于」「引擎服务」「记忆」页面和默认 OpenCode sidecar 启动通过。
+三个平台均为 1.12.0，最终源码提交为 `ac2e791`。Windows/Linux unpacked ASAR 和新 NSIS 安装器内部解出的 ASAR 都有 13,802 个条目逐文件校验通过。Ubuntu 最新 `.deb` 已安装，`dpkg-query` 为 1.12.0，安装 ASAR 与 `linux-unpacked` 的 MD5 均为 `925ccaa8ac9e1f82e5bce32e646272af`。Windows ChatGPT 修复后的本机安装正在运行；Windows 当前锁屏，未能完成人工界面检查。新 NSIS 安装包已确认内部 ASAR 有效，但尚未安装到 Windows（避免覆盖正在运行的本机修复）；在解锁并退出 Jeff 后再安装该新包，不能重装旧哈希包。
 
-Windows 产物为 PE32 Nullsoft Installer，内置 `opencode.exe` 与本次引擎/记忆特征在包内。APK 的包名 `app.jeff.mobile`、versionName `1.12.0`、versionCode `11200`；release 签名验证通过。最终 APK SHA-256 与 AVD、Windows Android 真机测试使用的 APK 完全相同；Android 14 AVD 与 Windows 连接的物理设备 instrumentation 均为 3/3。APK release 签名 v1/v2 验证通过，证书 SHA-256 为 `3ff7dff8f41e9e7025e6e297820dd58225e3d17b147b6ee7013bab6d77c49c1d`。Linux 已重新安装 `.deb`，`dpkg-query` 显示 1.12.0，安装目录与正式 `linux-unpacked` 的 app.asar MD5 均为 `6545ce718d55c0162de765dece3399c6`。
+Windows 产物为 PE32 Nullsoft Installer，内置 `opencode.exe` 与本次引擎/记忆特征在包内。APK 的包名 `app.jeff.mobile`、versionName `1.12.0`、versionCode `11200`；release 签名验证通过。最终 APK SHA-256 与 AVD、Windows Android 真机测试使用的 APK 完全相同；Android 14 AVD 与 Windows 连接的物理设备 instrumentation 均为 3/3。APK release 签名 v1/v2 验证通过，证书 SHA-256 为 `3ff7dff8f41e9e7025e6e297820dd58225e3d17b147b6ee7013bab6d77c49c1d`。Linux 已重新安装最新 `.deb`，`dpkg-query` 显示 1.12.0，安装目录与正式 `linux-unpacked` 的 app.asar MD5 均为 `925ccaa8ac9e1f82e5bce32e646272af`。
 
 
 实际 Android 8.1 / WebView 61 验收发现 Python 高亮的动态 Unicode 正则使真实回复白屏；修复为按浏览器能力关闭语法着色，保留原文、复制、链接与表格。失败证据保留在 `.tmp/engine-mobile-live/physical-render-error.json`，回归单测及真实回复 instrumentation 通过。Windows Cursor 官方 cmd 版本选择与 npm shim 分开解析，覆盖最新完整版本、残缺版本和 ps1 对应 cmd 的安全解析。
