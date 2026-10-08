@@ -36,9 +36,9 @@
 ## 安装与设备验收
 
 - Windows 实际安装目录运行 2.0.0 的具名验收通过。证据显示版本 2.0.0、sidecar running、OpenCode 1.18.30，隔离数据目录位于 `.jeff-deploy/runs/2026-10-08T121914-000Z/desktop-home`。截图保存在被忽略的 `.tmp/deploy/2026-10-08T121914-000Z/2026-10-08T121914-000Z/windows-jeff.png`。
-- Ubuntu `jeff` AVD 上 release Android instrumentation 1/1 通过；Windows USB/网络 ADB 设备不可用，实体机待验收。
-- Linux `.deb` 与 AppImage 已完成产物级校验；本机 `.deb` 安装验收未完成，因为 sudo 身份验证失败后停止重试。本次未修改系统已安装版本，不宣称 Linux 安装版通过。
-- 真实模型目前仅通过 1 条综合任务链路；负责人/群主分支、退回继续、停止/中断、规则冲突和多引擎/手机真实任务链路仍待补齐模型验收矩阵。
+- Ubuntu `jeff` AVD 上 release Android instrumentation 1/1 通过。Windows USB/网络设备及 Ubuntu 的 `192.168.3.161:5555`、`192.168.3.121:5555` 当前均不可达，实体机待验收。
+- Ubuntu 已安装正式 `.deb` 2.0.0：`dpkg-query` 显示 `install ok installed`；安装目录与构建目录 `app.asar` md5 均为 `a148b57c74fd74e1d205d2826dc1fa3f`，安装归档逐文件校验 13,802 项、0 失败。通过 `/opt/Jeff/jeff-desktop` 在隔离 `JEFF_HOME` 中启动具名 UI 验收，sidecar 为 running、OpenCode 为 1.18.30。截图经人工检查，三个任务文本域分别显示，保存后状态为待执行且执行记录为空。验收截图及 `app:info` 记录位于 `.tmp/deploy/linux-installed-acceptance/evidence/`。安装前本机数据快照位于 `.tmp/deploy/linux-preinstall-jeff-home-20261008.tar.gz`。
+- 真实模型目前通过 1 条隔离综合任务链路；负责人/群主分支、退回继续、停止/中断、规则冲突和多引擎/手机真实任务链路仍待补齐八类模型验收矩阵。
 
 ## 产物清单
 
