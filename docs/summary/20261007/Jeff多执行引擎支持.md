@@ -22,7 +22,7 @@ OpenCode 与 Codex 真实模型界面、文本落库对账通过。Codex 三轮�
 
 Ubuntu 的 Claude 模型服务返回 AgentPlan 订阅错误，Cursor 返回 Authentication required，故这两条 Ubuntu 真实模型链路未验证。Windows 原始 NSIS 包安装后 UI runner 无法启动应用。Windows ChatGPT 随后通过 ASAR 逐文件检查确认包内归档损坏：`node_modules/@jeff/core/src/chat/private.ts` 条目声明长度 16,168 字节，数据实际只有 16,155 字节，导致后续条目 offset 错 13 字节；13,802 个条目中 13,646 个 SHA-256 不匹配，根 `package.json` 也无法解析。安装包中的所有文件与安装目录逐项一致，故损坏已在打包产物内部。Windows ChatGPT 仅重写 ASAR 元数据及对应 offset，校验所有数据区字节不变后替换本机 `app.asar`；修复后 13,802 条目全部校验通过，Jeff 进程和主窗口启动成功。Windows `.jeff` 数据库与 AGENTS.md 修复前后哈希完全一致，SQLite 只读完整性检查返回 `ok`。损坏如何在构建期间产生仍未查明，不能把这次本机手工修复当作发布包。
 
-已新增 ASAR 逐文件完整性校验 `scripts/verify-asar.mjs`，Windows/Linux electron-builder 打包后自动核对全部条目的大小、SHA-256、数据边界和 `package.json` 版本/入口；失败时退出并阻止安装器生成成功。回归测试模拟首个条目短 13 字节及后续 offset 错位。重建后 Linux 和 Windows ASAR 均有 13,802 个有效条目且哈希一致（`4c440dcf675b238f6e7f57072f355ca58496220f9bb46bf74ff92b9ecf1e0620`）；新 Windows 安装包通过门禁。原始 Windows 安装包 SHA-256 `8d94ba83c284ff6a0c2d0b4031fe1cee3e6d79055739ad64e2ed5d0d4b867fbf` 仍标记为**损坏，禁止重装/分发**。校验门禁改动提交 `ac2e791`；本次正式产物由该提交构建。部署 manifest 中的提交号须与源码提交一致。详细事故证据见 Windows 工作区 `D:\P_xujian\workspace\jeff\Jeff-1.12.0-Windows-启动故障修复结果.md`。
+已新增 ASAR 逐文件完整性校验 `scripts/verify-asar.mjs`，Windows/Linux electron-builder 打包后自动核对全部条目的大小、SHA-256、数据边界和 `package.json` 版本/入口；失败时退出并使打包命令返回失败，禁止交付其产物。回归测试模拟首个条目短 13 字节及后续 offset 错位。重建后 Linux 和 Windows ASAR 均有 13,802 个有效条目且哈希一致（`4c440dcf675b238f6e7f57072f355ca58496220f9bb46bf74ff92b9ecf1e0620`）；新 Windows 安装包通过门禁。原始 Windows 安装包 SHA-256 `8d94ba83c284ff6a0c2d0b4031fe1cee3e6d79055739ad64e2ed5d0d4b867fbf` 仍标记为**损坏，禁止重装/分发**。校验门禁改动提交 `ac2e791`；最终安装批次从 `22621ef` 构建，详见下文产物表及部署 manifest。部署 manifest 中的提交号须与源码提交一致。详细事故证据见 Windows 工作区 `D:\P_xujian\workspace\jeff\Jeff-1.12.0-Windows-启动故障修复结果.md`。
 
 ## 安全与兼容
 
@@ -45,3 +45,11 @@ Windows 产物为 PE32 Nullsoft Installer，内置 `opencode.exe` 与本次引�
 
 
 实际 Android 8.1 / WebView 61 验收发现 Python 高亮的动态 Unicode 正则使真实回复白屏；修复为按浏览器能力关闭语法着色，保留原文、复制、链接与表格。失败证据保留在 `.tmp/engine-mobile-live/physical-render-error.json`，回归单测及真实回复 instrumentation 通过。Windows Cursor 官方 cmd 版本选择与 npm shim 分开解析，覆盖最新完整版本、残缺版本和 ps1 对应 cmd 的安全解析。
+
+## Windows 调试复盘规则落地
+
+根据本次故障、Windows 修复报告和最终安装记录，在项目 `AGENTS.md` 新增「三平台一次交付与 Windows 故障闭环」。明确当前 Agent 承担可自行修复的打包、安装和调试问题，修复后继续验收；在任务早期预检交互桌面、安装权限、路径及设备，把锁屏/离线等需用户操作的真实环境阻碍提前指出。
+
+本次命令错误包括 Bash 提前展开 PowerShell 的 `$env`、Python 字符串误解析 Windows 路径转义、CLIXML/编码干扰 JSON，以及序列化文件正文带出大量 PowerShell 元数据。规则要求复用从 `.ps1` 文件生成 EncodedCommand 的包装器，以 UTF-8 文件回传结构化结果，并分别保存 stdout、stderr、退出码。启动故障按归档、安装、进程、页面、sidecar 分阶段排查，不能只等待 DevTools 端口超时。正式构建冻结输入、核对 NSIS 内部 ASAR 和真实安装文件，重建后更新全部哈希与验收关联。
+
+后续开发任务最终统一报告 Ubuntu、Windows、Android 三平台的通过/失败/未验证、测试范围、产物哈希和证据，明确区分安装 smoke、具名功能与真实模型/手机回复验收。本次补充仅修改协作文档，检查文档差异和 `git diff --check`，不升版、不重打包、不新增平台测试结论。
