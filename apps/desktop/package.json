@@ -9,9 +9,9 @@
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "package:dir": "electron-vite build && electron-builder --dir",
-    "package:linux": "electron-vite build && electron-builder --linux --x64",
-    "package:win": "electron-vite build && electron-builder --win --x64",
+    "package:dir": "electron-vite build && electron-builder --dir && node ../../scripts/verify-asar.mjs",
+    "package:linux": "electron-vite build && electron-builder --linux --x64 && node ../../scripts/verify-asar.mjs release/linux-unpacked/resources/app.asar",
+    "package:win": "electron-vite build && electron-builder --win --x64 && node ../../scripts/verify-asar.mjs release/win-unpacked/resources/app.asar",
     "fetch-opencode": "node scripts/fetch-opencode.mjs",
     "test:e2e": "electron-vite build && playwright test -c e2e/playwright.config.ts --project=ui",
     "test:e2e:live": "electron-vite build && playwright test -c e2e/playwright.config.ts --project=live"

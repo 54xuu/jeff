@@ -94,7 +94,10 @@ npm run package:win
 file apps/desktop/release/jeff-Setup-<version>.exe            # 应为 PE32 executable (GUI) ... Nullsoft Installer
 grep -a extra-preview apps/desktop/release/win-unpacked/resources/app.asar   # 能命中＝本次前端改动已打进包
 ls apps/desktop/release/win-unpacked/resources/oc-bin/windows-x64/opencode.exe
+node scripts/verify-asar.mjs apps/desktop/release/win-unpacked/resources/app.asar
 ```
+
+**ASAR 必须逐文件校验，外层安装包 SHA-256 和 `asar list` 通过都不够。** `npm run package:win` 与 `npm run package:linux` 已在打包后自动运行 `scripts/verify-asar.mjs`，校验目录记录的每个文件大小、SHA-256、边界以及根目录 `package.json` 的版本和入口；任一失败就停止交付。2026-10-08 Windows 1.12.0 事故中，单个 workspace 文件实际短 13 字节，后续 13,663 个条目的 offset 整体错位，13,802 个条目中有 13,646 个哈希不匹配，`package.json` 也无法解析；安装器本身和整体产物哈希仍然正常。此类失败时禁止安装或分发该包、禁止直接改写已生成的 ASAR 后当作正式产物；先找出构建/归档阶段为何让文件长度与目录元数据分离，再从确认过的源码重建，并复验所有正式包。重装同一个损坏安装包会覆盖本机修复。部署清单里的提交号必须与实际构建源码提交一致。
 
 ⚠️ **不要再用「`wine` 弹出 Jeff Setup 向导」当验收门**：本机 wine 6.0.3 下安装包会直接以退出码 1 结束、不弹窗、也不在 prefix 留痕；历史版本（`jeff-Setup-1.7.17/1.7.18.exe`）同样如此，属**本机 wine 状态问题而非包的问题**。注意包是 **32 位 PE**（NSIS 自解压），必须用 `wine` 而不是 `wine64`（`wine64` 必退出码 1，容易误判成包坏了）。Windows 包最终以**在 Windows 机器上真装一次**为准。
 

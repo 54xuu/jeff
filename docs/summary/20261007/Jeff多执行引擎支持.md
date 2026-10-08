@@ -20,7 +20,9 @@ OpenCode 继续作为开箱即用的默认引擎；新增 Codex CLI、Cursor CLI
 
 OpenCode 与 Codex 真实模型界面、文本落库对账通过。Codex 三轮原生会话续接、文件产物、Jeff 会话 MCP、插件 MCP 服务端请求头与参数通过；混合引擎群协作及到点 Codex 定时任务会话隔离通过。证据：`.tmp/engine-live/codex-managed/evidence.json`、`.tmp/engine-evidence/extended-live.json`、真实界面截图及对应日志。截图已人工检查。
 
-Ubuntu 的 Claude 模型服务返回 AgentPlan 订阅错误，Cursor 返回 Authentication required，故这两条 Ubuntu 真实模型链路未验证。Windows 上此前已用真实安装版完成 Claude 与 Cursor 回复、多轮续接、Jeff/插件 MCP 调用；最终包安装后，自动 UI runner 未能再次打开安装版：`Jeff.exe` 进程快速退出（退出码 1），未生成 DevTools 端口。已确认安装器退出码 0、安装目录 `app.asar` 与产物一致，且 Windows Android 真机 instrumentation 3/3 通过；但本轮 Windows 安装版 UI/最终源码真实模型复验记为未通过/未验证，不声称通过；随后也尝试以正常数据目录重新启动已安装 1.12.0，进程同样立即退出，日常数据 `jeff.db` 与 `AGENTS.md` 仍存在且哈希未变。Windows 桌面当前未能恢复到运行状态，必须在 Windows 上继续查安装版启动故障。失败证据：`.tmp/deploy/2026-10-07T214928-011Z/outcome.json`、对应 `error.txt`；额外启动诊断在 `.tmp/engine-mobile-live/`。Ubuntu 上 Claude/Cursor 分别受服务订阅与未登录状态限制。Jeff 不自动修改账号、不自动安装或登录，也不会回退到其他引擎。
+Ubuntu 的 Claude 模型服务返回 AgentPlan 订阅错误，Cursor 返回 Authentication required，故这两条 Ubuntu 真实模型链路未验证。Windows 原始 NSIS 包安装后 UI runner 无法启动应用。Windows ChatGPT 随后通过 ASAR 逐文件检查确认包内归档损坏：`node_modules/@jeff/core/src/chat/private.ts` 条目声明长度 16,168 字节，数据实际只有 16,155 字节，导致之后 13,663 个文件的 offset 错 13 字节；13,802 个条目中 13,646 个 SHA-256 不匹配，根 `package.json` 也无法解析。Windows 安装包本身逐文件解包对比正确，损坏已在安装包的 `app.asar` 内。Windows ChatGPT 仅重写 ASAR 元数据及对应 offset，校验所有数据区字节不变后替换本机 `app.asar`；修复后 13,802 条目全部校验通过，Jeff 进程与主窗口启动成功。Windows `.jeff` 的数据库和 AGENTS.md 修复前后哈希完全一致，SQLite 只读完整性检查返回 `ok`。Windows 当前锁屏，窗口版本/视觉人工验收尚待解锁；原始 NSIS 安装包仍损坏，重装会覆盖本机修复，不能作为正式产物分发。安装包源头为何写出长度与内容不一致仍未查明。
+
+已经新增 ASAR 逐文件完整性校验 `scripts/verify-asar.mjs`，Linux 和 Windows electron-builder 打包命令在产出后自动校验，遇到错误直接终止。回归测试覆盖了这种“一个条目短 13 字节、后续 offset 连锁错位”的故障。实际检查本轮本地包时，Linux ASAR 13,802 个条目全通过，Windows ASAR 发现同样的损坏；因此原 Windows 产物 SHA-256 `8d94ba83c284ff6a0c2d0b4031fe1cee3e6d79055739ad64e2ed5d0d4b867fbf` 明确标记为**损坏、不可重装或分发**，并须从经验证源码重新构建。部署清单提交号与实际提交号也需要在新构建中一并核对。详细故障字节、修复步骤及哈希见 Windows 工作区 `D:\P_xujian\workspace\jeff\Jeff-1.12.0-Windows-启动故障修复结果.md`。
 
 ## 安全与兼容
 
