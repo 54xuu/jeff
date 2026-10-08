@@ -1,72 +1,39 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { IPC, projectRoleLabel, type GroupMessage, type GroupThreadBrief, type ProjectInfo, type ProjectMember } from '@jeff/core'
 import { useStore } from '../store'
 import { api } from '../api'
-import {
-  IPC, currentWeekRange, projectRoleLabel, parseProjectWorkspaceState, serializeProjectWorkspaceState,
-  canStartCampaignProduction,
-  type CampaignProposal, type CampaignKind, type ProjectWorkspaceState, type GroupMessage, type GroupThreadBrief, type ProjectInfo, type ProjectDocumentInfo, type ProjectMember,
-} from '@jeff/core'
 import Avatar from './Avatar'
 import { EmojiPickerButton } from './ui/EmojiPicker'
 import { useDirtyClose } from './ui/useDirtyClose'
 import WorkspaceFileTree from './WorkspaceFileTree'
 import SessionHistoryPanel from './SessionHistoryPanel'
 import ProjectTaskBoard from './ProjectTaskBoard'
-import ProjectReportsPanel from './ProjectReportsPanel'
 import { IconClose } from './ui/Icons'
 import ModelPickerCombo from './ModelPickerCombo'
 
-type GroupDrawerTab = 'settings' | 'workspace' | 'tasks' | 'members' | 'history' | 'files'
+type GroupDrawerTab = 'tasks' | 'profile' | 'members' | 'history' | 'files'
 
-/** 群资料抽屉：横向 Tabs（群设置 / 群成员 / 会话记录 / 工作区文件）。busy（生成中）时禁用切换/新建/删除会话，防消息串线 */
+/** 项目群资料：任务、群资料、成员、话题和工作区文件各自归属清晰。 */
 export default function GroupInfoDrawer(props: { project: ProjectInfo; busy?: boolean; onClose: () => void }): React.JSX.Element {
   const { project, busy, onClose } = props
   const agents = useStore((s) => s.agents)
   const dataDir = useStore((s) => s.appInfo?.dataDir || '')
-  const { refreshProjects, setActive, loadGroupHistory } = useStore()
-  const [tab, setTab] = useState<GroupDrawerTab>('settings')
+  const { refreshProjects, setActive, loadGroupHistory, setTab: setMainTab, setSettingsSection } = useStore()
+  const [tab, setTab] = useState<GroupDrawerTab>('tasks')
   const [members, setMembers] = useState<ProjectMember[]>([])
+  const [membersLoading, setMembersLoading] = useState(true)
   const memberConfigBaseline = useRef('[]')
   const [addingMember, setAddingMember] = useState(false)
   const [selectedMemberId, setSelectedMemberId] = useState('')
   const [engineModels, setEngineModels] = useState<Array<{ id: string; label: string }>>([])
-
   const [title, setTitle] = useState(project.title)
   const [icon, setIcon] = useState(project.icon || '👥')
   const [description, setDescription] = useState(project.description || '')
   const [groupRules, setGroupRules] = useState(project.system_prompt || '')
   const [workspaceDir, setWorkspaceDir] = useState(project.workspace_dir || '')
-  const [workspaceState, setWorkspaceState] = useState<ProjectWorkspaceState>(() => parseProjectWorkspaceState(project.workspace_state))
-  const [campaignKind, setCampaignKind] = useState<CampaignKind>('feature_video')
-  const [editingCampaignId, setEditingCampaignId] = useState('')
-  const [campaignTitle, setCampaignTitle] = useState('')
-  const [campaignFeature, setCampaignFeature] = useState('')
-  const [campaignStory, setCampaignStory] = useState('')
-  const [campaignPoints, setCampaignPoints] = useState('')
-  const [campaignMaterials, setCampaignMaterials] = useState('')
-  const [campaignChannels, setCampaignChannels] = useState('')
-  const [campaignFeedback, setCampaignFeedback] = useState<Record<string, string>>({})
-  const [assetTitle, setAssetTitle] = useState('')
-  const [assetPath, setAssetPath] = useState('')
-  const [assetFeature, setAssetFeature] = useState('')
-  const [assetKind, setAssetKind] = useState<'image' | 'video' | 'document' | 'demo_url'>('image')
-  const [assetSourceNote, setAssetSourceNote] = useState('')
-  const [assetScanDirectory, setAssetScanDirectory] = useState('素材')
-  const [captureTitle, setCaptureTitle] = useState('')
-  const [captureFeature, setCaptureFeature] = useState('')
-  const [captureFullPage, setCaptureFullPage] = useState(false)
-  const [captureRedactionConfirmed, setCaptureRedactionConfirmed] = useState(false)
-  const [assetSource, setAssetSource] = useState<'user_provided' | 'authorized_screenshot' | 'generated_illustration' | 'demo_material'>('user_provided')
-  const [assetReal, setAssetReal] = useState(false)
-  const [campaignAssetChoice, setCampaignAssetChoice] = useState<Record<string, string>>({})
-  const [deliveryPaths, setDeliveryPaths] = useState<Record<string, string>>({})
   const [leaderId, setLeaderId] = useState(project.leader_agent_id || '')
   const [saving, setSaving] = useState(false)
-  const [saveMsg, setSaveMsg] = useState<string | null>(null)
-  const [documentMsg, setDocumentMsg] = useState('')
-  const [weeklyStartDate, setWeeklyStartDate] = useState(() => currentWeekRange().startDate)
-  const [weeklyEndDate, setWeeklyEndDate] = useState(() => currentWeekRange().endDate)
-
+  const [saveMsg, setSaveMsg] = useState('')
 
   useEffect(() => {
     setTitle(project.title)
@@ -74,20 +41,19 @@ export default function GroupInfoDrawer(props: { project: ProjectInfo; busy?: bo
     setDescription(project.description || '')
     setGroupRules(project.system_prompt || '')
     setWorkspaceDir(project.workspace_dir || '')
-    setWorkspaceState(parseProjectWorkspaceState(project.workspace_state))
     setLeaderId(project.leader_agent_id || '')
-  }, [project.id, project.title, project.icon, project.description, project.system_prompt, project.workspace_dir, project.workspace_state, project.leader_agent_id])
+  }, [project.id, project.title, project.icon, project.description, project.system_prompt, project.workspace_dir, project.leader_agent_id])
 
   const refreshMembers = async () => {
-    const list = await api.invoke<ProjectMember[]>(IPC.projectMembers, { projectId: project.id })
-    setMembers(list)
-    memberConfigBaseline.current = JSON.stringify(list.map(({ agent_id, duties, model_override, thinking_override }) => ({ agent_id, duties, model_override, thinking_override })))
-    setSelectedMemberId((current) => current && list.some((member) => member.agent_id === current) ? current : list[0]?.agent_id || '')
+    setMembersLoading(true)
+    try {
+      const list = await api.invoke<ProjectMember[]>(IPC.projectMembers, { projectId: project.id })
+      setMembers(list)
+      memberConfigBaseline.current = JSON.stringify(list.map(({ agent_id, duties, model_override, thinking_override }) => ({ agent_id, duties, model_override, thinking_override })))
+      setSelectedMemberId((current) => current && list.some((member) => member.agent_id === current) ? current : list[0]?.agent_id || '')
+    } finally { setMembersLoading(false) }
   }
-
-  useEffect(() => {
-    void refreshMembers()
-  }, [project.id])
+  useEffect(() => { void refreshMembers().catch((error) => setSaveMsg('无法加载群成员：' + String(error))) }, [project.id])
 
   const selectedMember = members.find((member) => member.agent_id === selectedMemberId)
   useEffect(() => {
@@ -100,570 +66,170 @@ export default function GroupInfoDrawer(props: { project: ProjectInfo; busy?: bo
     return () => { active = false }
   }, [selectedMember?.agent_id, selectedMember?.execution_engine])
 
-  // 「工作区文件」与消息里的相对路径链接都以已保存的群工作空间为准（未配置 = Jeff 默认工作区）
-  const workspaceForFiles = (project.workspace_dir || '').trim() || (dataDir ? `${dataDir}/workspace` : '')
+  const workspaceForFiles = (project.workspace_dir || '').trim() || (dataDir ? dataDir + '/workspace' : '')
+  const candidateAgents = agents.filter((agent) => !members.some((member) => member.agent_id === agent.id))
+  const memberDraft = JSON.stringify(members.map(({ agent_id, duties, model_override, thinking_override }) => ({ agent_id, duties, model_override, thinking_override })))
+  const dirty = title !== project.title || icon !== (project.icon || '👥') || description !== (project.description || '') ||
+    groupRules !== (project.system_prompt || '') || workspaceDir !== (project.workspace_dir || '') ||
+    leaderId !== (project.leader_agent_id || '') || memberDraft !== memberConfigBaseline.current
+  const { requestClose, guard } = useDirtyClose({ dirty, onClose, disabled: addingMember })
 
-  const candidateAgents = agents.filter((a) => !members.some((m) => m.agent_id === a.id))
-  const currentMemberConfigs = JSON.stringify(members.map(({ agent_id, duties, model_override, thinking_override }) => ({ agent_id, duties, model_override, thinking_override })))
-
-  // 群设置表单脏检查：任一字段相对当前 project 有变化即视为脏（成员增删是即时保存的，不参与）
-  const formDirty =
-    title !== project.title ||
-    icon !== (project.icon || '👥') ||
-    description !== (project.description || '') ||
-    groupRules !== (project.system_prompt || '') ||
-    workspaceDir !== (project.workspace_dir || '') ||
-    leaderId !== (project.leader_agent_id || '') ||
-    serializeProjectWorkspaceState(workspaceState) !== serializeProjectWorkspaceState(parseProjectWorkspaceState(project.workspace_state)) ||
-    currentMemberConfigs !== memberConfigBaseline.current
-  const { requestClose, guard } = useDirtyClose({ dirty: formDirty, onClose, disabled: addingMember })
-
-  const persistWorkspace = async (nextState: ProjectWorkspaceState): Promise<boolean> => {
+  const saveProfile = async (): Promise<boolean> => {
     if (!title.trim() || !leaderId) return false
     setSaving(true)
-    setSaveMsg(null)
+    setSaveMsg('')
     try {
-      const updated = await api.invoke<ProjectInfo>(IPC.projectSave, {
-        id: project.id,
-        title: title.trim(),
-        icon: icon.trim() || '👥',
-        description: description.trim(),
-        system_prompt: groupRules.trim(),
-        leader_agent_id: leaderId,
-        workspace_dir: workspaceDir.trim(),
-        workspace_state: serializeProjectWorkspaceState(nextState),
-        memberAgentIds: members.map((m) => m.agent_id),
+      await api.invoke<ProjectInfo>(IPC.projectSave, {
+        id: project.id, title: title.trim(), icon: icon.trim() || '👥', description: description.trim(),
+        system_prompt: groupRules.trim(), leader_agent_id: leaderId, workspace_dir: workspaceDir.trim(),
+        memberAgentIds: members.map((member) => member.agent_id),
         memberConfigs: members.map(({ agent_id, duties, model_override, thinking_override }) => ({ agent_id, duties, model_override, thinking_override })),
       })
-      setWorkspaceState(parseProjectWorkspaceState(updated.workspace_state))
       await refreshProjects()
       await refreshMembers()
       setSaveMsg('已保存')
       return true
-    } catch (err) {
-      setSaveMsg(`保存失败：${String((err as Error).message).slice(0, 120)}`)
+    } catch (error) {
+      setSaveMsg('保存失败：' + String((error as Error).message).slice(0, 140))
       return false
     } finally {
       setSaving(false)
     }
   }
 
-  const saveSettings = async () => { await persistWorkspace(workspaceState) }
-  const generateProjectDocument = async (kind: 'charter' | 'weekly_report' | 'closeout') => {
-    try {
-      const result = await api.invoke<ProjectDocumentInfo>(IPC.projectDocument, { projectId: project.id, kind, ...(kind === 'weekly_report' ? { startDate: weeklyStartDate, endDate: weeklyEndDate } : {}) })
-      setDocumentMsg(`已生成草稿：${result.path}${result.missing.length ? `；待补：${result.missing.join('、')}` : ''}`)
-    } catch (error) { setDocumentMsg(`生成失败：${error instanceof Error ? error.message : String(error)}`) }
-  }
-
-  const createCampaign = async () => {
-    try {
-      const updated = await api.invoke<ProjectInfo>(IPC.projectCampaign, {
-        projectId: project.id, action: editingCampaignId ? 'update' : 'create', ...(editingCampaignId ? { campaignId: editingCampaignId } : {}), kind: campaignKind, title: campaignTitle,
-        feature: campaignFeature, story: campaignStory,
-        channels: campaignChannels.split('\n'), sellingPoints: campaignPoints.split('\n'), materialsNeeded: campaignMaterials.split('\n'),
-      })
-      setWorkspaceState(parseProjectWorkspaceState(updated.workspace_state))
-      await refreshProjects()
-      setSaveMsg('选题已保存，等待方向确认')
-      setEditingCampaignId('')
-      setCampaignTitle('')
-      setCampaignFeature('')
-      setCampaignStory('')
-      setCampaignPoints('')
-      setCampaignMaterials('')
-    } catch (err) { setSaveMsg(`无法创建选题：${String((err as Error).message)}`) }
-  }
-
-  const editCampaign = (campaign: CampaignProposal) => {
-    setCampaignKind(campaign.kind)
-    setEditingCampaignId(campaign.id)
-    setCampaignTitle(campaign.title)
-    setCampaignFeature(campaign.feature)
-    setCampaignStory(campaign.story)
-    setCampaignPoints(campaign.sellingPoints.join('\n'))
-    setCampaignMaterials(campaign.materialsNeeded.join('\n'))
-    setCampaignChannels(campaign.channels.join('\n'))
-  }
-
-  const decideDirection = async (campaign: CampaignProposal, decision: 'approve' | 'changes_requested') => {
-    try {
-      const updated = await api.invoke<ProjectInfo>(IPC.projectCampaign, { projectId: project.id, action: 'review_direction', campaignId: campaign.id, decision, feedback: campaignFeedback[campaign.id] || '' })
-      setWorkspaceState(parseProjectWorkspaceState(updated.workspace_state))
-      await refreshProjects()
-    } catch (err) { setSaveMsg(`无法确认选题：${String((err as Error).message)}`) }
-  }
-
-  const makeProductionTask = async (campaign: CampaignProposal) => {
-    try {
-      if (!canStartCampaignProduction(campaign)) throw new Error('先确认当前版本的选题，并补齐所需素材')
-      const updated = await api.invoke<ProjectInfo>(IPC.projectCampaign, { projectId: project.id, action: 'create_task', campaignId: campaign.id })
-      setWorkspaceState(parseProjectWorkspaceState(updated.workspace_state))
-      await refreshProjects()
-    } catch (err) { setSaveMsg(`无法创建制作任务：${String((err as Error).message)}`) }
-  }
-
-  const submitDelivery = async (campaign: CampaignProposal) => {
-    try {
-      const updated = await api.invoke<ProjectInfo>(IPC.projectCampaign, { projectId: project.id, action: 'submit_delivery', campaignId: campaign.id, path: deliveryPaths[campaign.id] || '' })
-      setWorkspaceState(parseProjectWorkspaceState(updated.workspace_state))
-      await refreshProjects()
-      setDeliveryPaths((paths) => ({ ...paths, [campaign.id]: '' }))
-    } catch (err) { setSaveMsg(`无法提交成品：${String((err as Error).message)}`) }
-  }
-
-  const decideDelivery = async (campaign: CampaignProposal, deliveryId: string, decision: 'accepted' | 'changes_requested') => {
-    try {
-      const updated = await api.invoke<ProjectInfo>(IPC.projectCampaign, { projectId: project.id, action: 'review_delivery', campaignId: campaign.id, deliveryId, decision, feedback: campaignFeedback[deliveryId] || '' })
-      setWorkspaceState(parseProjectWorkspaceState(updated.workspace_state))
-      await refreshProjects()
-    } catch (err) { setSaveMsg(`无法验收成品：${String((err as Error).message)}`) }
-  }
-  const registerAsset = async () => {
-    try {
-      const updated = await api.invoke<ProjectInfo>(IPC.projectCampaign, { projectId: project.id, action: 'register_asset', title: assetTitle, kind: assetKind, feature: assetFeature, path: assetPath, source: assetSource, sourceNote: assetSourceNote, isReal: assetReal })
-      setWorkspaceState(parseProjectWorkspaceState(updated.workspace_state)); setAssetTitle(''); setAssetPath(''); setAssetFeature(''); setAssetSourceNote('')
-    } catch (error) { setSaveMsg(error instanceof Error ? error.message : String(error)) }
-  }
-  const reviewAsset = async (assetId: string, confirmed: boolean) => {
-    try {
-      const updated = await api.invoke<ProjectInfo>(IPC.projectCampaign, { projectId: project.id, action: 'review_asset', assetId, confirmed })
-      setWorkspaceState(parseProjectWorkspaceState(updated.workspace_state))
-    } catch (error) { setSaveMsg(error instanceof Error ? error.message : String(error)) }
-  }
-  const resolveMaterial = async (campaign: CampaignProposal, need: string) => {
-    try {
-      const updated = await api.invoke<ProjectInfo>(IPC.projectCampaign, { projectId: project.id, action: 'resolve_material', campaignId: campaign.id, need, assetId: campaignAssetChoice[`${campaign.id}:${need}`] || '' })
-      setWorkspaceState(parseProjectWorkspaceState(updated.workspace_state))
-    } catch (error) { setSaveMsg(error instanceof Error ? error.message : String(error)) }
-  }
-  const captureBrowserScreenshot = async () => {
-    setSaving(true)
-    try {
-      const updated = await api.invoke<ProjectInfo>(IPC.projectCampaign, { projectId: project.id, action: 'capture_browser_screenshot', title: captureTitle, feature: captureFeature, fullPage: captureFullPage, redactionConfirmed: captureRedactionConfirmed })
-      setWorkspaceState(parseProjectWorkspaceState(updated.workspace_state))
-      setCaptureTitle(''); setCaptureFeature(''); setCaptureRedactionConfirmed(false)
-      setSaveMsg('截图已保存到项目素材库，待确认可用性')
-    } catch (error) { setSaveMsg(error instanceof Error ? error.message : String(error)) }
-    finally { setSaving(false) }
-  }
-  const scanAssetCandidates = async () => {
-    setSaving(true)
-    try {
-      const before = workspaceState.assets.length
-      const updated = await api.invoke<ProjectInfo>(IPC.projectCampaign, { projectId: project.id, action: 'scan_asset_candidates', directory: assetScanDirectory })
-      const nextState = parseProjectWorkspaceState(updated.workspace_state)
-      setWorkspaceState(nextState)
-      const count = Math.max(0, nextState.assets.length - before)
-      setSaveMsg(`扫描完成，发现 ${count} 个新候选${count >= 200 ? '（本轮到达 200 项上限，可再次扫描下一批）' : ''}；来源和脱敏确认前不能用于制作`)
-    } catch (error) { setSaveMsg(error instanceof Error ? error.message : String(error)) }
-    finally { setSaving(false) }
-  }
-
   const pickDir = async () => {
-    const dir = await api.invoke<string | null>(IPC.dialogPickDir, { title: '选择工作空间目录', defaultPath: workspaceDir || undefined })
+    const dir = await api.invoke<string | null>(IPC.dialogPickDir, { title: '选择工作区目录', defaultPath: workspaceDir || undefined })
     if (dir) setWorkspaceDir(dir)
   }
-
   const dissolve = async () => {
-    if (!confirm(`确定解散项目群「${project.title}」？任务与群聊记录将随软删除保留，可从同步历史恢复。`)) return
+    if (!confirm('确定解散项目群「' + project.title + '」？群聊和任务记录会保留为已解散数据。')) return
     await api.invoke(IPC.projectDelete, { id: project.id })
     await refreshProjects()
     setActive(null)
     onClose()
   }
+  const openProjectMemory = () => {
+    setMainTab('settings')
+    setSettingsSection('memory')
+    onClose()
+  }
+
+  const tabs: Array<{ id: GroupDrawerTab; label: string; count?: number }> = [
+    { id: 'tasks', label: '项目管理' },
+    { id: 'profile', label: '群资料' },
+    { id: 'members', label: '群成员', count: members.length },
+    { id: 'history', label: '会话记录' },
+    { id: 'files', label: '工作区文件' },
+  ]
 
   return (
     <div className="drawer-mask" data-testid="group-info-drawer" onClick={requestClose}>
-      <div className="drawer drawer-wide" onClick={(e) => e.stopPropagation()}>
-        <div className="drawer-head">
-          <span>项目资料：{project.title}</span>
-          <button className="icon-btn" title="关闭" onClick={requestClose}>
-            <IconClose />
-          </button>
-        </div>
-
-        <div className="drawer-tabs" data-testid="group-drawer-tabs">
-          <button className={`drawer-tab ${tab === 'settings' ? 'active' : ''}`} data-testid="group-tab-settings" onClick={() => setTab('settings')}>
-            群设置
-          </button>
-          <button className={`drawer-tab ${tab === 'workspace' ? 'active' : ''}`} data-testid="group-tab-workspace" onClick={() => setTab('workspace')}>
-            项目工作台
-          </button>
-          <button className={`drawer-tab ${tab === 'tasks' ? 'active' : ''}`} data-testid="group-tab-tasks" onClick={() => setTab('tasks')}>
-            项目管理
-          </button>
-          <button className={`drawer-tab ${tab === 'members' ? 'active' : ''}`} data-testid="group-tab-members" onClick={() => setTab('members')}>
-            群成员（{members.length}）
-          </button>
-          <button className={`drawer-tab ${tab === 'history' ? 'active' : ''}`} data-testid="group-tab-history" onClick={() => setTab('history')}>
-            会话记录
-          </button>
-          <button className={`drawer-tab ${tab === 'files' ? 'active' : ''}`} data-testid="group-tab-files" onClick={() => setTab('files')}>
-            工作区文件
-          </button>
-        </div>
-
-        {/* 项目工作台资料：纯事实与计划，素材文件仍放在工作区目录 */}
-        <div style={{ display: tab === 'tasks' ? undefined : 'none' }} data-testid="project-tasks-form"><ProjectTaskBoard projectId={project.id} /></div>
-        <div style={{ display: tab === 'workspace' ? undefined : 'none' }} data-testid="project-workspace-form">
-          <div className="drawer-sec">目标与内容框架</div>
-          <div className="group-settings">
-            <label className="field">
-              <span>阶段目标</span>
-              <textarea rows={3} value={workspaceState.goal} data-testid="project-workspace-goal" onChange={(e) => setWorkspaceState((s) => ({ ...s, goal: e.target.value }))} placeholder="这个项目当前要达成什么结果？" />
-            </label>
-            <label className="field">
-              <span>销售对象</span>
-              <input value={workspaceState.salesAudience} data-testid="project-workspace-sales-audience" onChange={(e) => setWorkspaceState((s) => ({ ...s, salesAudience: e.target.value }))} placeholder="例如：渠道商与集成商" />
-            </label>
-            <label className="field">
-              <span>内容呈现对象</span>
-              <input value={workspaceState.storyAudience} data-testid="project-workspace-story-audience" onChange={(e) => setWorkspaceState((s) => ({ ...s, storyAudience: e.target.value }))} placeholder="例如：一线医护人员" />
-            </label>
-            <label className="field">
-              <span>传播渠道（每行一个）</span>
-              <textarea rows={2} value={workspaceState.channels.join('\n')} data-testid="project-workspace-channels" onChange={(e) => setWorkspaceState((s) => ({ ...s, channels: e.target.value.split('\n') }))} placeholder="微信私聊\n渠道群转发\n客户现场讲解" />
-            </label>
-            <label className="field">
-              <span>系统介绍大纲（每行一章，作为完整 PPT 的内容框架）</span>
-              <textarea rows={7} value={workspaceState.systemOutline.join('\n')} data-testid="project-workspace-outline" onChange={(e) => setWorkspaceState((s) => ({ ...s, systemOutline: e.target.value.split('\n') }))} placeholder="系统解决的问题\n整体方案\n功能与医护使用场景\n对接与部署" />
-            </label>
-            <label className="field">
-              <span>每周推进节奏</span>
-              <textarea rows={2} value={workspaceState.weeklyCadence} data-testid="project-workspace-cadence" onChange={(e) => setWorkspaceState((s) => ({ ...s, weeklyCadence: e.target.value }))} placeholder="例如：每周提交一批选题与素材缺口；时间可后续设置" />
-            </label>
-            <div className="settings-actions" style={{ justifyContent: 'flex-start', marginTop: 4 }}>
-              <button className="btn primary" data-testid="project-workspace-save" disabled={saving || !title.trim() || !leaderId} onClick={() => void saveSettings()}>
-                {saving ? '保存中…' : '保存项目资料'}
-              </button>
-              {saveMsg && <span className="settings-tip" data-testid="project-workspace-save-result">{saveMsg}</span>}
-            </div>
-            <div className="settings-actions" style={{ justifyContent: 'flex-start', marginTop: 8 }}>
-              <button className="btn" data-testid="project-document-charter" onClick={() => void generateProjectDocument('charter')}>生成立项文档草稿</button>
-              <button className="btn" data-testid="project-document-closeout" onClick={() => void generateProjectDocument('closeout')}>生成结项核查草稿</button>
-            </div>
-            <label className="field"><span>周报统计区间</span><div className="settings-actions"><input data-testid="project-weekly-start" type="date" value={weeklyStartDate} onChange={(event) => setWeeklyStartDate(event.target.value)} /><input data-testid="project-weekly-end" type="date" value={weeklyEndDate} onChange={(event) => setWeeklyEndDate(event.target.value)} /><button className="btn" data-testid="project-document-weekly" disabled={!weeklyStartDate || !weeklyEndDate || weeklyStartDate > weeklyEndDate} onClick={() => void generateProjectDocument('weekly_report')}>生成项目周报草稿</button></div></label>
-            {documentMsg && <p className="settings-tip" role="status" data-testid="project-document-result">{documentMsg}</p>}
+      <section className="drawer drawer-wide project-drawer" role="dialog" aria-modal="true" aria-label={project.title + ' 项目群资料'} onClick={(event) => event.stopPropagation()}>
+        <header className="project-drawer-head">
+          <div className="project-drawer-identity">
+            <span className="project-drawer-icon">{project.icon || '👥'}</span>
+            <div><strong>{project.title}</strong><small>项目群资料 · {members.length} 位成员</small></div>
           </div>
-          <ProjectReportsPanel project={project} state={workspaceState} onState={setWorkspaceState} />
-          <div className="drawer-sec">宣传选题与成品</div>
-          <div className="group-settings campaign-workspace" data-testid="campaign-workspace">
-            <section className="campaign-assets" data-testid="project-assets">
-              <strong>项目素材库</strong>
-              <p className="settings-tip">真实产品素材和生成示意图分开标记；文件需在项目工作区内，截图需来自授权演示环境且先脱敏。</p>
-              <label className="field"><span>扫描候选目录（工作区相对路径）</span><input data-testid="asset-scan-directory" value={assetScanDirectory} onChange={(e) => setAssetScanDirectory(e.target.value)} placeholder="素材" /></label>
-              <button className="btn" data-testid="asset-scan" disabled={saving || !assetScanDirectory.trim()} onClick={() => void scanAssetCandidates()}>扫描目录中的新素材</button>
-              <label className="field"><span>当前页面截图场景</span><input data-testid="asset-capture-title" value={captureTitle} onChange={(e) => setCaptureTitle(e.target.value)} placeholder="护士在治疗中接收腕表呼叫" /></label>
-              <label className="field"><span>所属功能</span><input data-testid="asset-capture-feature" value={captureFeature} onChange={(e) => setCaptureFeature(e.target.value)} placeholder="腕表病房呼叫" /></label>
-              <label><input type="checkbox" data-testid="asset-capture-full-page" checked={captureFullPage} onChange={(e) => setCaptureFullPage(e.target.checked)} />截取完整页面</label>
-              <label><input type="checkbox" data-testid="asset-capture-consent" checked={captureRedactionConfirmed} onChange={(e) => setCaptureRedactionConfirmed(e.target.checked)} />我确认当前是获授权的演示页面，已检查并遮挡患者信息</label>
-              <button className="btn" data-testid="asset-capture" disabled={saving || !captureTitle.trim() || !captureRedactionConfirmed} onClick={() => void captureBrowserScreenshot()}>截取当前内置浏览器页面</button>
-              <label className="field"><span>素材名称</span><input data-testid="asset-title" value={assetTitle} onChange={(e) => setAssetTitle(e.target.value)} /></label>
-              <label className="field"><span>工作区相对路径</span><input data-testid="asset-path" value={assetPath} onChange={(e) => setAssetPath(e.target.value)} placeholder="产品资料/腕表正面.png" /></label>
-              <label className="field"><span>所属功能</span><input data-testid="asset-feature" value={assetFeature} onChange={(e) => setAssetFeature(e.target.value)} placeholder="腕表病房呼叫" /></label>
-              <label className="field"><span>素材类型</span><select data-testid="asset-kind" value={assetKind} onChange={(e) => setAssetKind(e.target.value as typeof assetKind)}><option value="image">图片</option><option value="video">视频</option><option value="document">文档</option><option value="demo_url">演示地址</option></select></label>
-              <label className="field"><span>素材来源</span><select data-testid="asset-source" value={assetSource} onChange={(e) => setAssetSource(e.target.value as typeof assetSource)}><option value="user_provided">用户提供</option><option value="authorized_screenshot">授权系统截图</option><option value="generated_illustration">生成示意图</option><option value="demo_material">演示素材</option></select></label>
-              <label className="field"><span>来源说明</span><input data-testid="asset-source-note" value={assetSourceNote} onChange={(e) => setAssetSourceNote(e.target.value)} placeholder="授权环境、生成工具或资料来源" /></label>
-              <label><input type="checkbox" data-testid="asset-real" checked={assetReal} onChange={(e) => setAssetReal(e.target.checked)} />真实产品素材（非示意图）</label>
-              <button className="btn" data-testid="asset-register" disabled={saving || !assetTitle.trim() || !assetPath.trim()} onClick={() => void registerAsset()}>登记为待确认素材</button>
-              {workspaceState.assets.map((asset) => <div className="campaign-asset-row" key={asset.id} data-testid={`asset-${asset.id}`}><span><strong>{asset.title}</strong> · {{ image: '图片', video: '视频', document: '文档', demo_url: '演示地址' }[asset.kind]} · {asset.feature || '通用'} · {asset.source === 'unverified_candidate' ? '扫描候选·来源待核实' : asset.source === 'generated_illustration' ? '生成示意图' : asset.source === 'authorized_screenshot' ? '授权截图' : asset.isReal ? '真实素材' : '素材'} · {asset.path}{asset.sourceNote ? ` · 来源：${asset.sourceNote}` : ''}</span><span>{asset.confirmed ? '已确认' : <><button className="btn" onClick={() => void reviewAsset(asset.id, true)}>确认可用</button><button className="btn" onClick={() => void reviewAsset(asset.id, false)}>撤销确认</button></>}</span></div>)}
-            </section>
-            <p className="settings-tip">每个版本单独确认方向；只有当前选题已确认且素材缺口清零后才能创建制作任务。成品按新路径登记版本，审核记录与路径会随项目同步。</p>
-            <label className="field"><span>成果线</span>
-              <select data-testid="campaign-kind" value={campaignKind} onChange={(event) => setCampaignKind(event.target.value as CampaignKind)}>
-                <option value="feature_video">单功能视频</option><option value="system_deck">完整系统介绍 PPT</option>
-              </select>
-            </label>
-            <label className="field"><span>选题标题</span><input data-testid="campaign-title" value={campaignTitle} onChange={(event) => setCampaignTitle(event.target.value)} placeholder="例如：腕表让护士不错过病房呼叫" /></label>
-            {campaignKind === 'feature_video' ? <label className="field"><span>具体功能</span><input data-testid="campaign-feature" value={campaignFeature} onChange={(event) => setCampaignFeature(event.target.value)} placeholder="例如：腕表病房呼叫" /></label> : null}
-            <label className="field"><span>一线医护使用场景</span><textarea rows={2} data-testid="campaign-story" value={campaignStory} onChange={(event) => setCampaignStory(event.target.value)} placeholder="描述具体角色、时刻、操作与改善" /></label>
-            <label className="field"><span>传播渠道（每行一个）</span><textarea rows={2} data-testid="campaign-channels" value={campaignChannels} onChange={(event) => setCampaignChannels(event.target.value)} placeholder="微信私聊\n渠道群转发\n现场讲解" /></label>
-            <label className="field"><span>核心卖点（每行一个）</span><textarea rows={3} data-testid="campaign-points" value={campaignPoints} onChange={(event) => setCampaignPoints(event.target.value)} placeholder="只填写已有资料能支持的产品事实" /></label>
-            <label className="field"><span>待补素材（每行一个；清空后才能创建制作任务）</span><textarea rows={2} data-testid="campaign-materials" value={campaignMaterials} onChange={(event) => setCampaignMaterials(event.target.value)} placeholder="腕表实拍 / 已脱敏界面截图 / 接口说明" /></label>
-            <button className="btn primary" data-testid="campaign-create" disabled={saving} onClick={() => void createCampaign()}>{editingCampaignId ? '保存为新选题版本' : '创建待确认选题'}</button>
-            {editingCampaignId ? <button className="btn" data-testid="campaign-edit-cancel" onClick={() => setEditingCampaignId('')}>取消编辑</button> : null}
-            {workspaceState.campaigns.map((campaign) => (
-              <article key={campaign.id} className="campaign-card" data-testid={`campaign-${campaign.id}`}>
-                <div className="campaign-card-head"><strong>{campaign.kind === 'system_deck' ? '完整系统 PPT' : '单功能视频'} · {campaign.title}</strong><span>方向 v{campaign.revision}{campaign.approvedRevision === campaign.revision ? ' · 已确认' : ' · 待确认'}</span></div>
-                <p>功能：{campaign.feature || '完整系统'}；场景：{campaign.story || '未填写'}</p>
-                <p>核心卖点：{campaign.sellingPoints.join('；')}</p>
-                <p>渠道：{campaign.channels.join('、') || '待配置'}{campaign.materialsNeeded.length ? ` · 待补素材：${campaign.materialsNeeded.join('、')}` : ' · 素材缺口已清零'}</p>
-                {campaign.materialsNeeded.map((need) => <div className="campaign-actions" key={need} data-testid={`campaign-material-${campaign.id}`}><span>补齐：{need}</span><select aria-label={`${need} 匹配素材`} data-testid={`campaign-asset-select-${campaign.id}`} value={campaignAssetChoice[`${campaign.id}:${need}`] || ''} onChange={(event) => setCampaignAssetChoice((choices) => ({ ...choices, [`${campaign.id}:${need}`]: event.target.value }))}><option value="">选择已确认素材</option>{workspaceState.assets.filter((asset) => asset.confirmed && (!asset.feature || !campaign.feature || asset.feature === campaign.feature)).map((asset) => <option key={asset.id} value={asset.id}>{asset.title} · {asset.source === 'generated_illustration' ? '示意图' : asset.isReal ? '真实素材' : '素材'}</option>)}</select><button className="btn" disabled={!campaignAssetChoice[`${campaign.id}:${need}`] || saving} data-testid={`campaign-material-resolve-${campaign.id}`} onClick={() => void resolveMaterial(campaign, need)}>使用该素材</button></div>)}
-                {campaign.directionFeedback ? <p className="campaign-feedback">方向意见：{campaign.directionFeedback}</p> : null}
-                <button className="btn" data-testid={`campaign-edit-${campaign.id}`} onClick={() => editCampaign(campaign)}>编辑并提交新版本</button>
-                {campaign.approvedRevision !== campaign.revision ? <div className="campaign-actions">
-                  <input aria-label={`${campaign.title} 审阅意见`} data-testid={`campaign-feedback-${campaign.id}`} value={campaignFeedback[campaign.id] || ''} onChange={(event) => setCampaignFeedback((current) => ({ ...current, [campaign.id]: event.target.value }))} placeholder="退回时填写修改意见" />
-                  <button className="btn" data-testid={`campaign-request-changes-${campaign.id}`} onClick={() => void decideDirection(campaign, 'changes_requested')}>退回修改</button>
-                  <button className="btn primary" data-testid={`campaign-approve-${campaign.id}`} onClick={() => void decideDirection(campaign, 'approve')}>确认方向</button>
-                </div> : null}
-                {campaign.approvedRevision === campaign.revision && !campaign.productionTaskId ? <button className="btn primary" data-testid={`campaign-task-${campaign.id}`} disabled={saving || campaign.materialsNeeded.length > 0} onClick={() => void makeProductionTask(campaign)}>创建制作任务</button> : null}
-                {campaign.productionTaskId ? <p data-testid={`campaign-task-linked-${campaign.id}`}>已关联制作任务 {campaign.productionTaskId}</p> : null}
-                {campaign.approvedRevision === campaign.revision ? <div className="campaign-actions">
-                  <input aria-label={`${campaign.title} 成品路径`} data-testid={`campaign-path-${campaign.id}`} value={deliveryPaths[campaign.id] || ''} onChange={(event) => setDeliveryPaths((current) => ({ ...current, [campaign.id]: event.target.value }))} placeholder="项目工作区中的相对路径，例如 宣传/腕表呼叫/v1.mp4" />
-                  <button className="btn" data-testid={`campaign-submit-${campaign.id}`} disabled={!canStartCampaignProduction(campaign) || !campaign.productionTaskId || saving} onClick={() => void submitDelivery(campaign)}>提交新版本验收</button>
-                </div> : null}
-                {campaign.deliveries.map((delivery) => <div key={delivery.id} className="campaign-delivery" data-testid={`campaign-delivery-${delivery.id}`}>
-                  <span>v{delivery.revision} · {delivery.path} · {delivery.status === 'in_review' ? '待验收' : delivery.status === 'accepted' ? '已验收' : '要求修改'}</span>
-                  {delivery.feedback ? <span className="campaign-feedback">意见：{delivery.feedback}</span> : null}
-                  {delivery.status === 'in_review' ? <div className="campaign-actions">
-                    <input aria-label={`v${delivery.revision} 验收意见`} data-testid={`delivery-feedback-${delivery.id}`} value={campaignFeedback[delivery.id] || ''} onChange={(event) => setCampaignFeedback((current) => ({ ...current, [delivery.id]: event.target.value }))} placeholder="要求修改时填写意见" />
-                    <button className="btn" data-testid={`delivery-request-changes-${delivery.id}`} onClick={() => void decideDelivery(campaign, delivery.id, 'changes_requested')}>要求修改</button>
-                    <button className="btn primary" data-testid={`delivery-accept-${delivery.id}`} onClick={() => void decideDelivery(campaign, delivery.id, 'accepted')}>验收通过</button>
-                  </div> : null}
-                </div>)}
-              </article>
-            ))}
-          </div>
-        </div>
+          <button className="icon-btn" aria-label="关闭" title="关闭" onClick={requestClose}><IconClose /></button>
+        </header>
+        <nav className="drawer-tabs project-drawer-tabs" data-testid="group-drawer-tabs" aria-label="项目群资料分区">
+          {tabs.map((item) => <button key={item.id} className={'drawer-tab' + (tab === item.id ? ' active' : '')}
+            data-testid={'group-tab-' + (item.id === 'profile' ? 'settings' : item.id)} aria-current={tab === item.id ? 'page' : undefined}
+            onClick={() => setTab(item.id)}>{item.label}{item.count != null ? ' · ' + item.count : ''}</button>)}
+        </nav>
+        <main className="project-drawer-body">
+          {tab === 'tasks' && <ProjectTaskBoard projectId={project.id} members={members} onOpenThread={async (threadId) => {
+            await api.invoke(IPC.groupThreadActivate, { projectId: project.id, threadId })
+            await loadGroupHistory(project.id)
+            onClose()
+          }} />}
 
-        {/* 群设置 Tab（切 Tab 不卸载，避免表单草稿丢失） */}
-        <div style={{ display: tab === 'settings' ? undefined : 'none' }}>
-          <div className="drawer-sec">群设置</div>
-          <div className="group-settings" data-testid="group-settings">
-            <label className="field">
-              <span>群名 *</span>
-              <input value={title} data-testid="group-settings-title" onChange={(e) => setTitle(e.target.value)} placeholder="如：Jeff 官网开发" />
-            </label>
-            <label className="field" style={{ width: 110 }}>
-              <span>图标</span>
-              <div className="emoji-input-row">
-                <input value={icon} data-testid="group-settings-icon" onChange={(e) => setIcon(e.target.value)} />
-                <EmojiPickerButton value={icon} onPick={setIcon} testId="group-icon-picker" />
+          {tab === 'profile' && <div className="project-profile-view" data-testid="group-settings">
+            <div className="project-section-heading"><div><h2>群资料与上下文</h2><p>这些设置只属于当前项目群，保存后才会进入群内 Agent 的上下文。</p></div></div>
+            <div className="project-profile-grid">
+              <label className="field"><span>群名称</span><input value={title} data-testid="group-settings-title" onChange={(event) => setTitle(event.target.value)} /></label>
+              <label className="field"><span>群图标</span><div className="emoji-input-row"><input value={icon} data-testid="group-settings-icon" onChange={(event) => setIcon(event.target.value)} /><EmojiPickerButton value={icon} onPick={setIcon} testId="group-icon-picker" /></div></label>
+            </div>
+            <label className="field"><span>群主与协调人</span><select value={leaderId} data-testid="group-settings-leader" onChange={(event) => setLeaderId(event.target.value)}>
+              <option value="">选择群主…</option>{agents.map((agent) => <option key={agent.id} value={agent.id}>{agent.avatar} {agent.name}{agent.builtin ? '（内置）' : ''}</option>)}
+            </select><small className="settings-tip">未指定任务负责人时，由群主协调。明确指定负责人时，任务会直接交给该成员。</small></label>
+            <label className="field"><span>群简介 · 项目背景</span><textarea rows={4} value={description} data-testid="group-settings-desc" onChange={(event) => setDescription(event.target.value)} placeholder="当前项目的背景和事实。不要把成员职责或一次性任务写在这里。" /></label>
+            <label className="field"><span>群规则 · 仅本群有效</span><textarea rows={7} value={groupRules} data-testid="group-settings-rules" onChange={(event) => setGroupRules(event.target.value)} placeholder="本群长期协作方式、质量要求和边界。" /><small className="settings-tip">群规则会作为本群约束注入；具体任务要求写在任务的三个文本域中。</small></label>
+            <label className="field"><span>工作区目录</span><div className="project-path-row"><input value={workspaceDir} data-testid="group-settings-workspace" onChange={(event) => setWorkspaceDir(event.target.value)} placeholder="留空使用 Jeff 默认工作区" /><button className="btn" type="button" onClick={() => void pickDir()}>浏览…</button></div></label>
+            <div className="project-context-links">
+              <div><strong>项目记忆与 AGENTS.md</strong><p>记忆保存长期事实；AGENTS.md 保存只对本项目生效的持续规则。</p></div>
+              <button className="btn" onClick={openProjectMemory}>打开记忆与规则设置</button>
+            </div>
+            <div className="project-form-footer"><span className="settings-tip" role="status">{saveMsg || (dirty ? '有未保存的修改' : '已与当前群资料同步')}</span><button className="btn primary" data-testid="group-settings-save" disabled={saving || !title.trim() || !leaderId || !dirty} onClick={() => void saveProfile()}>{saving ? '保存中…' : '保存群资料'}</button></div>
+            <div className="drawer-danger"><button className="btn danger" data-testid="group-dissolve" onClick={() => void dissolve()}>解散项目群</button></div>
+          </div>}
+
+          {tab === 'members' && <div className="project-members-view">
+            <div className="project-section-heading"><div><h2>群成员与职责</h2><p>职责、模型和思考覆盖只在本群生效；留空时继承 Agent 个人默认。</p></div><button className="btn" data-testid="group-add-member" disabled={!candidateAgents.length} onClick={() => setAddingMember(true)}>添加成员</button></div>
+            <div className="project-member-layout">
+              <div className="project-member-list" role="listbox" aria-label="群成员">
+                {members.map((member) => {
+                  const isLeader = member.agent_id === (leaderId || project.leader_agent_id)
+                  return <button type="button" role="option" aria-selected={selectedMemberId === member.agent_id} key={member.agent_id}
+                    className={'project-member-option' + (selectedMemberId === member.agent_id ? ' selected' : '')}
+                    data-testid={'group-member-' + member.agent_id} onClick={() => setSelectedMemberId(member.agent_id)}>
+                    <Avatar emoji={member.avatar} size={34} agentId={member.agent_id} /><span><strong>{member.name}</strong><small>{projectRoleLabel(isLeader ? 'leader' : member.role)}</small></span>
+                    {!isLeader && <span className="project-member-remove" onClick={async (event) => {
+                      event.stopPropagation()
+                      if (!(await saveProfile())) return
+                      await api.invoke(IPC.projectRemoveMember, { projectId: project.id, agentId: member.agent_id })
+                      await refreshMembers(); await refreshProjects()
+                    }}>移出</span>}
+                  </button>
+                })}
               </div>
-            </label>
-            <label className="field">
-              <span>群简介 / 项目背景（注入群聊 system）</span>
-              <textarea
-                rows={5}
-                value={description}
-                data-testid="group-settings-desc"
-                onChange={(e) => setDescription(e.target.value)}
-                placeholder="项目背景、约束、验收口径…会作为固定上下文注入群聊"
-              />
-            </label>
-            <label className="field">
-              <span>群规则（只在本群生效）</span>
-              <textarea
-                rows={8}
-                value={groupRules}
-                data-testid="group-settings-rules"
-                onChange={(e) => setGroupRules(e.target.value)}
-                placeholder="定义本群要达成的目标、协作流程、任务分配方式、验收口径和边界。群内身份与分工只在本群有效。"
-              />
-              <small className="settings-tip">这是群级 System Prompt；不会改写成员的个人身份指令。</small>
-            </label>
-            <label className="field">
-              <span>工作空间目录（不选 = Jeff 默认工作区）</span>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <input
-                  value={workspaceDir}
-                  data-testid="group-settings-workspace"
-                  onChange={(e) => setWorkspaceDir(e.target.value)}
-                  placeholder="留空 = Jeff 默认工作区"
-                  style={{ flex: 1 }}
-                />
-                <button className="btn" type="button" onClick={() => void pickDir()}>
-                  浏览…
-                </button>
-              </div>
-            </label>
-            <label className="field">
-              <span>群主（leader）*</span>
-              <select value={leaderId} data-testid="group-settings-leader" onChange={(e) => setLeaderId(e.target.value)}>
-                <option value="">选择智能体…</option>
-                {agents.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {a.avatar} {a.name}
-                    {a.builtin ? '（内置）' : ''}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <div className="settings-actions" style={{ justifyContent: 'flex-start', marginTop: 4 }}>
-              <button className="btn primary" data-testid="group-settings-save" disabled={saving || !title.trim() || !leaderId} onClick={() => void saveSettings()}>
-                {saving ? '保存中…' : '保存群设置'}
-              </button>
-              {saveMsg && <span className="settings-tip">{saveMsg}</span>}
-            </div>
-          </div>
-
-          <div className="drawer-danger">
-            <button className="btn danger" data-testid="group-dissolve" onClick={() => void dissolve()}>
-              解散群
-            </button>
-          </div>
-        </div>
-
-        {/* 群成员 Tab */}
-        <div style={{ display: tab === 'members' ? undefined : 'none' }}>
-          <div className="drawer-sec">
-            成员（{members.length}）
-            <button className="text-btn" data-testid="group-add-member" disabled={candidateAgents.length === 0} onClick={() => setAddingMember(true)}>
-              + 添加成员
-            </button>
-          </div>
-          <div className="member-list">
-            {members.map((m) => {
-              const isLeader = m.agent_id === (leaderId || project.leader_agent_id)
-              return (
-                <div key={m.agent_id} className={`member-row ${selectedMemberId === m.agent_id ? 'selected' : ''}`} data-testid={`group-member-${m.agent_id}`}>
-                  <Avatar emoji={m.avatar} size={30} agentId={m.agent_id} />
-                  <button className="text-btn member-name" onClick={() => setSelectedMemberId(m.agent_id)} aria-pressed={selectedMemberId === m.agent_id}>{m.name}</button>
-                  <span className={`tag ${isLeader ? 'tag-green' : ''}`}>{projectRoleLabel(isLeader ? 'leader' : m.role)}</span>
-                  {!isLeader && (
-                    <button
-                      className="text-btn danger"
-                      onClick={async () => {
-                        if (!(await persistWorkspace(workspaceState))) return
-                        await api.invoke(IPC.projectRemoveMember, { projectId: project.id, agentId: m.agent_id })
-                        setMembers((prev) => prev.filter((x) => x.agent_id !== m.agent_id))
-                        await refreshProjects()
-                      }}
-                    >
-                      移出
-                    </button>
-                  )}
-                </div>
-              )
-            })}
-          </div>
-          {selectedMember && (
-            <section className="group-settings" data-testid="group-member-config">
-              <div className="drawer-sec">{selectedMember.name} · 本群配置</div>
-              <p className="settings-tip">这些覆盖只用于「{project.title}」；留空时继承该 Agent 的个人默认设置。个人 Prompt、其他群和私聊不会改变。</p>
-              <label className="field">
-                <span>本群职责</span>
-                <textarea rows={4} data-testid="group-member-duties" value={selectedMember.duties} onChange={(event) => setMembers((current) => current.map((member) => member.agent_id === selectedMember.agent_id ? { ...member, duties: event.target.value } : member))} placeholder="描述该成员在本群负责的工作；留空表示由群规则统一分配" />
-              </label>
-              <label className="field">
-                <span>本群模型 · {selectedMember.execution_engine === 'opencode' ? 'OpenCode（Jeff）' : selectedMember.execution_engine === 'opencode-system' ? 'OpenCode（系统）' : selectedMember.execution_engine}</span>
-                {selectedMember.execution_engine === 'opencode' ? (
-                  <ModelPickerCombo value={selectedMember.model_override || ''} onChange={(value) => setMembers((current) => current.map((member) => member.agent_id === selectedMember.agent_id ? { ...member, model_override: value || null } : member))} placeholderEmpty="继承个人默认模型" />
-                ) : (
-                  <>
-                    <input data-testid="group-member-model" value={selectedMember.model_override || ''} onChange={(event) => setMembers((current) => current.map((member) => member.agent_id === selectedMember.agent_id ? { ...member, model_override: event.target.value || null } : member))} list={`group-engine-models-${selectedMember.agent_id}`} placeholder="留空继承个人默认模型" />
-                    <datalist id={`group-engine-models-${selectedMember.agent_id}`}>{engineModels.map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}</datalist>
-                  </>
-                )}
-              </label>
-              {selectedMember.execution_engine !== 'cursor' && (
-                <label className="field">
-                  <span>本群思考程度</span>
-                  <select data-testid="group-member-thinking" value={selectedMember.thinking_override || ''} onChange={(event) => setMembers((current) => current.map((member) => member.agent_id === selectedMember.agent_id ? { ...member, thinking_override: event.target.value || null } : member))}>
-                    <option value="">继承个人默认</option>
-                    <option value="none">关闭思考</option>
-                    <option value="low">低</option>
-                    <option value="medium">中</option>
-                    <option value="high">高</option>
-                    <option value="max">最大</option>
-                  </select>
+              {selectedMember ? <section className="project-member-editor" data-testid="group-member-config">
+                <div className="project-member-editor-head"><Avatar emoji={selectedMember.avatar} size={40} agentId={selectedMember.agent_id} /><div><strong>{selectedMember.name}</strong><span>{selectedMember.execution_engine} · 本群配置</span></div></div>
+                <label className="field"><span>本群职责</span><textarea rows={5} data-testid="group-member-duties" value={selectedMember.duties} onChange={(event) => setMembers((list) => list.map((member) => member.agent_id === selectedMember.agent_id ? { ...member, duties: event.target.value } : member))} placeholder="描述这位成员在当前项目群中承担的责任。" /></label>
+                <label className="field"><span>模型覆盖 <small>· {selectedMember.execution_engine === 'opencode' ? 'OpenCode（Jeff）' : selectedMember.execution_engine}</small></span>
+                  {selectedMember.execution_engine === 'opencode'
+                    ? <ModelPickerCombo value={selectedMember.model_override || ''} onChange={(value) => setMembers((list) => list.map((member) => member.agent_id === selectedMember.agent_id ? { ...member, model_override: value || null } : member))} placeholderEmpty="继承个人默认模型" />
+                    : <><input data-testid="group-member-model" value={selectedMember.model_override || ''} onChange={(event) => setMembers((list) => list.map((member) => member.agent_id === selectedMember.agent_id ? { ...member, model_override: event.target.value || null } : member))} list={'group-models-' + selectedMember.agent_id} placeholder="留空继承个人默认模型" /><datalist id={'group-models-' + selectedMember.agent_id}>{engineModels.map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}</datalist></>}
                 </label>
-              )}
-              <div className="settings-actions" style={{ justifyContent: 'flex-start', marginTop: 4 }}>
-                <button className="btn primary" data-testid="group-member-config-save" disabled={saving || !title.trim() || !leaderId} onClick={() => void saveSettings()}>{saving ? '保存中…' : '保存群规则与成员配置'}</button>
-                {saveMsg && <span className="settings-tip" role="status">{saveMsg}</span>}
-              </div>
-            </section>
-          )}
-        </div>
+                {selectedMember.execution_engine !== 'cursor' && <label className="field"><span>思考程度</span><select data-testid="group-member-thinking" value={selectedMember.thinking_override || ''} onChange={(event) => setMembers((list) => list.map((member) => member.agent_id === selectedMember.agent_id ? { ...member, thinking_override: event.target.value || null } : member))}><option value="">继承个人默认</option><option value="none">关闭</option><option value="low">低</option><option value="medium">中</option><option value="high">高</option><option value="max">最大</option></select></label>}
+                <div className="project-form-footer"><span className="settings-tip" role="status">{saveMsg || '当前有效设置按 Agent 默认与群内覆盖合成'}</span><button className="btn primary" data-testid="group-member-config-save" disabled={saving || !dirty} onClick={() => void saveProfile()}>{saving ? '保存中…' : '保存成员配置'}</button></div>
+              </section> : <div className="empty-card">{membersLoading ? '正在读取群成员…' : saveMsg || '先添加一位成员，或从左侧选择成员查看职责与配置。'}</div>}
+            </div>
+          </div>}
 
-        {/* 会话记录 Tab：与私聊「资料 → 聊天记录」共用同一面板（列表 + 预览，交互一致） */}
-        <div style={{ display: tab === 'history' ? undefined : 'none' }}>
-          <SessionHistoryPanel
-            busy={busy}
-            emptyText="还没有会话"
-            tip="每一段都是整个项目群的对话历史（可由不同成员执行）；可改标题、继续或新开。"
-            workspaceDir={workspaceForFiles}
-            testId="group-chat-history"
-            newBtnTestId="group-new-thread"
-            titleTestIdPrefix="thread-title-"
-            loadItems={async () => (await api.invoke<{ threads: GroupThreadBrief[] }>(IPC.groupThreadsList, { projectId: project.id })).threads}
-            loadPreview={async (threadId) =>
-              (await api.invoke<{ messages: GroupMessage[] }>(IPC.groupThreadPreview, { projectId: project.id, threadId })).messages
-            }
-            rename={async (threadId, next) => {
-              await api.invoke(IPC.groupThreadRename, { projectId: project.id, threadId, title: next })
-            }}
-            activate={async (threadId) => {
-              await api.invoke(IPC.groupThreadActivate, { projectId: project.id, threadId })
-              await loadGroupHistory(project.id)
-              onClose()
-            }}
-            remove={async (threadId) => {
-              await api.invoke(IPC.groupThreadDelete, { projectId: project.id, threadId })
-            }}
-            createNew={async () => {
-              await api.invoke(IPC.groupThreadNew, { projectId: project.id })
-              await loadGroupHistory(project.id)
-              onClose()
-            }}
-          />
-        </div>
+          {tab === 'history' && <div className="project-history-view">
+            <div className="project-section-heading"><div><h2>会话记录</h2><p>普通讨论与任务执行各有独立话题；选择任务话题可查看完整执行过程。</p></div></div>
+            <SessionHistoryPanel busy={busy} emptyText="还没有会话" tip="任务执行使用独立话题，普通群聊不会混入任务上下文。"
+              workspaceDir={workspaceForFiles} testId="group-chat-history" newBtnTestId="group-new-thread" titleTestIdPrefix="thread-title-"
+              loadItems={async () => (await api.invoke<{ threads: GroupThreadBrief[] }>(IPC.groupThreadsList, { projectId: project.id })).threads}
+              loadPreview={async (threadId) => (await api.invoke<{ messages: GroupMessage[] }>(IPC.groupThreadPreview, { projectId: project.id, threadId })).messages}
+              rename={async (threadId, next) => { await api.invoke(IPC.groupThreadRename, { projectId: project.id, threadId, title: next }) }}
+              activate={async (threadId) => { await api.invoke(IPC.groupThreadActivate, { projectId: project.id, threadId }); await loadGroupHistory(project.id); onClose() }}
+              remove={async (threadId) => { await api.invoke(IPC.groupThreadDelete, { projectId: project.id, threadId }) }}
+              createNew={async () => { await api.invoke(IPC.groupThreadNew, { projectId: project.id }); await loadGroupHistory(project.id); onClose() }} />
+          </div>}
 
-        {/* 工作区文件 Tab */}
-        {tab === 'files' && (
-          <div className="drawer-files">
-            <p className="settings-tip" style={{ marginTop: 0 }}>
-              浏览当前群工作空间的所有文件与文件夹；点击 .md 用内置预览器打开，其它文件用系统程序打开。
-            </p>
-            <WorkspaceFileTree dir={workspaceForFiles} />
-          </div>
-        )}
-
-        {addingMember && (
-          <AddMemberModal
-            candidates={candidateAgents}
-            onClose={() => setAddingMember(false)}
-            onPick={async (agentId) => {
-              if (!(await persistWorkspace(workspaceState))) return
-              await api.invoke(IPC.projectAddMember, { projectId: project.id, agentId })
-              setAddingMember(false)
-              await refreshMembers()
-              await refreshProjects()
-            }}
-          />
-        )}
-      </div>
+          {tab === 'files' && <div className="project-files-view"><div className="project-section-heading"><div><h2>工作区文件</h2><p>文件树使用已保存的工作区目录，切换临时目录不会改变当前数据源。</p></div></div><WorkspaceFileTree dir={workspaceForFiles} /></div>}
+        </main>
+        {addingMember && <AddMemberModal candidates={candidateAgents} onClose={() => setAddingMember(false)} onPick={async (agentId) => {
+          await api.invoke(IPC.projectAddMember, { projectId: project.id, agentId })
+          setAddingMember(false); await refreshMembers(); await refreshProjects()
+        }} />}
+      </section>
       {guard}
     </div>
   )
 }
 
-function AddMemberModal(props: {
-  candidates: Array<{ id: string; name: string; avatar: string }>
-  onClose: () => void
-  onPick: (agentId: string) => Promise<void>
-}): React.JSX.Element {
+function AddMemberModal(props: { candidates: Array<{ id: string; name: string; avatar: string }>; onClose: () => void; onPick: (agentId: string) => Promise<void> }): React.JSX.Element {
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') props.onClose()
-    }
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') props.onClose() }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
   }, [props.onClose])
-
-  return (
-    <div className="modal-mask" data-testid="group-add-member-modal" onClick={props.onClose}>
-      <div className="modal form" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-title">添加工作者</div>
-        {props.candidates.length === 0 ? (
-          <p className="settings-tip">没有可添加的智能体了。先到「通讯录」或找小杰创建。</p>
-        ) : (
-          <div className="member-picker">
-            {props.candidates.map((a) => (
-              <button key={a.id} className="member-chip" type="button" onClick={() => void props.onPick(a.id)}>
-                {a.avatar} {a.name}
-              </button>
-            ))}
-          </div>
-        )}
-        <div className="modal-actions">
-          <button className="btn" onClick={props.onClose}>
-            取消
-          </button>
-        </div>
-      </div>
-    </div>
-  )
+  return <div className="modal-mask" data-testid="group-add-member-modal" onClick={props.onClose}><div className="modal form" onClick={(event) => event.stopPropagation()}>
+    <div className="modal-title">添加群成员</div>
+    {!props.candidates.length ? <p className="settings-tip">没有可添加的智能体，请先在通讯录中创建。</p> :
+      <div className="member-picker">{props.candidates.map((agent) => <button key={agent.id} className="member-chip" type="button" onClick={() => void props.onPick(agent.id)}>{agent.avatar} {agent.name}</button>)}</div>}
+  </div></div>
 }

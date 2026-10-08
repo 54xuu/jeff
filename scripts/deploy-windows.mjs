@@ -84,6 +84,12 @@ export function preferConfiguredUsb(devices, usbSerial) {
   return Boolean(usbSerial && devices.some((device) => device.serial === usbSerial && device.state === 'device'))
 }
 
+export function windowsRunnerDestination(incomingPath) {
+  const normalized = incomingPath.replaceAll('\\', '/').replace(/\/+$/, '')
+  if (!normalized.endsWith('/incoming')) throw new Error('Windows incoming path must end with /incoming')
+  return `${normalized.slice(0, -'/incoming'.length)}/desktop-runner.cjs`
+}
+
 function run(label, command, args, options = {}) {
   console.log(`\n[deploy] ${label}`)
   const result = spawnSync(command, args, { cwd: ROOT, stdio: 'inherit', ...options })
@@ -320,6 +326,8 @@ async function main() {
   }
   const requestFile = path.join(runDir, `${started}.request.json`)
   fs.writeFileSync(requestFile, JSON.stringify(request, null, 2))
+  const desktopRunner = path.join(ROOT, 'deploy/windows/desktop-runner.cjs')
+  scp(config, [desktopRunner], windowsRunnerDestination(config.incomingPath))
   // Upload the request marker last; the Windows worker only starts after every referenced file exists.
   scp(config, [...files, path.join(runDir, 'manifest.json'), suiteFile, requestFile], config.incomingPath)
   sshOutput(config, `schtasks.exe /Run /TN JeffDeployWorker`)

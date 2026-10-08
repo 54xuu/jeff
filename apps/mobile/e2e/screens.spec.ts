@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test'
 
-type MockProject = { id: string; title: string; description: string; icon: string; status: string; leader_agent_id: string; workspace_dir: string; workspace_state?: string; updated_at: number; memberCount: number }
+type MockProject = { id: string; title: string; description: string; system_prompt?: string; icon: string; status: string; leader_agent_id: string; workspace_dir: string; updated_at: number; memberCount: number }
 type MockPhone = { desktops: Map<string, unknown>; activeId: string; listeners: ((event: unknown) => void)[]; init: () => Promise<void>; invoke: (channel: string, payload?: Record<string, unknown>) => Promise<any> }
 declare global { interface Window { __phone: MockPhone; __push: (event: unknown) => void } }
 
@@ -106,13 +106,13 @@ test.describe('1.11 统一风格全屏回归', () => {
                 case 'projects:list':
                   return projects
                 case 'project:members':
-                  return []
+                  return [{ agent_id: 'a1', role: 'member', name: agents.find((agent: any) => agent.id === 'a1')?.name || '成员', avatar: '🔧', duties: '负责当前群的执行与复核。', model_override: null, thinking_override: null, execution_engine: 'opencode', engine_model: 'test-model', model_provider: 'p', model_id: 'm', thinking: '' }]
                 case 'tasks:list':
                   return taskRows.filter((task) => task.project_id === p.projectId)
                 case 'task:save': {
                   let task = p.id ? taskRows.find((item) => item.id === p.id) : undefined
                   if (!task) {
-                    task = { id: `task_mobile_${taskRows.length + 1}`, project_id: p.project_id, number: taskRows.length + 1, key: `JEF-${taskRows.length + 1}`, status: 'todo', priority: 'medium', assignee_type: 'none', assignee_id: '', parent_task_id: null, depends_on: [], evidence_paths: [], acceptance_criteria: '', due_at: null }
+                    task = { id: `task_mobile_${taskRows.length + 1}`, project_id: p.project_id, number: taskRows.length + 1, key: `JEF-${taskRows.length + 1}`, status: 'todo', priority: 'medium', assignee_type: 'none', assignee_id: '', parent_task_id: null, depends_on: [], evidence_paths: [], acceptance_criteria: '', goal: '', description: '', result_summary: '', submission_id: '', submitted_spec_hash: '', review_feedback: '', reviewed_submission_id: '', created_at: Date.now(), updated_at: Date.now(), due_at: null }
                     taskRows.push(task)
                   }
                   Object.assign(task, p, { depends_on: p.depends_on ?? task.depends_on, due_at: p.due_at ?? task.due_at })
@@ -124,60 +124,8 @@ test.describe('1.11 统一风格全屏回归', () => {
                     if (project) Object.assign(project, p)
                     return { ...project, ...p, updated_at: Date.now(), memberCount: 3 }
                   }
-                case 'project:document':
-                  return { kind: p.kind, path: `/home/e2e/workspace/项目文档/${p.kind}.md`, content: '# 草稿', missing: [] }
                 case 'siyuan:search':
                   return [{ docId: '20261005123456-abc1234', title: '测试日报 2026-10-05', path: '/日报/2026/10/05', snippet: '完成接口联调' }]
-                case 'project:report': {
-                  const project = projects.find((x: MockProject) => x.id === p.projectId)
-                  if (!project) throw new Error('project missing')
-                  const state = JSON.parse(project.workspace_state || '{}')
-                  state.reportSources ||= []
-                  state.reportTemplates ||= []
-                  if (p.action === 'confirm_sources') state.reportSources.push({ ...p.sources[0], confirmedAt: Date.now() })
-                  else if (p.action === 'remove_source') state.reportSources = state.reportSources.filter((source: any) => source.docId !== p.docId)
-                  else if (p.action === 'save_template') state.reportTemplates.unshift({ id: p.template.id || 'rpt_mobile_e2e', ...p.template, updatedAt: Date.now() })
-                  else if (p.action === 'generate') return { path: '/home/e2e/workspace/项目文档/报告/测试报告.md', content: '# 测试报告', templateId: p.templateId, sourceDocIds: state.reportSources.map((source: any) => source.docId) }
-                  project.workspace_state = JSON.stringify(state)
-                  return { ...project, updated_at: Date.now(), memberCount: 3 }
-                }
-                case 'project:campaign': {
-                  const project = projects.find((x: MockProject) => x.id === p.projectId)
-                  if (!project) throw new Error('project missing')
-                  const state = JSON.parse(project.workspace_state || '{}')
-                  state.schemaVersion = 2
-                  state.campaigns ||= []
-                  state.assets ||= []
-                  if (p.action === 'create') {
-                    state.campaigns.unshift({
-                      id: 'cmp_mobile_e2e', kind: p.kind, title: p.title, feature: p.feature, story: p.story,
-                      channels: p.channels, sellingPoints: p.sellingPoints, materialsNeeded: p.materialsNeeded,
-                      assetIds: [], revision: 1, approvedRevision: null, directionFeedback: '', directionReviews: [],
-                      productionTaskId: '', updatedAt: Date.now(), deliveries: [],
-                    })
-                  } else {
-                    const campaign = state.campaigns.find((x: any) => x.id === p.campaignId)
-                    if (p.action === 'scan_asset_candidates') state.assets.unshift({ id: 'asset_mobile_candidate', title: '病房呼叫场景', kind: 'image', feature: '', path: `${p.directory}/ward.png`, source: 'unverified_candidate', sourceNote: '扫描候选，待核实', isReal: false, confirmed: false, createdAt: Date.now() })
-                    else if (p.action === 'capture_browser_screenshot') state.assets.unshift({ id: 'asset_mobile_capture', title: p.title, kind: 'image', feature: p.feature, path: '素材/浏览器截图/e2e.png', source: 'authorized_screenshot', sourceNote: '授权 E2E 页面', isReal: true, confirmed: false, createdAt: Date.now() })
-                    else if (p.action === 'register_asset') state.assets.unshift({ id: 'asset_mobile_e2e', ...p, confirmed: false, createdAt: Date.now() })
-                    else if (p.action === 'review_asset') Object.assign(state.assets.find((asset: any) => asset.id === p.assetId), { confirmed: p.confirmed })
-                    else if (p.action === 'resolve_material') {
-                      const campaign = state.campaigns.find((x: any) => x.id === p.campaignId)
-                      campaign.materialsNeeded = campaign.materialsNeeded.filter((need: string) => need !== p.need)
-                      campaign.assetIds.push(p.assetId)
-                    }
-                    else if (p.action === 'update') {
-                      Object.assign(campaign, p, { assetIds: [], revision: campaign.revision + 1, approvedRevision: null, directionFeedback: '', productionTaskId: '' })
-                    } else if (p.action === 'review_direction') {
-                      campaign.approvedRevision = p.decision === 'approve' ? campaign.revision : null
-                      campaign.directionFeedback = p.feedback || ''
-                    } else if (p.action === 'create_task') campaign.productionTaskId = 'task_mobile_e2e'
-                    else if (p.action === 'submit_delivery') campaign.deliveries.unshift({ id: 'out_mobile_e2e', revision: 1, path: p.path, status: 'in_review', submittedAt: Date.now(), reviewedAt: null, feedback: '' })
-                    else if (p.action === 'review_delivery') Object.assign(campaign.deliveries.find((d: any) => d.id === p.deliveryId), { status: p.decision, feedback: p.feedback || '', reviewedAt: Date.now() })
-                  }
-                  project.workspace_state = JSON.stringify(state)
-                  return { ...project, updated_at: Date.now(), memberCount: 3 }
-                }
                 case 'chat:history':
                   return chat[''] || []
                 case 'group:history':
@@ -287,7 +235,7 @@ test.describe('1.11 统一风格全屏回归', () => {
     await expect(page.getByTestId('chat')).toBeVisible()
   })
 
-  test('核心导航与项目工作区：360/390/412 宽度、亮色与暗色均无横向溢出', async ({ page }) => {
+  test('核心导航与项目管理：360/390/412 宽度、亮色与暗色均无横向溢出', async ({ page }) => {
     for (const width of [360, 390, 412]) {
       await page.setViewportSize({ width, height: width === 360 ? 640 : width === 390 ? 844 : 915 })
       for (const colorScheme of ['light', 'dark'] as const) {
@@ -297,10 +245,11 @@ test.describe('1.11 统一风格全屏回归', () => {
         await page.getByTestId('tab-contacts').click()
         await noOverflow(page, `contacts-${width}-${colorScheme}`)
         await openContact(page, 'chat-group-一个很长很长的项目群名字用来测试顶栏按钮不溢出')
-        await page.getByTestId('project-workspace').click()
-        await expect(page.getByTestId('project-workspace-overview')).toBeVisible()
-        await noOverflow(page, `project-overview-${width}-${colorScheme}`)
-        await page.getByTestId('project-section-profile').click()
+        await page.getByTestId('project-management').click()
+        await expect(page.getByTestId('project-management-screen')).toBeVisible()
+        await expect(page.getByTestId('mobile-project-task-list')).toBeVisible()
+        await noOverflow(page, `project-management-${width}-${colorScheme}`)
+        await page.getByTestId('mobile-project-section-profile').click()
         await noOverflow(page, `project-profile-${width}-${colorScheme}`)
       }
     }
@@ -378,90 +327,52 @@ test.describe('1.11 统一风格全屏回归', () => {
     await page.screenshot({ path: '../../.tmp/e2e-screens/04-chat-group.png' })
   })
 
-  test('项目资料：手机修改后可重新打开读取', async ({ page }) => {
+  test('项目管理：独立任务要求、群资料保存重开与资料分区', async ({ page }) => {
     await openContact(page, 'chat-group-一个很长很长的项目群名字用来测试顶栏按钮不溢出')
-    await page.getByTestId('project-workspace').click()
-    await expect(page.getByTestId('project-workspace-screen')).toBeVisible()
-    await expect(page.getByTestId('project-workspace-overview')).toBeVisible()
-    await page.screenshot({ path: '../../.tmp/e2e-screens/14-project-overview.png' })
-    await page.getByTestId('project-section-assets').click()
-    await page.getByTestId('mobile-asset-scan').click()
-    await expect(page.getByTestId('mobile-asset-asset_mobile_candidate')).toContainText('扫描候选·来源待核实')
-    await expect(page.getByTestId('mobile-asset-asset_mobile_candidate')).toContainText('待确认')
-    await page.locator('.project-workspace-screen .btn-nav-back').click()
-    await page.getByTestId('project-section-profile').click()
-    await page.screenshot({ path: '../../.tmp/e2e-screens/15-project-profile.png' })
-    await page.getByTestId('mobile-workspace-goal').fill('完成无声智慧病房系统介绍')
-    await page.getByTestId('mobile-workspace-sales-audience').fill('渠道商与集成商')
-    await page.getByTestId('mobile-workspace-story-audience').fill('一线医护人员')
-    await page.getByTestId('mobile-workspace-outline').fill('系统方案\n病房呼叫\n门诊叫号')
-    await page.getByTestId('mobile-workspace-save').click()
-    await expect(page.getByTestId('mobile-workspace-result')).toHaveText('已保存到项目资料')
-    await page.getByTestId('mobile-project-document-weekly').click()
-    await expect(page.getByTestId('mobile-workspace-result')).toContainText('项目文档/weekly_report.md')
-    await page.locator('.project-workspace-screen .btn-nav-back').click()
-    await page.getByTestId('project-section-profile').click()
-    await expect(page.getByTestId('mobile-workspace-goal')).toHaveValue('完成无声智慧病房系统介绍')
-    await expect(page.getByTestId('mobile-workspace-outline')).toHaveValue('系统方案\n病房呼叫\n门诊叫号')
-    await page.locator('.project-workspace-screen .btn-nav-back').click()
-    await page.getByTestId('project-section-reports').click()
-    await page.getByTestId('mobile-report-query').fill('接口联调')
-    await page.getByTestId('mobile-report-search').click()
-    await page.getByLabel('选择 测试日报 2026-10-05').check()
-    await page.getByTestId('mobile-report-confirm-sources').click()
-    await expect(page.getByTestId('mobile-report-message')).toContainText('已确认 1 篇来源')
-    await page.getByTestId('mobile-report-template-name').fill('测试季报')
-    await page.getByTestId('mobile-report-period').fill('季报')
-    await page.getByTestId('mobile-report-sections').fill('主要进展\n风险与下一步')
-    await page.getByTestId('mobile-report-template-save').click()
-    await expect(page.getByTestId('mobile-report-message')).toContainText('模板已保存')
-    await page.getByTestId('mobile-report-generate').click()
-    await expect(page.getByTestId('mobile-report-result')).toContainText('测试报告')
-    await page.locator('.project-workspace-screen .btn-nav-back').click()
-    await page.getByTestId('project-section-tasks').click()
-    await page.getByTestId('mobile-project-task-title').fill('先完成接口联调')
-    await page.getByTestId('mobile-project-task-create').click()
-    await expect(page.getByTestId('mobile-project-task-task_mobile_1')).toContainText('先完成接口联调')
-    await page.getByTestId('mobile-project-task-title').fill('再做现场验收')
-    await page.getByTestId('mobile-project-task-dependencies').selectOption('task_mobile_1')
-    await page.getByTestId('mobile-project-task-criteria').fill('护士站现场呼叫通过')
-    await page.getByTestId('mobile-project-task-create').click()
-    const mobileSecondTask = page.getByTestId('mobile-project-task-task_mobile_2')
-    await expect(mobileSecondTask).toContainText('等待前置任务')
-    await expect(mobileSecondTask.getByRole('combobox')).toBeDisabled()
-    await page.getByTestId('mobile-project-task-task_mobile_1').getByRole('combobox').selectOption('done')
-    await expect(mobileSecondTask.getByRole('combobox')).toBeEnabled()
-    await page.locator('.project-workspace-screen .btn-nav-back').click()
-    await page.getByTestId('project-section-campaigns').click()
-    await page.getByTestId('mobile-campaign-title').fill('腕表让护士不错过病房呼叫')
-    await page.getByTestId('mobile-campaign-feature').fill('腕表病房呼叫')
-    await page.getByTestId('mobile-campaign-story').fill('护士忙碌时通过腕表接收呼叫')
-    await page.getByTestId('mobile-campaign-points').fill('腕表接收病房呼叫')
-    await page.getByTestId('mobile-campaign-create').click()
-    await expect(page.getByTestId('mobile-campaign-cmp_mobile_e2e')).toBeVisible()
-    await page.getByTestId('mobile-campaign-approve-cmp_mobile_e2e').click()
-    await expect(page.getByTestId('mobile-campaign-task-cmp_mobile_e2e')).toBeVisible()
-    await page.getByTestId('mobile-campaign-edit-cmp_mobile_e2e').click()
-    await page.getByTestId('mobile-campaign-materials').fill('腕表实拍')
-    await page.getByTestId('mobile-campaign-create').click()
-    await expect(page.getByTestId('mobile-campaign-cmp_mobile_e2e')).toContainText('方向 v2 · 待确认')
-    await page.getByTestId('mobile-campaign-approve-cmp_mobile_e2e').click()
-    await expect(page.getByTestId('mobile-campaign-task-cmp_mobile_e2e')).toBeDisabled()
-    await page.getByTestId('mobile-campaign-edit-cmp_mobile_e2e').click()
-    await page.getByTestId('mobile-campaign-materials').fill('')
-    await page.getByTestId('mobile-campaign-create').click()
-    await expect(page.getByTestId('mobile-campaign-cmp_mobile_e2e')).toContainText('方向 v3 · 待确认')
-    await page.getByTestId('mobile-campaign-approve-cmp_mobile_e2e').click()
-    await expect(page.getByTestId('mobile-campaign-task-cmp_mobile_e2e')).toBeEnabled()
-    await page.getByTestId('mobile-campaign-task-cmp_mobile_e2e').click()
-    await expect(page.getByTestId('mobile-campaign-cmp_mobile_e2e')).toContainText('已关联任务 task_mobile_e2e')
-    await page.getByTestId('mobile-campaign-path-cmp_mobile_e2e').fill('宣传/腕表呼叫/v1.mp4')
-    await page.getByTestId('mobile-campaign-submit-cmp_mobile_e2e').click()
-    await expect(page.getByTestId('mobile-campaign-delivery-out_mobile_e2e')).toContainText('待验收')
-    await page.getByTestId('mobile-delivery-feedback-out_mobile_e2e').fill('字幕调整')
-    await page.getByTestId('mobile-campaign-delivery-out_mobile_e2e').getByRole('button', { name: '要求修改' }).click()
-    await expect(page.getByTestId('mobile-campaign-delivery-out_mobile_e2e')).toContainText('要求修改')
-    await noOverflow(page, 'project-workspace')
+    await page.getByTestId('project-management').click()
+    await expect(page.getByTestId('project-management-screen')).toBeVisible()
+    await expect(page.getByTestId('mobile-project-task-list')).toContainText('还没有任务')
+    await page.screenshot({ path: '../../.tmp/e2e-screens/14-project-management.png' })
+
+    await page.getByRole('button', { name: '新建任务' }).click()
+    await page.getByTestId('mobile-project-task-title').fill('整理本周巡检结论')
+    await page.getByTestId('mobile-project-task-goal').fill('让项目组获得一份可复核的周度结果')
+    await page.getByTestId('mobile-project-task-description').fill('汇总巡检记录，标出异常、来源和待跟进事项。')
+    await page.getByTestId('mobile-project-task-criteria').fill('结果文件存在，异常均附来源，待跟进项有负责人。')
+    await expect(page.getByTestId('mobile-project-task-goal')).toBeVisible()
+    await expect(page.getByTestId('mobile-project-task-description')).toBeVisible()
+    await expect(page.getByTestId('mobile-project-task-criteria')).toBeVisible()
+    await page.getByTestId('mobile-project-task-save').click()
+    await expect(page.getByTestId('mobile-project-task-detail')).toContainText('任务已保存。保存不会自动开始执行。')
+    await expect(page.getByTestId('mobile-project-task-detail')).toContainText('让项目组获得一份可复核的周度结果')
+    await expect(page.getByTestId('mobile-project-task-detail')).toContainText('异常均附来源')
+    await page.screenshot({ path: '../../.tmp/e2e-screens/15-project-task.png' })
+
+    await page.getByTestId('mobile-project-section-tasks').click()
+    await expect(page.getByTestId('mobile-project-task-task_mobile_1')).toContainText('整理本周巡检结论')
+    await expect(page.getByTestId('mobile-project-task-task_mobile_1')).toContainText('让项目组获得一份可复核的周度结果')
+
+    await page.getByTestId('mobile-project-section-profile').click()
+    await page.getByTestId('mobile-group-description').fill('仅用于验收的项目背景。')
+    await page.getByTestId('mobile-group-rules').fill('本群规则只约束当前项目群。')
+    await page.getByTestId('mobile-group-profile-save').click()
+    await expect(page.getByRole('status')).toContainText('群资料已保存')
+    await page.screenshot({ path: '../../.tmp/e2e-screens/16-group-profile.png' })
+
+    await page.getByTestId('mobile-project-section-members').click()
+    await expect(page.getByTestId('mobile-group-member-duties')).toHaveValue('负责当前群的执行与复核。')
+    await page.getByTestId('mobile-project-section-history').click()
+    await expect(page.getByTestId('mobile-project-history')).toContainText('普通讨论和任务执行使用不同话题')
+    await page.getByTestId('mobile-project-section-files').click()
+    await expect(page.getByTestId('mobile-project-files')).toBeVisible()
+    await noOverflow(page, 'project-management')
+
+    await page.locator('.project-management-screen .btn-nav-back').click()
+    await page.getByTestId('project-management').click()
+    await page.getByTestId('mobile-project-section-profile').click()
+    await expect(page.getByTestId('mobile-group-description')).toHaveValue('仅用于验收的项目背景。')
+    await expect(page.getByTestId('mobile-group-rules')).toHaveValue('本群规则只约束当前项目群。')
+    await page.locator('.project-management-screen .btn-nav-back').click()
   })
 
   test('流式回复：思考中折叠条与停止按钮，无溢出', async ({ page }) => {
@@ -571,42 +482,6 @@ test.describe('1.11 统一风格全屏回归', () => {
     await page.screenshot({ path: '../../.tmp/e2e-screens/12-file-preview.png' })
   })
 
-  test('手机登记素材并确认来源状态', async ({ page }) => {
-    await openContact(page, 'chat-group-一个很长很长的项目群名字用来测试顶栏按钮不溢出')
-    await expect(page.getByTestId('bubbles')).toBeVisible()
-    await page.getByTestId('project-workspace').click()
-    await expect(page.getByTestId('project-workspace-screen')).toBeVisible()
-    await page.getByTestId('project-section-assets').click()
-    await page.getByTestId('mobile-asset-capture-title').fill('护士查看叫号队列')
-    await page.getByTestId('mobile-asset-capture-feature').fill('门诊叫号')
-    const captureButton = page.getByTestId('mobile-asset-capture')
-    await expect(captureButton).toBeDisabled()
-    await page.getByTestId('mobile-asset-capture-consent').check()
-    await captureButton.click()
-    await expect(page.getByTestId('mobile-asset-asset_mobile_capture')).toContainText('授权截图')
-    await page.getByTestId('mobile-asset-title').fill('腕表正面照片')
-    await page.getByTestId('mobile-asset-path').fill('assets/watch.png')
-    await page.getByTestId('mobile-asset-feature').fill('病房呼叫')
-    await page.getByTestId('mobile-asset-register').click()
-    await expect(page.getByTestId('mobile-asset-asset_mobile_e2e')).toContainText('待确认')
-    await page.getByTestId('mobile-asset-asset_mobile_e2e').getByRole('button', { name: '确认可用' }).click()
-    await expect(page.getByTestId('mobile-asset-asset_mobile_e2e')).toContainText('已确认')
-    await page.locator('.project-workspace-screen .btn-nav-back').click()
-    await page.getByTestId('project-section-campaigns').click()
-    await page.getByTestId('mobile-campaign-title').fill('护士接收病房呼叫')
-    await page.getByTestId('mobile-campaign-feature').fill('病房呼叫')
-    await page.getByTestId('mobile-campaign-points').fill('及时接收呼叫')
-    await page.getByTestId('mobile-campaign-materials').fill('腕表实拍')
-    await page.getByTestId('mobile-campaign-create').click()
-    const card = page.getByTestId('mobile-campaign-cmp_mobile_e2e')
-    await expect(card).toContainText('待补素材：腕表实拍')
-    await page.getByTestId('mobile-campaign-approve-cmp_mobile_e2e').click()
-    const task = page.getByTestId('mobile-campaign-task-cmp_mobile_e2e')
-    await expect(task).toBeDisabled()
-    await page.getByTestId('mobile-campaign-asset-select-cmp_mobile_e2e').selectOption('asset_mobile_e2e')
-    await page.getByTestId('mobile-campaign-material-resolve-cmp_mobile_e2e').click()
-    await expect(task).toBeEnabled()
-  })
   test('手机记忆范围搜索和保存，长列表不撑大弹窗', async ({ page }) => {
     await page.getByTestId('tab-me').click()
     await page.getByTestId('mobile-memory-settings').click()

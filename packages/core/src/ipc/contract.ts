@@ -3,6 +3,7 @@ export * from '../engines/contract.js'
 import type { ChatMsg } from '../chat/private.js'
 import type { ProviderSetting } from '../oc/configWriter.js'
 import type { ChatPluginInvoke } from '../plugins/invoke.js'
+import type { PromptContext, PromptSnapshotRecord } from '../prompt/context.js'
 
 // 渲染进程把 @jeff/core 别名到本文件（避免 node 依赖进浏览器 bundle）；
 // parseMcpServersJson / parseMcpServerJson / McpServerCfg 是纯 TS，从这里再导出供渲染层使用。
@@ -55,13 +56,9 @@ export const IPC = {
   chatStop: 'chat:stop',
   projectsList: 'projects:list',
   projectSave: 'project:save',
-  projectCampaign: 'project:campaign',
-  projectDocument: 'project:document',
   siyuanConfigGet: 'siyuan:configGet',
   siyuanConfigSave: 'siyuan:configSave',
   siyuanSearch: 'siyuan:search',
-  siyuanExport: 'siyuan:export',
-  projectReport: 'project:report',
   projectDelete: 'project:delete',
   projectMembers: 'project:members',
   projectAddMember: 'project:addMember',
@@ -69,6 +66,10 @@ export const IPC = {
   tasksList: 'tasks:list',
   taskSave: 'task:save',
   taskDelete: 'task:delete',
+  taskStart: 'task:start',
+  taskStop: 'task:stop',
+  taskRuns: 'task:runs',
+  taskReview: 'task:review',
   groupHistory: 'group:history',
   groupSend: 'group:send',
   groupStop: 'group:stop',
@@ -116,6 +117,7 @@ export const IPC = {
   syncStatus: 'sync:status',
   syncConfigure: 'sync:configure',
   contextPreview: 'context:preview',
+  contextPromptDetails: 'context:prompt-details',
   contextCompress: 'context:compress',
   // 定时任务
   cronList: 'cron:list',
@@ -196,36 +198,12 @@ export interface ProjectInfo {
   leader_agent_id: string | null
   /** 工作空间目录（空 = 全局 workspace；未指定输出目录时文件都保存到工作空间） */
   workspace_dir: string
-  /** 项目工作台的结构化配置 JSON（不含本机绝对路径） */
-  workspace_state: string
   updated_at: number
   memberCount: number
 }
 
-export type ProjectCampaignCommand =
-  | { projectId: string; action: 'capture_browser_screenshot'; title: string; feature: string; fullPage: boolean; redactionConfirmed: boolean }
-  | { projectId: string; action: 'scan_asset_candidates'; directory: string }
-  | { projectId: string; action: 'register_asset'; title: string; kind: 'image' | 'video' | 'document' | 'demo_url'; feature: string; path: string; source: 'user_provided' | 'authorized_screenshot' | 'generated_illustration' | 'demo_material'; sourceNote: string; isReal: boolean }
-  | { projectId: string; action: 'review_asset'; assetId: string; confirmed: boolean }
-  | { projectId: string; action: 'resolve_material'; campaignId: string; need: string; assetId: string }
-  | { projectId: string; action: 'create'; kind: 'system_deck' | 'feature_video'; title: string; feature?: string; story?: string; channels: string[]; sellingPoints: string[]; materialsNeeded: string[] }
-  | { projectId: string; action: 'update'; campaignId: string; kind: 'system_deck' | 'feature_video'; title: string; feature?: string; story?: string; channels: string[]; sellingPoints: string[]; materialsNeeded: string[] }
-  | { projectId: string; action: 'review_direction'; campaignId: string; decision: 'approve' | 'changes_requested'; feedback?: string }
-  | { projectId: string; action: 'create_task'; campaignId: string }
-  | { projectId: string; action: 'submit_delivery'; campaignId: string; path: string }
-  | { projectId: string; action: 'review_delivery'; campaignId: string; deliveryId: string; decision: 'accepted' | 'changes_requested'; feedback?: string }
-
-export interface ProjectDocumentInfo { kind: 'charter' | 'weekly_report' | 'closeout'; path: string; content: string; missing: string[] }
-export interface ProjectDocumentCommand { projectId: string; kind: 'charter' | 'weekly_report' | 'closeout'; startDate?: string; endDate?: string }
 export interface SiYuanConfigInfo { baseUrl: string; tokenConfigured: boolean }
 export interface SiYuanSearchResult { docId: string; title: string; path: string; snippet: string }
-export interface ProjectReportInfo { path: string; content: string; templateId: string; sourceDocIds: string[] }
-export type ProjectReportCommand =
-  | { projectId: string; action: 'confirm_sources'; query: string; sources: Array<{ docId: string; title: string; path: string; reportDate: string }> }
-  | { projectId: string; action: 'remove_source'; docId: string }
-  | { projectId: string; action: 'save_template'; template: { id?: string; name: string; periodType: string; sections: string[]; outputFormat: 'markdown' } }
-  | { projectId: string; action: 'delete_template'; templateId: string }
-  | { projectId: string; action: 'generate'; templateId: string; startDate: string; endDate: string }
 
 export interface ProjectMember {
   agent_id: string
@@ -258,6 +236,28 @@ export interface TaskInfo {
   depends_on: string[]
   acceptance_criteria: string
   evidence_paths: string[]
+  goal: string
+  result_summary: string
+  submission_id: string
+  submitted_spec_hash: string
+  review_feedback: string
+  reviewed_submission_id: string
+  created_at: number
+  updated_at: number
+  active_run?: TaskRunInfo | null
+}
+
+export interface TaskRunInfo {
+  id: string
+  task_id: string
+  project_id: string
+  thread_id: string
+  agent_id: string
+  status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'interrupted' | 'needs_input'
+  started_at: number
+  finished_at: number | null
+  error: string
+  submission_id: string
 }
 
 export interface GroupMessage extends ChatMsg {
@@ -303,6 +303,8 @@ export interface GroupThreadBrief {
   active: boolean
   /** 消息条数（可选展示） */
   messageCount?: number
+  kind?: 'discussion' | 'task' | 'cron'
+  taskId?: string
 }
 
 export interface AppSettings {
@@ -344,9 +346,18 @@ export interface ContextPreviewInfo {
   threshold: number | null
   autoEnabled: boolean
   system: string | null
+  /** Semantic Jeff-owned blocks for a requested preview (omitted from lightweight usage polling). */
+  promptContext?: PromptContext
+  /** Most recent actual Jeff-owned send for the selected session, when details were requested. */
+  lastPromptSnapshot?: PromptSnapshotRecord | null
   summary: string | null
   activeMessages: ChatMsg[]
   compactedCount: number
+}
+
+export interface ContextPromptDetails {
+  promptContext: PromptContext
+  lastPromptSnapshot: PromptSnapshotRecord | null
 }
 
 export interface AppInfo {
@@ -668,21 +679,21 @@ export type InvokeMap = {
   [IPC.chatNew]: { agentId: string }
   [IPC.chatStop]: { agentId: string }
   [IPC.projectsList]: void
-  [IPC.projectSave]: { id?: string; title: string; description?: string; system_prompt?: string; icon?: string; leader_agent_id?: string | null; memberAgentIds?: string[]; memberConfigs?: Array<{ agent_id: string; duties?: string; model_override?: string | null; thinking_override?: string | null }>; workspace_dir?: string; workspace_state?: string }
-  [IPC.projectCampaign]: ProjectCampaignCommand
-  [IPC.projectDocument]: ProjectDocumentCommand
+  [IPC.projectSave]: { id?: string; title: string; description?: string; system_prompt?: string; icon?: string; leader_agent_id?: string | null; memberAgentIds?: string[]; memberConfigs?: Array<{ agent_id: string; duties?: string; model_override?: string | null; thinking_override?: string | null }>; workspace_dir?: string }
   [IPC.siyuanConfigGet]: void
   [IPC.siyuanConfigSave]: { baseUrl: string; token?: string }
   [IPC.siyuanSearch]: { keyword: string }
-  [IPC.siyuanExport]: { docId: string }
-  [IPC.projectReport]: ProjectReportCommand
   [IPC.projectDelete]: { id: string }
   [IPC.projectMembers]: { projectId: string }
   [IPC.projectAddMember]: { projectId: string; agentId: string; role?: string }
   [IPC.projectRemoveMember]: { projectId: string; agentId: string }
   [IPC.tasksList]: { projectId: string }
-  [IPC.taskSave]: { id?: string; project_id: string; title: string; description?: string; status?: string; priority?: string; assignee_id?: string; due_at?: number | null; depends_on?: string[]; acceptance_criteria?: string; evidence_paths?: string[] }
+  [IPC.taskSave]: { id?: string; project_id: string; title: string; goal?: string; description?: string; priority?: string; assignee_id?: string; due_at?: number | null; depends_on?: string[]; acceptance_criteria?: string; evidence_paths?: string[] }
   [IPC.taskDelete]: { id: string }
+  [IPC.taskStart]: { id: string }
+  [IPC.taskStop]: { id: string; runId: string }
+  [IPC.taskRuns]: { id: string }
+  [IPC.taskReview]: { id: string; action: 'approve' | 'return' | 'reopen'; submissionId?: string; specHash?: string; feedback?: string }
   [IPC.groupHistory]: { projectId: string; limit?: number }
   [IPC.groupSend]: { projectId: string; text: string; model?: { providerID: string; modelID: string }; variant?: string; images?: ChatImage[]; plugin?: ChatPluginInvoke }
   [IPC.groupStop]: { projectId: string }
@@ -738,6 +749,7 @@ export type InvokeMap = {
     tlsVerify?: boolean
   }
   [IPC.contextPreview]: { agentId: string; projectId?: string; model?: { providerID: string; modelID: string } }
+  [IPC.contextPromptDetails]: { agentId: string; projectId?: string }
   [IPC.contextCompress]: { agentId: string; projectId?: string; model?: { providerID: string; modelID: string } }
   [IPC.fsListFiles]: { dir: string }
   [IPC.fsReadFile]: { file: string }

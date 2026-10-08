@@ -3,6 +3,7 @@ import { Agent, fetch as undiciFetch } from 'undici'
 import type { Dispatcher } from 'undici'
 import { sleep } from '../sidecar/manager.js'
 import type { DebugLogFn } from '../logger.js'
+import type { PromptContext } from '../prompt/context.js'
 
 /**
  * 一轮 sendMessage 的默认总预算（POST + 轮询直到 assistant 完成）。
@@ -254,6 +255,8 @@ export class OcClient extends EventEmitter {
     /** 思考档位（模型 variants 的 key；opencode PromptInput.variant 原生支持） */
     variant?: string
     system?: string
+    /** Jeff-only semantic source map; the engine adapter records it locally and never sends it upstream. */
+    promptContext?: PromptContext
     noReply?: boolean
     timeoutMs?: number
   }): Promise<AssistantInfo> {

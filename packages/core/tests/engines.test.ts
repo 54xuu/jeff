@@ -15,6 +15,7 @@ import { REMOTE_POLICY } from '../src/remote/whitelist.js'
 import { IPC } from '../src/ipc/contract.js'
 import { executeJsonCli, executeOpenCode, RpcProcess } from '../src/engines/backends.js'
 import { prepareEnvironment, readSystemOpenCodeProfile, systemOpenCodeModelOptions, systemOpenCodePaths } from '../src/engines/environment.js'
+import { composePromptContext, makePromptBlock, PromptSnapshotStore } from '../src/prompt/context.js'
 
 let root: string
 let db: DB
@@ -183,10 +184,29 @@ let input=''; process.stdin.on('data', b=>input+=b); process.stdin.on('end', asy
     const agent = agentRepo(db).create({ name: '协议测试', execution_engine: 'claude' })
     const received: any[] = []
     bridge.register('jeff_memory', async (args) => { received.push(args); return '服务端已保存' })
-    const client = new EngineClient(0, { db, root, workspace: root, bridge, mcp: () => ({}) })
+    const promptSnapshots = new PromptSnapshotStore(root)
+    const client = new EngineClient(0, { db, root, workspace: root, bridge, mcp: () => ({}), promptSnapshots })
     client.probe = async (id) => ({ id, path: binary, label: id, available: true, capabilities: { images: true, thinking: true, compression: false, contextStats: false } })
     const session = await client.createSession({ agent: agentSlug(agent.id) })
-    await client.sendMessage({ sessionId: session.id, text: '第一轮' })
+    const promptContext = composePromptContext({ agentId: agent.id, sessionId: session.id, projectId: 'project-1', threadId: 'thread-1', taskId: 'task-1', taskRunId: 'run-1' }, [
+      makePromptBlock({ id: 'agent-instructions', kind: 'agent-instructions', scope: 'agent', source: `agent:${agent.id}.instructions`, readStatus: 'loaded', included: true, delivery: 'agent-definition', content: agent.instructions }),
+      makePromptBlock({ id: 'group-rules', kind: 'group-rules', scope: 'project', source: 'project:project-1.rules', readStatus: 'loaded', included: true, content: '群规则：先核对服务端事实。' }),
+      makePromptBlock({ id: 'task', kind: 'task', scope: 'task', source: 'task:task-1', readStatus: 'loaded', included: true, content: '目标：验证真实工具调用。' }),
+    ])
+    await client.sendMessage({ sessionId: session.id, text: '第一轮', system: promptContext.system, promptContext })
+    const snapshot = promptSnapshots.latest(session.id)
+    expect(snapshot).toMatchObject({
+      agentId: agent.id,
+      projectId: 'project-1',
+      threadId: 'thread-1',
+      taskId: 'task-1',
+      taskRunId: 'run-1',
+      engine: 'claude',
+      system: promptContext.system,
+      adapterPrompt: expect.stringContaining('群规则：先核对服务端事实。'),
+    })
+    expect(snapshot?.context.blocks.map((block) => block.kind)).toEqual(['agent-instructions', 'group-rules', 'task'])
+    expect(snapshot?.context.contextHash).toMatch(/^[a-f0-9]{64}$/)
     await client.sendMessage({ sessionId: session.id, text: '第二轮' })
     const history = await client.getMessages(session.id)
     expect(history.map((message) => message.info.role)).toEqual(['user', 'assistant', 'user', 'assistant'])

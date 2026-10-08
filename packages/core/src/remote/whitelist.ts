@@ -25,6 +25,7 @@ const DENY: Record<string, string> = {
   [IPC.remoteFocus]: '桌面端把当前会话推给手机，不接受手机回调这一条',
   [IPC.siyuanConfigGet]: '思源 API 配置与令牌只在桌面端设置页管理',
   [IPC.siyuanConfigSave]: '思源 API 令牌只允许在桌面端本地保存',
+  [IPC.contextPromptDetails]: '完整 Prompt 快照含本机记忆与规则，仅允许在桌面本机查看',
   [IPC.remoteReconnect]: '重新连接中转站只在电脑上操作',
 }
 
@@ -44,8 +45,8 @@ const PUSH = new Set<string>([
   IPC.evChatStream,
 ])
 
-// 宣传审批状态迁移由桌面主进程执行，App 只经现有加密链路调用该契约。
-const ALLOW = new Set<string>([IPC.projectCampaign, IPC.projectDocument, IPC.projectReport, IPC.siyuanSearch, IPC.siyuanExport, IPC.tasksList, IPC.taskSave, IPC.taskDelete])
+// 通用任务执行和验收通过现有加密 IPC 链路；运行历史只含本地诊断信息，远端仅查询状态。
+const ALLOW = new Set<string>([IPC.siyuanSearch, IPC.tasksList, IPC.taskSave, IPC.taskDelete, IPC.taskStart, IPC.taskStop, IPC.taskRuns, IPC.taskReview])
 
 function build(): Record<string, RemoteRule> {
   const out: Record<string, RemoteRule> = {}

@@ -1,9 +1,11 @@
 import type { DB } from '../db/db.js'
-import { agentRepo } from '../db/repos.js'
+import { agentRepo, projectAgentRepo } from '../db/repos.js'
 import { agentSlug } from '../agents/registry.js'
 import type { OcClient } from '../oc/client.js'
-import { agentPromptOpts } from '../util/modelKey.js'
+import { agentPromptOpts, projectMemberPromptOpts } from '../util/modelKey.js'
 import { DEFAULT_SEND_TIMEOUT_MS } from '../oc/client.js'
+import { formatGroupTaskContext, type GroupTaskSnapshot } from './group.js'
+import { composePromptContext, makePromptBlock, type PromptContext } from '../prompt/context.js'
 
 /** 内部工具名（bridge handler 名 = opencode 工具名）。用户不需要记住它。 */
 export const SUBTASK_TOOL = 'jeff_spawn_subtask'
@@ -49,6 +51,9 @@ export interface SubtaskCtx {
   agentId: string
   kind: 'private' | 'group'
   projectId?: string
+  threadId?: string
+  taskRunId?: string
+  taskSnapshot?: GroupTaskSnapshot
   /** 工作空间目录（群有 workspace_dir 时传入；私聊默认走引擎默认工作区，不传） */
   directory?: string
 }
@@ -78,6 +83,14 @@ export class SubtaskRunner {
   private perMessageCount = new Map<string, { count: number; ts: number }>()
   /** 规则/记忆注入（用户级+项目级 AGENTS.md 与记忆），与私聊/群聊回合保持一致；由 JeffCore 注入 */
   buildSystem?: (agentId: string, projectId?: string) => string | undefined
+  buildGroupSystem?: (agentId: string, projectId: string) => string | undefined
+  buildPromptContext?: (agentId: string, projectId: string | undefined, input: {
+    sessionId: string
+    threadId?: string
+    taskSnapshot?: GroupTaskSnapshot
+    taskRunId?: string
+    isSubtask: true
+  }) => PromptContext
   /** 子任务会话创建后回调：调用方据此写 session 元数据（标 isSubtask，供嵌套检测与会话隐藏） */
   onSessionCreated?: (sessionId: string, meta: { kind: 'private' | 'group'; agentId: string; projectId?: string }) => void
   /** 智能体未绑定模型时的会话兜底 */
@@ -121,8 +134,29 @@ export class SubtaskRunner {
     }
     this.onSessionCreated?.(sessionId, { kind: ctx.kind, agentId: ctx.agentId, ...(ctx.projectId ? { projectId: ctx.projectId } : {}) })
 
-    const opts = agentPromptOpts(agent, this.defaultModel?.() ?? null)
-    const system = this.buildSystem?.(ctx.agentId, ctx.projectId)
+    const memberConfig = ctx.kind === 'group' && ctx.projectId
+      ? projectAgentRepo(this.db).listByProject(ctx.projectId).find((row) => row.agent_id === ctx.agentId)
+      : undefined
+    const opts = ctx.kind === 'group'
+      ? projectMemberPromptOpts(agent, memberConfig || {}, this.defaultModel?.() ?? null)
+      : agentPromptOpts(agent, this.defaultModel?.() ?? null)
+    let promptContext = this.buildPromptContext?.(ctx.agentId, ctx.projectId, {
+      sessionId,
+      ...(ctx.threadId ? { threadId: ctx.threadId } : {}),
+      ...(ctx.taskSnapshot ? { taskSnapshot: ctx.taskSnapshot } : {}),
+      ...(ctx.taskRunId ? { taskRunId: ctx.taskRunId } : {}),
+      isSubtask: true,
+    })
+    if (!promptContext) {
+      const legacySystem = ctx.kind === 'group' && ctx.projectId
+        ? this.buildGroupSystem?.(ctx.agentId, ctx.projectId)
+        : this.buildSystem?.(ctx.agentId, ctx.projectId)
+      promptContext = composePromptContext({ agentId: ctx.agentId, sessionId, ...(ctx.projectId ? { projectId: ctx.projectId } : {}), ...(ctx.threadId ? { threadId: ctx.threadId } : {}), ...(ctx.taskRunId ? { taskRunId: ctx.taskRunId } : {}), ...(ctx.taskSnapshot ? { taskId: ctx.taskSnapshot.id } : {}) }, [
+        makePromptBlock({ id: 'agent-instructions', kind: 'agent-instructions', scope: 'agent', source: `agent:${ctx.agentId}.instructions`, readStatus: agent.instructions.trim() ? 'loaded' : 'empty', included: !!agent.instructions.trim(), delivery: 'agent-definition', content: agent.instructions }),
+        ...(legacySystem ? [makePromptBlock({ id: 'legacy-persistent-context', kind: 'unclassified-system', scope: ctx.projectId ? 'project' : 'user', source: 'SubtaskRunner.buildSystem', readStatus: 'generated', included: true, content: legacySystem })] : []),
+        ...(ctx.taskSnapshot ? [makePromptBlock({ id: 'task', kind: 'task', scope: 'task', source: `task:${ctx.taskSnapshot.id}`, readStatus: 'loaded', included: true, content: formatGroupTaskContext(ctx.taskSnapshot, false) })] : []),
+      ])
+    }
     const text = [
       '【独立子任务】你正在一个全新的、空白的会话里执行下面这一项任务。',
       '这是一批互相独立目标中的一项，只关注本条指令本身，不要假设它与其它同类任务有关联。',
@@ -137,7 +171,8 @@ export class SubtaskRunner {
         sessionId,
         text,
         agent: agentSlug(ctx.agentId),
-        system,
+        system: promptContext.system,
+        promptContext,
         timeoutMs: DEFAULT_SEND_TIMEOUT_MS,
         ...opts,
       })

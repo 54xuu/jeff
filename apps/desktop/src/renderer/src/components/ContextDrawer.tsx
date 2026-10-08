@@ -1,13 +1,23 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from '../api'
 import { useStore } from '../store'
-import { IPC, type ChatMsg, type ContextPreviewInfo } from '@jeff/core'
+import { IPC, type ChatMsg, type ContextPromptDetails, type ContextPreviewInfo } from '@jeff/core'
 import { Markdown } from './Markdown'
 import { IconClose, IconCompress } from './ui/Icons'
 
 function fmtTokens(n: number): string {
   if (n >= 1000) return `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k`
   return String(n)
+}
+
+function promptStatus(status: string): string {
+  switch (status) {
+    case 'loaded': return '已读取'
+    case 'empty': return '未填写'
+    case 'missing': return '不存在'
+    case 'error': return '读取失败'
+    default: return 'Jeff 生成'
+  }
 }
 
 /** 标题栏占用条：点击打开上下文抽屉 */
@@ -80,13 +90,14 @@ export default function ContextDrawer(props: {
     setLoading(true)
     setError('')
     try {
-      const r = await api.invoke<ContextPreviewInfo>(IPC.contextPreview, {
-        agentId: id,
-        ...(props.projectId ? { projectId: props.projectId } : {}),
-        ...(props.model ? { model: props.model } : {}),
-      })
-      setPreview(r)
-      props.onPreviewChange?.(r)
+      const args = { agentId: id, ...(props.projectId ? { projectId: props.projectId } : {}) }
+      const [r, details] = await Promise.all([
+        api.invoke<ContextPreviewInfo>(IPC.contextPreview, { ...args, ...(props.model ? { model: props.model } : {}) }),
+        api.invoke<ContextPromptDetails>(IPC.contextPromptDetails, args),
+      ])
+      const merged = { ...r, ...details }
+      setPreview(merged)
+      props.onPreviewChange?.(merged)
     } catch (err) {
       setError(String((err as Error).message).slice(0, 200))
       setPreview(null)
@@ -130,8 +141,13 @@ export default function ContextDrawer(props: {
         ...(props.projectId ? { projectId: props.projectId } : {}),
         ...(props.model ? { model: props.model } : {}),
       })
-      setPreview(r)
-      props.onPreviewChange?.(r)
+      const details = await api.invoke<ContextPromptDetails>(IPC.contextPromptDetails, {
+        agentId,
+        ...(props.projectId ? { projectId: props.projectId } : {}),
+      })
+      const merged = { ...r, ...details }
+      setPreview(merged)
+      props.onPreviewChange?.(merged)
     } catch (err) {
       setError(String((err as Error).message).slice(0, 200))
     } finally {
@@ -192,11 +208,46 @@ export default function ContextDrawer(props: {
             </div>
 
             <section className="ctx-section">
-              <h3 className="ctx-section-title">本轮 System</h3>
-              {preview.system ? (
+              <h3 className="ctx-section-title">下一轮拟发送的 Jeff 上下文</h3>
+              <p className="settings-tip">个人指令通过 Agent 定义注入；这里展示 Jeff 提供的规则、资料、记忆和任务内容。</p>
+              {preview.promptContext?.blocks.length ? (
+                <div className="ctx-prompt-blocks">
+                  {preview.promptContext.blocks.map((block) => (
+                    <article key={`${block.id}:${block.source}`} className={`ctx-prompt-block ${block.included ? 'is-included' : 'is-omitted'}`}>
+                      <div className="ctx-prompt-block-head">
+                        <b>{block.id === 'agent-instructions' ? 'Agent 个人指令' : block.id}</b>
+                        <span>{promptStatus(block.readStatus)} · {block.scope}{block.delivery === 'agent-definition' ? ' · Agent 定义' : ''}</span>
+                      </div>
+                      <small>{block.source}{block.contentHash ? ` · SHA-256 ${block.contentHash.slice(0, 12)}` : ''}</small>
+                      {block.content ? <pre className="ctx-pre">{block.content}</pre> : <p className="ctx-prompt-empty">此来源当前没有可注入内容。</p>}
+                    </article>
+                  ))}
+                </div>
+              ) : preview.system ? (
                 <pre className="ctx-pre">{preview.system}</pre>
               ) : (
-                <div className="empty-card">无记忆 / AGENTS.md 注入</div>
+                <div className="empty-card">当前没有额外 Jeff 上下文。</div>
+              )}
+            </section>
+
+            <section className="ctx-section">
+              <h3 className="ctx-section-title">最近一轮实际发送</h3>
+              {preview.lastPromptSnapshot ? (
+                <>
+                  <p className="settings-tip">{new Date(preview.lastPromptSnapshot.sentAt).toLocaleString()} · {preview.lastPromptSnapshot.engine} · 上下文 SHA-256 {preview.lastPromptSnapshot.context.contextHash.slice(0, 16)}。不包含 CLI、模型服务商内部提示词。</p>
+                  <details className="ctx-actual-prompt" open>
+                    <summary>Jeff 实际提交的 system 内容</summary>
+                    <pre className="ctx-pre">{preview.lastPromptSnapshot.system || '（空）'}</pre>
+                  </details>
+                  {preview.lastPromptSnapshot.adapterPrompt && (
+                    <details className="ctx-actual-prompt">
+                      <summary>Agent / 引擎适配器收到的 Jeff 指令</summary>
+                      <pre className="ctx-pre">{preview.lastPromptSnapshot.adapterPrompt}</pre>
+                    </details>
+                  )}
+                </>
+              ) : (
+                <div className="empty-card">当前会话还没有可查看的发送快照。</div>
               )}
             </section>
 

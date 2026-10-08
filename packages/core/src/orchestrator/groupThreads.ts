@@ -13,6 +13,8 @@ export interface GroupThreadMeta {
    * 显式命名、手动改名、以及本次改动之前建的旧会话都没有这个字段（视为 false）。
    */
   autoTitle?: boolean
+  kind?: 'discussion' | 'task' | 'cron'
+  taskId?: string
 }
 
 const ACTIVE_KEY = (projectId: string) => `group:activeThread:${projectId}`
@@ -80,7 +82,7 @@ export class GroupThreadStore {
   /**
    * @param opts.activate 默认 true。定时任务建专属话题时传 false，避免把用户正在看的群会话抢走。
    */
-  createThread(projectId: string, title?: string, opts?: { activate?: boolean }): GroupThreadMeta {
+  createThread(projectId: string, title?: string, opts?: { activate?: boolean; kind?: 'discussion' | 'task' | 'cron'; taskId?: string }): GroupThreadMeta {
     const id = genId('thr')
     const now = Date.now()
     const explicit = (title || '').trim()
@@ -89,6 +91,8 @@ export class GroupThreadStore {
       // 未显式命名 = 自动命名会话：先占位，首条用户消息落库后补上任务名
       title: explicit || placeholderTitle(now),
       autoTitle: !explicit,
+      kind: opts?.kind || 'discussion',
+      ...(opts?.taskId ? { taskId: opts.taskId } : {}),
       createdAt: now,
       updatedAt: now,
     }

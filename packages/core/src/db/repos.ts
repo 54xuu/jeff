@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { assertAgentEngine, engineId, type EngineId } from '../engines/contract.js'
 import type { DB } from './db.js'
 import { now } from './db.js'
@@ -69,7 +70,6 @@ export interface ProjectRow {
   leader_agent_id: string | null
   /** 工作空间目录（空 = 全局 workspace） */
   workspace_dir: string
-  workspace_state: string
   created_at: number
   updated_at: number
   deleted_at: number | null
@@ -105,6 +105,12 @@ export interface TaskRow {
   created_at: number
   updated_at: number
   deleted_at: number | null
+  goal: string
+  result_summary: string
+  submission_id: string
+  submitted_spec_hash: string
+  review_feedback: string
+  reviewed_submission_id: string
 }
 
 export interface TaskActivityRow {
@@ -113,10 +119,26 @@ export interface TaskActivityRow {
   task_id: string
   task_number: number
   title: string
-  kind: 'created' | 'status_changed' | 'deleted'
+  kind: 'created' | 'status_changed' | 'deleted' | 'submitted' | 'review_approved' | 'review_returned' | 'reopened'
   from_status: string
   to_status: string
   at: number
+  details: string
+}
+
+export interface TaskRunRow {
+  id: string
+  task_id: string
+  project_id: string
+  thread_id: string
+  agent_id: string
+  status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'interrupted' | 'needs_input'
+  spec_hash: string
+  task_snapshot: string
+  started_at: number
+  finished_at: number | null
+  error: string
+  submission_id: string
 }
 
 export interface ChatMessageRow {
@@ -250,15 +272,16 @@ export const agentRepo = (db: DB) => ({
 })
 
 // ---------- project ----------
+const PROJECT_COLUMNS = 'id, title, description, system_prompt, icon, status, leader_agent_id, workspace_dir, created_at, updated_at, deleted_at'
 export const projectRepo = (db: DB) => ({
   list(includeDeleted = false): ProjectRow[] {
     const where = includeDeleted ? '' : 'WHERE deleted_at IS NULL'
-    return db.prepare(`SELECT * FROM project ${where} ORDER BY updated_at DESC`).all() as unknown as ProjectRow[]
+    return db.prepare(`SELECT ${PROJECT_COLUMNS} FROM project ${where} ORDER BY updated_at DESC`).all() as unknown as ProjectRow[]
   },
   get(id: string): ProjectRow | undefined {
-    return db.prepare('SELECT * FROM project WHERE id = ?').get(id) as unknown as ProjectRow | undefined
+    return db.prepare(`SELECT ${PROJECT_COLUMNS} FROM project WHERE id = ?`).get(id) as unknown as ProjectRow | undefined
   },
-  create(data: { title: string; description?: string; system_prompt?: string; icon?: string; leader_agent_id?: string | null; status?: string; workspace_dir?: string; workspace_state?: string }): ProjectRow {
+  create(data: { title: string; description?: string; system_prompt?: string; icon?: string; leader_agent_id?: string | null; status?: string; workspace_dir?: string }): ProjectRow {
     const row: ProjectRow = {
       id: genId('prj'),
       title: data.title,
@@ -268,23 +291,22 @@ export const projectRepo = (db: DB) => ({
       status: data.status || 'in_progress',
       leader_agent_id: data.leader_agent_id ?? null,
       workspace_dir: data.workspace_dir || '',
-      workspace_state: data.workspace_state || '{}',
       created_at: now(),
       updated_at: now(),
       deleted_at: null,
     }
     db.prepare(
-      `INSERT INTO project (id, title, description, system_prompt, icon, status, leader_agent_id, workspace_dir, workspace_state, created_at, updated_at, deleted_at)
-       VALUES (@id, @title, @description, @system_prompt, @icon, @status, @leader_agent_id, @workspace_dir, @workspace_state, @created_at, @updated_at, @deleted_at)`,
+      `INSERT INTO project (id, title, description, system_prompt, icon, status, leader_agent_id, workspace_dir, created_at, updated_at, deleted_at)
+       VALUES (@id, @title, @description, @system_prompt, @icon, @status, @leader_agent_id, @workspace_dir, @created_at, @updated_at, @deleted_at)`,
     ).run(row as unknown as Record<string, never>)
     return row
   },
-  update(id: string, patch: Partial<Pick<ProjectRow, 'title' | 'description' | 'system_prompt' | 'icon' | 'status' | 'leader_agent_id' | 'workspace_dir' | 'workspace_state'>>): ProjectRow | undefined {
+  update(id: string, patch: Partial<Pick<ProjectRow, 'title' | 'description' | 'system_prompt' | 'icon' | 'status' | 'leader_agent_id' | 'workspace_dir'>>): ProjectRow | undefined {
     const cur = this.get(id)
     if (!cur) return undefined
     const next = { ...cur, ...patch, updated_at: now() }
     db.prepare(
-      `UPDATE project SET title=@title, description=@description, system_prompt=@system_prompt, icon=@icon, status=@status, leader_agent_id=@leader_agent_id, workspace_dir=@workspace_dir, workspace_state=@workspace_state, updated_at=@updated_at WHERE id=@id`,
+      `UPDATE project SET title=@title, description=@description, system_prompt=@system_prompt, icon=@icon, status=@status, leader_agent_id=@leader_agent_id, workspace_dir=@workspace_dir, updated_at=@updated_at WHERE id=@id`,
     ).run({
       title: next.title,
       description: next.description,
@@ -293,7 +315,6 @@ export const projectRepo = (db: DB) => ({
       status: next.status,
       leader_agent_id: next.leader_agent_id,
       workspace_dir: next.workspace_dir,
-      workspace_state: next.workspace_state,
       updated_at: next.updated_at,
       id: next.id,
     })
@@ -368,9 +389,9 @@ export const projectAgentRepo = (db: DB) => ({
 })
 
 // ---------- task ----------
-function recordTaskActivity(db: DB, task: TaskRow, kind: TaskActivityRow['kind'], fromStatus = '', toStatus = task.status): void {
-  db.prepare('INSERT INTO task_activity (id, project_id, task_id, task_number, title, kind, from_status, to_status, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
-    .run(genId('activity'), task.project_id, task.id, task.number, task.title, kind, fromStatus, toStatus, now())
+function recordTaskActivity(db: DB, task: TaskRow, kind: TaskActivityRow['kind'], fromStatus = '', toStatus = task.status, details: Record<string, unknown> = {}): void {
+  db.prepare('INSERT INTO task_activity (id, project_id, task_id, task_number, title, kind, from_status, to_status, at, details) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(genId('activity'), task.project_id, task.id, task.number, task.title, kind, fromStatus, toStatus, now(), JSON.stringify(details))
 }
 
 export const taskRepo = (db: DB) => ({
@@ -386,7 +407,7 @@ export const taskRepo = (db: DB) => ({
     const row = db.prepare('SELECT MAX(number) AS m FROM task WHERE project_id = ?').get(projectId) as { m: number | null }
     return (row.m ?? 0) + 1
   },
-  create(data: { project_id: string; title: string; description?: string; status?: string; priority?: string; assignee_type?: string; assignee_id?: string; parent_task_id?: string | null; due_at?: number | null; depends_on?: string[]; acceptance_criteria?: string; evidence_paths?: string[] }): TaskRow {
+  create(data: { project_id: string; title: string; goal?: string; description?: string; status?: string; priority?: string; assignee_type?: string; assignee_id?: string; parent_task_id?: string | null; due_at?: number | null; depends_on?: string[]; acceptance_criteria?: string; evidence_paths?: string[] }): TaskRow {
     const dependencies = [...new Set(data.depends_on ?? [])]
     if (dependencies.some((id) => {
       const dependency = this.get(id)
@@ -411,17 +432,37 @@ export const taskRepo = (db: DB) => ({
       created_at: now(),
       updated_at: now(),
       deleted_at: null,
+      goal: data.goal || '',
+      result_summary: '',
+      submission_id: '',
+      submitted_spec_hash: '',
+      review_feedback: '',
+      reviewed_submission_id: '',
     }
     db.prepare(
-      `INSERT INTO task (id, project_id, number, title, description, status, priority, assignee_type, assignee_id, parent_task_id, due_at, depends_on, acceptance_criteria, evidence_paths, position, created_at, updated_at, deleted_at)
-       VALUES (@id, @project_id, @number, @title, @description, @status, @priority, @assignee_type, @assignee_id, @parent_task_id, @due_at, @depends_on, @acceptance_criteria, @evidence_paths, @position, @created_at, @updated_at, @deleted_at)`,
+      `INSERT INTO task (id, project_id, number, title, goal, description, status, priority, assignee_type, assignee_id, parent_task_id, due_at, depends_on, acceptance_criteria, evidence_paths, position, created_at, updated_at, deleted_at, result_summary, submission_id, submitted_spec_hash, review_feedback, reviewed_submission_id)
+       VALUES (@id, @project_id, @number, @title, @goal, @description, @status, @priority, @assignee_type, @assignee_id, @parent_task_id, @due_at, @depends_on, @acceptance_criteria, @evidence_paths, @position, @created_at, @updated_at, @deleted_at, @result_summary, @submission_id, @submitted_spec_hash, @review_feedback, @reviewed_submission_id)`,
     ).run(row as unknown as Record<string, never>)
     recordTaskActivity(db, row, 'created', '', row.status)
     return row
   },
-  update(id: string, patch: Partial<Pick<TaskRow, 'title' | 'description' | 'status' | 'priority' | 'assignee_type' | 'assignee_id' | 'parent_task_id' | 'position' | 'due_at' | 'depends_on' | 'acceptance_criteria' | 'evidence_paths'>>): TaskRow | undefined {
+  update(id: string, patch: Partial<Pick<TaskRow, 'title' | 'goal' | 'description' | 'status' | 'priority' | 'assignee_type' | 'assignee_id' | 'parent_task_id' | 'position' | 'due_at' | 'depends_on' | 'acceptance_criteria' | 'evidence_paths' | 'result_summary' | 'submission_id' | 'submitted_spec_hash' | 'review_feedback' | 'reviewed_submission_id'>>): TaskRow | undefined {
     const cur = this.get(id)
     if (!cur) return undefined
+    patch = Object.fromEntries(Object.entries(patch).filter(([, value]) => value !== undefined)) as typeof patch
+    const specFields = ['title', 'goal', 'description', 'acceptance_criteria', 'assignee_type', 'assignee_id', 'depends_on'] as const
+    const specChanged = specFields.some((field) => patch[field] !== undefined && patch[field] !== cur[field])
+    if (cur.status === 'done' && specChanged) throw new Error('已验收任务需要先重新打开，才能修改要求')
+    if (cur.status === 'in_review' && specChanged) {
+      patch = {
+        ...patch,
+        status: 'in_progress',
+        submission_id: '',
+        submitted_spec_hash: '',
+        reviewed_submission_id: '',
+        review_feedback: '',
+      }
+    }
     if (patch.status && !(TASK_STATUSES as readonly string[]).includes(patch.status)) return undefined
     if (patch.priority && !(TASK_PRIORITIES as readonly string[]).includes(patch.priority)) return undefined
     if (patch.depends_on !== undefined) {
@@ -450,11 +491,14 @@ export const taskRepo = (db: DB) => ({
     }
     const next = { ...cur, ...patch, updated_at: now() }
     db.prepare(
-      `UPDATE task SET title=@title, description=@description, status=@status, priority=@priority, assignee_type=@assignee_type,
+      `UPDATE task SET title=@title, goal=@goal, description=@description, status=@status, priority=@priority, assignee_type=@assignee_type,
        assignee_id=@assignee_id, parent_task_id=@parent_task_id, position=@position, due_at=@due_at, depends_on=@depends_on,
-       acceptance_criteria=@acceptance_criteria, evidence_paths=@evidence_paths, updated_at=@updated_at WHERE id=@id`,
+       acceptance_criteria=@acceptance_criteria, evidence_paths=@evidence_paths, result_summary=@result_summary,
+       submission_id=@submission_id, submitted_spec_hash=@submitted_spec_hash, review_feedback=@review_feedback,
+       reviewed_submission_id=@reviewed_submission_id, updated_at=@updated_at WHERE id=@id`,
     ).run({
       title: next.title,
+      goal: next.goal,
       description: next.description,
       status: next.status,
       priority: next.priority,
@@ -466,6 +510,11 @@ export const taskRepo = (db: DB) => ({
       depends_on: next.depends_on,
       acceptance_criteria: next.acceptance_criteria,
       evidence_paths: next.evidence_paths,
+      result_summary: next.result_summary,
+      submission_id: next.submission_id,
+      submitted_spec_hash: next.submitted_spec_hash,
+      review_feedback: next.review_feedback,
+      reviewed_submission_id: next.reviewed_submission_id,
       updated_at: next.updated_at,
       id: next.id,
     })
@@ -480,6 +529,52 @@ export const taskRepo = (db: DB) => ({
     recordTaskActivity(db, { ...cur, deleted_at: at }, 'deleted', cur.status, cur.status)
     return true
   },
+  submit(id: string, data: { submissionId: string; resultSummary: string; specHash: string; evidencePaths: string[] }): TaskRow {
+    const cur = this.get(id)
+    if (!cur || cur.deleted_at) throw new Error('任务不存在或已删除')
+    if (!data.resultSummary.trim()) throw new Error('提交结果不能为空')
+    if (cur.status !== 'in_progress') throw new Error('任务当前不接受结果提交')
+    const next = this.update(id, {
+      status: 'in_review',
+      result_summary: data.resultSummary.trim(),
+      submission_id: data.submissionId,
+      submitted_spec_hash: data.specHash,
+      review_feedback: '',
+      evidence_paths: JSON.stringify(data.evidencePaths),
+    })
+    if (!next) throw new Error('提交任务结果失败')
+    recordTaskActivity(db, next, 'submitted', cur.status, next.status, {
+      submissionId: data.submissionId, specHash: data.specHash, evidencePaths: data.evidencePaths,
+    })
+    return next
+  },
+  review(id: string, data: { action: 'approve' | 'return' | 'reopen'; submissionId: string; specHash: string; feedback?: string }): TaskRow {
+    const cur = this.get(id)
+    if (!cur || cur.deleted_at) throw new Error('任务不存在或已删除')
+    if (data.action === 'reopen') {
+      if (cur.status !== 'done') throw new Error('只有已完成的任务可以重新打开')
+      const next = this.update(id, { status: 'todo', reviewed_submission_id: '' })
+      if (!next) throw new Error('重新打开任务失败')
+      recordTaskActivity(db, next, 'reopened', cur.status, next.status)
+      return next
+    }
+    if (cur.status !== 'in_review') throw new Error('任务当前没有等待验收的提交')
+    if (cur.submission_id !== data.submissionId || cur.submitted_spec_hash !== data.specHash) throw new Error('任务内容或提交已更新，请刷新后重新验收')
+    const currentHash = taskSpecHash(cur)
+    if (currentHash !== data.specHash) throw new Error('任务要求已变更，当前提交已失效；请退回并重新执行')
+    if (data.action === 'approve') {
+      const next = this.update(id, { status: 'done', reviewed_submission_id: data.submissionId })
+      if (!next) throw new Error('验收任务失败')
+      recordTaskActivity(db, next, 'review_approved', cur.status, next.status, { submissionId: data.submissionId, specHash: data.specHash })
+      return next
+    }
+    const feedback = (data.feedback || '').trim()
+    if (!feedback) throw new Error('退回时请填写原因')
+    const next = this.update(id, { status: 'in_progress', review_feedback: feedback, reviewed_submission_id: '' })
+    if (!next) throw new Error('退回任务失败')
+    recordTaskActivity(db, next, 'review_returned', cur.status, next.status, { submissionId: data.submissionId, specHash: data.specHash, feedback })
+    return next
+  },
 })
 
 export const taskActivityRepo = (db: DB) => ({
@@ -490,15 +585,51 @@ export const taskActivityRepo = (db: DB) => ({
     return db.prepare('SELECT * FROM task_activity ORDER BY at ASC, id ASC').all() as unknown as TaskActivityRow[]
   },
   merge(rows: TaskActivityRow[]): number {
-    const insert = db.prepare('INSERT OR IGNORE INTO task_activity (id, project_id, task_id, task_number, title, kind, from_status, to_status, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    const insert = db.prepare('INSERT OR IGNORE INTO task_activity (id, project_id, task_id, task_number, title, kind, from_status, to_status, at, details) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
     let inserted = 0
     for (const row of rows) {
-      const result = insert.run(row.id, row.project_id, row.task_id, row.task_number, row.title, row.kind, row.from_status, row.to_status, row.at)
+      const result = insert.run(row.id, row.project_id, row.task_id, row.task_number, row.title, row.kind, row.from_status, row.to_status, row.at, row.details || '{}')
       inserted += Number(result.changes || 0)
     }
     return inserted
   },
 })
+
+export const taskRunRepo = (db: DB) => ({
+  get(id: string): TaskRunRow | undefined {
+    return db.prepare('SELECT * FROM task_run WHERE id = ?').get(id) as unknown as TaskRunRow | undefined
+  },
+  getActive(taskId: string): TaskRunRow | undefined {
+    return db.prepare("SELECT * FROM task_run WHERE task_id = ? AND status IN ('queued', 'running') ORDER BY started_at DESC LIMIT 1").get(taskId) as unknown as TaskRunRow | undefined
+  },
+  list(taskId: string): TaskRunRow[] {
+    return db.prepare('SELECT * FROM task_run WHERE task_id = ? ORDER BY started_at DESC').all(taskId) as unknown as TaskRunRow[]
+  },
+  create(data: Omit<TaskRunRow, 'finished_at' | 'error' | 'submission_id'>): TaskRunRow {
+    db.prepare('INSERT INTO task_run (id, task_id, project_id, thread_id, agent_id, status, spec_hash, task_snapshot, started_at, finished_at, error, submission_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)')
+      .run(data.id, data.task_id, data.project_id, data.thread_id, data.agent_id, data.status, data.spec_hash, data.task_snapshot, data.started_at, '', '')
+    return this.get(data.id)!
+  },
+  update(id: string, patch: Partial<Pick<TaskRunRow, 'status' | 'finished_at' | 'error' | 'submission_id'>>): TaskRunRow {
+    const current = this.get(id)
+    if (!current) throw new Error('任务运行记录不存在')
+    const next = { ...current, ...patch }
+    db.prepare('UPDATE task_run SET status=?, finished_at=?, error=?, submission_id=? WHERE id=?')
+      .run(next.status, next.finished_at, next.error, next.submission_id, id)
+    return next
+  },
+  markOrphanedInterrupted(): number {
+    const result = db.prepare("UPDATE task_run SET status='interrupted', finished_at=?, error='Jeff 重启时任务仍在运行，未自动重试' WHERE status IN ('queued', 'running')").run(now())
+    return Number(result.changes || 0)
+  },
+})
+
+export function taskSpecHash(task: Pick<TaskRow, 'project_id' | 'title' | 'goal' | 'description' | 'acceptance_criteria' | 'assignee_type' | 'assignee_id' | 'depends_on'>): string {
+  return createHash('sha256').update(JSON.stringify([
+    task.project_id, (task.title || '').trim(), (task.goal || '').trim(), (task.description || '').trim(), (task.acceptance_criteria || '').trim(),
+    task.assignee_type || '', task.assignee_id || '', task.depends_on || '[]',
+  ])).digest('hex')
+}
 
 // ---------- chat_message（群聊消息记录）----------
 export const chatMessageRepo = (db: DB) => ({

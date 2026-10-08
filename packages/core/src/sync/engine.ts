@@ -757,12 +757,12 @@ export class SyncEngine {
           const workspaceDir = exists ? exists.workspace_dir || '' : ''
           if (!exists) {
             this.db
-              .prepare(`INSERT INTO project (id, title, description, system_prompt, icon, status, leader_agent_id, workspace_dir, workspace_state, created_at, updated_at, deleted_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
-              .run(id, d.project.title, d.project.description, d.project.system_prompt || '', d.project.icon, d.project.status, d.project.leader_agent_id, workspaceDir, d.project.workspace_state || '{}', d.project.created_at, rec.updatedAt, rec.deletedAt)
+              .prepare(`INSERT INTO project (id, title, description, system_prompt, icon, status, leader_agent_id, workspace_dir, created_at, updated_at, deleted_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)`)
+              .run(id, d.project.title, d.project.description, d.project.system_prompt || '', d.project.icon, d.project.status, d.project.leader_agent_id, workspaceDir, d.project.created_at, rec.updatedAt, rec.deletedAt)
           } else {
             this.db
-              .prepare(`UPDATE project SET title=?, description=?, system_prompt=?, icon=?, status=?, leader_agent_id=?, workspace_state=?, updated_at=?, deleted_at=? WHERE id=?`)
-              .run(d.project.title, d.project.description, d.project.system_prompt ?? exists.system_prompt ?? '', d.project.icon, d.project.status, d.project.leader_agent_id, d.project.workspace_state || '{}', rec.updatedAt, rec.deletedAt, id)
+              .prepare(`UPDATE project SET title=?, description=?, system_prompt=?, icon=?, status=?, leader_agent_id=?, updated_at=?, deleted_at=? WHERE id=?`)
+              .run(d.project.title, d.project.description, d.project.system_prompt ?? exists.system_prompt ?? '', d.project.icon, d.project.status, d.project.leader_agent_id, rec.updatedAt, rec.deletedAt, id)
           }
           const incomingIds = new Set<string>()
           for (const m of d.members) {
@@ -785,15 +785,15 @@ export class SyncEngine {
           if (!exists) {
             this.db
               .prepare(
-                `INSERT INTO task (id, project_id, number, title, description, status, priority, assignee_type, assignee_id, parent_task_id, due_at, depends_on, acceptance_criteria, evidence_paths, position, created_at, updated_at, deleted_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+                `INSERT INTO task (id, project_id, number, title, goal, description, status, priority, assignee_type, assignee_id, parent_task_id, due_at, depends_on, acceptance_criteria, evidence_paths, result_summary, submission_id, submitted_spec_hash, review_feedback, reviewed_submission_id, position, created_at, updated_at, deleted_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
               )
-              .run(id, d.project_id, d.number, d.title, d.description, d.status, d.priority, d.assignee_type, d.assignee_id, d.parent_task_id, d.due_at ?? null, d.depends_on || '[]', d.acceptance_criteria || '', d.evidence_paths || '[]', d.position, d.created_at, rec.updatedAt, rec.deletedAt)
+              .run(id, d.project_id, d.number, d.title, d.goal || '', d.description, d.status, d.priority, d.assignee_type, d.assignee_id, d.parent_task_id, d.due_at ?? null, d.depends_on || '[]', d.acceptance_criteria || '', d.evidence_paths || '[]', d.result_summary || '', d.submission_id || '', d.submitted_spec_hash || '', d.review_feedback || '', d.reviewed_submission_id || '', d.position, d.created_at, rec.updatedAt, rec.deletedAt)
           } else {
             this.db
               .prepare(
-                `UPDATE task SET project_id=?, number=?, title=?, description=?, status=?, priority=?, assignee_type=?, assignee_id=?, parent_task_id=?, due_at=?, depends_on=?, acceptance_criteria=?, evidence_paths=?, position=?, updated_at=?, deleted_at=? WHERE id=?`,
+                `UPDATE task SET project_id=?, number=?, title=?, goal=?, description=?, status=?, priority=?, assignee_type=?, assignee_id=?, parent_task_id=?, due_at=?, depends_on=?, acceptance_criteria=?, evidence_paths=?, result_summary=?, submission_id=?, submitted_spec_hash=?, review_feedback=?, reviewed_submission_id=?, position=?, updated_at=?, deleted_at=? WHERE id=?`,
               )
-              .run(d.project_id, d.number, d.title, d.description, d.status, d.priority, d.assignee_type, d.assignee_id, d.parent_task_id, d.due_at ?? null, d.depends_on || '[]', d.acceptance_criteria || '', d.evidence_paths || '[]', d.position, rec.updatedAt, rec.deletedAt, id)
+              .run(d.project_id, d.number, d.title, d.goal || '', d.description, d.status, d.priority, d.assignee_type, d.assignee_id, d.parent_task_id, d.due_at ?? null, d.depends_on || '[]', d.acceptance_criteria || '', d.evidence_paths || '[]', d.result_summary || '', d.submission_id || '', d.submitted_spec_hash || '', d.review_feedback || '', d.reviewed_submission_id || '', d.position, rec.updatedAt, rec.deletedAt, id)
           }
           n += 1
           continue

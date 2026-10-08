@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import crypto from 'node:crypto'
-import { parseArgs, parseAdbDevices, chooseAndroidDevice, chooseWindowsAndroidPath, preferConfiguredUsb, verifyArtifactManifest } from './deploy-windows.mjs'
+import { parseArgs, parseAdbDevices, chooseAndroidDevice, chooseWindowsAndroidPath, preferConfiguredUsb, verifyArtifactManifest, windowsRunnerDestination } from './deploy-windows.mjs'
 
 test('deployment CLI accepts explicit target, Android fallback mode, and a named suite', () => {
   assert.deepEqual(
@@ -64,4 +64,10 @@ test('artifact manifest validation rejects missing, changed, and duplicate artif
   assert.equal(verifyArtifactManifest(entries, new Map([['app.apk', Buffer.from('nope')]])).ok, false)
   assert.equal(verifyArtifactManifest(entries, new Map()).ok, false)
   assert.throws(() => verifyArtifactManifest([...entries, ...entries], new Map()), /duplicate/)
+})
+
+test('Windows UI runner is synced beside the persistent worker before a suite starts', () => {
+  assert.equal(windowsRunnerDestination('/C:/Users/xujia/.jeff-deploy/incoming/'), '/C:/Users/xujia/.jeff-deploy/desktop-runner.cjs')
+  assert.equal(windowsRunnerDestination('C:\\Users\\xujia\\.jeff-deploy\\incoming'), 'C:/Users/xujia/.jeff-deploy/desktop-runner.cjs')
+  assert.throws(() => windowsRunnerDestination('/C:/Users/xujia/.jeff-deploy/current'), /must end with \/incoming/)
 })

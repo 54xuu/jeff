@@ -59,6 +59,7 @@ describe('GroupChat', () => {
     projectAgentRepo(db).updateConfig(p.id, devId, { duties: '负责本群代码实现' })
     agentRepo(db).update(devId, { instructions: 'PERSONAL-PROMPT-ONLY' })
     const briefing = group.buildBriefing(p.id, leaderId)
+    const promptBlocks = group.buildBriefingBlocks(p.id, leaderId)
     expect(briefing).toContain('官网项目')
     expect(briefing).toContain('项目背景（群简介）')
     expect(briefing).toContain('架构师')
@@ -66,6 +67,13 @@ describe('GroupChat', () => {
     expect(briefing).toContain('负责本群代码实现')
     expect(briefing).toContain('本群群主')
     expect(briefing).not.toContain('PERSONAL-PROMPT-ONLY')
+    expect(promptBlocks.map((block) => block.kind)).toEqual([
+      'group-identity', 'group-description', 'group-workspace', 'group-rules', 'member-duty', 'member-roster', 'group-rules',
+    ])
+    expect(promptBlocks.find((block) => block.kind === 'group-description')).toMatchObject({ scope: 'project', source: 'project.description', readStatus: 'empty', included: true })
+    const workerPromptBlocks = group.buildBriefingBlocks(p.id, devId)
+    expect(workerPromptBlocks.find((block) => block.kind === 'member-duty')).toMatchObject({ scope: 'agent', source: `project_agent:${devId}.duties`, readStatus: 'loaded', included: true })
+    expect(promptBlocks.find((block) => block.id === 'group-rules')?.content).toContain('本群规则：先由产品成员确认需求')
     const workerBriefing = group.buildBriefing(p.id, agentRepo(db).list().find((a) => a.name === '开发')!.id)
     expect(workerBriefing).toContain('负责本群代码实现')
     expect(workerBriefing).toContain('本群规则：')

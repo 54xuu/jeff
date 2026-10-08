@@ -50,7 +50,6 @@ function seed(side: Side): void {
     system_prompt: '群规则：销小美协调；成员按本群职责执行。',
     leader_agent_id: leader.id,
     workspace_dir: '/home/linux/project-a',
-    workspace_state: JSON.stringify({ goal: '项目级宣传计划', systemOutline: ['整体方案', '腕表呼叫'] }),
   })
   projectAgentRepo(side.db).add(p.id, leader.id, 'leader')
   projectAgentRepo(side.db).add(p.id, dev.id, 'worker')
@@ -147,7 +146,6 @@ describe('SyncEngine（实体级双向合并）', () => {
     // 新建项目：workspace_dir 按设备留空，不拷贝 Linux 路径
     expect(projects[0].workspace_dir).toBe('')
     expect(projects[0].system_prompt).toBe('群规则：销小美协调；成员按本群职责执行。')
-    expect(JSON.parse(projects[0].workspace_state)).toEqual({ goal: '项目级宣传计划', systemOutline: ['整体方案', '腕表呼叫'] })
     expect(projectAgentRepo(B.db).listByProject(projects[0].id)).toMatchObject([
       { duties: '本群协调、拆解和验收', model_override: 'openai/gpt-5.1', thinking_override: 'high' },
       { duties: '本群按分配提交实现', model_override: 'openai/gpt-5.1-mini', thinking_override: 'low' },

@@ -3,10 +3,9 @@ import EngineSelector from './EngineSelector'
 import { Capacitor } from '@capacitor/core'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
-  IPC, ENGINE_LABELS, XIAOJIE_ID, TOOL_ACTION_LABEL, extractThinkTags, mergeReasoning, sortedPinKeys, decodePluginUserMessage, currentWeekRange,
-  parseProjectWorkspaceState, serializeProjectWorkspaceState, canStartCampaignProduction,
+  IPC, ENGINE_LABELS, XIAOJIE_ID, TOOL_ACTION_LABEL, extractThinkTags, mergeReasoning, sortedPinKeys, decodePluginUserMessage,
 } from '@jeff/core'
-import type { AgentInfo, AppInfo, ChatMsg, FileNode, FsDirEntry, GroupMessage, ProjectInfo, ProjectMember, ContextPreviewInfo, PluginCommand, PluginInfo, CampaignKind, CampaignProposalInput, CampaignProposal, TaskInfo, ProjectDocumentInfo, ProjectReportInfo, SiYuanSearchResult } from '@jeff/core'
+import type { AgentInfo, AppInfo, ChatMsg, FileNode, FsDirEntry, GroupMessage, ProjectInfo, ProjectMember, ContextPreviewInfo, PluginCommand, PluginInfo, TaskInfo, GroupThreadBrief, TaskRunInfo } from '@jeff/core'
 import type { RemoteStreamFrame } from '@jeff/core/remote'
 import { consumeBack } from './backstack'
 import Mascot from './Mascot'
@@ -17,7 +16,7 @@ import { type PairProgress, Native, PhoneLink, mergeStream, shrinkImage } from '
 type Tab = 'messages' | 'contacts' | 'me'
 type Screen = 'list' | 'chat' | 'dirs' | 'files' | 'file' | 'project'
 type ChatFilter = 'all' | 'agent' | 'group'
-type ProjectSection = 'overview' | 'profile' | 'members' | 'reports' | 'tasks' | 'assets' | 'campaigns'
+type ProjectSection = 'profile' | 'members' | 'tasks' | 'task' | 'history' | 'files'
 type ChatTarget =
   | { kind: 'agent'; id: string; name: string; avatar?: string }
   | { kind: 'group'; id: string; name: string; icon?: string }
@@ -464,7 +463,7 @@ export function App() {
   const [listQuery, setListQuery] = useState('')
   const [listMenuOpen, setListMenuOpen] = useState(false)
   const [chatMenuOpen, setChatMenuOpen] = useState(false)
-  const [projectSection, setProjectSection] = useState<ProjectSection>('overview')
+  const [projectSection, setProjectSection] = useState<ProjectSection>('tasks')
   const [pairProgress, setPairProgress] = useState<PairProgress | null>(null)
   const [paste, setPaste] = useState('')
   const [adding, setAdding] = useState(false)
@@ -497,41 +496,28 @@ export function App() {
   const [fileTrail, setFileTrail] = useState<Array<{ name: string; abs: string }>>([])
   const [filePreview, setFilePreview] = useState<{ name: string; content: string; truncated?: boolean } | null>(null)
   const [filesTip, setFilesTip] = useState('')
-  const [workspaceDraft, setWorkspaceDraft] = useState(() => parseProjectWorkspaceState('{}'))
+  const [projectTitle, setProjectTitle] = useState('')
+  const [projectIcon, setProjectIcon] = useState('👥')
+  const [projectDescription, setProjectDescription] = useState('')
+  const [projectWorkspaceDir, setProjectWorkspaceDir] = useState('')
+  const [projectLeaderId, setProjectLeaderId] = useState('')
   const [groupRules, setGroupRules] = useState('')
   const [projectMembers, setProjectMembers] = useState<ProjectMember[]>([])
   const [selectedMemberId, setSelectedMemberId] = useState('')
+  const [memberToAdd, setMemberToAdd] = useState('')
   const [projectMemberModels, setProjectMemberModels] = useState<Array<{ id: string; label: string }>>([])
   const [workspaceSaving, setWorkspaceSaving] = useState(false)
   const [workspaceSaved, setWorkspaceSaved] = useState('')
   const [projectTasks, setProjectTasks] = useState<TaskInfo[]>([])
-  const [newTaskTitle, setNewTaskTitle] = useState('')
-  const [newTaskDue, setNewTaskDue] = useState('')
-  const [newTaskCriteria, setNewTaskCriteria] = useState('')
-  const [newTaskDepends, setNewTaskDepends] = useState<string[]>([])
-  const [weeklyStartDate, setWeeklyStartDate] = useState(() => currentWeekRange().startDate)
-  const [weeklyEndDate, setWeeklyEndDate] = useState(() => currentWeekRange().endDate)
-  const [reportQuery, setReportQuery] = useState('')
-  const [reportHits, setReportHits] = useState<SiYuanSearchResult[]>([])
-  const [reportSelected, setReportSelected] = useState<string[]>([])
-  const [reportDates, setReportDates] = useState<Record<string, string>>({})
-  const [reportTemplateId, setReportTemplateId] = useState('')
-  const [reportTemplateName, setReportTemplateName] = useState('')
-  const [reportPeriodType, setReportPeriodType] = useState('季度')
-  const [reportSections, setReportSections] = useState('工作重点\n主要进展\n量化成果\n风险与下一步')
-  const [reportStartDate, setReportStartDate] = useState(`${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-01`)
-  const [reportEndDate, setReportEndDate] = useState(new Date().toISOString().slice(0, 10))
-  const [reportBusy, setReportBusy] = useState(false)
-  const [reportMessage, setReportMessage] = useState('')
-  const [reportResult, setReportResult] = useState<ProjectReportInfo | null>(null)
-  const [campaignDraft, setCampaignDraft] = useState<CampaignProposalInput>({ kind: 'feature_video', title: '', feature: '', story: '', channels: [], sellingPoints: [], materialsNeeded: [] })
-  const [editingCampaignId, setEditingCampaignId] = useState('')
-  const [campaignFeedback, setCampaignFeedback] = useState<Record<string, string>>({})
-  const [campaignPaths, setCampaignPaths] = useState<Record<string, string>>({})
-  const [campaignAssetChoices, setCampaignAssetChoices] = useState<Record<string, string>>({})
-  const [captureDraft, setCaptureDraft] = useState({ title: '', feature: '', fullPage: false, redactionConfirmed: false })
-  const [assetScanDirectory, setAssetScanDirectory] = useState('素材')
-  const [assetDraft, setAssetDraft] = useState<{ title: string; path: string; feature: string; kind: 'image' | 'video' | 'document' | 'demo_url'; source: 'user_provided' | 'authorized_screenshot' | 'generated_illustration' | 'demo_material'; sourceNote: string; isReal: boolean }>({ title: '', path: '', feature: '', kind: 'image', source: 'user_provided', sourceNote: '', isReal: false })
+  const [projectTasksLoading, setProjectTasksLoading] = useState(false)
+  const [projectMembersLoading, setProjectMembersLoading] = useState(false)
+  const [projectThreadsLoading, setProjectThreadsLoading] = useState(false)
+  const [selectedTaskId, setSelectedTaskId] = useState('')
+  const [taskEditing, setTaskEditing] = useState(false)
+  const [taskDraft, setTaskDraft] = useState({ title: '', goal: '', description: '', acceptance_criteria: '', assignee_id: '', priority: 'medium', due_at: null as number | null, depends_on: [] as string[] })
+  const [taskRuns, setTaskRuns] = useState<TaskRunInfo[]>([])
+  const [taskReviewFeedback, setTaskReviewFeedback] = useState('')
+  const [projectThreads, setProjectThreads] = useState<GroupThreadBrief[]>([])
   const dataDirRef = useRef('')
   const [computers, setComputers] = useState(phone.desktops)
   const [activeId, setActiveId] = useState('')
@@ -711,8 +697,8 @@ export function App() {
       return
     }
     if (screenRef.current === 'project') {
-      if (projectSection !== 'overview') {
-        setProjectSection('overview')
+      if (projectSection !== 'tasks') {
+        setProjectSection('tasks')
         return
       }
       setScreen('chat')
@@ -1285,19 +1271,42 @@ export function App() {
     await loadFiles(dir)
   }
 
-  function openProjectWorkspace() {
+  async function refreshProjectTasks(projectId: string) {
+    setProjectTasksLoading(true)
+    try {
+      const tasks = await phone.invoke<TaskInfo[]>(IPC.tasksList, { projectId })
+      setProjectTasks(tasks)
+      setSelectedTaskId((current) => current && tasks.some((task) => task.id === current) ? current : tasks[0]?.id || '')
+    } finally { setProjectTasksLoading(false) }
+  }
+
+  function openProjectManagement() {
     if (!target || target.kind !== 'group') return
-    const project = projects.find((p) => p.id === target.id)
+    const project = projects.find((item) => item.id === target.id)
     if (!project) return
-    const state = parseProjectWorkspaceState(project.workspace_state)
-    setWorkspaceDraft(state)
+    setProjectTitle(project.title)
+    setProjectIcon(project.icon || '👥')
+    setProjectDescription(project.description || '')
     setGroupRules(project.system_prompt || '')
+    setProjectWorkspaceDir(project.workspace_dir || '')
+    setProjectLeaderId(project.leader_agent_id || '')
+    setWorkspaceSaved('')
+    setProjectSection('tasks')
+    setFilesData(null)
+    setFileTrail([])
+    setSelectedTaskId('')
+    setTaskEditing(false)
+    setTaskRuns([])
+    setScreen('project')
+    setProjectMembersLoading(true)
     void phone.invoke<ProjectMember[]>(IPC.projectMembers, { projectId: project.id }).then((members) => {
       setProjectMembers(members)
       setSelectedMemberId((current) => current && members.some((member) => member.agent_id === current) ? current : members[0]?.agent_id || '')
-    }).catch(() => setProjectMembers([]))
-    setProjectSection('overview')
-    setFilesData(null)
+    }).catch((error) => setWorkspaceSaved('无法加载群成员：' + String(error))).finally(() => setProjectMembersLoading(false))
+    void refreshProjectTasks(project.id).catch((error) => setWorkspaceSaved('无法加载任务：' + String(error)))
+    setProjectThreadsLoading(true)
+    void phone.invoke<{ threads: GroupThreadBrief[] }>(IPC.groupThreadsList, { projectId: project.id }).then((result) => setProjectThreads(result.threads || []))
+      .catch((error) => setWorkspaceSaved('无法加载会话：' + String(error))).finally(() => setProjectThreadsLoading(false))
     void (async () => {
       try {
         let dir = project.workspace_dir.trim()
@@ -1312,23 +1321,10 @@ export function App() {
         setFilesData(null)
       }
     })()
-    setReportQuery(''); setReportHits([]); setReportSelected([]); setReportResult(null); setReportMessage('')
-    const firstTemplate = state.reportTemplates[0]
-    setReportTemplateId(firstTemplate?.id || '')
-    setReportTemplateName(firstTemplate?.name || '')
-    setReportPeriodType(firstTemplate?.periodType || '季度')
-    setReportSections(firstTemplate?.sections.join('\n') || '工作重点\n主要进展\n量化成果\n风险与下一步')
-    setCampaignDraft({ kind: 'feature_video', title: '', feature: '', story: '', channels: state.channels, sellingPoints: [], materialsNeeded: [] })
-    setEditingCampaignId('')
-    setCampaignFeedback({})
-    setCampaignPaths({})
-    setWorkspaceSaved('')
-    setNewTaskTitle(''); setNewTaskDue(''); setNewTaskCriteria(''); setNewTaskDepends([])
-    void phone.invoke<TaskInfo[]>(IPC.tasksList, { projectId: target.id }).then(setProjectTasks).catch((error) => setWorkspaceSaved(`无法加载项目任务：${error instanceof Error ? error.message : String(error)}`))
-    setScreen('project')
   }
 
   const selectedProjectMember = projectMembers.find((member) => member.agent_id === selectedMemberId)
+  const selectedProjectTask = projectTasks.find((task) => task.id === selectedTaskId) || null
   useEffect(() => {
     let active = true
     setProjectMemberModels([])
@@ -1339,241 +1335,148 @@ export function App() {
     return () => { active = false }
   }, [screen, selectedProjectMember?.agent_id, selectedProjectMember?.execution_engine])
 
-  async function saveProjectTask(task?: TaskInfo, status?: string) {
-    if (!target || target.kind !== 'group') return
-    setWorkspaceSaving(true)
-    try {
-      const payload = task
-        ? { id: task.id, project_id: target.id, title: task.title, description: task.description, status: status ?? task.status, priority: task.priority, assignee_id: task.assignee_id, due_at: task.due_at, depends_on: task.depends_on, acceptance_criteria: task.acceptance_criteria, evidence_paths: task.evidence_paths }
-        : { project_id: target.id, title: newTaskTitle.trim(), due_at: newTaskDue ? new Date(`${newTaskDue}T23:59:59`).getTime() : null, depends_on: newTaskDepends, acceptance_criteria: newTaskCriteria.trim() }
-      await phone.invoke<TaskInfo>(IPC.taskSave, payload)
-      setProjectTasks(await phone.invoke<TaskInfo[]>(IPC.tasksList, { projectId: target.id }))
-      setNewTaskTitle(''); setNewTaskDue(''); setNewTaskCriteria(''); setNewTaskDepends([]); setWorkspaceSaved('项目任务已保存')
-    } catch (error) { setWorkspaceSaved(`任务保存失败：${error instanceof Error ? error.message : String(error)}`) }
-    finally { setWorkspaceSaving(false) }
-  }
-
-  async function generateProjectDocument(kind: 'charter' | 'weekly_report' | 'closeout') {
-    if (!target || target.kind !== 'group') return
-    setWorkspaceSaving(true)
-    try {
-      const result = await phone.invoke<ProjectDocumentInfo>(IPC.projectDocument, { projectId: target.id, kind, ...(kind === 'weekly_report' ? { startDate: weeklyStartDate, endDate: weeklyEndDate } : {}) })
-      setWorkspaceSaved(`已生成草稿：${result.path}${result.missing.length ? `；待补：${result.missing.join('、')}` : ''}`)
-    } catch (error) { setWorkspaceSaved(`生成失败：${error instanceof Error ? error.message : String(error)}`) }
-    finally { setWorkspaceSaving(false) }
-  }
-
-  async function searchReportSources() {
-    setReportBusy(true); setReportMessage('正在搜索思源日报…')
-    try {
-      const found = await phone.invoke<SiYuanSearchResult[]>(IPC.siyuanSearch, { keyword: reportQuery })
-      setReportHits(found); setReportSelected([])
-      setReportDates(Object.fromEntries(found.map((item) => [item.docId, `${item.docId.slice(0, 4)}-${item.docId.slice(4, 6)}-${item.docId.slice(6, 8)}`])))
-      setReportMessage('请核对每篇日报日期后选择来源')
+  useEffect(() => {
+    if (screen !== 'project' || projectSection !== 'task' || !selectedProjectTask) return
+    let active = true
+    const loadRuns = async () => {
+      try {
+        const rows = await phone.invoke<TaskRunInfo[]>(IPC.taskRuns, { id: selectedProjectTask.id })
+        if (active) setTaskRuns(rows)
+      } catch (error) { if (active) setWorkspaceSaved('无法读取执行记录：' + String(error)) }
     }
-    catch (error) { setReportHits([]); setReportMessage(`搜索失败：${error instanceof Error ? error.message : String(error)}`) }
-    finally { setReportBusy(false) }
+    void loadRuns()
+    const timer = selectedProjectTask.active_run ? window.setInterval(() => {
+      void loadRuns()
+      if (target?.kind === 'group') void refreshProjectTasks(target.id)
+    }, 1800) : undefined
+    return () => { active = false; if (timer) clearInterval(timer) }
+  }, [screen, projectSection, selectedProjectTask?.id, selectedProjectTask?.active_run?.id, selectedProjectTask?.active_run?.status])
+
+  function newProjectTask() {
+    setSelectedTaskId('')
+    setTaskDraft({ title: '', goal: '', description: '', acceptance_criteria: '', assignee_id: '', priority: 'medium', due_at: null, depends_on: [] })
+    setTaskEditing(true)
+    setProjectSection('task')
+    setWorkspaceSaved('')
   }
 
-  async function confirmReportSourcesOnPhone() {
-    if (!target || target.kind !== 'group') return
-    setReportBusy(true)
-    try {
-      const sources = reportHits.filter((item) => reportSelected.includes(item.docId)).map(({ docId, title, path }) => ({ docId, title, path, reportDate: reportDates[docId] || '' }))
-      const info = await phone.invoke<ProjectInfo>(IPC.projectReport, { projectId: target.id, action: 'confirm_sources', query: reportQuery, sources })
-      setWorkspaceDraft(parseProjectWorkspaceState(info.workspace_state)); setProjects((items) => items.map((item) => item.id === info.id ? info : item)); setReportSelected([]); setReportMessage(`已确认 ${sources.length} 篇来源`)
-    } catch (error) { setReportMessage(`确认失败：${error instanceof Error ? error.message : String(error)}`) }
-    finally { setReportBusy(false) }
+  function editProjectTask(task: TaskInfo) {
+    if (task.active_run || task.status === 'done') return
+    setSelectedTaskId(task.id)
+    setTaskDraft({ title: task.title, goal: task.goal, description: task.description, acceptance_criteria: task.acceptance_criteria,
+      assignee_id: task.assignee_type === 'agent' ? task.assignee_id : '', priority: task.priority, due_at: task.due_at, depends_on: task.depends_on })
+    setTaskEditing(true)
+    setWorkspaceSaved('')
   }
 
-  async function saveReportTemplateOnPhone() {
-    if (!target || target.kind !== 'group') return
-    setReportBusy(true)
-    try {
-      const info = await phone.invoke<ProjectInfo>(IPC.projectReport, { projectId: target.id, action: 'save_template', template: { ...(reportTemplateId ? { id: reportTemplateId } : {}), name: reportTemplateName, periodType: reportPeriodType, sections: reportSections.split('\n'), outputFormat: 'markdown' } })
-      const next = parseProjectWorkspaceState(info.workspace_state)
-      setWorkspaceDraft(next); setProjects((items) => items.map((item) => item.id === info.id ? info : item))
-      const saved = next.reportTemplates.find((item) => item.name === reportTemplateName.trim())
-      if (saved) setReportTemplateId(saved.id)
-      setReportMessage('报告模板已保存并同步到项目')
-    } catch (error) { setReportMessage(`模板保存失败：${error instanceof Error ? error.message : String(error)}`) }
-    finally { setReportBusy(false) }
-  }
-
-  async function generateProjectReportOnPhone() {
-    if (!target || target.kind !== 'group') return
-    setReportBusy(true); setReportResult(null); setReportMessage('正在读取日报并生成报告草稿…')
-    try {
-      const result = await phone.invoke<ProjectReportInfo>(IPC.projectReport, { projectId: target.id, action: 'generate', templateId: reportTemplateId, startDate: reportStartDate, endDate: reportEndDate })
-      setReportResult(result); setReportMessage(`已生成报告草稿，引用 ${result.sourceDocIds.length} 篇日报`)
-    } catch (error) { setReportMessage(`报告生成失败：${error instanceof Error ? error.message : String(error)}`) }
-    finally { setReportBusy(false) }
-  }
-
-  async function removeReportSourceOnPhone(docId: string) {
-    if (!target || target.kind !== 'group') return
-    try {
-      const info = await phone.invoke<ProjectInfo>(IPC.projectReport, { projectId: target.id, action: 'remove_source', docId })
-      setWorkspaceDraft(parseProjectWorkspaceState(info.workspace_state)); setProjects((items) => items.map((item) => item.id === info.id ? info : item))
-    } catch (error) { setReportMessage(`移除来源失败：${error instanceof Error ? error.message : String(error)}`) }
-  }
-
-  async function persistProjectWorkspace(state: ReturnType<typeof parseProjectWorkspaceState>): Promise<boolean> {
-    if (!target || target.kind !== 'group') return false
-    const project = projects.find((p) => p.id === target.id)
-    if (!project) return false
+  async function saveProjectTask() {
+    if (!target || target.kind !== 'group' || !taskDraft.title.trim()) return
     setWorkspaceSaving(true)
     setWorkspaceSaved('')
     try {
-      const updated = await phone.invoke<ProjectInfo>(IPC.projectSave, {
-        id: project.id,
-        title: project.title,
-        description: project.description,
-        system_prompt: groupRules,
-        icon: project.icon,
-        leader_agent_id: project.leader_agent_id,
-        memberAgentIds: projectMembers.map((member) => member.agent_id),
-        memberConfigs: projectMembers.map(({ agent_id, duties, model_override, thinking_override }) => ({ agent_id, duties, model_override, thinking_override })),
-        workspace_dir: project.workspace_dir,
-        workspace_state: serializeProjectWorkspaceState(state),
+      const task = await phone.invoke<TaskInfo>(IPC.taskSave, {
+        ...(selectedTaskId ? { id: selectedTaskId } : {}), project_id: target.id, title: taskDraft.title.trim(),
+        goal: taskDraft.goal, description: taskDraft.description, acceptance_criteria: taskDraft.acceptance_criteria,
+        assignee_id: taskDraft.assignee_id, priority: taskDraft.priority, due_at: taskDraft.due_at, depends_on: taskDraft.depends_on,
       })
-      setProjects((items) => items.map((item) => item.id === project.id ? updated : item))
-      setWorkspaceDraft(state)
-      setWorkspaceSaved('已保存到项目资料')
-      return true
-    } catch (err) {
-      setWorkspaceSaved(`保存失败：${String((err as Error).message).slice(0, 100)}`)
-      return false
-    } finally {
-      setWorkspaceSaving(false)
-    }
+      await refreshProjectTasks(target.id)
+      setSelectedTaskId(task.id)
+      setTaskEditing(false)
+      setWorkspaceSaved('任务已保存。保存不会自动开始执行。')
+    } catch (error) { setWorkspaceSaved('任务保存失败：' + String(error instanceof Error ? error.message : error)) }
+    finally { setWorkspaceSaving(false) }
   }
 
-  async function saveProjectWorkspace() { await persistProjectWorkspace(workspaceDraft) }
-
-  async function createCampaignOnPhone() {
+  async function runProjectTask(action: 'start' | 'stop' | 'approve' | 'return' | 'reopen') {
+    if (!target || target.kind !== 'group' || !selectedProjectTask) return
+    setWorkspaceSaving(true)
+    setWorkspaceSaved('')
     try {
-      if (!target || target.kind !== 'group') return
-      const updated = await phone.invoke<ProjectInfo>(IPC.projectCampaign, { projectId: target.id, action: editingCampaignId ? 'update' : 'create', ...(editingCampaignId ? { campaignId: editingCampaignId } : {}), ...campaignDraft })
-      const nextState = parseProjectWorkspaceState(updated.workspace_state)
-      setProjects((items) => items.map((item) => item.id === updated.id ? updated : item))
-      setWorkspaceDraft(nextState)
-      setWorkspaceSaved('选题已保存，等待方向确认')
-      setEditingCampaignId('')
-      setCampaignDraft({ ...campaignDraft, title: '', feature: '', story: '', sellingPoints: [], materialsNeeded: [] })
-    } catch (err) { setWorkspaceSaved(`无法创建选题：${String((err as Error).message)}`) }
+      if (action === 'start') await phone.invoke(IPC.taskStart, { id: selectedProjectTask.id })
+      if (action === 'stop' && selectedProjectTask.active_run) await phone.invoke(IPC.taskStop, { id: selectedProjectTask.id, runId: selectedProjectTask.active_run.id })
+      if (action === 'approve') await phone.invoke(IPC.taskReview, { id: selectedProjectTask.id, action, submissionId: selectedProjectTask.submission_id, specHash: selectedProjectTask.submitted_spec_hash })
+      if (action === 'return') await phone.invoke(IPC.taskReview, { id: selectedProjectTask.id, action, submissionId: selectedProjectTask.submission_id, specHash: selectedProjectTask.submitted_spec_hash, feedback: taskReviewFeedback })
+      if (action === 'reopen') await phone.invoke(IPC.taskReview, { id: selectedProjectTask.id, action })
+      await refreshProjectTasks(target.id)
+      const labels: Record<typeof action, string> = { start: '任务已启动。', stop: '已请求停止本次任务执行。', approve: '验收通过，任务已完成。', return: '已退回任务，意见会进入下一轮执行。', reopen: '任务已重新打开。' }
+      setWorkspaceSaved(labels[action])
+    } catch (error) { setWorkspaceSaved(String(error instanceof Error ? error.message : error)) }
+    finally { setWorkspaceSaving(false) }
   }
 
-  function editCampaignOnPhone(campaign: CampaignProposal) {
-    setEditingCampaignId(campaign.id)
-    setCampaignDraft({
-      kind: campaign.kind, title: campaign.title, feature: campaign.feature, story: campaign.story,
-      channels: campaign.channels, sellingPoints: campaign.sellingPoints, materialsNeeded: campaign.materialsNeeded,
-    })
-  }
-
-  async function reviewCampaignOnPhone(campaign: CampaignProposal, decision: 'approve' | 'changes_requested') {
+  async function saveProjectProfile() {
+    if (!target || target.kind !== 'group') return
+    setWorkspaceSaving(true)
+    setWorkspaceSaved('')
     try {
-      if (!target || target.kind !== 'group') return
-      const updated = await phone.invoke<ProjectInfo>(IPC.projectCampaign, { projectId: target.id, action: 'review_direction', campaignId: campaign.id, decision, feedback: campaignFeedback[campaign.id] || '' })
-      setProjects((items) => items.map((item) => item.id === updated.id ? updated : item))
-      setWorkspaceDraft(parseProjectWorkspaceState(updated.workspace_state))
-      setWorkspaceSaved('方向审核已保存')
-    }
-    catch (err) { setWorkspaceSaved(`无法确认选题：${String((err as Error).message)}`) }
+      const saved = await phone.invoke<ProjectInfo>(IPC.projectSave, {
+        id: target.id, title: projectTitle.trim(), icon: projectIcon.trim() || '👥',
+        description: projectDescription, system_prompt: groupRules, leader_agent_id: projectLeaderId || null,
+        workspace_dir: projectWorkspaceDir, memberAgentIds: projectMembers.map((member) => member.agent_id),
+        memberConfigs: projectMembers.map(({ agent_id, duties, model_override, thinking_override }) => ({ agent_id, duties, model_override, thinking_override })),
+      })
+      setProjects((items) => items.map((item) => item.id === saved.id ? saved : item))
+      setWorkspaceSaved('群资料已保存')
+    } catch (error) { setWorkspaceSaved('保存失败：' + String(error instanceof Error ? error.message : error)) }
+    finally { setWorkspaceSaving(false) }
   }
 
-  async function makeCampaignTaskOnPhone(campaign: CampaignProposal) {
+  async function saveProjectMembers() {
+    await saveProjectProfile()
+  }
+
+  async function addProjectMember() {
+    if (!target || target.kind !== 'group' || !memberToAdd) return
+    setWorkspaceSaving(true)
+    try {
+      await phone.invoke(IPC.projectAddMember, { projectId: target.id, agentId: memberToAdd })
+      const members = await phone.invoke<ProjectMember[]>(IPC.projectMembers, { projectId: target.id })
+      setProjectMembers(members)
+      setMemberToAdd('')
+      setSelectedMemberId(memberToAdd)
+      setWorkspaceSaved('成员已添加')
+    } catch (error) { setWorkspaceSaved('添加失败：' + String(error instanceof Error ? error.message : error)) }
+    finally { setWorkspaceSaving(false) }
+  }
+
+  async function removeProjectMember(member: ProjectMember) {
+    if (!target || target.kind !== 'group') return
+    if (member.agent_id === projectLeaderId) { setWorkspaceSaved('请先在群资料中更换群主'); return }
+    setWorkspaceSaving(true)
+    try {
+      await phone.invoke(IPC.projectRemoveMember, { projectId: target.id, agentId: member.agent_id })
+      setProjectMembers((list) => list.filter((item) => item.agent_id !== member.agent_id))
+      if (selectedMemberId === member.agent_id) setSelectedMemberId('')
+      setWorkspaceSaved('成员已移出')
+    } catch (error) { setWorkspaceSaved('移出失败：' + String(error instanceof Error ? error.message : error)) }
+    finally { setWorkspaceSaving(false) }
+  }
+
+  async function openProjectThread(threadId: string) {
+    if (!target || target.kind !== 'group') return
+    await phone.invoke(IPC.groupThreadActivate, { projectId: target.id, threadId })
+    setProjectSection('tasks')
+    setScreen('chat')
+    await loadHistory(target)
+  }
+
+  async function openProjectFiles() {
     if (!target || target.kind !== 'group') return
     const project = projects.find((item) => item.id === target.id)
     if (!project) return
-    try {
-      if (!canStartCampaignProduction(campaign)) throw new Error('先确认方向并补齐素材')
-      const updated = await phone.invoke<ProjectInfo>(IPC.projectCampaign, { projectId: project.id, action: 'create_task', campaignId: campaign.id })
-      setProjects((items) => items.map((item) => item.id === updated.id ? updated : item))
-      setWorkspaceDraft(parseProjectWorkspaceState(updated.workspace_state))
-      setWorkspaceSaved('制作任务已创建并关联选题')
-    } catch (err) { setWorkspaceSaved(`无法创建制作任务：${String((err as Error).message)}`) }
-  }
-
-  async function submitCampaignOnPhone(campaign: CampaignProposal) {
-    try {
-      if (!target || target.kind !== 'group') return
-      const updated = await phone.invoke<ProjectInfo>(IPC.projectCampaign, { projectId: target.id, action: 'submit_delivery', campaignId: campaign.id, path: campaignPaths[campaign.id] || '' })
-      setProjects((items) => items.map((item) => item.id === updated.id ? updated : item))
-      setWorkspaceDraft(parseProjectWorkspaceState(updated.workspace_state))
-      setWorkspaceSaved('成品版本已提交验收')
-      setCampaignPaths((current) => ({ ...current, [campaign.id]: '' }))
-    } catch (err) { setWorkspaceSaved(`无法提交成品：${String((err as Error).message)}`) }
-  }
-
-  async function reviewDeliveryOnPhone(campaign: CampaignProposal, deliveryId: string, decision: 'accepted' | 'changes_requested') {
-    try {
-      if (!target || target.kind !== 'group') return
-      const updated = await phone.invoke<ProjectInfo>(IPC.projectCampaign, { projectId: target.id, action: 'review_delivery', campaignId: campaign.id, deliveryId, decision, feedback: campaignFeedback[deliveryId] || '' })
-      setProjects((items) => items.map((item) => item.id === updated.id ? updated : item))
-      setWorkspaceDraft(parseProjectWorkspaceState(updated.workspace_state))
-      setWorkspaceSaved('成品验收已保存')
+    let dir = project.workspace_dir.trim()
+    if (!dir) {
+      const dataDir = await ensureDataDir()
+      if (dataDir) dir = dataDir + '/workspace'
     }
-    catch (err) { setWorkspaceSaved(`无法验收成品：${String((err as Error).message)}`) }
-  }
-
-  async function registerAssetOnPhone() {
+    if (!dir) { setFilesTip('项目群没有配置工作区目录。'); setProjectSection('files'); return }
     try {
-      if (!target || target.kind !== 'group') return
-      const updated = await phone.invoke<ProjectInfo>(IPC.projectCampaign, { projectId: target.id, action: 'register_asset', ...assetDraft })
-      setProjects((items) => items.map((item) => item.id === updated.id ? updated : item))
-      setWorkspaceDraft(parseProjectWorkspaceState(updated.workspace_state))
-      setAssetDraft({ title: '', path: '', feature: '', kind: 'image', source: 'user_provided', sourceNote: '', isReal: false })
-      setWorkspaceSaved('素材已登记，待确认来源与可用性')
-    } catch (err) { setWorkspaceSaved(`无法登记素材：${String((err as Error).message)}`) }
-  }
-
-  async function reviewAssetOnPhone(assetId: string, confirmed: boolean) {
-    try {
-      if (!target || target.kind !== 'group') return
-      const updated = await phone.invoke<ProjectInfo>(IPC.projectCampaign, { projectId: target.id, action: 'review_asset', assetId, confirmed })
-      setProjects((items) => items.map((item) => item.id === updated.id ? updated : item))
-      setWorkspaceDraft(parseProjectWorkspaceState(updated.workspace_state))
-    } catch (err) { setWorkspaceSaved(`无法确认素材：${String((err as Error).message)}`) }
-  }
-
-  async function resolveCampaignMaterialOnPhone(campaign: CampaignProposal, need: string) {
-    try {
-      if (!target || target.kind !== 'group') return
-      const updated = await phone.invoke<ProjectInfo>(IPC.projectCampaign, { projectId: target.id, action: 'resolve_material', campaignId: campaign.id, need, assetId: campaignAssetChoices[`${campaign.id}:${need}`] || '' })
-      setProjects((items) => items.map((item) => item.id === updated.id ? updated : item))
-      setWorkspaceDraft(parseProjectWorkspaceState(updated.workspace_state))
-      setWorkspaceSaved('已使用确认素材补齐选题缺口')
-    } catch (err) { setWorkspaceSaved(`无法补齐素材缺口：${String((err as Error).message)}`) }
-  }
-
-  async function captureProjectScreenshotOnPhone() {
-    try {
-      if (!target || target.kind !== 'group') return
-      setWorkspaceSaving(true)
-      const updated = await phone.invoke<ProjectInfo>(IPC.projectCampaign, { projectId: target.id, action: 'capture_browser_screenshot', ...captureDraft })
-      setProjects((items) => items.map((item) => item.id === updated.id ? updated : item))
-      setWorkspaceDraft(parseProjectWorkspaceState(updated.workspace_state))
-      setCaptureDraft({ title: '', feature: '', fullPage: false, redactionConfirmed: false })
-      setWorkspaceSaved('截图已保存到项目素材库，待确认可用性')
-    } catch (err) { setWorkspaceSaved(`无法截图：${String((err as Error).message)}`) }
-    finally { setWorkspaceSaving(false) }
-  }
-
-  async function scanProjectAssetsOnPhone() {
-    try {
-      if (!target || target.kind !== 'group') return
-      setWorkspaceSaving(true)
-      const before = workspaceDraft.assets.length
-      const updated = await phone.invoke<ProjectInfo>(IPC.projectCampaign, { projectId: target.id, action: 'scan_asset_candidates', directory: assetScanDirectory })
-      setProjects((items) => items.map((item) => item.id === updated.id ? updated : item))
-      const nextState = parseProjectWorkspaceState(updated.workspace_state)
-      setWorkspaceDraft(nextState)
-      const count = Math.max(0, nextState.assets.length - before)
-      setWorkspaceSaved(`扫描完成，发现 ${count} 个新候选${count >= 200 ? '（本轮到达 200 项上限，可再次扫描下一批）' : ''}；来源和脱敏确认前不能用于制作`)
-    } catch (err) { setWorkspaceSaved(`无法扫描素材：${String((err as Error).message)}`) }
-    finally { setWorkspaceSaving(false) }
+      const result = await phone.invoke<{ exists: boolean; nodes: FileNode[] }>(IPC.fsListFiles, { dir })
+      setFilesData({ root: dir.replace(/[\\/]+$/, ''), exists: result.exists, nodes: result.nodes || [] })
+      setFileTrail([])
+      setFilesTip('')
+    } catch (error) { setFilesTip('读取工作区失败：' + String(error instanceof Error ? error.message : error)) }
+    setProjectSection('files')
   }
 
   async function loadFiles(dir: string) {
@@ -1733,18 +1636,6 @@ export function App() {
     }
     return nodes
   }, [filesData, fileTrail])
-
-  const recentWorkspaceFiles = useMemo(() => {
-    const files: FileNode[] = []
-    const visit = (nodes: FileNode[]) => {
-      for (const node of nodes) {
-        if (node.dir) visit(node.children || [])
-        else files.push(node)
-      }
-    }
-    visit(filesData?.nodes || [])
-    return files.sort((a, b) => b.mtime - a.mtime).slice(0, 3)
-  }, [filesData])
 
   const groups = useMemo(() => {
     const map = new Map<string, AgentInfo[]>()
@@ -2025,7 +1916,7 @@ export function App() {
               ) : null}
             </div>
             {target.kind === 'group' ? (
-              <button type="button" className="bar-icon-btn project-workspace-entry" data-testid="project-workspace" title="项目工作区" aria-label="项目工作区" onClick={openProjectWorkspace}>
+              <button type="button" className="bar-icon-btn project-management-entry" data-testid="project-management" title="项目管理" aria-label="项目管理" onClick={openProjectManagement}>
                 <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
                 </svg>
@@ -2495,171 +2386,102 @@ export function App() {
       )}
 
       {screen === 'project' && target?.kind === 'group' && (
-        <section className="dirs wechat-dirs project-workspace-screen" data-testid="project-workspace-screen">
+        <section className="dirs wechat-dirs project-management-screen" data-testid="project-management-screen">
           <header className="bar wechat-bar">
-            <button type="button" className="btn-nav-back" onClick={() => projectSection === 'overview' ? setScreen('chat') : setProjectSection('overview')}>
+            <button type="button" className="btn-nav-back" onClick={() => {
+              if (projectSection === 'task') { setTaskEditing(false); setProjectSection('tasks') }
+              else setScreen('chat')
+            }}>
               <span className="wechat-back-chevron">‹</span>
-              <span className="wechat-back-text">{projectSection === 'overview' ? '返回聊天' : '项目概览'}</span>
+              <span className="wechat-back-text">{projectSection === 'task' ? '项目管理' : '返回聊天'}</span>
             </button>
-            <b>{projectSection === 'overview' ? '项目工作区' : ({ profile: '项目资料与群规则', members: '群成员配置', reports: '日报与报告', tasks: '任务看板', assets: '项目素材', campaigns: '宣传选题与成品' } as Record<ProjectSection, string>)[projectSection]}</b>
-            <span style={{ width: 48 }} />
+            <b>{({ profile: '群资料', members: '群成员', tasks: '项目管理', task: taskEditing ? '编辑任务' : '任务详情', history: '会话记录', files: '工作区文件' } as Record<ProjectSection, string>)[projectSection]}</b>
+            {projectSection === 'tasks' ? <button type="button" className="btn-nav-action" onClick={newProjectTask}>新建</button> : <span style={{ width: 36 }} />}
           </header>
-          <p className="wechat-file-hint">项目进度、待交付和最近文件集中在这里；具体资料按需打开。</p>
-          {projectSection === 'overview' ? (
-            <div className="project-workspace-overview" data-testid="project-workspace-overview">
-              <article className="project-overview-hero">
-                <span className="project-overview-eyebrow">项目工作区</span>
-                <h2>{target.name}</h2>
-                <p>查看团队进展，或进入一个具体事项继续处理。</p>
-              </article>
-              <div className="project-overview-stats">
-                <button type="button" onClick={() => setProjectSection('tasks')}><strong>{projectTasks.filter((task) => task.status !== 'done' && task.status !== 'cancelled').length}</strong><span>进行中任务</span></button>
-                <button type="button" onClick={() => setProjectSection('campaigns')}><strong>{workspaceDraft.campaigns.reduce((sum, campaign) => sum + campaign.deliveries.filter((delivery) => delivery.status === 'in_review').length, 0)}</strong><span>待验收交付</span></button>
-                <button type="button" onClick={() => setProjectSection('assets')}><strong>{workspaceDraft.assets.filter((asset) => !asset.confirmed).length}</strong><span>待确认素材</span></button>
-              </div>
-              <div className="project-overview-links">
-                <button type="button" data-testid="project-section-profile" onClick={() => setProjectSection('profile')}><span>项目资料</span><small>目标、受众与项目文档</small><b>›</b></button>
-                <button type="button" data-testid="project-section-members" onClick={() => setProjectSection('members')}><span>群规则与成员配置</span><small>{projectMembers.length} 位成员 · 群内职责、模型与思考程度</small><b>›</b></button>
-                <button type="button" data-testid="project-section-reports" onClick={() => setProjectSection('reports')}><span>日报与报告</span><small>搜索来源、管理模板、生成草稿</small><b>›</b></button>
-                <button type="button" data-testid="project-section-tasks" onClick={() => setProjectSection('tasks')}><span>任务看板</span><small>{projectTasks.length} 项任务</small><b>›</b></button>
-                <button type="button" data-testid="project-section-assets" onClick={() => setProjectSection('assets')}><span>项目素材</span><small>{workspaceDraft.assets.length} 项素材</small><b>›</b></button>
-                <button type="button" data-testid="project-section-campaigns" onClick={() => setProjectSection('campaigns')}><span>宣传选题与成品</span><small>{workspaceDraft.campaigns.length} 个选题</small><b>›</b></button>
-              </div>
-              <section className="project-overview-files">
-                <div><h3>最近文件</h3><span>项目工作区</span></div>
-                {recentWorkspaceFiles.length ? recentWorkspaceFiles.map((file) => <button type="button" key={file.abs} onClick={() => void openRemoteFile(file.abs, file.name)}><span>▤</span><strong>{file.name}</strong><small>{new Date(file.mtime).toLocaleDateString('zh-CN')}</small><b>›</b></button>) : <p>还没有项目文件。文件生成后会显示在这里。</p>}
-              </section>
-            </div>
-          ) : null}
-          {projectSection === 'profile' && <div className="project-workspace-form">
-            <label><span>群规则（只在本群生效）</span><textarea rows={8} data-testid="mobile-group-rules" value={groupRules} onChange={(event) => setGroupRules(event.target.value)} placeholder="定义本群目标、协作流程、任务分配方式、验收口径和边界。群内身份与分工只在本群有效，不修改成员个人 Prompt。" /></label>
-            <label><span>阶段目标</span><textarea rows={3} data-testid="mobile-workspace-goal" value={workspaceDraft.goal} onChange={(e) => setWorkspaceDraft((s) => ({ ...s, goal: e.target.value }))} placeholder="这个项目当前要达成什么结果？" /></label>
-            <label><span>销售对象</span><input data-testid="mobile-workspace-sales-audience" value={workspaceDraft.salesAudience} onChange={(e) => setWorkspaceDraft((s) => ({ ...s, salesAudience: e.target.value }))} placeholder="例如：渠道商与集成商" /></label>
-            <label><span>内容呈现对象</span><input data-testid="mobile-workspace-story-audience" value={workspaceDraft.storyAudience} onChange={(e) => setWorkspaceDraft((s) => ({ ...s, storyAudience: e.target.value }))} placeholder="例如：一线医护人员" /></label>
-            <label><span>传播渠道（每行一个）</span><textarea rows={2} data-testid="mobile-workspace-channels" value={workspaceDraft.channels.join('\n')} onChange={(e) => setWorkspaceDraft((s) => ({ ...s, channels: e.target.value.split('\n') }))} placeholder="微信私聊\n渠道群转发\n现场讲解" /></label>
-            <label><span>系统介绍大纲（每行一章）</span><textarea rows={7} data-testid="mobile-workspace-outline" value={workspaceDraft.systemOutline.join('\n')} onChange={(e) => setWorkspaceDraft((s) => ({ ...s, systemOutline: e.target.value.split('\n') }))} placeholder="整体方案\n功能与医护使用场景\n对接与部署" /></label>
-            <label><span>每周推进节奏</span><textarea rows={2} data-testid="mobile-workspace-cadence" value={workspaceDraft.weeklyCadence} onChange={(e) => setWorkspaceDraft((s) => ({ ...s, weeklyCadence: e.target.value }))} placeholder="每周提交一批选题与素材缺口" /></label>
-            <button type="button" className="btn-primary" data-testid="mobile-workspace-save" disabled={workspaceSaving} onClick={() => void saveProjectWorkspace()}>{workspaceSaving ? '保存中…' : '保存项目资料'}</button>
-            {workspaceSaved ? <p className="project-workspace-result" data-testid="mobile-workspace-result">{workspaceSaved}</p> : null}
-            <h3 className="campaign-mobile-title">项目文档</h3>
-            <p className="project-workspace-result">生成的均为待复核 Markdown 草稿，保存在电脑的项目工作区。</p>
-            <div className="campaign-mobile-actions">
-              <button type="button" disabled={workspaceSaving} data-testid="mobile-project-document-charter" onClick={() => void generateProjectDocument('charter')}>生成立项文档草稿</button>
-              <button type="button" disabled={workspaceSaving} data-testid="mobile-project-document-closeout" onClick={() => void generateProjectDocument('closeout')}>生成结项核查草稿</button>
-            </div>
-            <div className="project-workspace-form"><label><span>周报统计开始日期</span><input data-testid="mobile-project-weekly-start" type="date" value={weeklyStartDate} onChange={(e) => setWeeklyStartDate(e.target.value)} /></label><label><span>周报统计结束日期</span><input data-testid="mobile-project-weekly-end" type="date" value={weeklyEndDate} onChange={(e) => setWeeklyEndDate(e.target.value)} /></label></div>
-            <button type="button" disabled={workspaceSaving || !weeklyStartDate || !weeklyEndDate || weeklyStartDate > weeklyEndDate} data-testid="mobile-project-document-weekly" onClick={() => void generateProjectDocument('weekly_report')}>生成项目周报草稿</button>
+
+          <nav className="project-mobile-tabs" data-testid="project-management-tabs" aria-label="项目群资料分区">
+            {([{ id: 'tasks', label: '项目管理' }, { id: 'profile', label: '群资料' }, { id: 'members', label: '成员' }, { id: 'history', label: '会话' }, { id: 'files', label: '文件' }] as const).map((item) =>
+              <button type="button" key={item.id} aria-current={projectSection === item.id || (item.id === 'tasks' && projectSection === 'task') ? 'page' : undefined}
+                data-testid={'mobile-project-section-' + item.id} onClick={() => item.id === 'files' ? void openProjectFiles() : setProjectSection(item.id)}>{item.label}</button>) }
+          </nav>
+
+          {projectSection === 'profile' && <div className="project-workspace-form" data-testid="mobile-project-profile">
+            <p className="project-workspace-result">群简介用于提供项目背景，群规则定义本群持续有效的协作边界。任务要求写在每项任务自己的三个文本域中。</p>
+            <label><span>群名称</span><input data-testid="mobile-group-title" value={projectTitle} onChange={(event) => setProjectTitle(event.target.value)} /></label>
+            <label><span>群图标</span><input data-testid="mobile-group-icon" value={projectIcon} onChange={(event) => setProjectIcon(event.target.value)} /></label>
+            <label><span>群主与协调人</span><select data-testid="mobile-group-leader" value={projectLeaderId} onChange={(event) => setProjectLeaderId(event.target.value)}><option value="">选择群主</option>{agents.map((agent) => <option key={agent.id} value={agent.id}>{agent.name}</option>)}</select></label>
+            <label><span>群简介 · 项目背景</span><textarea rows={4} data-testid="mobile-group-description" value={projectDescription} onChange={(event) => setProjectDescription(event.target.value)} placeholder="只写当前项目的背景事实。" /></label>
+            <label><span>群规则 · 只在本群生效</span><textarea rows={7} data-testid="mobile-group-rules" value={groupRules} onChange={(event) => setGroupRules(event.target.value)} placeholder="本群长期协作方式、质量要求和边界。" /></label>
+            <label><span>工作区目录</span><input data-testid="mobile-group-workspace" value={projectWorkspaceDir} onChange={(event) => setProjectWorkspaceDir(event.target.value)} placeholder="留空使用 Jeff 默认工作区" /></label>
+            <div className="project-context-links"><strong>项目记忆与 AGENTS.md</strong><p>记忆保存长期事实；AGENTS.md 保存本项目持续规则。</p><button type="button" onClick={() => setMemorySettingsOpen(true)}>打开记忆与规则设置</button></div>
+            <button type="button" className="btn-primary" data-testid="mobile-group-profile-save" disabled={workspaceSaving || !projectTitle.trim() || !projectLeaderId} onClick={() => void saveProjectProfile()}>{workspaceSaving ? '保存中…' : '保存群资料'}</button>
           </div>}
+
           {projectSection === 'members' && <div className="project-workspace-form" data-testid="mobile-group-members">
-            <p className="project-workspace-result">每个 Agent 保留个人默认模型与思考程度。这里的职责和配置只在当前群生效；留空表示继承个人默认值。</p>
-            <label><span>群成员</span><select data-testid="mobile-group-member-select" value={selectedMemberId} onChange={(event) => setSelectedMemberId(event.target.value)}>{projectMembers.map((member) => <option key={member.agent_id} value={member.agent_id}>{member.name}{member.agent_id === projects.find((project) => project.id === target.id)?.leader_agent_id ? ' · 群主' : ''}</option>)}</select></label>
+            <p className="project-workspace-result">职责只在当前群生效。模型和思考程度留空时继承 Agent 个人默认；执行引擎仍由 Agent 个人资料决定。</p>
+            <div className="project-member-add"><select aria-label="添加群成员" value={memberToAdd} onChange={(event) => setMemberToAdd(event.target.value)}><option value="">选择要添加的智能体</option>{agents.filter((agent) => !projectMembers.some((member) => member.agent_id === agent.id)).map((agent) => <option key={agent.id} value={agent.id}>{agent.name}</option>)}</select><button type="button" disabled={workspaceSaving || !memberToAdd} onClick={() => void addProjectMember()}>添加</button></div>
+            <label><span>当前成员</span><select data-testid="mobile-group-member-select" value={selectedMemberId} onChange={(event) => setSelectedMemberId(event.target.value)}>{projectMembers.map((member) => <option key={member.agent_id} value={member.agent_id}>{member.name}{member.agent_id === projectLeaderId ? ' · 群主' : ''}</option>)}</select></label>
             {selectedProjectMember ? <>
-              <p className="project-workspace-result">{selectedProjectMember.name} · {selectedProjectMember.execution_engine === 'opencode' ? 'OpenCode（Jeff）' : selectedProjectMember.execution_engine === 'opencode-system' ? 'OpenCode（系统）' : selectedProjectMember.execution_engine}</p>
-              <label><span>本群职责</span><textarea rows={5} data-testid="mobile-group-member-duties" value={selectedProjectMember.duties} onChange={(event) => setProjectMembers((members) => members.map((member) => member.agent_id === selectedProjectMember.agent_id ? { ...member, duties: event.target.value } : member))} placeholder="该成员在本群负责什么；留空时按群规则分配" /></label>
-              <label><span>本群模型（留空继承个人默认）</span><input data-testid="mobile-group-member-model" list="mobile-group-member-models" value={selectedProjectMember.model_override || ''} onChange={(event) => setProjectMembers((members) => members.map((member) => member.agent_id === selectedProjectMember.agent_id ? { ...member, model_override: event.target.value || null } : member))} placeholder={selectedProjectMember.execution_engine === 'opencode' ? 'provider/model，例如 openai/gpt-5' : 'CLI 模型 ID'} />
-                <datalist id="mobile-group-member-models">{projectMemberModels.map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}</datalist>
-              </label>
-              {selectedProjectMember.execution_engine !== 'cursor' && <label><span>本群思考程度</span><select data-testid="mobile-group-member-thinking" value={selectedProjectMember.thinking_override || ''} onChange={(event) => setProjectMembers((members) => members.map((member) => member.agent_id === selectedProjectMember.agent_id ? { ...member, thinking_override: event.target.value || null } : member))}><option value="">继承个人默认</option><option value="none">关闭</option><option value="low">低</option><option value="medium">中</option><option value="high">高</option><option value="max">最大</option></select></label>}
-              <button type="button" className="btn-primary" data-testid="mobile-group-member-save" disabled={workspaceSaving} onClick={() => void saveProjectWorkspace()}>{workspaceSaving ? '保存中…' : '保存群规则与成员配置'}</button>
-              {workspaceSaved ? <p className="project-workspace-result" role="status">{workspaceSaved}</p> : null}
-            </> : <p className="project-workspace-result">这个群还没有可编辑成员。</p>}
+              <p className="project-workspace-result">{selectedProjectMember.name} · {selectedProjectMember.execution_engine}</p>
+              <label><span>本群职责</span><textarea rows={5} data-testid="mobile-group-member-duties" value={selectedProjectMember.duties} onChange={(event) => setProjectMembers((list) => list.map((member) => member.agent_id === selectedProjectMember.agent_id ? { ...member, duties: event.target.value } : member))} placeholder="描述该成员在当前群承担的责任。" /></label>
+              <label><span>本群模型覆盖</span><input data-testid="mobile-group-member-model" list="mobile-group-member-models" value={selectedProjectMember.model_override || ''} onChange={(event) => setProjectMembers((list) => list.map((member) => member.agent_id === selectedProjectMember.agent_id ? { ...member, model_override: event.target.value || null } : member))} placeholder="留空继承个人默认" /><datalist id="mobile-group-member-models">{projectMemberModels.map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}</datalist></label>
+              {selectedProjectMember.execution_engine !== 'cursor' && <label><span>本群思考程度</span><select data-testid="mobile-group-member-thinking" value={selectedProjectMember.thinking_override || ''} onChange={(event) => setProjectMembers((list) => list.map((member) => member.agent_id === selectedProjectMember.agent_id ? { ...member, thinking_override: event.target.value || null } : member))}><option value="">继承个人默认</option><option value="none">关闭</option><option value="low">低</option><option value="medium">中</option><option value="high">高</option><option value="max">最大</option></select></label>}
+              <div className="project-member-actions"><button type="button" className="btn-primary" data-testid="mobile-group-member-save" disabled={workspaceSaving} onClick={() => void saveProjectMembers()}>{workspaceSaving ? '保存中…' : '保存成员设置'}</button>{selectedProjectMember.agent_id !== projectLeaderId && <button type="button" onClick={() => void removeProjectMember(selectedProjectMember)}>移出群</button>}</div>
+            </> : <p className="project-workspace-result">{projectMembersLoading ? '正在读取群成员…' : '还没有群成员。'}</p>}
           </div>}
-          {projectSection === 'reports' && <div className="project-workspace-form">
-            <h3 className="campaign-mobile-title">思源日报与报告模板</h3>
-            <p className="project-workspace-result">思源连接需先在桌面「设置 → 思源知识库」配置。请核对每篇日报日期，思源文档创建时间可能不同于日报日期。生成时正文会发送给项目群主所用模型，并在独立报告话题留痕；搜索结果只有经你确认后才会进入项目来源。</p>
-            <label><span>搜索日报</span><input data-testid="mobile-report-query" value={reportQuery} onChange={(e) => setReportQuery(e.target.value)} placeholder="标题或内容关键词" /></label>
-            <button type="button" data-testid="mobile-report-search" disabled={reportBusy || reportQuery.trim().length < 2} onClick={() => void searchReportSources()}>搜索思源日报</button>
-            {reportHits.map((hit) => <div className="campaign-mobile-delivery" key={hit.docId}><span><strong>{hit.title}</strong><br />{hit.path}<br />{hit.snippet}<br /><label>日报日期 <input type="date" aria-label={`${hit.title} 的日报日期`} value={reportDates[hit.docId] || ''} onChange={(e) => setReportDates((dates) => ({ ...dates, [hit.docId]: e.target.value }))} /></label></span><input type="checkbox" aria-label={`选择 ${hit.title}`} checked={reportSelected.includes(hit.docId)} onChange={(e) => setReportSelected((ids) => e.target.checked ? [...ids, hit.docId] : ids.filter((id) => id !== hit.docId))} /></div>)}
-            {reportHits.length > 0 ? <button type="button" data-testid="mobile-report-confirm-sources" disabled={reportBusy || reportSelected.length === 0} onClick={() => void confirmReportSourcesOnPhone()}>确认所选日报来源</button> : null}
-            {workspaceDraft.reportSources.map((source) => <div className="campaign-mobile-delivery" key={source.docId}><span>{source.reportDate} · {source.title} · {source.path}</span><button type="button" onClick={() => void removeReportSourceOnPhone(source.docId)}>移除</button></div>)}
-            <label><span>模板</span><select data-testid="mobile-report-template-select" value={reportTemplateId} onChange={(e) => { const item = workspaceDraft.reportTemplates.find((template) => template.id === e.target.value); setReportTemplateId(item?.id || ''); setReportTemplateName(item?.name || ''); setReportPeriodType(item?.periodType || '季度'); setReportSections(item?.sections.join('\n') || '工作重点\n主要进展\n量化成果\n风险与下一步') }}><option value="">新模板</option>{workspaceDraft.reportTemplates.map((template) => <option key={template.id} value={template.id}>{template.name} · {template.periodType}</option>)}</select></label>
-            <label><span>模板名称</span><input data-testid="mobile-report-template-name" value={reportTemplateName} onChange={(e) => setReportTemplateName(e.target.value)} placeholder="员工工作总结" /></label>
-            <label><span>周期类型（可扩展）</span><input data-testid="mobile-report-period" value={reportPeriodType} onChange={(e) => setReportPeriodType(e.target.value)} placeholder="月报 / 季报 / 年报" /></label>
-            <label><span>栏目（每行一个）</span><textarea data-testid="mobile-report-sections" rows={4} value={reportSections} onChange={(e) => setReportSections(e.target.value)} /></label>
-            <button type="button" data-testid="mobile-report-template-save" disabled={reportBusy || !reportTemplateName.trim() || !reportPeriodType.trim() || !reportSections.trim()} onClick={() => void saveReportTemplateOnPhone()}>保存报告模板</button>
-            <div className="project-workspace-form"><label><span>统计开始日期</span><input data-testid="mobile-report-start" type="date" value={reportStartDate} onChange={(e) => setReportStartDate(e.target.value)} /></label><label><span>统计结束日期</span><input data-testid="mobile-report-end" type="date" value={reportEndDate} onChange={(e) => setReportEndDate(e.target.value)} /></label></div>
-            <button type="button" className="btn-primary" data-testid="mobile-report-generate" disabled={reportBusy || !reportTemplateId || workspaceDraft.reportSources.length === 0 || reportStartDate > reportEndDate} onClick={() => void generateProjectReportOnPhone()}>{reportBusy ? '生成中…' : '生成报告草稿'}</button>
-            {reportMessage ? <p className="project-workspace-result" role="status" data-testid="mobile-report-message">{reportMessage}</p> : null}
-            {reportResult ? <details data-testid="mobile-report-result"><summary>{reportResult.path}</summary><pre>{reportResult.content}</pre></details> : null}
+
+          {projectSection === 'tasks' && <div className="project-task-mobile" data-testid="mobile-project-task-list">
+            <div className="project-task-mobile-heading"><div><small>PROJECT TASKS</small><p>{projectTasks.filter((task) => task.status === 'in_review').length} 项等待验收</p></div><button type="button" className="btn-primary" onClick={newProjectTask}>新建任务</button></div>
+            {projectTasks.length ? projectTasks.map((task) => <button type="button" className="project-task-mobile-card" key={task.id} data-testid={'mobile-project-task-' + task.id} onClick={() => {
+              setSelectedTaskId(task.id); setTaskEditing(false); setTaskReviewFeedback('')
+              void phone.invoke<TaskRunInfo[]>(IPC.taskRuns, { id: task.id }).then(setTaskRuns).catch(() => setTaskRuns([]))
+              setProjectSection('task')
+            }}><span><b>{task.key}</b><em>{({ todo: '待办', in_progress: '进行中', in_review: '待验收', done: '已完成', cancelled: '已取消' } as Record<string, string>)[task.status] || task.status}</em></span><strong>{task.title}</strong>{task.goal && <small>目标：{task.goal}</small>}<small>{task.assignee_id ? projectMembers.find((member) => member.agent_id === task.assignee_id)?.name || '成员已移出' : '由群主协调'}{task.active_run ? ' · 正在执行' : ''}</small></button>) : <p className="project-workspace-result">{projectTasksLoading ? '正在读取任务…' : workspaceSaved.startsWith('无法加载任务') ? workspaceSaved : '还没有任务。新建后会先保存为待办，不会自动执行。'}</p>}
           </div>}
-          {projectSection === 'tasks' && <div className="project-workspace-form">
-            <h3 className="campaign-mobile-title">项目管理 · 任务</h3>
-            <p className="project-workspace-result">设置期限、前置任务和验收标准；依赖未完成的任务不能标记完成。</p>
-            <label><span>任务标题</span><input data-testid="mobile-project-task-title" value={newTaskTitle} onChange={(e) => setNewTaskTitle(e.target.value)} placeholder="例如：完成腕表呼叫联调" /></label>
-            <label><span>截止日期</span><input data-testid="mobile-project-task-due" type="date" value={newTaskDue} onChange={(e) => setNewTaskDue(e.target.value)} /></label>
-            <label><span>前置任务（可多选）</span><select multiple data-testid="mobile-project-task-dependencies" value={newTaskDepends} onChange={(e) => setNewTaskDepends(Array.from(e.currentTarget.selectedOptions, (option) => option.value))}>{projectTasks.map((task) => <option key={task.id} value={task.id}>{task.key} · {task.title}</option>)}</select></label>
-            <label><span>验收标准</span><textarea rows={2} data-testid="mobile-project-task-criteria" value={newTaskCriteria} onChange={(e) => setNewTaskCriteria(e.target.value)} placeholder="完成条件与可核对结果" /></label>
-            <button type="button" className="btn-primary" data-testid="mobile-project-task-create" disabled={workspaceSaving || !newTaskTitle.trim()} onClick={() => void saveProjectTask()}>创建项目任务</button>
-            {projectTasks.map((task) => {
-              const blocked = task.depends_on.some((id) => projectTasks.find((candidate) => candidate.id === id)?.status !== 'done')
-              const daysLeft = task.due_at == null ? null : Math.ceil((new Date(task.due_at).setHours(0, 0, 0, 0) - new Date().setHours(0, 0, 0, 0)) / 86_400_000)
-              const risk = task.status === 'done' || task.status === 'cancelled' ? '' : blocked ? '风险：等待前置任务' : daysLeft !== null && daysLeft < 0 ? `风险：已逾期 ${-daysLeft} 天` : daysLeft !== null && daysLeft <= 3 ? `风险：${daysLeft === 0 ? '今天到期' : `${daysLeft} 天内到期`}` : ''
-              return <div className="campaign-mobile-delivery" key={task.id} data-testid={`mobile-project-task-${task.id}`}><span><strong>{task.key} · {task.title}</strong><br />{task.due_at ? `截止 ${new Date(task.due_at).toLocaleDateString('zh-CN')}` : '未设期限'} · {blocked ? '等待前置任务' : task.status}{risk ? <><br /><strong data-testid={`mobile-project-task-risk-${task.id}`}>{risk}</strong></> : null}{task.acceptance_criteria ? ` · 验收：${task.acceptance_criteria}` : ''}</span><select aria-label={`${task.key} 状态`} value={task.status} disabled={workspaceSaving || (blocked && task.status !== 'done')} onChange={(e) => void saveProjectTask(task, e.target.value)}><option value="todo">待办</option><option value="in_progress">进行中</option><option value="in_review">待验收</option><option value="done">已完成</option><option value="cancelled">已取消</option></select></div>
-            })}
+
+          {projectSection === 'task' && <div className="project-workspace-form project-task-mobile-detail" data-testid="mobile-project-task-detail">
+            {taskEditing ? <>
+              <h3>{selectedTaskId ? '编辑任务' : '新建任务'}</h3>
+              <label><span>任务标题 *</span><input data-testid="mobile-project-task-title" value={taskDraft.title} onChange={(event) => setTaskDraft((draft) => ({ ...draft, title: event.target.value }))} /></label>
+              <label><span>目标</span><textarea rows={3} data-testid="mobile-project-task-goal" value={taskDraft.goal} onChange={(event) => setTaskDraft((draft) => ({ ...draft, goal: event.target.value }))} placeholder="期望达成的结果；销售对象等具体对象也可以写在这里。" /></label>
+              <label><span>任务描述</span><textarea rows={5} data-testid="mobile-project-task-description" value={taskDraft.description} onChange={(event) => setTaskDraft((draft) => ({ ...draft, description: event.target.value }))} placeholder="具体工作、背景、材料和限制。" /></label>
+              <label><span>验收标准</span><textarea rows={3} data-testid="mobile-project-task-criteria" value={taskDraft.acceptance_criteria} onChange={(event) => setTaskDraft((draft) => ({ ...draft, acceptance_criteria: event.target.value }))} placeholder="怎样判断任务完成？" /></label>
+              <label><span>负责人</span><select value={taskDraft.assignee_id} onChange={(event) => setTaskDraft((draft) => ({ ...draft, assignee_id: event.target.value }))}><option value="">未指定 · 由群主协调</option>{projectMembers.map((member) => <option key={member.agent_id} value={member.agent_id}>{member.name}</option>)}</select></label>
+              <label><span>优先级</span><select value={taskDraft.priority} onChange={(event) => setTaskDraft((draft) => ({ ...draft, priority: event.target.value }))}><option value="low">低</option><option value="medium">普通</option><option value="high">高</option><option value="urgent">紧急</option></select></label>
+              <details><summary>更多设置</summary><label><span>截止日期</span><input type="date" value={taskDraft.due_at ? new Date(taskDraft.due_at).toISOString().slice(0, 10) : ''} onChange={(event) => setTaskDraft((draft) => ({ ...draft, due_at: event.target.value ? new Date(event.target.value + 'T23:59:59').getTime() : null }))} /></label>
+                <label><span>前置任务</span><select multiple value={taskDraft.depends_on} onChange={(event) => setTaskDraft((draft) => ({ ...draft, depends_on: Array.from(event.currentTarget.selectedOptions, (option) => option.value) }))}>{projectTasks.filter((task) => task.id !== selectedTaskId && task.status !== 'done').map((task) => <option key={task.id} value={task.id}>{task.key} · {task.title}</option>)}</select></label></details>
+              <button type="button" className="btn-primary" data-testid="mobile-project-task-save" disabled={workspaceSaving || !taskDraft.title.trim()} onClick={() => void saveProjectTask()}>{workspaceSaving ? '保存中…' : '保存任务'}</button><button type="button" onClick={() => { setTaskEditing(false); if (!selectedTaskId) setProjectSection('tasks') }}>取消编辑</button>
+            </> : selectedProjectTask ? <>
+              <div className="mobile-task-title"><small>{selectedProjectTask.key} · {selectedProjectTask.status === 'in_review' ? '待验收' : selectedProjectTask.status === 'done' ? '已完成' : selectedProjectTask.status === 'in_progress' ? '进行中' : '待办'}</small><h3>{selectedProjectTask.title}</h3></div>
+              <div className="mobile-task-requirements"><strong>目标</strong><p>{selectedProjectTask.goal || '未填写'}</p><strong>任务描述</strong><p>{selectedProjectTask.description || '未填写'}</p><strong>验收标准</strong><p>{selectedProjectTask.acceptance_criteria || '未填写'}</p></div>
+              {selectedProjectTask.review_feedback && <div className="project-workspace-result"><b>退回意见</b><p>{selectedProjectTask.review_feedback}</p></div>}
+              <section className="mobile-task-runs"><h4>执行记录</h4>{taskRuns.length ? taskRuns.map((run) => <article key={run.id}><b>{({ queued: '排队中', running: '执行中', succeeded: '已提交', failed: '执行失败', cancelled: '已停止', interrupted: '意外中断', needs_input: '需要补充' } as Record<string, string>)[run.status]}</b><small>{new Date(run.started_at).toLocaleString('zh-CN')}</small>{run.error && <p>{run.error}</p>}{run.thread_id && <button type="button" onClick={() => void openProjectThread(run.thread_id)}>查看执行话题</button>}</article>) : <p>尚无执行记录。</p>}</section>
+              {selectedProjectTask.status === 'in_review' && <section className="mobile-task-review" data-testid="mobile-project-task-submission"><h4>执行结果 · 等待验收</h4><p>{selectedProjectTask.result_summary}</p>{selectedProjectTask.evidence_paths.map((path) => <code key={path}>{path}</code>)}<label><span>退回意见</span><textarea rows={3} value={taskReviewFeedback} onChange={(event) => setTaskReviewFeedback(event.target.value)} placeholder="退回时说明还需要补充的内容。" /></label><div><button type="button" disabled={workspaceSaving || !taskReviewFeedback.trim()} onClick={() => void runProjectTask('return')}>退回继续执行</button><button type="button" className="btn-primary" data-testid="mobile-project-task-approve" disabled={workspaceSaving} onClick={() => void runProjectTask('approve')}>验收通过</button></div></section>}
+              {workspaceSaved && <p className="project-workspace-result" role="status">{workspaceSaved}</p>}
+              <div className="mobile-task-actions">
+                {(selectedProjectTask.status === 'todo' || selectedProjectTask.status === 'in_progress') && !selectedProjectTask.active_run && <button type="button" className="btn-primary" data-testid="mobile-project-task-start" disabled={workspaceSaving} onClick={() => void runProjectTask('start')}>{taskRuns.length ? '继续执行' : '开始执行'}</button>}
+                {selectedProjectTask.active_run && <button type="button" disabled={workspaceSaving} onClick={() => void runProjectTask('stop')}>停止本次执行</button>}
+                {selectedProjectTask.status === 'done' && <button type="button" onClick={() => void runProjectTask('reopen')}>重新打开</button>}
+                {!selectedProjectTask.active_run && selectedProjectTask.status !== 'done' && <button type="button" onClick={() => editProjectTask(selectedProjectTask)}>编辑要求</button>}
+              </div>
+            </> : <p className="project-workspace-result">选择一项任务，或创建新任务。</p>}
           </div>}
-          {projectSection === 'assets' && <div className="project-workspace-form">
-            <h4>项目素材库</h4>
-            <p className="project-workspace-result">真实素材、授权截图与生成示意图分别标记；文件需先放入项目工作区，截图先脱敏。</p>
-            <label><span>扫描候选目录（工作区相对路径）</span><input data-testid="mobile-asset-scan-directory" value={assetScanDirectory} onChange={(e) => setAssetScanDirectory(e.target.value)} /></label>
-            <button type="button" disabled={workspaceSaving || !assetScanDirectory.trim()} data-testid="mobile-asset-scan" onClick={() => void scanProjectAssetsOnPhone()}>扫描目录中的新素材</button>
-            <label><span>当前页面截图场景</span><input data-testid="mobile-asset-capture-title" value={captureDraft.title} onChange={(e) => setCaptureDraft((d) => ({ ...d, title: e.target.value }))} placeholder="护士接收腕表呼叫" /></label>
-            <label><span>所属功能</span><input data-testid="mobile-asset-capture-feature" value={captureDraft.feature} onChange={(e) => setCaptureDraft((d) => ({ ...d, feature: e.target.value }))} /></label>
-            <label><input type="checkbox" checked={captureDraft.fullPage} onChange={(e) => setCaptureDraft((d) => ({ ...d, fullPage: e.target.checked }))} />截取完整页面</label>
-            <label><input type="checkbox" data-testid="mobile-asset-capture-consent" checked={captureDraft.redactionConfirmed} onChange={(e) => setCaptureDraft((d) => ({ ...d, redactionConfirmed: e.target.checked }))} />已获演示授权并检查/遮挡患者信息</label>
-            <button type="button" disabled={workspaceSaving || !captureDraft.title.trim() || !captureDraft.redactionConfirmed} data-testid="mobile-asset-capture" onClick={() => void captureProjectScreenshotOnPhone()}>截取电脑当前内置浏览器页面</button>
-            <label><span>素材名称</span><input data-testid="mobile-asset-title" value={assetDraft.title} onChange={(e) => setAssetDraft((d) => ({ ...d, title: e.target.value }))} /></label>
-            <label><span>工作区相对路径</span><input data-testid="mobile-asset-path" value={assetDraft.path} onChange={(e) => setAssetDraft((d) => ({ ...d, path: e.target.value }))} placeholder="产品资料/腕表正面.png" /></label>
-            <label><span>所属功能</span><input data-testid="mobile-asset-feature" value={assetDraft.feature} onChange={(e) => setAssetDraft((d) => ({ ...d, feature: e.target.value }))} /></label>
-            <label><span>类型</span><select data-testid="mobile-asset-kind" value={assetDraft.kind} onChange={(e) => setAssetDraft((d) => ({ ...d, kind: e.target.value as typeof d.kind }))}><option value="image">图片</option><option value="video">视频</option><option value="document">文档</option><option value="demo_url">演示地址</option></select></label>
-            <label><span>来源</span><select data-testid="mobile-asset-source" value={assetDraft.source} onChange={(e) => setAssetDraft((d) => ({ ...d, source: e.target.value as typeof d.source }))}><option value="user_provided">用户提供</option><option value="authorized_screenshot">授权系统截图</option><option value="generated_illustration">生成示意图</option><option value="demo_material">演示素材</option></select></label>
-            <label><span>来源说明</span><input data-testid="mobile-asset-source-note" value={assetDraft.sourceNote} onChange={(e) => setAssetDraft((d) => ({ ...d, sourceNote: e.target.value }))} /></label>
-            <label><input type="checkbox" checked={assetDraft.isReal} onChange={(e) => setAssetDraft((d) => ({ ...d, isReal: e.target.checked }))} />真实产品素材</label>
-            <button type="button" disabled={workspaceSaving || !assetDraft.title.trim() || !assetDraft.path.trim()} data-testid="mobile-asset-register" onClick={() => void registerAssetOnPhone()}>登记素材</button>
-            {workspaceDraft.assets.map((asset) => <div className="campaign-mobile-delivery" key={asset.id} data-testid={`mobile-asset-${asset.id}`}><span>{asset.title} · {{ image: '图片', video: '视频', document: '文档', demo_url: '演示地址' }[asset.kind]} · {asset.feature || '通用'} · {asset.source === 'unverified_candidate' ? '扫描候选·来源待核实' : asset.source === 'generated_illustration' ? '生成示意图' : asset.source === 'authorized_screenshot' ? '授权截图' : asset.isReal ? '真实素材' : '素材'} · {asset.path}{asset.sourceNote ? ` · 来源：${asset.sourceNote}` : ''} · {asset.confirmed ? '已确认' : '待确认'}</span>{!asset.confirmed ? <button type="button" onClick={() => void reviewAssetOnPhone(asset.id, true)}>确认可用</button> : <button type="button" onClick={() => void reviewAssetOnPhone(asset.id, false)}>撤销确认</button>}</div>)}
+
+          {projectSection === 'history' && <div className="project-workspace-form" data-testid="mobile-project-history">
+            <p className="project-workspace-result">普通讨论和任务执行使用不同话题，继续任务时会复用该任务自己的话题。</p>
+            {projectThreads.length ? projectThreads.map((thread) => <button type="button" className="project-history-row" key={thread.id} onClick={() => void openProjectThread(thread.id)}><span><strong>{thread.title}</strong><small>{thread.kind === 'task' ? '任务执行话题' : thread.kind === 'cron' ? '定时任务话题' : '群讨论'} · {new Date(thread.updatedAt).toLocaleString('zh-CN')}</small></span><b>{thread.active ? '当前' : '打开'} ›</b></button>) : <p>{projectThreadsLoading ? '正在读取会话…' : '还没有会话记录。'}</p>}
           </div>}
-          {projectSection === 'campaigns' && <div className="project-workspace-form">
-            <h3 className="campaign-mobile-title">宣传选题与成品</h3>
-            <p className="project-workspace-result">方向确认、制作任务和成品验收分开记录。只有当前方向已确认且待补素材清零，才可创建制作任务。</p>
-            <label><span>成果线</span><select data-testid="mobile-campaign-kind" value={campaignDraft.kind} onChange={(e) => setCampaignDraft((draft) => ({ ...draft, kind: e.target.value as CampaignKind }))}><option value="feature_video">单功能视频</option><option value="system_deck">完整系统介绍 PPT</option></select></label>
-            <label><span>选题标题</span><input data-testid="mobile-campaign-title" value={campaignDraft.title} onChange={(e) => setCampaignDraft((draft) => ({ ...draft, title: e.target.value }))} placeholder="例如：腕表让护士不错过病房呼叫" /></label>
-            {campaignDraft.kind === 'feature_video' ? <label><span>具体功能</span><input data-testid="mobile-campaign-feature" value={campaignDraft.feature} onChange={(e) => setCampaignDraft((draft) => ({ ...draft, feature: e.target.value }))} placeholder="例如：腕表病房呼叫" /></label> : null}
-            <label><span>一线医护使用场景</span><textarea rows={2} data-testid="mobile-campaign-story" value={campaignDraft.story} onChange={(e) => setCampaignDraft((draft) => ({ ...draft, story: e.target.value }))} placeholder="谁在什么时刻遇到什么问题，如何使用" /></label>
-            <label><span>传播渠道（每行一个）</span><textarea rows={2} data-testid="mobile-campaign-channels" value={campaignDraft.channels.join('\n')} onChange={(e) => setCampaignDraft((draft) => ({ ...draft, channels: e.target.value.split('\n') }))} placeholder="微信私聊\n渠道群转发\n现场讲解" /></label>
-            <label><span>核心卖点（每行一个）</span><textarea rows={3} data-testid="mobile-campaign-points" value={campaignDraft.sellingPoints.join('\n')} onChange={(e) => setCampaignDraft((draft) => ({ ...draft, sellingPoints: e.target.value.split('\n') }))} placeholder="仅填写资料能支持的产品事实" /></label>
-            <label><span>待补素材（每行一个）</span><textarea rows={2} data-testid="mobile-campaign-materials" value={campaignDraft.materialsNeeded.join('\n')} onChange={(e) => setCampaignDraft((draft) => ({ ...draft, materialsNeeded: e.target.value.split('\n') }))} placeholder="腕表实拍 / 已脱敏界面截图 / 接口说明" /></label>
-            <button type="button" className="btn-primary" data-testid="mobile-campaign-create" disabled={workspaceSaving} onClick={() => void createCampaignOnPhone()}>{editingCampaignId ? '保存为新选题版本' : '创建待确认选题'}</button>
-            {editingCampaignId ? <button type="button" data-testid="mobile-campaign-edit-cancel" onClick={() => setEditingCampaignId('')}>取消编辑</button> : null}
-            {workspaceDraft.campaigns.map((campaign) => (
-              <article className="campaign-mobile-card" key={campaign.id} data-testid={`mobile-campaign-${campaign.id}`}>
-                <strong>{campaign.kind === 'system_deck' ? '完整系统 PPT' : '单功能视频'} · {campaign.title}</strong>
-                <span>方向 v{campaign.revision} · {campaign.approvedRevision === campaign.revision ? '已确认' : '待确认'}</span>
-                <p>功能：{campaign.feature || '完整系统'}；场景：{campaign.story || '未填写'}</p>
-                <p>核心卖点：{campaign.sellingPoints.join('；')}</p>
-                <p>{campaign.materialsNeeded.length ? `待补素材：${campaign.materialsNeeded.join('、')}` : '素材缺口已清零'}</p>
-                {campaign.materialsNeeded.map((need) => <div className="campaign-mobile-actions" key={need} data-testid={`mobile-campaign-material-${campaign.id}`}><span>补齐：{need}</span><select aria-label={`${need} 匹配素材`} data-testid={`mobile-campaign-asset-select-${campaign.id}`} value={campaignAssetChoices[`${campaign.id}:${need}`] || ''} onChange={(e) => setCampaignAssetChoices((choices) => ({ ...choices, [`${campaign.id}:${need}`]: e.target.value }))}><option value="">选择已确认素材</option>{workspaceDraft.assets.filter((asset) => asset.confirmed && (!asset.feature || !campaign.feature || asset.feature === campaign.feature)).map((asset) => <option key={asset.id} value={asset.id}>{asset.title} · {asset.source === 'generated_illustration' ? '示意图' : asset.isReal ? '真实素材' : '素材'}</option>)}</select><button type="button" disabled={!campaignAssetChoices[`${campaign.id}:${need}`] || workspaceSaving} data-testid={`mobile-campaign-material-resolve-${campaign.id}`} onClick={() => void resolveCampaignMaterialOnPhone(campaign, need)}>使用该素材</button></div>)}
-                {campaign.directionFeedback ? <p>方向意见：{campaign.directionFeedback}</p> : null}
-                <button type="button" data-testid={`mobile-campaign-edit-${campaign.id}`} onClick={() => editCampaignOnPhone(campaign)}>编辑并提交新版本</button>
-                {campaign.approvedRevision !== campaign.revision ? <>
-                  <input aria-label={`${campaign.title} 审阅意见`} data-testid={`mobile-campaign-feedback-${campaign.id}`} value={campaignFeedback[campaign.id] || ''} onChange={(e) => setCampaignFeedback((current) => ({ ...current, [campaign.id]: e.target.value }))} placeholder="退回时填写修改意见" />
-                  <div className="campaign-mobile-actions"><button type="button" data-testid={`mobile-campaign-request-changes-${campaign.id}`} onClick={() => void reviewCampaignOnPhone(campaign, 'changes_requested')}>退回修改</button><button type="button" data-testid={`mobile-campaign-approve-${campaign.id}`} onClick={() => void reviewCampaignOnPhone(campaign, 'approve')}>确认方向</button></div>
-                </> : null}
-                {campaign.approvedRevision === campaign.revision && !campaign.productionTaskId ? <button type="button" disabled={workspaceSaving || campaign.materialsNeeded.length > 0} data-testid={`mobile-campaign-task-${campaign.id}`} onClick={() => void makeCampaignTaskOnPhone(campaign)}>创建制作任务</button> : null}
-                {campaign.productionTaskId ? <span>已关联任务 {campaign.productionTaskId}</span> : null}
-                {campaign.approvedRevision === campaign.revision ? <>
-                  <input aria-label={`${campaign.title} 成品路径`} data-testid={`mobile-campaign-path-${campaign.id}`} value={campaignPaths[campaign.id] || ''} onChange={(e) => setCampaignPaths((current) => ({ ...current, [campaign.id]: e.target.value }))} placeholder="工作区相对路径，如 宣传/腕表呼叫/v1.mp4" />
-                  <button type="button" disabled={workspaceSaving || !canStartCampaignProduction(campaign) || !campaign.productionTaskId} data-testid={`mobile-campaign-submit-${campaign.id}`} onClick={() => void submitCampaignOnPhone(campaign)}>提交新版本验收</button>
-                </> : null}
-                {campaign.deliveries.map((delivery) => <div className="campaign-mobile-delivery" key={delivery.id} data-testid={`mobile-campaign-delivery-${delivery.id}`}>
-                  <span>v{delivery.revision} · {delivery.path} · {delivery.status === 'in_review' ? '待验收' : delivery.status === 'accepted' ? '已验收' : '要求修改'}</span>
-                  {delivery.feedback ? <p>意见：{delivery.feedback}</p> : null}
-                  {delivery.status === 'in_review' ? <>
-                    <input aria-label={`v${delivery.revision} 验收意见`} data-testid={`mobile-delivery-feedback-${delivery.id}`} value={campaignFeedback[delivery.id] || ''} onChange={(e) => setCampaignFeedback((current) => ({ ...current, [delivery.id]: e.target.value }))} placeholder="要求修改时填写意见" />
-                    <div className="campaign-mobile-actions"><button type="button" data-testid={`mobile-delivery-request-changes-${delivery.id}`} onClick={() => void reviewDeliveryOnPhone(campaign, delivery.id, 'changes_requested')}>要求修改</button><button type="button" data-testid={`mobile-delivery-accept-${delivery.id}`} onClick={() => void reviewDeliveryOnPhone(campaign, delivery.id, 'accepted')}>验收通过</button></div>
-                  </> : null}
-                </div>)}
-              </article>
-            ))}
+
+          {projectSection === 'files' && <div className="project-workspace-form" data-testid="mobile-project-files">
+            <div className="project-file-heading"><div><b>工作区文件</b><small>{filesData?.root || '工作区未配置'}</small></div><button type="button" onClick={() => void openProjectFiles()}>刷新</button></div>
+            {filesTip && <p className="err">{filesTip}</p>}
+            {!filesData ? <p>还没有工作区文件。</p> : !filesData.exists ? <p>工作区目录不存在：{filesData.root}</p> : <>
+              {fileTrail.length > 0 && <button type="button" className="project-file-row" onClick={() => setFileTrail((trail) => trail.slice(0, -1))}>📁 ..（上级目录）</button>}
+              {currentNodes.map((node) => <button type="button" className="project-file-row" key={node.abs} onClick={() => node.dir ? setFileTrail((trail) => [...trail, { name: node.name, abs: node.abs }]) : void openRemoteFile(node.abs, node.name)}>{node.dir ? '📁' : '📄'} {node.name}<small>{node.dir ? '文件夹' : formatFileSize(node.size)}</small></button>)}
+              {!currentNodes.length && <p>目录为空。</p>}
+            </>}
           </div>}
+          {workspaceSaved && projectSection !== 'task' && <p className="project-workspace-result" role="status">{workspaceSaved}</p>}
         </section>
       )}
 

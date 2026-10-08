@@ -112,11 +112,12 @@ describe('配对码', () => {
 })
 
 describe('远程白名单', () => {
-  it('宣传选题状态机允许手机经加密 IPC 调用', () => {
-    expect(REMOTE_POLICY[IPC.projectCampaign]).toEqual({ policy: 'allow' })
-    expect(REMOTE_POLICY[IPC.projectReport]).toEqual({ policy: 'allow' })
+  it('通用项目任务管理允许手机经加密 IPC 调用', () => {
+    for (const channel of [IPC.tasksList, IPC.taskSave, IPC.taskDelete, IPC.taskStart, IPC.taskStop, IPC.taskRuns, IPC.taskReview]) {
+      expect(REMOTE_POLICY[channel]).toEqual({ policy: 'allow' })
+    }
     expect(REMOTE_POLICY[IPC.siyuanSearch]).toEqual({ policy: 'allow' })
-    expect(REMOTE_POLICY[IPC.siyuanExport]).toEqual({ policy: 'allow' })
+    expect(REMOTE_POLICY[IPC.contextPromptDetails]).toMatchObject({ policy: 'deny', note: expect.stringContaining('本机记忆与规则') })
   })
   it('每个 IPC 通道恰好一条规则', () => {
     const channels = Object.values(IPC)
@@ -136,6 +137,7 @@ describe('远程白名单', () => {
         'browser:pageShot',
         'browser:result',
         'browser:state',
+        'context:prompt-details',
         'debugLog:openDir',
         'notify:desktop',
         'remote:focus',
@@ -156,11 +158,11 @@ describe('远程白名单', () => {
 })
 
 describe('手机远程调用超时', () => {
-  it('报告模型生成走长任务时限，配置保存仍使用普通请求时限', () => {
-    expect(remoteRequestTimeout(IPC.projectReport, { action: 'generate' })).toBe(95 * 60 * 1000)
-    expect(remoteRequestTimeout(IPC.projectReport, { action: 'save_template' })).toBe(30_000)
+  it('任务启动与停止走长任务时限', () => {
+    expect(remoteRequestTimeout(IPC.taskStart)).toBe(30_000)
+    expect(remoteRequestTimeout(IPC.taskStop)).toBe(30_000)
     expect(remoteRequestTimeout(IPC.groupSend, {})).toBe(95 * 60 * 1000)
-    expect(remoteRequestTimeout(IPC.projectReport, { action: 'generate' }, 5_000)).toBe(5_000)
+    expect(remoteRequestTimeout(IPC.taskStart, {}, 5_000)).toBe(5_000)
   })
 })
 

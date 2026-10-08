@@ -10,7 +10,6 @@ import { ToolBridge } from '../src/tools/bridge.js'
 import { registerAdminTools } from '../src/tools/adminTools.js'
 import { registerProjectTools } from '../src/tools/projectTools.js'
 import { allToolDefs } from '../src/tools/definitions.js'
-import { createCampaignProposal, reviewCampaignDirection, parseProjectWorkspaceState, serializeProjectWorkspaceState } from '../src/project/workspace.js'
 
 let tmp: string
 let db: DB
@@ -58,9 +57,8 @@ describe('工具定义与实现的一致性', () => {
     }
   })
 
-  it('项目工作台结构化配置必须在项目更新工具参数中声明', () => {
+  it('群规则与群成员覆盖必须在对应配置工具中声明', () => {
     const d = allToolDefs().find((x) => x.name === 'jeff_project_update')
-    expect(d?.args.workspace_state?.type).toBe('string')
     expect(d?.args.system_prompt?.type).toBe('string')
     const member = allToolDefs().find((x) => x.name === 'jeff_project_member_config')
     expect(member?.args).toMatchObject({
@@ -137,33 +135,21 @@ describe('小杰改项目群 / 任务：空值不抹字段', () => {
     expect(projectRepo(db).get(project.id)?.system_prompt).toBe('')
   })
 
-  it('项目工作台只接受完整的对象 JSON，非法配置不改变已保存资料', async () => {
+  it('任务分别保存目标、任务描述和验收标准，创建后不会由 Agent 直接改状态', async () => {
     const call = projCall()
     const leader = agentRepo(db).create({ name: '项目统筹' })
-    const project = projectRepo(db).create({ title: '宣传项目', leader_agent_id: leader.id, workspace_state: '{"goal":"旧目标"}' })
-    await expect(call('jeff_project_update', { id: project.id, workspace_state: '{' })).rejects.toThrow(/合法 JSON/)
-    expect(parseProjectWorkspaceState(projectRepo(db).get(project.id)?.workspace_state).goal).toBe('旧目标')
-    await call('jeff_project_update', { id: project.id, workspace_state: '{"goal":"新目标"}' })
-    expect(parseProjectWorkspaceState(projectRepo(db).get(project.id)!.workspace_state).goal).toBe('新目标')
-  })
-
-  it('Agent 可改项目事实，但不能伪造用户选题确认与成品状态', async () => {
-    const call = projCall()
-    const leader = agentRepo(db).create({ name: '项目统筹' })
-    let workspace = createCampaignProposal(parseProjectWorkspaceState('{}'), {
-      kind: 'feature_video', title: '腕表呼叫', feature: '病房呼叫', story: '护士用腕表接收呼叫',
-      channels: ['渠道群'], sellingPoints: ['及时接收'], materialsNeeded: [],
+    const project = projectRepo(db).create({ title: '通用项目群', leader_agent_id: leader.id })
+    const created = await call<{ id: string; status: string }>('jeff_task_create', {
+      project_id: project.id, title: '检查交付物', goal: '确认关键流程可用',
+      description: '启动应用并走一遍主要流程', acceptance_criteria: '流程通过且无错误记录',
     })
-    const campaignId = workspace.campaigns[0]!.id
-    workspace = reviewCampaignDirection(workspace, campaignId, 'approve')
-    const project = projectRepo(db).create({ title: '宣传项目', leader_agent_id: leader.id, workspace_state: serializeProjectWorkspaceState(workspace) })
-    const forged = JSON.parse(serializeProjectWorkspaceState(workspace)) as Record<string, unknown>
-    forged.goal = 'Agent 可维护的目标'
-    ;(forged.campaigns as Array<Record<string, unknown>>)[0] = { ...(forged.campaigns as Array<Record<string, unknown>>)[0], approvedRevision: null, productionTaskId: 'forged', deliveries: [{ id: 'fake', path: 'fake.mp4', status: 'accepted' }] }
-    await call('jeff_project_update', { id: project.id, workspace_state: JSON.stringify(forged) })
-    const saved = parseProjectWorkspaceState(projectRepo(db).get(project.id)!.workspace_state)
-    expect(saved.goal).toBe('Agent 可维护的目标')
-    expect(saved.campaigns[0]).toEqual(workspace.campaigns[0])
+    expect(created.status).toBe('todo')
+    expect(taskRepo(db).get(created.id)).toMatchObject({
+      goal: '确认关键流程可用', description: '启动应用并走一遍主要流程',
+      acceptance_criteria: '流程通过且无错误记录', status: 'todo',
+    })
+    await expect(call('jeff_task_update', { id: created.id, status: 'done' })).rejects.toThrow(/没有要修改的字段/)
+    expect(taskRepo(db).get(created.id)?.status).toBe('todo')
   })
 
   it('改群名时空串字段不覆盖已有值；工作空间目录传空串才是「清除」', async () => {
@@ -184,26 +170,23 @@ describe('小杰改项目群 / 任务：空值不抹字段', () => {
     await expect(call('jeff_project_update', { id: p.id, title: '' })).rejects.toThrow(/没有要修改的字段/)
   })
 
-  it('任务状态流转时标题/描述不被空值清掉；指派传空串 = 取消指派', async () => {
+  it('任务字段更新时标题/要求不被空值清掉；指派传空串 = 取消指派', async () => {
     const call = projCall()
     const leader = agentRepo(db).create({ name: '护士长' })
     const nurse = agentRepo(db).create({ name: '责任护士' })
     const p = await call<{ id: string }>('jeff_project_create', { title: '护士站', leader_agent_id: leader.id, members: [{ agentId: nurse.id }] })
     expect(projectAgentRepo(db).listByProject(p.id).map((m) => m.agent_id).sort()).toEqual([leader.id, nurse.id].sort())
-    const t = await call<{ id: string; key: string }>('jeff_task_create', { project_id: p.id, title: '随访名单', description: '整理本周名单', priority: 'high', assignee_agent_id: nurse.id })
+    const t = await call<{ id: string; key: string }>('jeff_task_create', { project_id: p.id, title: '随访名单', description: '整理本周名单', goal: '完成名单复核', acceptance_criteria: '主管确认', priority: 'high', assignee_agent_id: nurse.id })
     expect(t.key).toMatch(/^JEF-\d+$/)
 
-    const r = await call<{ changed: string[] }>('jeff_task_update', { id: t.id, status: 'in_progress', title: '', description: '', priority: '' })
-    expect(r.changed).toEqual(['status'])
-    expect(taskRepo(db).get(t.id)).toMatchObject({ title: '随访名单', description: '整理本周名单', priority: 'high', status: 'in_progress', assignee_id: nurse.id })
+    await expect(call('jeff_task_update', { id: t.id, title: '', goal: '', description: '', acceptance_criteria: '', priority: '' })).rejects.toThrow(/没有要修改的字段/)
+    expect(taskRepo(db).get(t.id)).toMatchObject({ title: '随访名单', goal: '完成名单复核', description: '整理本周名单', acceptance_criteria: '主管确认', priority: 'high', status: 'todo', assignee_id: nurse.id })
 
     await call('jeff_task_update', { id: t.id, assignee_agent_id: '' })
     expect(taskRepo(db).get(t.id)).toMatchObject({ assignee_type: 'none', assignee_id: '' })
     await expect(call('jeff_task_update', { id: t.id, title: '   ' })).rejects.toThrow(/没有要修改的字段/)
-    // 非法枚举值要有能读懂的报错（而不是 repo 返回 undefined 后抛内部 TypeError）
-    await expect(call('jeff_task_update', { id: t.id, status: 'nope' })).rejects.toThrow(/status 非法/)
     await expect(call('jeff_task_update', { id: t.id, priority: 'ASAP' })).rejects.toThrow(/priority 非法/)
-    expect(taskRepo(db).get(t.id)).toMatchObject({ status: 'in_progress' })
+    expect(taskRepo(db).get(t.id)).toMatchObject({ status: 'todo' })
   })
 
   it('项目群删除是软删；成员移除不能踢群主', async () => {

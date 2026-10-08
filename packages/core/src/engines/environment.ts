@@ -135,14 +135,14 @@ function openCodeMcp(servers: Record<string, McpServerCfg>, bridgeUrl: string): 
 
 /** Only generated runtime files live here. Target projects and global CLI config remain untouched. */
 export function prepareEnvironment(root: string, id: string, engine: EngineId, system: string, workspace: string,
-  bridgeUrl: string, servers: Record<string, McpServerCfg>): { cwd: string; env: NodeJS.ProcessEnv; extraArgs: string[] } {
+  bridgeUrl: string, servers: Record<string, McpServerCfg>): { cwd: string; env: NodeJS.ProcessEnv; extraArgs: string[]; instructions: string } {
   const cwd = path.join(root, 'engines', engine, id)
   fs.mkdirSync(cwd, { recursive: true, mode: 0o700 })
   const env = { ...process.env }
   const skills = userSkillsDir()
   const skillGuide = fs.existsSync(skills) ? fs.readdirSync(skills).filter((name) => fs.existsSync(path.join(skills, name, 'SKILL.md')))
     .map((name) => `${name}: ${path.join(skills, name, 'SKILL.md')}`).join('\n') : ''
-  const instructions = `${system}\n\n【工作目录】真实目标目录为 ${workspace}。文件操作使用该目录的绝对路径；所有命令先 cd 到该目录。当前运行目录仅用于 Jeff 会话配置。\n【技能】只使用以下技能；需要时读取对应 SKILL.md，不加载其它来源：\n${skillGuide}\n【提问】需要用户回答时用普通回复说明问题，不调用终端交互提问工具。`
+  const instructions = composeAdapterInstructions(system, workspace, skillGuide)
   const mcp = nativeMcp(servers, bridgeUrl)
   if (engine === 'opencode-system') {
     const profile = readSystemOpenCodeProfile(process.env)
@@ -181,7 +181,7 @@ export function prepareEnvironment(root: string, id: string, engine: EngineId, s
     }
     env.OPENCODE_DISABLE_AUTOUPDATE = '1'
     env.OPENCODE_DISABLE_EXTERNAL_SKILLS = '1'
-    return { cwd, env, extraArgs: ['--agent', 'jeff-agent'] }
+    return { cwd, env, extraArgs: ['--agent', 'jeff-agent'], instructions }
   }
   if (engine === 'codex') {
     const home = path.join(cwd, 'codex-home')
@@ -207,7 +207,7 @@ export function prepareEnvironment(root: string, id: string, engine: EngineId, s
     fs.writeFileSync(path.join(home, 'config.toml'), stringify(config), { mode: 0o600 })
     copy(path.join(source, 'auth.json'), path.join(home, 'auth.json'))
     env.CODEX_HOME = home
-    return { cwd, env, extraArgs: [] }
+    return { cwd, env, extraArgs: [], instructions }
   }
   const configDir = path.join(cwd, 'config')
   fs.mkdirSync(configDir, { recursive: true, mode: 0o700 })
@@ -222,7 +222,7 @@ export function prepareEnvironment(root: string, id: string, engine: EngineId, s
     env.CLAUDE_CONFIG_DIR = configDir
     json(path.join(cwd, 'mcp.json'), { mcpServers: mcp })
     fs.writeFileSync(path.join(cwd, 'CLAUDE.md'), instructions)
-    return { cwd, env, extraArgs: ['--bare', '--setting-sources', 'user', '--strict-mcp-config', '--mcp-config', path.join(cwd, 'mcp.json'), '--add-dir', workspace, '--append-system-prompt-file', path.join(cwd, 'CLAUDE.md')] }
+    return { cwd, env, extraArgs: ['--bare', '--setting-sources', 'user', '--strict-mcp-config', '--mcp-config', path.join(cwd, 'mcp.json'), '--add-dir', workspace, '--append-system-prompt-file', path.join(cwd, 'CLAUDE.md')], instructions }
   }
   const source = process.env.CURSOR_CONFIG_DIR || path.join(os.homedir(), '.cursor')
   const originalFile = path.join(source, 'cli-config.json')
@@ -238,5 +238,15 @@ export function prepareEnvironment(root: string, id: string, engine: EngineId, s
   env.CURSOR_CONFIG_DIR = configDir
   env.CURSOR_DATA_DIR = path.join(cwd, 'data')
   fs.writeFileSync(path.join(cwd, 'AGENTS.md'), instructions)
-  return { cwd, env, extraArgs: ['--workspace', cwd, '--add-dir', workspace, '--trust', '--approve-mcps'] }
+  return { cwd, env, extraArgs: ['--workspace', cwd, '--add-dir', workspace, '--trust', '--approve-mcps'], instructions }
+}
+
+/** Jeff-owned instruction payload appended for external CLI adapters. */
+export function composeAdapterInstructions(system: string, workspace: string, skillGuide?: string): string {
+  const guide = skillGuide ?? (() => {
+    const skills = userSkillsDir()
+    return fs.existsSync(skills) ? fs.readdirSync(skills).filter((name) => fs.existsSync(path.join(skills, name, 'SKILL.md')))
+      .map((name) => `${name}: ${path.join(skills, name, 'SKILL.md')}`).join('\n') : ''
+  })()
+  return `${system}\n\n【工作目录】真实目标目录为 ${workspace}。文件操作使用该目录的绝对路径；所有命令先 cd 到该目录。当前运行目录仅用于 Jeff 会话配置。\n【技能】只使用以下技能；需要时读取对应 SKILL.md，不加载其它来源：\n${guide}\n【提问】需要用户回答时用普通回复说明问题，不调用终端交互提问工具。`
 }

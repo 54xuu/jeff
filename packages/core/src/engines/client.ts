@@ -15,6 +15,7 @@ import { executeCodex, executeJsonCli, executeOpenCode, RpcProcess } from './bac
 import { readSystemOpenCodeProfile, systemOpenCodeModelOptions } from './environment.js'
 import { ReplyCollector } from './stream.js'
 import { APP_VERSION } from '../version.js'
+import { composePromptContext, makePromptBlock, type PromptContext, type PromptSnapshotStore } from '../prompt/context.js'
 
 interface Binding {
   id: string
@@ -38,7 +39,7 @@ export class EngineClient extends OcClient {
   private stopped = new Map<string, number>()
   private completions = new Map<string, Promise<void>>()
   constructor(port: number, private deps: {
-    db: DB; root: string; workspace: string; bridge: ToolBridge; mcp: () => Record<string, McpServerCfg>; bundledOpenCode?: () => string | null
+    db: DB; root: string; workspace: string; bridge: ToolBridge; mcp: () => Record<string, McpServerCfg>; bundledOpenCode?: () => string | null; promptSnapshots?: PromptSnapshotStore
   }, log?: DebugLogFn) { super(port, log) }
   private kv() { return kvRepo(this.deps.db) }
   private binding(id: string): Binding | null { return this.kv().getJSON<Binding | null>(bindingKey(id), null) }
@@ -177,7 +178,14 @@ export class EngineClient extends OcClient {
   }
   override async sendMessage(input: Parameters<OcClient['sendMessage']>[0]): Promise<AssistantInfo> {
     const binding = this.binding(input.sessionId)
-    if (!binding || binding.engine === 'opencode') return super.sendMessage(input)
+    const agent = binding ? agentRepo(this.deps.db).get(binding.agentId) : this.agent(input.agent)
+    const agentId = binding?.agentId || agent?.id || input.agent || 'unknown'
+    const engine = binding?.engine || agent?.execution_engine || 'opencode'
+    if (!binding || binding.engine === 'opencode') {
+      const agentDefinition = agent ? this.readAgentDefinition(agent.id) : undefined
+      this.savePromptSnapshot(input, agentId, engine, agentDefinition)
+      return super.sendMessage(input)
+    }
     if (this.runs.has(binding.id)) throw new Error('该会话正在执行')
     const controller = new AbortController()
     this.runs.set(binding.id, controller)
@@ -218,6 +226,7 @@ export class EngineClient extends OcClient {
     const mcp = this.deps.bridge.openMcpSession(binding.id, agentSlug(agent.id), new Set())
     try {
       const environment = prepareEnvironment(this.deps.root, binding.id, binding.engine, `${agent.instructions}\n${input.system || ''}`, binding.directory, mcp.url, this.deps.mcp())
+      this.savePromptSnapshot(input, binding.agentId, binding.engine, environment.instructions)
       const selectedModel = input.engineModel?.trim() || (input.model ? `${input.model.providerID}/${input.model.modelID}` : '')
       const runtimeModel = currentEngine === binding.engine ? selectedModel || agent.engine_model || '' : binding.model || ''
       if (currentEngine === binding.engine) { binding.model = runtimeModel; binding.thinking = thinking || ''; this.save(binding) }
@@ -244,5 +253,47 @@ export class EngineClient extends OcClient {
     if (!right) return false
     try { return fs.realpathSync(left).toLowerCase() === fs.realpathSync(right).toLowerCase() }
     catch { return path.resolve(left).toLowerCase() === path.resolve(right).toLowerCase() }
+  }
+
+  private readAgentDefinition(agentId: string): string | undefined {
+    const file = path.join(this.deps.root, 'oc-home', 'config', 'opencode', 'agent', `${agentSlug(agentId)}.md`)
+    try { return fs.readFileSync(file, 'utf8') } catch { return undefined }
+  }
+
+  private savePromptSnapshot(input: Parameters<OcClient['sendMessage']>[0], agentId: string, engine: string, adapterPrompt?: string): void {
+    if (!this.deps.promptSnapshots || input.noReply) return
+    const agent = agentRepo(this.deps.db).get(agentId)
+    const original = input.promptContext
+    const sourceBlocks = original?.blocks.map(({ contentHash: _contentHash, ...block }) => block) || []
+    if (!original) {
+      if (agent) sourceBlocks.push(makePromptBlock({
+        id: 'agent-instructions', kind: 'agent-instructions', scope: 'agent', source: `agent:${agentId}.instructions`,
+        readStatus: agent.instructions.trim() ? 'loaded' : 'empty', included: !!agent.instructions.trim(), delivery: 'agent-definition', content: agent.instructions,
+      }))
+      if (input.system) sourceBlocks.push(makePromptBlock({
+        id: 'unclassified-system', kind: 'unclassified-system', scope: 'user', source: 'direct OcClient.sendMessage input.system',
+        readStatus: 'generated', included: true, content: input.system,
+      }))
+    }
+    const context = composePromptContext({
+      ...(original?.metadata || { agentId }),
+      agentId,
+      sessionId: input.sessionId,
+      engine,
+      ...(agent ? { agentInstructionsVersion: agent.instructions_version || 0 } : {}),
+    }, sourceBlocks)
+    const system = input.system || ''
+    this.deps.promptSnapshots.write({
+      sessionId: input.sessionId,
+      agentId,
+      ...(context.metadata.projectId ? { projectId: context.metadata.projectId } : {}),
+      ...(context.metadata.threadId ? { threadId: context.metadata.threadId } : {}),
+      ...(context.metadata.taskId ? { taskId: context.metadata.taskId } : {}),
+      ...(context.metadata.taskRunId ? { taskRunId: context.metadata.taskRunId } : {}),
+      engine,
+      context,
+      system,
+      ...(adapterPrompt === undefined ? {} : { adapterPrompt }),
+    })
   }
 }

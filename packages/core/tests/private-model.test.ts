@@ -18,6 +18,9 @@ beforeEach(() => {
   tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'jeff-priv-'))
   db = openDb(buildPaths(tmp))
   agentRepo(db).create({ id: XIAOJIE_ID, name: '小杰', builtin: 1 })
+  for (const id of ['agt_a', 'agt_stop', 'agt_fail', 'agt_race', 'agt_idle', 'agt_n1', 'agt_f', 'agt_old']) {
+    agentRepo(db).create({ id, name: id })
+  }
 })
 
 afterEach(() => {

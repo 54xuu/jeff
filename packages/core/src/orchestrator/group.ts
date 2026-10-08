@@ -6,7 +6,8 @@ import type { GroupMessage } from '../ipc/contract.js'
 import { projectMemberPromptOpts } from '../util/modelKey.js'
 import { GroupThreadStore, groupMsgScope } from './groupThreads.js'
 import { decodePluginUserMessage } from '../plugins/invoke.js'
-import { wantsIndependentSubtasks, withSubtaskSteer } from './subtask.js'
+import { SUBTASK_STEER, wantsIndependentSubtasks } from './subtask.js'
+import { composePromptContext, makePromptBlock, type PromptContext, type PromptContextBlock } from '../prompt/context.js'
 
 /** 单次用户消息触发的串行协作流水线最大步数（防死循环） */
 const MAX_PIPELINE_HOPS = 5
@@ -57,6 +58,7 @@ export interface GroupSendResult {
   routedTo: string
   summaryFailed?: boolean
   summaryError?: string
+  stopped?: boolean
 }
 
 export interface GroupChatHooks {
@@ -65,6 +67,16 @@ export interface GroupChatHooks {
 
   /** 群消息的记忆块注入（追加在 briefing 之后） */
   buildMemory?: (agentId: string, projectId: string) => string | undefined
+  buildSystem?: (agentId: string, projectId: string) => string | undefined
+  buildPromptContext?: (agentId: string, projectId: string, input: {
+    sessionId: string
+    threadId: string
+    taskSnapshot?: GroupTaskSnapshot
+    taskRunId?: string
+    includeSubtaskSteer: boolean
+  }) => PromptContext
+  onTaskRunStarted?: (runId: string) => void
+  isTaskRunActive?: (runId: string) => boolean
   afterReply?: (scope: { kind: 'private'; agentId: string } | { kind: 'group'; projectId: string; agentId: string }) => void
   /** 智能体未绑定模型时的会话兜底 */
   defaultModel?: () => { providerID: string; modelID: string } | null
@@ -72,6 +84,31 @@ export interface GroupChatHooks {
   onDebugLog?: (tag: string, detail: unknown) => void
   /** 单次群发送流水线完全结束（含锁内清理）后回调；用于 sidecar 待重启的延迟落闸 */
   onPipelineIdle?: () => void
+}
+
+export interface GroupTaskSnapshot {
+  id: string
+  key: string
+  title: string
+  goal: string
+  description: string
+  acceptanceCriteria: string
+  reviewFeedback: string
+  resultSummary: string
+}
+
+export function formatGroupTaskContext(snapshot: GroupTaskSnapshot, allowSubmit = true): string {
+  return [
+    `【当前项目任务 ${snapshot.key}：${snapshot.title}】`,
+    `目标：${snapshot.goal || '（未填写）'}`,
+    `任务描述：${snapshot.description || '（未填写）'}`,
+    `验收标准：${snapshot.acceptanceCriteria || '（未填写）'}`,
+    ...(snapshot.reviewFeedback ? [`用户退回意见：${snapshot.reviewFeedback}`] : []),
+    ...(snapshot.resultSummary ? [`上次提交结果：${snapshot.resultSummary}`] : []),
+    allowSubmit
+      ? '本回合只处理当前任务。完成后调用 jeff_task_submit 提交实际结果；没有提交的结果不会进入用户验收。'
+      : '你正在执行负责人委派的子项。只完成本项并把实际结果和产物位置汇报给负责人；由负责人汇总后正式提交验收。',
+  ].join('\n')
 }
 
 /**
@@ -90,7 +127,7 @@ export class GroupChat {
   }
 
   /** 单次群发送的运行态：冻结发起时的 thread，跟踪当前会话与取消标记（stream/stop/system 公告都归属它） */
-  private runStates = new Map<string, { threadId: string; cancelled: boolean; sessionId: string | null }>()
+  private runStates = new Map<string, { threadId: string; cancelled: boolean; sessionId: string | null; taskRunId?: string }>()
 
   /** 该项目群是否有在途发送（用于禁止切换/删除 thread，防止消息串线） */
   isBusy(projectId: string): boolean {
@@ -109,6 +146,15 @@ export class GroupChat {
   async abort(projectId: string): Promise<boolean> {
     const st = this.runStates.get(projectId)
     if (!st) return false
+    st.cancelled = true
+    if (st.sessionId) await this.getOc().abortSession(st.sessionId).catch(() => {})
+    return true
+  }
+
+  /** 只停止指定项目任务，不影响同群普通消息或其他任务话题。 */
+  async abortTask(projectId: string, runId: string): Promise<boolean> {
+    const st = this.runStates.get(projectId)
+    if (!st || st.taskRunId !== runId) return false
     st.cancelled = true
     if (st.sessionId) await this.getOc().abortSession(st.sessionId).catch(() => {})
     return true
@@ -203,7 +249,7 @@ export class GroupChat {
     return result
   }
 
-  buildBriefing(projectId: string, agentId: string): string {
+  buildBriefingBlocks(projectId: string, agentId: string): PromptContextBlock[] {
     const project = projectRepo(this.db).get(projectId)
     if (!project) throw new Error(`项目不存在: ${projectId}`)
     const agents = agentRepo(this.db)
@@ -223,17 +269,25 @@ export class GroupChat {
       .join('\n')
     const bg = (project.description || '').trim()
     const duties = currentMember?.duties?.trim() || '（本群未设置单独职责，按群规则和任务需要协作）'
-    return [
-      `【项目群上下文】群名：${project.title}`,
-      `项目背景（群简介）：${bg || '（未填写，请在群资料补充）'}`,
-      `工作空间目录：${project.workspace_dir || '默认工作区'}。用户没有指定输出位置时，产出的所有文件（代码、文档等）都保存到该目录。`,
-      `【本群规则（群级 System Prompt）】\n${project.system_prompt?.trim() || '（尚未设置。根据项目目标与用户指令协作。）'}`,
-      `【你的本群职责】\n${duties}`,
-      `【群成员名册与本群职责】`,
-      roster,
-      `群主身份只在本群有效。按本群规则决定由谁协调、执行和汇报；成员可以使用 Jeff 提供的工具完成任务。个人身份与个人默认模型仍由各自 Agent 设置决定。`,
-      `群内所有沟通均使用简体中文，清晰、专业、可执行。`,
+    const rules = project.system_prompt?.trim() || ''
+    const scopeGuidance = [
+      '群简介仅提供项目背景事实；群规则定义本群持续协作要求；成员职责只定义该成员在本群的责任。当前具体任务要求以任务的目标、任务描述、验收标准为准。不要将这些设置扩展到私聊或其他项目群。',
+      '群主身份只在本群有效。按本群规则决定由谁协调、执行和汇报；成员可以使用 Jeff 提供的工具完成任务。个人身份与个人默认模型仍由各自 Agent 设置决定。',
+      '群内所有沟通均使用简体中文，清晰、专业、可执行。',
     ].join('\n')
+    return [
+      makePromptBlock({ id: 'group-identity', kind: 'group-identity', scope: 'project', source: 'project.title', readStatus: 'loaded', included: true, content: `【项目群上下文】群名：${project.title}` }),
+      makePromptBlock({ id: 'group-description', kind: 'group-description', scope: 'project', source: 'project.description', readStatus: bg ? 'loaded' : 'empty', included: true, content: `项目背景（群简介）：${bg || '（未填写，请在群资料补充）'}` }),
+      makePromptBlock({ id: 'group-workspace', kind: 'group-workspace', scope: 'project', source: 'project.workspace_dir', readStatus: project.workspace_dir ? 'loaded' : 'empty', included: true, content: `工作空间目录：${project.workspace_dir || '默认工作区'}。用户没有指定输出位置时，产出的所有文件（代码、文档等）都保存到该目录。` }),
+      makePromptBlock({ id: 'group-rules', kind: 'group-rules', scope: 'project', source: 'project.system_prompt', readStatus: rules ? 'loaded' : 'empty', included: true, content: `【本群规则（群级 System Prompt）】\n${rules || '（尚未设置。根据项目目标与用户指令协作。）'}` }),
+      makePromptBlock({ id: 'member-duty', kind: 'member-duty', scope: 'agent', source: `project_agent:${agentId}.duties`, readStatus: currentMember?.duties?.trim() ? 'loaded' : 'empty', included: true, content: `【你的本群职责】\n${duties}` }),
+      makePromptBlock({ id: 'member-roster', kind: 'member-roster', scope: 'project', source: 'project_agent roster', readStatus: members.length ? 'loaded' : 'empty', included: true, content: `【群成员名册与本群职责】\n${roster}` }),
+      makePromptBlock({ id: 'group-scope-guidance', kind: 'group-rules', scope: 'project', source: 'Jeff group context policy', readStatus: 'generated', included: true, content: scopeGuidance }),
+    ]
+  }
+
+  buildBriefing(projectId: string, agentId: string): string {
+    return this.buildBriefingBlocks(projectId, agentId).map((block) => block.content).join('\n')
   }
 
   /**
@@ -262,8 +316,17 @@ export class GroupChat {
      * 缺省则用（必要时创建）当前活跃话题，与手动发消息一致。
      */
     threadId?: string
+    taskRunId?: string
+    targetAgentId?: string
+    taskSnapshot?: GroupTaskSnapshot
   }): Promise<GroupSendResult> {
-    return this.withProjectLock(input.projectId, () => this.doSend(input))
+    return this.withProjectLock(input.projectId, () => {
+      if (input.taskRunId) {
+        if (!this.hooks?.isTaskRunActive?.(input.taskRunId)) throw new Error('任务执行已取消或不存在')
+        this.hooks?.onTaskRunStarted?.(input.taskRunId)
+      }
+      return this.doSend(input)
+    })
   }
 
   private projectLocks = new Map<string, Promise<void>>()
@@ -290,11 +353,14 @@ export class GroupChat {
     images?: Array<{ mime: string; dataUrl: string }>
     cronTaskId?: string
     threadId?: string
+    taskRunId?: string
+    targetAgentId?: string
+    taskSnapshot?: GroupTaskSnapshot
   }): Promise<GroupSendResult> {
     const { projectId, text } = input
     const project = projectRepo(this.db).get(projectId)
     if (!project) throw new Error(`项目不存在: ${projectId}`)
-    if (!project.leader_agent_id) throw new Error('项目未设置群主（leader）')
+    if (!project.leader_agent_id && !input.targetAgentId) throw new Error('项目未设置群主（leader）')
     let threadId: string
     if (input.threadId) {
       if (!this.threads.getMeta(projectId, input.threadId)) throw new Error('会话不存在')
@@ -303,7 +369,7 @@ export class GroupChat {
       threadId = this.threads.ensureActiveThread(projectId)
     }
     // 冻结本次流程的归属：后续 stream/system 公告/取消都只认这个 thread，不随界面切换漂移
-    const runState = { threadId, cancelled: false, sessionId: null as string | null }
+    const runState = { threadId, cancelled: false, sessionId: null as string | null, ...(input.taskRunId ? { taskRunId: input.taskRunId } : {}) }
     this.runStates.set(projectId, runState)
     try {
       return await this.doSendPipeline(input, project, threadId, runState)
@@ -322,14 +388,17 @@ export class GroupChat {
       variant?: string
       images?: Array<{ mime: string; dataUrl: string }>
       cronTaskId?: string
+      taskRunId?: string
+      targetAgentId?: string
+      taskSnapshot?: GroupTaskSnapshot
     },
     project: ProjectRow,
     threadId: string,
-    runState: { threadId: string; cancelled: boolean; sessionId: string | null },
+    runState: { threadId: string; cancelled: boolean; sessionId: string | null; taskRunId?: string },
   ): Promise<GroupSendResult> {
     const { projectId, text } = input
-    const leaderId = project.leader_agent_id
-    if (!leaderId) throw new Error('项目未设置群主（leader）')
+    const leaderId = project.leader_agent_id || ''
+    if (!leaderId && !input.targetAgentId) throw new Error('项目未设置群主（leader）')
     const members = projectAgentRepo(this.db).listByProject(projectId)
     const agents = agentRepo(this.db)
     const scope = groupMsgScope(projectId, threadId)
@@ -348,14 +417,16 @@ export class GroupChat {
 
     const memberInfos = members.map((m) => ({ agent_id: m.agent_id, name: agents.get(m.agent_id)?.name || '' }))
     const mentioned = this.parseMention(text, memberInfos)
-    const firstTargetId = mentioned ?? leaderId
+    const firstTargetId = input.targetAgentId ?? mentioned ?? leaderId
+    if (!firstTargetId) throw new Error('没有可执行任务的 Agent，请设置负责人或群主')
     const firstTarget = agents.get(firstTargetId)
     if (!firstTarget) throw new Error(`路由目标不存在: ${firstTargetId}`)
 
     // 第一回合：响应用户
-    const first = await this.runTurn({ projectId, threadId, agentId: firstTargetId, text, images: input.images, runState })
+    const first = await this.runTurn({ projectId, threadId, agentId: firstTargetId, text, images: input.images, runState, taskSnapshot: input.taskSnapshot })
     let routedTo = firstTargetId
-    if (first.stopped) return { routedTo }
+    if (first.stopped) return { routedTo, ...(input.taskRunId ? { stopped: true } : {}) }
+    if (input.taskRunId) return { routedTo }
 
     // 记录各执行成员的汇报成果摘要（闭环透传给 leader 验收总结，避免 leader 盲猜或重复查文件浪费 token）
     const workerReports: Array<{ agentName: string; content: string }> = []
@@ -372,7 +443,7 @@ export class GroupChat {
       .filter((m) => m.agent_id !== firstTargetId && !(firstTargetId !== leaderId && m.agent_id === leaderId))
       .map((m) => ({ agentId: m.agent_id, source: first.content }))
     while (queue.length > 0 && hops < MAX_PIPELINE_HOPS) {
-      if (runState.cancelled) return { routedTo }
+      if (runState.cancelled) return { routedTo, ...(input.taskRunId ? { stopped: true } : {}) }
       const item = queue.shift() as { agentId: string; source: string }
       const workerId = item.agentId
       const worker = agents.get(workerId)
@@ -393,7 +464,7 @@ export class GroupChat {
         if (nm.agent_id !== leaderId && !queue.some((q) => q.agentId === nm.agent_id)) queue.push({ agentId: nm.agent_id, source: turn.content })
       }
     }
-    if (runState.cancelled) return { routedTo }
+    if (runState.cancelled) return { routedTo, ...(input.taskRunId ? { stopped: true } : {}) }
     if (hops >= MAX_PIPELINE_HOPS && queue.length > 0) {
       this.addSystemMessage(projectId, `⚠️ 本轮协作步数已达上限（${MAX_PIPELINE_HOPS} 步），剩余任务不再派发，由群主直接汇总。`, undefined, threadId)
     }
@@ -450,7 +521,7 @@ export class GroupChat {
    * 返回回复文本与是否被用户停止。
    * callbackMention：worker 执行回合的回调落库确保带 @我（模型未按约定输出时补一次）。
    */
-  private async runTurn(input: { projectId: string; threadId: string; agentId: string; text: string; images?: Array<{ mime: string; dataUrl: string }>; runState?: { threadId: string; cancelled: boolean; sessionId: string | null }; callbackMention?: boolean }): Promise<{ content: string; stopped: boolean }> {
+  private async runTurn(input: { projectId: string; threadId: string; agentId: string; text: string; images?: Array<{ mime: string; dataUrl: string }>; runState?: { threadId: string; cancelled: boolean; sessionId: string | null; taskRunId?: string }; callbackMention?: boolean; taskSnapshot?: GroupTaskSnapshot }): Promise<{ content: string; stopped: boolean }> {
     const { projectId, threadId, agentId, text } = input
     const agents = agentRepo(this.db)
     const target = agents.get(agentId)
@@ -462,9 +533,24 @@ export class GroupChat {
     if (input.runState) input.runState.sessionId = sessionId
     this.threads.setLastOcSession(projectId, sessionId)
     let reply: AssistantInfo
-    const memoryBlock = this.hooks?.buildMemory?.(agentId, projectId)
-    const systemBase = memoryBlock ? `${this.buildBriefing(projectId, agentId)}\n\n${memoryBlock}` : this.buildBriefing(projectId, agentId)
-    const system = withSubtaskSteer(systemBase)
+    let promptContext = this.hooks?.buildPromptContext?.(agentId, projectId, {
+      sessionId,
+      threadId,
+      ...(input.taskSnapshot ? { taskSnapshot: input.taskSnapshot } : {}),
+      ...(input.runState?.taskRunId ? { taskRunId: input.runState.taskRunId } : {}),
+      includeSubtaskSteer: true,
+    })
+    if (!promptContext) {
+      const sharedSystem = this.hooks?.buildSystem?.(agentId, projectId)
+      const memoryBlock = sharedSystem || this.hooks?.buildMemory?.(agentId, projectId)
+      promptContext = composePromptContext({ agentId, projectId, sessionId, threadId, ...(input.runState?.taskRunId ? { taskRunId: input.runState.taskRunId } : {}) }, [
+        ...this.buildBriefingBlocks(projectId, agentId),
+        ...(memoryBlock ? [makePromptBlock({ id: 'legacy-persistent-context', kind: 'unclassified-system', scope: 'project', source: 'GroupChatHooks.buildMemory', readStatus: 'generated', included: true, content: memoryBlock })] : []),
+        ...(input.taskSnapshot ? [makePromptBlock({ id: 'task', kind: 'task', scope: 'task', source: `task:${input.taskSnapshot.id}`, readStatus: 'loaded', included: true, content: formatGroupTaskContext(input.taskSnapshot) })] : []),
+        makePromptBlock({ id: 'subtask-steer', kind: 'subtask-steer', scope: 'agent', source: 'Jeff subtask policy', readStatus: 'generated', included: true, content: SUBTASK_STEER }),
+      ])
+    }
+    const system = promptContext.system
     if (wantsIndependentSubtasks(text)) this.hooks?.onDebugLog?.('subtask-steer', { projectId, threadId, agentId, sessionId })
     const member = projectAgentRepo(this.db).listByProject(projectId).find((item) => item.agent_id === agentId)
     const opts = projectMemberPromptOpts(target, member || {}, this.hooks?.defaultModel?.() ?? null)
@@ -477,6 +563,7 @@ export class GroupChat {
         ...(input.images && input.images.length ? { images: input.images } : {}),
         agent: agentSlug(agentId),
         system,
+        ...(promptContext ? { promptContext } : {}),
         timeoutMs: GROUP_TURN_TIMEOUT_MS,
         ...opts,
       })

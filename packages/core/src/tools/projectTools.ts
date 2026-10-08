@@ -1,13 +1,13 @@
 import type { ToolBridge } from './bridge.js'
 import type { DB } from '../db/db.js'
 import { PROJECT_STATUSES, TASK_PRIORITIES, TASK_STATUSES, agentRepo, projectAgentRepo, projectRepo, taskRepo } from '../db/repos.js'
-import { parseProjectWorkspaceState, serializeProjectWorkspaceState, validateProjectWorkspaceJson } from '../project/workspace.js'
 
 export interface ProjectToolDeps {
   db: DB
   /** 任务/项目变化后回调：写群系统消息（任务卡片）+ 通知 UI */
   onTaskChanged: (projectId: string, taskId?: string) => void
   onProjectChanged: () => void
+  isTaskActive?: (taskId: string) => boolean
 }
 
 /**
@@ -66,7 +66,7 @@ export function registerProjectTools(reg: ToolBridge, deps: ProjectToolDeps): vo
     return { id: p.id, title: p.title, leader_agent_id: p.leader_agent_id, workspace_dir: p.workspace_dir || '' }
   })
 
-  reg.register('jeff_project_update', async (args: { id?: string; title?: string; description?: string; system_prompt?: string; clear_system_prompt?: boolean; icon?: string; status?: string; leader_agent_id?: string; workspace_dir?: string; workspace_state?: string }) => {
+  reg.register('jeff_project_update', async (args: { id?: string; title?: string; description?: string; system_prompt?: string; clear_system_prompt?: boolean; icon?: string; status?: string; leader_agent_id?: string; workspace_dir?: string }) => {
     if (!args.id) throw new Error('id 不能为空')
     const patch = onlyProvided({
       title: nonBlank(args.title),
@@ -75,20 +75,10 @@ export function registerProjectTools(reg: ToolBridge, deps: ProjectToolDeps): vo
       icon: nonBlank(args.icon),
       status: nonBlank(args.status),
       leader_agent_id: nonBlank(args.leader_agent_id),
-      ...(args.workspace_state !== undefined ? {
-        workspace_state: serializeProjectWorkspaceState({
-          ...parseProjectWorkspaceState(validateProjectWorkspaceJson(args.workspace_state)),
-          // 自治 agent 可以维护项目事实，但不能伪造用户的选题确认、制作关联或成品验收。
-          campaigns: parseProjectWorkspaceState(projects.get(args.id)?.workspace_state).campaigns,
-          assets: parseProjectWorkspaceState(projects.get(args.id)?.workspace_state).assets,
-          reportTemplates: parseProjectWorkspaceState(projects.get(args.id)?.workspace_state).reportTemplates,
-          reportSources: parseProjectWorkspaceState(projects.get(args.id)?.workspace_state).reportSources,
-        }),
-      } : {}),
       // 例外：工作空间目录明确支持「传空串 = 清除为默认工作区」（工具说明里写明了）
       ...(args.workspace_dir !== undefined ? { workspace_dir: String(args.workspace_dir).trim() } : {}),
     })
-    if (Object.keys(patch).length === 0) throw new Error('没有要修改的字段（title / description / system_prompt / icon / status / leader_agent_id / workspace_dir / workspace_state 至少要传一个有值的）')
+    if (Object.keys(patch).length === 0) throw new Error('没有要修改的字段（title / description / system_prompt / icon / status / leader_agent_id / workspace_dir 至少要传一个有值的）')
     if (patch.status && !(PROJECT_STATUSES as readonly string[]).includes(String(patch.status))) {
       throw new Error(`status 非法：${String(patch.status)}（可用：${PROJECT_STATUSES.join('/')}）`)
     }
@@ -192,6 +182,7 @@ export function registerProjectTools(reg: ToolBridge, deps: ProjectToolDeps): vo
   reg.register('jeff_task_create', async (args: {
     project_id?: string
     title?: string
+    goal?: string
     description?: string
     priority?: string
     assignee_agent_id?: string
@@ -205,10 +196,11 @@ export function registerProjectTools(reg: ToolBridge, deps: ProjectToolDeps): vo
     if (!title) throw new Error('title 必填')
     if (!projects.get(args.project_id)) throw new Error(`项目不存在: ${args.project_id}`)
     const assigneeType = args.assignee_agent_id ? 'agent' : 'none'
-    if (args.assignee_agent_id && !agents.get(args.assignee_agent_id)) throw new Error(`指派的智能体不存在: ${args.assignee_agent_id}`)
+    if (args.assignee_agent_id && (!agents.get(args.assignee_agent_id) || !members.getRole(args.project_id, args.assignee_agent_id))) throw new Error('指派对象必须是当前项目群成员')
     const t = tasks.create({
       project_id: args.project_id,
       title,
+      goal: args.goal || '',
       description: args.description || '',
       priority: args.priority,
       assignee_type: assigneeType,
@@ -225,8 +217,9 @@ export function registerProjectTools(reg: ToolBridge, deps: ProjectToolDeps): vo
   reg.register('jeff_task_update', async (args: {
     id?: string
     title?: string
+    goal?: string
+    clear_goal?: boolean
     description?: string
-    status?: string
     priority?: string
     assignee_agent_id?: string
     due_at?: number
@@ -236,13 +229,14 @@ export function registerProjectTools(reg: ToolBridge, deps: ProjectToolDeps): vo
     if (!args.id) throw new Error('id 必填')
     const cur = tasks.get(args.id)
     if (!cur) throw new Error(`任务不存在: ${args.id}`)
-    if (args.assignee_agent_id !== undefined && args.assignee_agent_id !== '' && !agents.get(args.assignee_agent_id)) {
-      throw new Error(`指派的智能体不存在: ${args.assignee_agent_id}`)
+    if (deps.isTaskActive?.(args.id)) throw new Error('任务正在执行，暂时不能修改任务要求')
+    if (args.assignee_agent_id !== undefined && args.assignee_agent_id !== '' && (!agents.get(args.assignee_agent_id) || !members.getRole(cur.project_id, args.assignee_agent_id))) {
+      throw new Error('指派对象必须是当前项目群成员')
     }
     const patch = onlyProvided({
       title: nonBlank(args.title),
+      ...(args.clear_goal ? { goal: '' } : { goal: nonBlank(args.goal) }),
       description: nonBlank(args.description),
-      status: nonBlank(args.status),
       priority: nonBlank(args.priority),
       ...(args.due_at !== undefined && Number.isFinite(args.due_at) ? { due_at: args.due_at } : {}),
       ...(args.depends_on !== undefined ? { depends_on: JSON.stringify(args.depends_on) } : {}),
@@ -252,17 +246,12 @@ export function registerProjectTools(reg: ToolBridge, deps: ProjectToolDeps): vo
         ? { assignee_type: args.assignee_agent_id ? 'agent' : 'none', assignee_id: args.assignee_agent_id }
         : {}),
     })
-    if (Object.keys(patch).length === 0) throw new Error('没有要修改的字段（title / description / status / priority / assignee_agent_id / due_at / depends_on / acceptance_criteria 至少要传一个有值的）')
-    // 非法枚举值必须在调用 repo 前拦住：repo 对非法值返回 undefined，直接读 row.id 会抛
-    // 「Cannot read properties of undefined」这种内部错误，模型看不懂也不知道该怎么改
-    if (patch.status && !(TASK_STATUSES as readonly string[]).includes(String(patch.status))) {
-      throw new Error(`status 非法：${String(patch.status)}（可用：${TASK_STATUSES.join('/')}）`)
-    }
+    if (Object.keys(patch).length === 0) throw new Error('没有要修改的字段（title / goal / description / priority / assignee_agent_id / due_at / depends_on / acceptance_criteria 至少要传一个有值的）')
     if (patch.priority && !(TASK_PRIORITIES as readonly string[]).includes(String(patch.priority))) {
       throw new Error(`priority 非法：${String(patch.priority)}（可用：${TASK_PRIORITIES.join('/')}）`)
     }
     const row = tasks.update(args.id, patch)
-    if (!row) throw new Error(`任务更新失败（不存在或状态/优先级非法）: ${args.id}`)
+    if (!row) throw new Error(`任务更新失败（不存在或优先级非法）: ${args.id}`)
     deps.onTaskChanged(cur.project_id, args.id)
     return { id: row!.id, key: `JEF-${row!.number}`, status: row!.status, changed: Object.keys(patch) }
   })
@@ -286,6 +275,7 @@ export function registerProjectTools(reg: ToolBridge, deps: ProjectToolDeps): vo
     if (!args.id) throw new Error('id 必填')
     const cur = tasks.get(args.id)
     if (!cur) throw new Error(`任务不存在: ${args.id}`)
+    if (deps.isTaskActive?.(args.id)) throw new Error('任务正在执行，暂时不能删除')
     tasks.softDelete(args.id)
     deps.onTaskChanged(cur.project_id, args.id)
     return { deleted: true }
@@ -303,9 +293,9 @@ export function taskCardMessage(db: DB, projectId: string, taskId: string): { co
 }
 
 export function statusLabel(status: string): string {
-  const map: Record<string, string> = { todo: '待办', in_progress: '进行中', in_review: '待审', done: '完成', cancelled: '已取消' }
+  const map: Record<string, string> = { todo: '待办', in_progress: '进行中', in_review: '待验收', done: '已完成', cancelled: '已取消' }
   return map[status] || status
 }
 
 /** 供小杰指令参考：项目群/任务工具提示文本 */
-export const PROJECT_TOOL_HINT = `项目群工具（jeff_project_*）用于建群、维护群规则（system_prompt）、群主、成员职责和逐成员模型/思考覆盖。Agent 个人 Prompt 只写跨场景稳定的人设与能力；leader/协调者/执行职责只存在于具体群的群规则和成员配置。所有 Agent 可以使用 Jeff 工具；项目群资源仍按真实成员身份校验。任务工具（jeff_task_*）用于创建和流转任务。`
+export const PROJECT_TOOL_HINT = `项目群工具（jeff_project_*）用于维护该群的群简介（项目背景）、群规则（本群协作约束）、群主和成员职责/模型/思考覆盖；各字段只影响所属项目群。Agent 个人 Prompt 只写跨场景稳定的人设与能力。通用任务含可选的目标、任务描述、验收标准；保存不会启动任务。用户点击「开始执行」后，指定负责人执行，未指定负责人时由群主协调。负责人用 jeff_task_submit 提交实际结果，进入待验收；只有用户可以通过验收或退回。所有工具仍按真实成员、任务和会话身份校验。`

@@ -91,7 +91,7 @@ export function allToolDefs(): ToolDef[] {
     },
     {
       name: 'jeff_project_update',
-      description: '修改项目群规则或资料（名称/简介/群级 System Prompt/图标/状态/群主/工作空间目录/工作台 JSON 配置）。群规则和成员分工只在这个群生效，不写入 Agent 个人 Prompt。没传或传空串的字段保持不变；clear_system_prompt=true 可清除群规则。',
+      description: '修改项目群规则或资料（名称/简介/群级 System Prompt/图标/状态/群主/工作空间目录）。群规则和成员分工只在这个群生效，不写入 Agent 个人 Prompt。没传或传空串的字段保持不变；clear_system_prompt=true 可清除群规则。',
       args: {
         id: { type: 'string', description: '项目 id' },
         title: { type: 'string', description: '新群名（可选）' },
@@ -102,7 +102,6 @@ export function allToolDefs(): ToolDef[] {
         status: { type: 'string', description: '状态', enum: [...PROJECT_STATUSES] },
         leader_agent_id: { type: 'string', description: '新群主 id（可选）' },
         workspace_dir: { type: 'string', description: '工作空间目录（可选；传空串清除为默认工作区）' },
-        workspace_state: { type: 'string', description: '完整 JSON 对象字符串：目标、系统大纲、宣传受众/渠道等项目工作台信息（可选；更新时传完整新对象）' },
       },
     },
     {
@@ -144,11 +143,12 @@ export function allToolDefs(): ToolDef[] {
     },
     {
       name: 'jeff_task_create',
-      description: '在项目里创建任务（编号自动生成 JEF-n）。可指定指派、截止时间毫秒时间戳、同项目依赖任务 id 数组和验收标准；依赖未完成时任务不能标记完成。',
+      description: '在项目里创建通用任务（编号自动生成 JEF-n）。每个任务可分别填写目标、任务描述和验收标准；保存后不会自动执行。点击「开始执行」后由指定负责人执行，未指定时交给群主协调。',
       args: {
         project_id: { type: 'string', description: '项目 id' },
         title: { type: 'string', description: '标题' },
-        description: { type: 'string', description: '描述/验收标准' },
+        goal: { type: 'string', description: '目标（可选；描述期望达成的结果或对象）' },
+        description: { type: 'string', description: '任务描述（可选；说明要做什么和背景）' },
         priority: { type: 'string', description: '优先级', enum: [...TASK_PRIORITIES] },
         assignee_agent_id: { type: 'string', description: '指派的智能体 id（可选）' },
         parent_task_id: { type: 'string', description: '父任务 id（可选，子任务拆分）' },
@@ -159,17 +159,26 @@ export function allToolDefs(): ToolDef[] {
     },
     {
       name: 'jeff_task_update',
-      description: '修改任务（标题/描述/状态/优先级/指派/截止时间/依赖/验收标准）。没传或传空串的字段保持不变（指派例外：明确传空串 = 取消指派）；依赖未完成时不能标记完成。',
+      description: '修改任务内容、优先级、指派、截止时间或依赖。执行状态只能由用户开始执行和验收操作推进，Agent 不能自行把任务标成完成。没传或传空串的字段保持不变（指派例外：明确传空串 = 取消指派）。',
       args: {
         id: { type: 'string', description: '任务 id' },
         title: { type: 'string', description: '新标题（可选）' },
+        goal: { type: 'string', description: '新目标（可选）' },
+        clear_goal: { type: 'boolean', description: 'true 时清空目标' },
         description: { type: 'string', description: '新描述（可选）' },
-        status: { type: 'string', description: '新状态', enum: [...TASK_STATUSES] },
         priority: { type: 'string', description: '新优先级', enum: [...TASK_PRIORITIES] },
         assignee_agent_id: { type: 'string', description: '改指派（传空串清除）' },
         due_at: { type: 'number', description: '新截止时间 Unix 毫秒时间戳（可选）' },
         depends_on: { type: 'array', items: { type: 'string' }, description: '完整替换依赖任务 id 数组（可选）' },
         acceptance_criteria: { type: 'string', description: '验收标准（可选）' },
+      },
+    },
+    {
+      name: 'jeff_task_submit',
+      description: '当前任务负责人在专属任务会话中提交执行结果供用户验收。必须填写结果摘要；证据使用项目工作空间内已经存在的相对文件路径。不能自行通过验收。',
+      args: {
+        result_summary: { type: 'string', description: '本次实际完成的结果与关键信息' },
+        evidence_paths: { type: 'array', items: { type: 'string' }, description: '项目工作空间内已存在的相对文件路径数组，可为空数组' },
       },
     },
     {

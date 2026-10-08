@@ -18,6 +18,7 @@ import { containsCredentialValue } from './memory/routing.js'
 import { registerMemoryTools, DELEGATE_TOOL, sesMetaKey, type SessionScopeCtx } from './tools/memoryTools.js'
 import { registerCronTools, CRON_TOOL_NAMES } from './tools/cronTools.js'
 import { registerPluginTools, PLUGIN_TOOL_NAMES } from './tools/pluginTools.js'
+import { TaskService } from './tasks/service.js'
 import { allToolDefs } from './tools/definitions.js'
 import { normalizeViewportArgs, parseFullPageFlag, shotName } from './tools/browserArgs.js'
 import { PluginManager } from './plugins/manager.js'
@@ -26,9 +27,9 @@ import { dispatchCronTask } from './cron/dispatch.js'
 import { cronExprForOnce, describeSchedule, nextRunAt, resolveOnceTarget } from './cron/expr.js'
 import { UnavailableBrowser, type BrowserControl } from './browser/control.js'
 import { PrivateChat, autoTitleKey } from './chat/private.js'
-import { GroupChat } from './orchestrator/group.js'
+import { GroupChat, formatGroupTaskContext } from './orchestrator/group.js'
 import { Delegator } from './orchestrator/delegate.js'
-import { SubtaskRunner, SUBTASK_TOOL } from './orchestrator/subtask.js'
+import { SubtaskRunner, SUBTASK_TOOL, SUBTASK_STEER } from './orchestrator/subtask.js'
 import { MemoryStore } from './memory/store.js'
 import { SessionIndex } from './memory/indexer.js'
 import type { McpServerCfg } from './mcp/parse.js'
@@ -38,6 +39,7 @@ import type { SkillsBackupReport, SkillsRestoreStage, SkillsRestoreApply, Contex
 import { SyncEngine, type WebdavConfig, type SyncReport, normalizeWebdavBasePath } from './sync/engine.js'
 import { compactionThreshold, splitContextMessages } from './chat/context.js'
 import { DebugLogger, type DebugLogFn } from './logger.js'
+import { composePromptContext, makePromptBlock, PromptSnapshotStore, type PromptContext, type PromptContextBlock } from './prompt/context.js'
 
 export { APP_VERSION } from './version.js'
 
@@ -135,32 +137,37 @@ export function agentWebSearchCapable(agent: AgentRow | null | undefined, skills
  * 项目级以 ~/.jeff/agents-md/<projectId>.md 权威副本为唯一执行来源（设置页编辑 + WebDAV 同步）；
  * 权威副本缺失时才兼容读取工作空间旧 AGENTS.md 作为迁移来源，设置页保存后即写入权威副本。
  */
-export function composeAgentsMdBlocks(paths: JeffPaths, db: DB, projectId?: string): string[] {
-  const out: string[] = []
-  try {
-    const userFile = paths.agentsMdUser
-    if (fs.existsSync(userFile)) {
-      const text = fs.readFileSync(userFile, 'utf8').trim()
-      if (text) out.push(`【AGENTS.md · 用户级】（${userFile}）\n${text}`)
-    }
-    if (projectId) {
-      const auth = path.join(paths.agentsMdDir, `${projectId}.md`)
-      if (fs.existsSync(auth)) {
-        const text = fs.readFileSync(auth, 'utf8').trim()
-        if (text) out.push(`【AGENTS.md · 项目级】（${auth}）\n${text}`)
-      } else {
-        const project = projectRepo(db).get(projectId)
-        const legacy = path.join(project?.workspace_dir || paths.workspaceDir, 'AGENTS.md')
-        if (fs.existsSync(legacy)) {
-          const text = fs.readFileSync(legacy, 'utf8').trim()
-          if (text) out.push(`【AGENTS.md · 项目级】（${legacy}）\n${text}`)
-        }
+export function composeAgentsMdContext(paths: JeffPaths, db: DB, projectId?: string): PromptContextBlock[] {
+  const out: PromptContextBlock[] = []
+  const readRule = (kind: 'user' | 'project', label: string, file: string): PromptContextBlock => {
+    try {
+      const text = fs.readFileSync(file, 'utf8').trim()
+      return text
+        ? makePromptBlock({ id: `agents-md-${kind}`, kind: kind === 'user' ? 'agents-md-user' : 'agents-md-project', scope: kind, source: file, readStatus: 'loaded', included: true, content: `【AGENTS.md · ${label}】（${file}）\n${text}` })
+        : makePromptBlock({ id: `agents-md-${kind}`, kind: kind === 'user' ? 'agents-md-user' : 'agents-md-project', scope: kind, source: file, readStatus: 'empty', included: false, content: '' })
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') {
+        return makePromptBlock({ id: `agents-md-${kind}`, kind: kind === 'user' ? 'agents-md-user' : 'agents-md-project', scope: kind, source: file, readStatus: 'missing', included: false, content: '' })
       }
+      return makePromptBlock({ id: `agents-md-${kind}`, kind: kind === 'user' ? 'agents-md-user' : 'agents-md-project', scope: kind, source: file, readStatus: 'error', included: true,
+        content: `【AGENTS.md · ${label}读取失败】（${file}）\n规则文件无法读取（${String((error as NodeJS.ErrnoException)?.code || '未知错误')}）。不要将其视为不存在或默认允许；告知用户并继续遵循其他已加载规则。` })
     }
-  } catch {
-    /* 读取失败不注入 */
+  }
+  out.push(readRule('user', '用户级', paths.agentsMdUser))
+  if (projectId) {
+    const auth = path.join(paths.agentsMdDir, `${projectId}.md`)
+    const projectRead = readRule('project', '项目级', auth)
+    if (projectRead.readStatus === 'missing') {
+      const project = projectRepo(db).get(projectId)
+      const legacy = path.join(project?.workspace_dir || paths.workspaceDir, 'AGENTS.md')
+      out.push(readRule('project', '项目级', legacy))
+    } else out.push(projectRead)
   }
   return out
+}
+
+export function composeAgentsMdBlocks(paths: JeffPaths, db: DB, projectId?: string): string[] {
+  return composeAgentsMdContext(paths, db, projectId).filter((block) => block.included).map((block) => block.content)
 }
 
 /** Jeff 核心实例：桌面主进程与测试脚本共用 */
@@ -173,6 +180,7 @@ export class JeffCore extends EventEmitter {
   bridge = new ToolBridge()
   privateChat!: PrivateChat
   groupChat!: GroupChat
+  tasks!: TaskService
   delegator!: Delegator
   subtaskRunner!: SubtaskRunner
   memory!: MemoryStore
@@ -186,6 +194,7 @@ export class JeffCore extends EventEmitter {
   browser: BrowserControl = new UnavailableBrowser()
   /** 调试日志（设置 → 引擎服务 开启；写 ~/.jeff/logs/debug-YYYYMMDD.log） */
   debugLog!: DebugLogger
+  promptSnapshots!: PromptSnapshotStore
   bus = new EventEmitter()
   private started = false
   private registryDirty = false
@@ -201,6 +210,7 @@ export class JeffCore extends EventEmitter {
     if (this.started) return
     ensureDirs(this.paths)
     this.db = openDb(this.paths)
+    this.promptSnapshots = new PromptSnapshotStore(this.paths.root)
     this.seedXiaojie()
     this.debugLog = new DebugLogger(this.paths)
     // 默认开启：卡死/超时类问题只有事前开着日志才留得下现场（用户无须预先设置）；用户可在设置里关掉
@@ -216,16 +226,29 @@ export class JeffCore extends EventEmitter {
     })
     this.plugins.applyMcpInjection()
     this.groupChat = new GroupChat(this.db, () => this.oc, this.chatHooks())
+    this.tasks = new TaskService(this.db, this.groupChat, this.groupChat.threads, this.paths.workspaceDir, {
+      resolveSession: (sessionId) => this.resolveSession(sessionId),
+      onChanged: (projectId) => {
+        this.bus.emit('data-changed', 'tasks')
+        this.bus.emit('group-updated', { projectId })
+      },
+    })
     this.privateChat = new PrivateChat(this.db, () => this.oc, this.chatHooks())
     this.delegator = new Delegator(this.db, () => this.oc, this.groupChat, (payload) => {
       this.bus.emit('group-updated', payload)
     })
     // 委派回合与普通群回合一致：注入用户级/项目级 AGENTS.md 与记忆
     this.delegator.buildMemory = (agentId, projectId) => this.buildMemorySystem(agentId, projectId)
+    this.delegator.buildPromptContext = (agentId, projectId, input) => this.buildPromptContext(agentId, projectId, input)
     this.delegator.onDebugLog = this.debugLog.fn()
     this.delegator.onIdle = () => this.flushPendingRegistryRestart()
     this.subtaskRunner = new SubtaskRunner(this.db, () => this.oc)
     this.subtaskRunner.buildSystem = (agentId, projectId) => this.buildMemorySystem(agentId, projectId, { isSubtask: true })
+    this.subtaskRunner.buildPromptContext = (agentId, projectId, input) => this.buildPromptContext(agentId, projectId, { ...input, isSubtask: true })
+    this.subtaskRunner.buildGroupSystem = (agentId, projectId) => [
+      this.groupChat.buildBriefing(projectId, agentId),
+      this.buildMemorySystem(agentId, projectId, { isSubtask: true }),
+    ].filter(Boolean).join('\n\n')
     this.subtaskRunner.defaultModel = () => this.defaultModel()
     this.subtaskRunner.onDebugLog = this.debugLog.fn()
     // 子任务会话标 isSubtask：resolveSession 据此拦下嵌套调用；同时不进 session:private/group 指针，
@@ -260,6 +283,7 @@ export class JeffCore extends EventEmitter {
     })
     registerProjectTools(this.bridge, {
       db: this.db,
+      isTaskActive: (taskId) => this.tasks.hasActiveTask(taskId),
       onProjectChanged: () => {
         this.bus.emit('data-changed', 'projects')
       },
@@ -271,6 +295,18 @@ export class JeffCore extends EventEmitter {
         this.bus.emit('data-changed', 'tasks')
         this.bus.emit('group-updated', { projectId })
       },
+    })
+    this.bridge.register('jeff_task_submit', async (raw: Record<string, unknown>) => {
+      const ctx = raw.__ctx as { sessionID?: string } | undefined
+      const summary = typeof raw.result_summary === 'string' ? raw.result_summary : ''
+      const evidence = Array.isArray(raw.evidence_paths) ? raw.evidence_paths.map(String) : []
+      if (!ctx?.sessionID) return { ok: false, error: '当前调用缺少真实会话身份，无法提交' }
+      try {
+        const result = this.tasks.submitFromSession(ctx.sessionID, summary, evidence)
+        return { ok: true, task_id: result.taskId, submission_id: result.submissionId, status: 'in_review' }
+      } catch (error) {
+        return { ok: false, error: String((error as Error)?.message || error) }
+      }
     })
     registerMemoryTools(this.bridge, {
       db: this.db,
@@ -324,7 +360,15 @@ export class JeffCore extends EventEmitter {
       }
       if (!member_agent_id || !instruction) return { ok: false, error: 'member_agent_id 与 instruction 必填' }
       const r = await this.delegator.delegate(
-        { projectId: resolved.projectId, actorAgentId: resolved.agentId, ...(resolved.threadId ? { threadId: resolved.threadId } : {}) },
+        {
+          projectId: resolved.projectId,
+          actorAgentId: resolved.agentId,
+          ...(resolved.threadId ? { threadId: resolved.threadId } : {}),
+          ...(resolved.projectId && resolved.threadId ? {
+            taskSnapshot: this.tasks.snapshotForThread(resolved.projectId, resolved.threadId),
+            taskRunId: this.tasks.activeRunForThread(resolved.projectId, resolved.threadId)?.id,
+          } : {}),
+        },
         member_agent_id,
         instruction,
         __ctx?.messageID,
@@ -346,7 +390,17 @@ export class JeffCore extends EventEmitter {
       const directory = resolved.kind === 'group' ? projectRepo(this.db).get(resolved.projectId)?.workspace_dir || undefined : undefined
       const callKey = __ctx?.messageID || __ctx?.sessionID || 'unknown'
       return this.subtaskRunner.run(
-        { agentId: resolved.agentId, kind: resolved.kind, ...(resolved.kind === 'group' ? { projectId: resolved.projectId } : {}), directory },
+        {
+          agentId: resolved.agentId,
+          kind: resolved.kind,
+          ...(resolved.kind === 'group' ? { projectId: resolved.projectId } : {}),
+          ...(resolved.kind === 'group' && resolved.projectId && resolved.threadId ? {
+            threadId: resolved.threadId,
+            taskSnapshot: this.tasks.snapshotForThread(resolved.projectId, resolved.threadId),
+            taskRunId: this.tasks.activeRunForThread(resolved.projectId, resolved.threadId)?.id,
+          } : {}),
+          directory,
+        },
         { label, instruction, target_path },
         callKey,
       )
@@ -475,10 +529,14 @@ export class JeffCore extends EventEmitter {
         if (!agentId || (agentRepo(this.db).get(agentId)?.execution_engine || 'opencode') === 'opencode') await this.ensureSidecarReady()
       },
       onPipelineIdle: () => this.flushPendingRegistryRestart(),
-      onSessionCreated: (sessionId: string, meta: { kind: 'private' | 'group' | 'review'; agentId: string; projectId?: string }) => {
+      onSessionCreated: (sessionId: string, meta: { kind: 'private' | 'group' | 'review'; agentId: string; projectId?: string; threadId?: string }) => {
         this.kv().setJSON(sesMetaKey(sessionId), meta)
       },
       buildSystem: (agentId: string, projectId?: string) => this.buildMemorySystem(agentId, projectId),
+      buildPromptContext: (agentId: string, projectId?: string, input?: { sessionId: string; threadId?: string; taskSnapshot?: import('./orchestrator/group.js').GroupTaskSnapshot; taskRunId?: string; includeSubtaskSteer: boolean }) =>
+        this.buildPromptContext(agentId, projectId, input || { includeSubtaskSteer: false }),
+      onTaskRunStarted: (runId: string) => this.tasks?.markRunning(runId),
+      isTaskRunActive: (runId: string) => this.tasks?.active(runId) ?? false,
       buildMemory: (agentId: string, projectId: string) => this.buildMemorySystem(agentId, projectId),
       defaultModel: () => this.defaultModel(),
       afterReply: (scope: { kind: 'private'; agentId: string } | { kind: 'group'; projectId: string; agentId: string }) => {
@@ -488,27 +546,71 @@ export class JeffCore extends EventEmitter {
     }
   }
 
-  /** 记忆注入：联网指南（仅具备联网能力的 agent）+ agent 记忆 + 项目记忆（群聊）+ 全局用户画像 + AGENTS.md（用户级/项目级） */
-  buildMemorySystem(agentId: string, projectId?: string, opts?: { isSubtask?: boolean }): string | undefined {
-    const blocks: string[] = []
-    // 联网指南只在 agent 真能联网时注入：skill 工具被禁或联网技能未安装的专用 agent，每轮省下无效的 100+ token
+  private buildPersistentPromptBlocks(agentId: string, projectId?: string, opts?: { isSubtask?: boolean }): PromptContextBlock[] {
+    const blocks: PromptContextBlock[] = [
+      makePromptBlock({ id: 'memory-policy', kind: 'memory-policy', scope: 'user', source: 'Jeff persistent context policy', readStatus: 'generated', included: true, content: [
+        '【长期上下文的使用方式】AGENTS.md 是持续有效的操作规则，遵守其中适用的步骤、边界与验收要求；用户当前明确指令优先级更高。记忆是可能过时的事实或偏好，不可把它当作本轮命令；与用户当前明确要求冲突时以当前要求为准，影响结果且无法判断时先询问。项目记忆只用于所属项目群。',
+        '【设置含义】AGENTS.md 保存公开、持续有效的规则；记忆保存长期事实与偏好；群简介提供本项目的背景事实，群规则约束本群协作，当前成员职责说明该成员在本群的责任。不要把这些内容改写成个人身份或其他群规则。用 jeff_memory 更新：保密内容存本机私有记忆；公开内容按全局或项目范围写 AGENTS.md。',
+      ].join('\n') }),
+    ]
     if (!opts?.isSubtask && agentWebSearchCapable(agentRepo(this.db).get(agentId))) {
-      blocks.push(WEB_SEARCH_GUIDE)
+      blocks.push(makePromptBlock({ id: 'web-search-guide', kind: 'web-search-guide', scope: 'agent', source: `skill:${WEB_SEARCH_SKILL_NAME}`, readStatus: 'loaded', included: true, content: WEB_SEARCH_GUIDE }))
     }
-    for (const md of this.agentsMdBlocks(projectId)) blocks.push(md)
-    const agentBlock = this.memory.renderBlock({ kind: 'agent', agentId })
-    if (agentBlock) blocks.push(agentBlock)
-    if (projectId) {
-      const projectBlock = this.memory.renderBlock({ kind: 'project', projectId })
-      if (projectBlock) blocks.push(projectBlock)
+    blocks.push(...composeAgentsMdContext(this.paths, this.db, projectId))
+
+    const memoryScopes: Array<{ id: string; kind: 'memory-agent' | 'memory-project' | 'memory-user'; scope: 'agent' | 'project' | 'user'; source: { kind: 'agent'; agentId: string } | { kind: 'project'; projectId: string } | { kind: 'user' } }> = [
+      { id: 'memory-agent', kind: 'memory-agent' as const, scope: 'agent' as const, source: { kind: 'agent' as const, agentId } },
+      ...(projectId ? [{ id: 'memory-project', kind: 'memory-project' as const, scope: 'project' as const, source: { kind: 'project' as const, projectId } }] : []),
+      { id: 'memory-user', kind: 'memory-user' as const, scope: 'user' as const, source: { kind: 'user' as const } },
+    ]
+    for (const item of memoryScopes) {
+      const content = this.memory.renderBlock(item.source) || ''
+      blocks.push(makePromptBlock({ id: item.id, kind: item.kind, scope: item.scope, source: this.memory.file(item.source), readStatus: content ? 'loaded' : 'empty', included: !!content, content }))
     }
-    const userBlock = this.memory.renderBlock({ kind: 'user' })
-    if (userBlock) blocks.push(userBlock)
-    if (blocks.length === 0) return undefined
-    return [
-      '【长期记忆与规则（Jeff）】以下是关于用户/项目的持久记忆与 AGENTS.md 规则，供你参考；如与当前对话冲突，以对话为准。用 jeff_memory 更新：保密内容存私有记忆；公开内容按全局或项目范围写 AGENTS.md。',
-      ...blocks,
-    ].join('\n')
+    return blocks
+  }
+
+  /** 持久上下文的兼容字符串视图；实际会话统一从 buildPromptContext 生成。 */
+  buildMemorySystem(agentId: string, projectId?: string, opts?: { isSubtask?: boolean }): string | undefined {
+    const context = composePromptContext({ agentId, ...(projectId ? { projectId } : {}) }, this.buildPersistentPromptBlocks(agentId, projectId, opts))
+    return context.system || undefined
+  }
+
+  /** 所有聊天、委派、子任务和预览共用的语义上下文组装入口。 */
+  buildPromptContext(agentId: string, projectId?: string, options: {
+    sessionId?: string
+    threadId?: string
+    taskSnapshot?: import('./orchestrator/group.js').GroupTaskSnapshot
+    taskRunId?: string
+    isSubtask?: boolean
+    includeSubtaskSteer?: boolean
+    extraBlocks?: PromptContextBlock[]
+  } = {}): PromptContext {
+    const agent = agentRepo(this.db).get(agentId)
+    if (!agent) throw new Error(`智能体不存在: ${agentId}`)
+    const blocks: PromptContextBlock[] = [makePromptBlock({
+      id: 'agent-instructions', kind: 'agent-instructions', scope: 'agent', source: `agent:${agentId}.instructions`,
+      readStatus: agent.instructions.trim() ? 'loaded' : 'empty', included: !!agent.instructions.trim(), delivery: 'agent-definition', content: agent.instructions,
+    })]
+    if (projectId) blocks.push(...this.groupChat.buildBriefingBlocks(projectId, agentId))
+    blocks.push(...this.buildPersistentPromptBlocks(agentId, projectId, { isSubtask: options.isSubtask }))
+
+    const activeRun = projectId && options.threadId ? this.tasks.activeRunForThread(projectId, options.threadId) : null
+    const taskSnapshot = options.taskSnapshot || (projectId && options.threadId ? this.tasks.snapshotForThread(projectId, options.threadId) : undefined)
+    if (taskSnapshot) blocks.push(makePromptBlock({ id: 'task', kind: 'task', scope: 'task', source: `task:${taskSnapshot.id}`, readStatus: 'loaded', included: true, content: formatGroupTaskContext(taskSnapshot, !!(options.taskRunId || activeRun)) }))
+    if (options.includeSubtaskSteer) blocks.push(makePromptBlock({ id: 'subtask-steer', kind: 'subtask-steer', scope: 'agent', source: 'Jeff subtask policy', readStatus: 'generated', included: true, content: SUBTASK_STEER }))
+    if (options.extraBlocks?.length) blocks.push(...options.extraBlocks)
+
+    return composePromptContext({
+      agentId,
+      ...(options.sessionId ? { sessionId: options.sessionId } : {}),
+      ...(projectId ? { projectId } : {}),
+      ...(options.threadId ? { threadId: options.threadId } : {}),
+      ...(taskSnapshot ? { taskId: taskSnapshot.id } : {}),
+      ...(options.taskRunId || activeRun?.id ? { taskRunId: options.taskRunId || activeRun?.id } : {}),
+      engine: agent.execution_engine || 'opencode',
+      agentInstructionsVersion: agent.instructions_version || 0,
+    }, blocks)
   }
 
   // ---------- 历史会话（聊天记录抽屉） ----------
@@ -538,7 +640,7 @@ export class JeffCore extends EventEmitter {
   }
 
   /** 项目群话题列表（扁平聊天记录） */
-  listGroupThreads(projectId: string): Array<{ id: string; title: string; updatedAt: number; createdAt: number; active: boolean; messageCount: number }> {
+  listGroupThreads(projectId: string): Array<{ id: string; title: string; updatedAt: number; createdAt: number; active: boolean; messageCount: number; kind?: 'discussion' | 'task' | 'cron'; taskId?: string }> {
     if (!projectRepo(this.db).get(projectId)) throw new Error('项目不存在')
     const active = this.groupChat.threads.ensureActiveThread(projectId)
     return this.groupChat.threads.listThreads(projectId).map((t) => ({
@@ -548,6 +650,8 @@ export class JeffCore extends EventEmitter {
       createdAt: t.createdAt,
       active: t.id === active,
       messageCount: this.groupChat.history(projectId, t.id).length,
+      kind: t.kind || 'discussion',
+      ...(t.taskId ? { taskId: t.taskId } : {}),
     }))
   }
 
@@ -679,7 +783,14 @@ export class JeffCore extends EventEmitter {
     const model = engine === 'opencode' ? this.resolveModel(agentId, input.model) : null
     const { contextLimit, outputLimit } = this.modelLimits(model)
     const threshold = compactionThreshold(contextLimit ?? undefined, outputLimit ?? undefined)
-    const system = this.buildMemorySystem(agentId, projectId) || null
+    const agent = agentRepo(this.db).get(agentId)!
+    const threadId = projectId ? this.groupChat.threads.getActiveThreadId(projectId) || undefined : undefined
+    const promptContext = this.buildPromptContext(agentId, projectId, {
+      ...(sessionId ? { sessionId } : {}),
+      ...(threadId ? { threadId } : {}),
+      includeSubtaskSteer: true,
+    })
+    const system = promptContext.system || null
 
     if (!sessionId) {
       return {
@@ -716,6 +827,21 @@ export class JeffCore extends EventEmitter {
       activeMessages: parts.activeMessages,
       compactedCount: parts.compactedCount,
     }
+  }
+
+  /** Full prompt contents are local-only because they may include private memory and AGENTS.md rules. */
+  contextPromptDetails(input: { agentId: string; projectId?: string }): import('./ipc/contract.js').ContextPromptDetails {
+    if (!agentRepo(this.db).get(input.agentId)) throw new Error('智能体不存在')
+    const sessionId = input.projectId
+      ? this.groupChat.getSessionId(input.projectId, input.agentId)
+      : this.privateChat.getSessionId(input.agentId)
+    const threadId = input.projectId ? this.groupChat.threads.getActiveThreadId(input.projectId) || undefined : undefined
+    const promptContext = this.buildPromptContext(input.agentId, input.projectId, {
+      ...(sessionId ? { sessionId } : {}),
+      ...(threadId ? { threadId } : {}),
+      includeSubtaskSteer: true,
+    })
+    return { promptContext, lastPromptSnapshot: sessionId ? this.promptSnapshots.latest(sessionId) : null }
   }
 
   /** 手动压缩当前会话（调用 opencode summarize） */
@@ -1677,7 +1803,7 @@ export class JeffCore extends EventEmitter {
     if (this.oc) {
       this.oc.port = this.sidecar.port
     } else {
-      this.oc = new EngineClient(this.sidecar.port, { db: this.db, root: this.paths.root, workspace: this.paths.workspaceDir, bridge: this.bridge, mcp: () => this.listMcp(), bundledOpenCode: () => this.sidecar?.resolveBinary() || null }, this.debugLog.fn())
+      this.oc = new EngineClient(this.sidecar.port, { db: this.db, root: this.paths.root, workspace: this.paths.workspaceDir, bridge: this.bridge, mcp: () => this.listMcp(), bundledOpenCode: () => this.sidecar?.resolveBinary() || null, promptSnapshots: this.promptSnapshots }, this.debugLog.fn())
       this.wireOcClient()
     }
     this.oc.startEventStream()
@@ -1725,7 +1851,7 @@ export class JeffCore extends EventEmitter {
     fs.rmSync(path.join(this.paths.ocSkillsDir, BUILTIN_SKILL_DIR), { recursive: true, force: true })
     const content = `---
 name: jeff-usage
-description: Jeff 桌面应用的完整使用说明：智能体、项目群规则与成员职责、任务看板、记忆、WebDAV 同步。当用户问「Jeff 怎么用 / 能做什么」时加载。
+description: Jeff 桌面应用的完整使用说明：智能体、项目群资料与成员职责、通用任务、记忆、WebDAV 同步。当用户问「Jeff 怎么用 / 能做什么」时加载。
 ---
 
 # Jeff 使用说明
@@ -1743,11 +1869,10 @@ Jeff 把「开发 + 项目管理」组织成三个概念（微信心智模型）
 - 一个项目就是一个群；群规则是该群的 System Prompt，定义本群目标、分工、协作流程和边界。
 - 群主与成员职责只在该群有效，同一 Agent 在不同群可承担不同工作。默认消息由群主接收；按群规则用 @成员名 直达成员，任意群成员都能按群规则委派工作。
 - 群成员可设置本群专属模型与思考程度；未覆盖时继承其个人默认。私聊不注入群内身份。
-- 群资料面板管理群规则、群主与成员职责/配置；任务看板可拖拽改状态。
+- 群资料面板分项目管理、群资料、群成员、会话记录和工作区文件；群规则、群主和成员职责只影响当前群。
 
 ## 3. 任务 = JEF-n
-- 任务归属项目群，编号 JEF-n，状态：待办/进行中/待审/完成/已取消；优先级四级。
-- 创建途径：Agent 可使用 Jeff 项目工具，或从群资料看板手动建；任务自动出现在项目群。
+- 任务归属项目群，编号 JEF-n；可分别填写目标、任务描述和验收标准，三项均可留空。保存后保持待办；用户点击「开始执行」后由指定负责人执行，未指定时由群主协调。Agent 提交结果进入待验收，只有用户验收后才完成。
 
 ## 其他能力
 - **记忆**：说「记住/忘记/整理记忆」后，jeff_memory 自动把保密内容存本机私有记忆，把公开信息写全局或项目 AGENTS.md。私有条目不参与同步；旧记忆保留。设置 → 记忆可搜索智能体和项目群、筛选范围、人工编辑，手机「我 → 记忆与公开规则」也可管理。
@@ -1757,7 +1882,7 @@ Jeff 把「开发 + 项目管理」组织成三个概念（微信心智模型）
 - **模型与思考**：模型与思考程度在 Agent 资料中配置个人默认；群成员可另设群内覆盖，留空继承个人默认。
 - **MCP**：设置页粘贴 JSON 导入（支持 mcpServers 包裹格式），所有 Agent 都能调用已接入的 MCP 工具。
 - **图片消息**：聊天输入框支持上传/粘贴/拖拽图片（需模型支持图片输入），智能体能看图回答。
-- **项目群工作空间**：发起群聊可选工作空间目录，群内产出的文件默认保存到该目录。
+- **项目群工作区**：发起群聊可选工作区目录，群内产出的文件默认保存到该目录。
 - **WebDAV 同步**：设置页配置；同步智能体/项目群/任务/设置（含 MCP）/记忆/AGENTS.md + 镜像备份 ~/.agents/skills（整目录对齐：本地删除远端也删，删前归档；恢复为整目录替换）；项目工作空间路径按设备保留；实体级双向合并。同步或恢复 skills 后可用菜单「重启 Jeff」整应用重开。
 - **亮/深夜模式**：左侧导航底部切换，或跟随系统。
 - **Agent 工具**：所有 Agent 都可使用 Jeff 提供的配置、项目群、任务、记忆、插件、定时任务与浏览器工具；执行范围由真实调用者与资源关系校验。须去设置的：OpenCode（Jeff）模型提供商、MCP、WebDAV/skills、主题与引擎。
@@ -1848,8 +1973,6 @@ Jeff 把「开发 + 项目管理」组织成三个概念（微信心智模型）
 
 export { sesMetaKey } from './tools/memoryTools.js'
 export * from './ipc/contract.js'
-export * from './project/workspace.js'
-export * from './project/documents.js'
 export * from './db/repos.js'
 export * from './oc/client.js'
 export * from './oc/configWriter.js'

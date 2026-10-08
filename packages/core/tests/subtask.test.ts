@@ -137,15 +137,15 @@ describe('SubtaskRunner', () => {
     expect(r2.ok).toBe(true)
   })
 
-  it('注入 buildSystem 时按调用者与 projectId 生成 system（与私聊/群聊回合一致）', async () => {
-    runner.buildSystem = (aid, pid) => {
+  it('群内子任务使用独立的群上下文构造器，私聊继续使用个人上下文构造器', async () => {
+    runner.buildGroupSystem = (aid, pid) => {
       expect(aid).toBe(agentId)
       expect(pid).toBe('proj_x')
-      return 'MEM-BLOCK'
+      return 'GROUP-BRIEFING\n\nMEM-BLOCK'
     }
     const r = await runner.run({ agentId, kind: 'group', projectId: 'proj_x' }, { instruction: '任务' }, 'msg_7')
     expect(r.ok).toBe(true)
-    expect(sent[sent.length - 1].system).toBe('MEM-BLOCK')
+    expect(sent[sent.length - 1].system).toBe('GROUP-BRIEFING\n\nMEM-BLOCK')
   })
 })
 

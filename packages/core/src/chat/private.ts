@@ -5,7 +5,8 @@ import { DEFAULT_SEND_TIMEOUT_MS, type OcClient, type AssistantInfo } from '../o
 import { agentPromptOpts } from '../util/modelKey.js'
 import { composeAutoTitle, placeholderTitle } from '../util/title.js'
 import { decodePluginUserMessage, type ChatPluginInvoke } from '../plugins/invoke.js'
-import { wantsIndependentSubtasks, withSubtaskSteer } from '../orchestrator/subtask.js'
+import { SUBTASK_STEER, wantsIndependentSubtasks } from '../orchestrator/subtask.js'
+import { composePromptContext, makePromptBlock, type PromptContext } from '../prompt/context.js'
 
 /** UI 侧聊天消息（私聊与群聊共用形状） */
 export interface ChatMsg {
@@ -38,6 +39,7 @@ export interface PrivateChatHooks {
   onSessionCreated?: (sessionId: string, meta: { kind: 'private' | 'group' | 'review'; agentId: string; projectId?: string }) => void
   /** 每条消息的 system 注入（长期记忆块） */
   buildSystem?: (agentId: string, projectId?: string) => string | undefined
+  buildPromptContext?: (agentId: string, projectId?: string, input?: { sessionId: string; includeSubtaskSteer: boolean }) => PromptContext
   /** 回复完成后（索引 + nudge） */
   afterReply?: (scope: { kind: 'private'; agentId: string } | { kind: 'group'; projectId: string; agentId: string }) => void
   /** 智能体未绑定模型时的会话兜底 */
@@ -254,15 +256,26 @@ export class PrivateChat {
     }
     if (flags.autoTitle) await this.maybeAutoTitle(sessionId, text)
     const agent = agentRepo(this.db).get(agentId)
+    if (!agent) throw new Error(`智能体不存在: ${agentId}`)
     const opts = agentPromptOpts(agent, this.hooks?.defaultModel?.() ?? null)
     if (wantsIndependentSubtasks(text)) this.hooks?.onDebugLog?.('subtask-steer', { agentId, sessionId })
+    let promptContext = this.hooks?.buildPromptContext?.(agentId, undefined, { sessionId, includeSubtaskSteer: true })
+    if (!promptContext) {
+      const legacySystem = this.hooks?.buildSystem?.(agentId)
+      promptContext = composePromptContext({ agentId, sessionId, engine: agent.execution_engine || 'opencode', agentInstructionsVersion: agent.instructions_version || 0 }, [
+        makePromptBlock({ id: 'agent-instructions', kind: 'agent-instructions', scope: 'agent', source: `agent:${agentId}.instructions`, readStatus: agent.instructions.trim() ? 'loaded' : 'empty', included: !!agent.instructions.trim(), delivery: 'agent-definition', content: agent.instructions }),
+        ...(legacySystem ? [makePromptBlock({ id: 'legacy-persistent-context', kind: 'unclassified-system', scope: 'user', source: 'PrivateChatHooks.buildSystem', readStatus: 'generated', included: true, content: legacySystem })] : []),
+        makePromptBlock({ id: 'subtask-steer', kind: 'subtask-steer', scope: 'agent', source: 'Jeff subtask policy', readStatus: 'generated', included: true, content: SUBTASK_STEER }),
+      ])
+    }
     try {
       const reply = await this.getOc().sendMessage({
         sessionId,
         text,
         ...(images && images.length ? { images } : {}),
         agent: agentSlug(agentId),
-        system: withSubtaskSteer(this.hooks?.buildSystem?.(agentId)),
+        system: promptContext.system,
+        promptContext,
         timeoutMs: DEFAULT_SEND_TIMEOUT_MS,
         ...opts,
       })

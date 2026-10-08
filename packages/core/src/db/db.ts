@@ -41,7 +41,6 @@ CREATE TABLE IF NOT EXISTS project (
   icon            TEXT NOT NULL DEFAULT '👥',    -- 群图标
   status          TEXT NOT NULL DEFAULT 'in_progress', -- 状态：planned/in_progress/paused/completed/cancelled
   leader_agent_id TEXT,                          -- 群主（leader）agent id，统筹一切
-  workspace_state TEXT NOT NULL DEFAULT '{}',    -- 工作台结构化资料（目标、大纲、内容规划；随项目同步）
   created_at      INTEGER NOT NULL,              -- 创建时间（ms）
   updated_at      INTEGER NOT NULL,              -- 更新时间（ms）
   deleted_at      INTEGER                        -- 软删除时间（ms）
@@ -74,6 +73,12 @@ CREATE TABLE IF NOT EXISTS task (
   created_at     INTEGER NOT NULL,               -- 创建时间（ms）
   updated_at     INTEGER NOT NULL,               -- 更新时间（ms）
   deleted_at     INTEGER,                        -- 软删除时间（ms）
+  goal           TEXT NOT NULL DEFAULT '',        -- 该任务希望达成的结果
+  result_summary TEXT NOT NULL DEFAULT '',        -- 智能体最近一次提交给用户验收的结果摘要
+  submission_id  TEXT NOT NULL DEFAULT '',        -- 当前待验收提交 ID，由服务端生成
+  submitted_spec_hash TEXT NOT NULL DEFAULT '',   -- 提交时任务要求的内容哈希
+  review_feedback TEXT NOT NULL DEFAULT '',       -- 用户最近一次退回意见
+  reviewed_submission_id TEXT NOT NULL DEFAULT '', -- 用户已经通过的提交 ID
   UNIQUE (project_id, number)
 );
 
@@ -86,7 +91,23 @@ CREATE TABLE IF NOT EXISTS task_activity (
   kind        TEXT NOT NULL,                    -- created/status_changed/deleted
   from_status TEXT NOT NULL DEFAULT '',          -- 变更前状态；创建时为空
   to_status   TEXT NOT NULL DEFAULT '',          -- 变更后状态；删除时为删除前状态
-  at          INTEGER NOT NULL                  -- 发生时间（ms）
+  at          INTEGER NOT NULL,                 -- 发生时间（ms）
+  details     TEXT NOT NULL DEFAULT '{}'         -- 提交/验收等事件详情 JSON；不得放凭据
+);
+
+CREATE TABLE IF NOT EXISTS task_run (
+  id            TEXT PRIMARY KEY,               -- 单次项目任务执行 ID
+  task_id       TEXT NOT NULL,                   -- 所属项目任务
+  project_id    TEXT NOT NULL,                   -- 项目快照
+  thread_id     TEXT NOT NULL,                   -- 本机独立任务话题
+  agent_id      TEXT NOT NULL,                   -- 本次实际执行的 Agent
+  status        TEXT NOT NULL,                   -- queued/running/succeeded/failed/cancelled/interrupted/needs_input
+  spec_hash     TEXT NOT NULL,                   -- 开始执行时任务要求的 SHA-256
+  task_snapshot TEXT NOT NULL,                   -- 开始执行时任务字段 JSON
+  started_at    INTEGER NOT NULL,                -- 请求创建时间（ms）
+  finished_at   INTEGER,                         -- 执行结束时间（ms）
+  error         TEXT NOT NULL DEFAULT '',        -- 失败或中断原因
+  submission_id TEXT NOT NULL DEFAULT ''        -- 本轮提交 ID（无提交时为空）
 );
 
 CREATE TABLE IF NOT EXISTS chat_message (
@@ -135,6 +156,9 @@ CREATE TABLE IF NOT EXISTS cron_run (
 CREATE INDEX IF NOT EXISTS idx_agent_name ON agent(name);
 CREATE INDEX IF NOT EXISTS idx_task_project ON task(project_id, status);
 CREATE INDEX IF NOT EXISTS idx_task_activity_project ON task_activity(project_id, at);
+CREATE INDEX IF NOT EXISTS idx_task_run_task ON task_run(task_id, started_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_task_run_active_unique ON task_run(task_id)
+  WHERE status IN ('queued', 'running');
 CREATE INDEX IF NOT EXISTS idx_msg_scope ON chat_message(scope, created_at);
 CREATE INDEX IF NOT EXISTS idx_cron_next ON cron_task(enabled, next_run_at);
 CREATE INDEX IF NOT EXISTS idx_cron_run_task ON cron_run(task_id, started_at);
@@ -147,7 +171,7 @@ CREATE INDEX IF NOT EXISTS idx_cron_run_task ON cron_run(task_id, started_at);
   addColumn(db, 'agent', 'category', "TEXT NOT NULL DEFAULT ''", "分组分类（如：项目管理/医疗场景/项目开发；空=默认分组）")
   addColumn(db, 'agent', 'instructions_version', 'INTEGER NOT NULL DEFAULT 0', '身份指令版本号：仅 instructions 实际变更时 +1（jeff_self_update 写前校验用，随同步携带）')
   addColumn(db, 'project', 'workspace_dir', "TEXT NOT NULL DEFAULT ''", '工作空间目录（空=全局 workspace，输出文件默认落这里）')
-  addColumn(db, 'project', 'workspace_state', "TEXT NOT NULL DEFAULT '{}'", '工作台结构化资料（目标、大纲、内容规划；随项目同步）')
+  dropColumn(db, 'project', 'workspace_state')
   addColumn(db, 'project', 'system_prompt', "TEXT NOT NULL DEFAULT ''", '项目群规则 System Prompt；旧项目默认空')
   addColumn(db, 'project_agent', 'duties', "TEXT NOT NULL DEFAULT ''", '成员在该项目群内的职责；旧成员默认空')
   addColumn(db, 'project_agent', 'model_override', 'TEXT', '群内成员模型覆盖；NULL=继承 Agent 个人默认')
@@ -157,6 +181,13 @@ CREATE INDEX IF NOT EXISTS idx_cron_run_task ON cron_run(task_id, started_at);
   addColumn(db, 'task', 'depends_on', "TEXT NOT NULL DEFAULT '[]'", '依赖任务 id 数组 JSON')
   addColumn(db, 'task', 'acceptance_criteria', "TEXT NOT NULL DEFAULT ''", '任务验收标准')
   addColumn(db, 'task', 'evidence_paths', "TEXT NOT NULL DEFAULT '[]'", '任务验收证据的工作区相对路径数组 JSON')
+  addColumn(db, 'task', 'goal', "TEXT NOT NULL DEFAULT ''", '任务希望达成的结果')
+  addColumn(db, 'task', 'result_summary', "TEXT NOT NULL DEFAULT ''", '最近一次智能体提交的结果摘要')
+  addColumn(db, 'task', 'submission_id', "TEXT NOT NULL DEFAULT ''", '当前提交验收的唯一 ID')
+  addColumn(db, 'task', 'submitted_spec_hash', "TEXT NOT NULL DEFAULT ''", '当前提交对应的任务要求哈希')
+  addColumn(db, 'task', 'review_feedback', "TEXT NOT NULL DEFAULT ''", '最近一次用户退回意见')
+  addColumn(db, 'task', 'reviewed_submission_id', "TEXT NOT NULL DEFAULT ''", '用户已经通过的提交 ID')
+  addColumn(db, 'task_activity', 'details', "TEXT NOT NULL DEFAULT '{}'", '提交/验收等事件详情 JSON')
 
   // 旧任务只有当前状态和创建时间：回填创建事实，不猜测历史状态变化。
   db.exec(`INSERT OR IGNORE INTO task_activity (id, project_id, task_id, task_number, title, kind, from_status, to_status, at)
@@ -190,6 +221,12 @@ function addColumn(db: DB, table: string, column: string, def: string, comment: 
   // eslint-disable-next-line @typescript-eslint/no-unused-expressions
   comment // 注释仅作文档（SQLite 无法附加列注释），保持与建表注释同一精神
   db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${def}`)
+}
+
+/** 删除已下线的结构化业务字段（SQLite 3.35+；保留同一任务的历史状态数据）。 */
+function dropColumn(db: DB, table: string, column: string): void {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>
+  if (cols.some((c) => c.name === column)) db.exec(`ALTER TABLE ${table} DROP COLUMN ${column}`)
 }
 
 export const now = (): number => Date.now()

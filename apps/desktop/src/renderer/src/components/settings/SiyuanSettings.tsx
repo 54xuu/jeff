@@ -39,7 +39,7 @@ export default function SiyuanSettings(): React.JSX.Element {
 
   return <div className="settings-content" data-testid="siyuan-settings">
     <h2 className="settings-title">思源知识库</h2>
-    <p className="settings-tip">连接思源 Kernel API，用于搜索日报和读取已确认的报告来源。API Token 只保存在本机，不进入 WebDAV 同步，也不会发给手机。</p>
+    <p className="settings-tip">连接思源 Kernel API 并搜索知识库文档。API Token 只保存在本机，不进入 WebDAV 同步，也不会发给手机。</p>
     <div className="settings-card">
       <label className="field"><span>服务地址</span><input data-testid="siyuan-base-url" value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder="http://127.0.0.1:6806" /></label>
       <label className="field"><span>Kernel API Token {configured ? '（已保存；留空保持不变）' : ''}</span><input data-testid="siyuan-token" type="password" value={token} onChange={(event) => setToken(event.target.value)} placeholder={configured ? '已配置' : '粘贴思源 API Token'} autoComplete="new-password" /></label>
@@ -49,7 +49,7 @@ export default function SiyuanSettings(): React.JSX.Element {
       <h3>连接测试与候选搜索</h3>
       <div className="settings-actions"><input data-testid="siyuan-search-keyword" value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder="输入日报标题或内容关键词" /><button className="btn" data-testid="siyuan-search" disabled={busy || keyword.trim().length < 2} onClick={() => void search()}>搜索思源</button></div>
       {message && <p className="settings-tip" role="status" data-testid="siyuan-message">{message}</p>}
-      {results.map((item) => <div className="campaign-asset-row" key={item.docId}><span><strong>{item.title}</strong><br />{item.path}<br />{item.snippet}</span><code>{item.docId}</code></div>)}
+      {results.map((item) => <div className="siyuan-result-row" key={item.docId}><span><strong>{item.title}</strong><br />{item.path}<br />{item.snippet}</span><code>{item.docId}</code></div>)}
     </div>
   </div>
 }

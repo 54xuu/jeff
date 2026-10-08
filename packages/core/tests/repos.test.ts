@@ -112,13 +112,6 @@ describe('taskRepo', () => {
 })
 
 describe('projectAgentRepo', () => {
-  it('旧版本项目表迁移后得到空工作台配置', () => {
-    const p = projectRepo(db).create({ title: '旧项目' })
-    db.exec('ALTER TABLE project DROP COLUMN workspace_state')
-    migrate(db)
-    expect(projectRepo(db).get(p.id)?.workspace_state).toBe('{}')
-  })
-
   it('成员增删与角色', () => {
     const projects = projectRepo(db)
     const agents = agentRepo(db)
@@ -178,14 +171,15 @@ describe('projectAgentRepo', () => {
     expect(leaders).toHaveLength(1)
   })
 
-  it('项目工作台配置跨更新保留并可同步读写', () => {
+  it('升级时删除旧工作台字段并保留通用群资料', () => {
     const projects = projectRepo(db)
-    const p = projects.create({ title: '宣传项目', workspace_state: JSON.stringify({ goal: '腕表呼叫', audience: '渠道商' }) })
-    expect(JSON.parse(projects.get(p.id)!.workspace_state)).toEqual({ goal: '腕表呼叫', audience: '渠道商' })
-    const updated = projects.update(p.id, { description: '第一期' })!
-    expect(JSON.parse(updated.workspace_state)).toEqual({ goal: '腕表呼叫', audience: '渠道商' })
-    projects.update(p.id, { workspace_state: JSON.stringify({ outline: ['系统介绍', '病房呼叫'] }) })
-    expect(JSON.parse(projects.get(p.id)!.workspace_state)).toEqual({ outline: ['系统介绍', '病房呼叫'] })
+    db.exec("ALTER TABLE project ADD COLUMN workspace_state TEXT NOT NULL DEFAULT '{}'")
+    const p = projects.create({ title: '通用项目群', description: '项目背景', system_prompt: '本群规则' })
+    db.prepare('UPDATE project SET workspace_state=? WHERE id=?').run('{"campaigns":[]}', p.id)
+    migrate(db)
+    expect(projects.get(p.id)).toMatchObject({ title: '通用项目群', description: '项目背景', system_prompt: '本群规则' })
+    const fields = db.prepare('PRAGMA table_info(project)').all() as Array<{ name: string }>
+    expect(fields.map((field) => field.name)).not.toContain('workspace_state')
   })
 })
 

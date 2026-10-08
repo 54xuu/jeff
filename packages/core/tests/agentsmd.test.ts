@@ -70,6 +70,21 @@ describe('composeAgentsMdBlocks（项目规则唯一来源）', () => {
     expect(blocks.join('\n')).not.toContain('不应生效')
   })
 
+  it('空的权威副本仍覆盖旧工作空间文件，读取失败会显式进入上下文且不回退旧来源', () => {
+    const auth = path.join(paths.agentsMdDir, `${projectId}.md`)
+    write(auth, '   ')
+    write(path.join(wsDir, 'AGENTS.md'), '# 不能回退到这条旧规则')
+    expect(composeAgentsMdBlocks(paths, db, projectId)).toHaveLength(0)
+
+    fs.rmSync(auth)
+    fs.mkdirSync(auth)
+    const failed = composeAgentsMdBlocks(paths, db, projectId)
+    expect(failed).toHaveLength(1)
+    expect(failed[0]).toContain('项目级读取失败')
+    expect(failed[0]).toContain('EISDIR')
+    expect(failed.join('\n')).not.toContain('# 不能回退到这条旧规则')
+  })
+
   it('无任何文件时不注入项目块', () => {
     expect(composeAgentsMdBlocks(paths, db, projectId)).toHaveLength(0)
   })

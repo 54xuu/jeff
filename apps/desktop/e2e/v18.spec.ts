@@ -844,28 +844,7 @@ test('v1.8.7：内置浏览器分辨率（4:3 / 自定义）+ 视口与整页截
     fs.copyFileSync(shotFixed.file, path.join(EVIDENCE, '20b-viewport-shot-fixed.png'))
     await page.screenshot({ path: path.join(EVIDENCE, '20-browser-viewport-fixed.png') })
 
-    // ---------- 项目素材：浏览器截图落入当前项目工作区，先拦未确认脱敏，再登记为待人工确认素材 ----------
-    const projectWorkspace = path.join(HOME, 'workspace', 'campaign-capture')
-    fs.mkdirSync(projectWorkspace, { recursive: true })
-    const captureProject = await page.evaluate(async (workspaceDir) => {
-      const jeff = (window as unknown as { jeff: { invoke: (channel: string, payload?: unknown) => Promise<any> } }).jeff
-      return jeff.invoke('project:save', { title: '截图素材验收项目', leader_agent_id: 'agt_xiaojie', memberAgentIds: ['agt_xiaojie'], workspace_dir: workspaceDir })
-    }, projectWorkspace)
-    const refusedCapture = await page.evaluate(async (projectId) => {
-      const jeff = (window as unknown as { jeff: { invoke: (channel: string, payload?: unknown) => Promise<any> } }).jeff
-      return jeff.invoke('project:campaign', { projectId, action: 'capture_browser_screenshot', title: '护士查看腕表呼叫', feature: '腕表病房呼叫', fullPage: false, redactionConfirmed: false }).then(() => '').catch((error) => String(error.message))
-    }, captureProject.id)
-    expect(refusedCapture).toContain('获授权')
-    const capturedProject = await page.evaluate(async (projectId) => {
-      const jeff = (window as unknown as { jeff: { invoke: (channel: string, payload?: unknown) => Promise<any> } }).jeff
-      return jeff.invoke('project:campaign', { projectId, action: 'capture_browser_screenshot', title: '护士查看腕表呼叫', feature: '腕表病房呼叫', fullPage: false, redactionConfirmed: true })
-    }, captureProject.id)
-    const capturedState = JSON.parse(capturedProject.workspace_state)
-    expect(capturedState.assets[0]).toMatchObject({ title: '护士查看腕表呼叫', feature: '腕表病房呼叫', source: 'authorized_screenshot', isReal: true, confirmed: false })
-    const capturedFile = path.join(projectWorkspace, capturedState.assets[0].path)
-    expect(fs.existsSync(capturedFile)).toBe(true)
-    expect(pngSize(capturedFile).width).toBeGreaterThan(0)
-
+    // ---------- 分辨率超出 Jeff 窗口：截图工具必须明确拒绝裁切画面 ----------
     // 3b. 分辨率超出 Jeff 窗口：页面视口照样按精确像素渲染（布局是真的），但截图必须**如实拒绝**
     // —— 实测这一档 Chromium 会把渲染表面裁掉/平铺，硬截只会得到错位或重复的假图。
     const winSize = await page.evaluate(() => ({ w: window.innerWidth, h: window.innerHeight }))

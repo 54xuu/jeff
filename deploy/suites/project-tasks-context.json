@@ -1,0 +1,170 @@
+{
+  "description": "在 Windows 安装版中创建项目群并通过实际 IPC 校验通用任务三字段、保存不启动、群资料与成员职责进入 Prompt 预览；Android instrumentation 校验 release bundle 含对应任务表单和验收操作。",
+  "desktop": {
+    "visible": [
+      "[data-testid=nav-rail]"
+    ],
+    "actions": [
+      {
+        "type": "click",
+        "selector": "[data-testid=chat-list-plus]"
+      },
+      {
+        "type": "click",
+        "selector": "[data-testid=create-group-btn]"
+      },
+      {
+        "type": "fill",
+        "selector": "[data-testid=group-title]",
+        "value": "项目任务上下文验收"
+      },
+      {
+        "type": "fill",
+        "selector": "[data-testid=group-desc]",
+        "value": "部署验收背景标记：DEPLOY_PROJECT_CONTEXT_20261008"
+      },
+      {
+        "type": "select-option-containing",
+        "selector": "[data-testid=group-leader]",
+        "value": "小杰"
+      },
+      {
+        "type": "click",
+        "selector": "[data-testid=group-create-confirm]"
+      },
+      {
+        "type": "expect-hidden",
+        "selector": "[data-testid=create-group-modal]"
+      },
+      {
+        "type": "click",
+        "selector": "[data-testid=\"chat-group-项目任务上下文验收\"]"
+      },
+      {
+        "type": "click",
+        "selector": "[data-testid=group-info-btn]"
+      },
+      {
+        "type": "click",
+        "selector": "[data-testid=group-tab-tasks]"
+      },
+      {
+        "type": "expect-visible",
+        "selector": "[data-testid=project-task-board]"
+      },
+      {
+        "type": "click",
+        "selector": "[data-testid=project-task-new]"
+      },
+      {
+        "type": "fill",
+        "selector": "[data-testid=project-task-title]",
+        "value": "三个独立任务字段验收"
+      },
+      {
+        "type": "fill",
+        "selector": "[data-testid=project-task-goal]",
+        "value": "目标标记：DEPLOY_TASK_GOAL_20261008"
+      },
+      {
+        "type": "fill",
+        "selector": "[data-testid=project-task-description]",
+        "value": "描述标记：DEPLOY_TASK_DESCRIPTION_20261008"
+      },
+      {
+        "type": "fill",
+        "selector": "[data-testid=project-task-criteria]",
+        "value": "验收标记：DEPLOY_TASK_ACCEPTANCE_20261008"
+      },
+      {
+        "type": "click",
+        "selector": "[data-testid=project-task-create]"
+      },
+      {
+        "type": "expect-text",
+        "selector": "[data-testid=project-task-detail]",
+        "value": "任务已保存；保存不会自动开始执行。"
+      },
+      {
+        "type": "expect-task-record",
+        "selector": "body",
+        "projectTitle": "项目任务上下文验收",
+        "task": {
+          "title": "三个独立任务字段验收",
+          "goal": "目标标记：DEPLOY_TASK_GOAL_20261008",
+          "description": "描述标记：DEPLOY_TASK_DESCRIPTION_20261008",
+          "acceptance_criteria": "验收标记：DEPLOY_TASK_ACCEPTANCE_20261008",
+          "status": "todo",
+          "assignee_type": "none",
+          "assignee_id": ""
+        }
+      },
+      {
+        "type": "click",
+        "selector": "[data-testid=group-tab-settings]"
+      },
+      {
+        "type": "fill",
+        "selector": "[data-testid=group-settings-rules]",
+        "value": "群规则标记：DEPLOY_GROUP_RULE_20261008"
+      },
+      {
+        "type": "click",
+        "selector": "[data-testid=group-settings-save]"
+      },
+      {
+        "type": "expect-text",
+        "selector": "[data-testid=group-settings]",
+        "value": "已保存"
+      },
+      {
+        "type": "click",
+        "selector": "[data-testid=group-tab-members]"
+      },
+      {
+        "type": "expect-visible",
+        "selector": "[data-testid=group-member-config]"
+      },
+      {
+        "type": "fill",
+        "selector": "[data-testid=group-member-duties]",
+        "value": "成员职责标记：DEPLOY_MEMBER_DUTY_20261008"
+      },
+      {
+        "type": "click",
+        "selector": "[data-testid=group-member-config-save]"
+      },
+      {
+        "type": "expect-group-prompt-context",
+        "selector": "body",
+        "projectTitle": "项目任务上下文验收",
+        "blocks": [
+          {
+            "id": "group-description",
+            "scope": "project",
+            "contains": "DEPLOY_PROJECT_CONTEXT_20261008"
+          },
+          {
+            "id": "group-rules",
+            "scope": "project",
+            "contains": "DEPLOY_GROUP_RULE_20261008"
+          },
+          {
+            "id": "member-duty",
+            "scope": "agent",
+            "contains": "DEPLOY_MEMBER_DUTY_20261008"
+          }
+        ]
+      },
+      {
+        "type": "click",
+        "selector": "[data-testid=group-tab-tasks]"
+      },
+      {
+        "type": "expect-visible",
+        "selector": "[data-testid=project-task-detail]"
+      }
+    ]
+  },
+  "androidTestClass": "MobileProjectTaskBundleTest"
+}

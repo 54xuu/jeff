@@ -385,10 +385,10 @@ export class RelayLink {
   }
 }
 
-/** Long model-backed project report generation needs the same remote budget as chat turns. */
+/** Long-running chat turns wait for the model; task start only queues a local run and returns promptly. */
 export function remoteRequestTimeout(channel: string, payload?: unknown, configuredTimeout?: number): number {
   if (configuredTimeout != null) return configuredTimeout
-  const action = payload && typeof payload === 'object' ? (payload as { action?: unknown }).action : undefined
-  const slow = channel === IPC.chatSend || channel === IPC.groupSend || (channel === IPC.projectReport && action === 'generate')
+  void payload
+  const slow = channel === IPC.chatSend || channel === IPC.groupSend
   return slow ? 95 * 60 * 1000 : 30_000
 }

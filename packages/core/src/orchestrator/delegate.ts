@@ -5,14 +5,18 @@ import { agentSlug } from '../agents/registry.js'
 import type { OcClient } from '../oc/client.js'
 import { projectMemberPromptOpts } from '../util/modelKey.js'
 import { GROUP_TURN_TIMEOUT_MS, ensureCallbackMention, extractReplyParts } from './group.js'
-import type { GroupChat } from './group.js'
+import { formatGroupTaskContext, type GroupChat, type GroupTaskSnapshot } from './group.js'
 import { groupMsgScope } from './groupThreads.js'
+import { composePromptContext, makePromptBlock, type PromptContext } from '../prompt/context.js'
+import { SUBTASK_STEER } from './subtask.js'
 
 export interface DelegateCtx {
   projectId: string
   actorAgentId: string
   /** 发起委派时的群会话（冻结归属，防界面切换后公告/消息落到别的 thread） */
   threadId?: string
+  taskSnapshot?: GroupTaskSnapshot
+  taskRunId?: string
 }
 
 export interface DelegateResult {
@@ -38,6 +42,14 @@ export class Delegator {
   onDebugLog?: (tag: string, detail: unknown) => void
   /** 规则/记忆注入（用户级+项目级 AGENTS.md 与记忆），与普通群回合保持一致；由 JeffCore 注入 */
   buildMemory?: (agentId: string, projectId: string) => string | undefined
+  buildPromptContext?: (agentId: string, projectId: string, input: {
+    sessionId: string
+    threadId: string
+    taskSnapshot?: GroupTaskSnapshot
+    taskRunId?: string
+    extraBlocks: ReturnType<typeof makePromptBlock>[]
+    includeSubtaskSteer: boolean
+  }) => PromptContext
   /** 委派全部结束后回调（无在途委派时触发）；用于 sidecar 待重启的延迟落闸 */
   onIdle?: () => void
 
@@ -126,13 +138,31 @@ export class Delegator {
       const memberConfig = projectAgentRepo(this.db).listByProject(ctx.projectId).find((row) => row.agent_id === memberId)
       const opts = projectMemberPromptOpts(member, memberConfig || {})
       // 与普通群回合一致：briefing + 规则/记忆（用户级+项目级 AGENTS.md、成员与项目记忆）
-      const memory = this.buildMemory?.(memberId, ctx.projectId)
-      const system = [this.memberBriefing(ctx.projectId, memberId, actorName), memory].filter(Boolean).join('\n\n')
+      let promptContext = this.buildPromptContext?.(memberId, ctx.projectId, {
+        sessionId,
+        threadId,
+        ...(ctx.taskSnapshot ? { taskSnapshot: ctx.taskSnapshot } : {}),
+        ...(ctx.taskRunId ? { taskRunId: ctx.taskRunId } : {}),
+        extraBlocks: [makePromptBlock({ id: 'delegation', kind: 'delegation', scope: 'thread', source: `delegate:${ctx.actorAgentId}`, readStatus: 'generated', included: true, content: `【本次由群成员 ${actorName} 委派任务】按群规则与本群职责执行；能做就完成并给出结果，做不到就说明原因和阻塞点。` })],
+        includeSubtaskSteer: true,
+      })
+      if (!promptContext) {
+        const memory = this.buildMemory?.(memberId, ctx.projectId)
+        const task = ctx.taskSnapshot ? formatGroupTaskContext(ctx.taskSnapshot, false) : ''
+        promptContext = composePromptContext({ agentId: memberId, projectId: ctx.projectId, sessionId, threadId, ...(ctx.taskRunId ? { taskRunId: ctx.taskRunId } : {}), ...(ctx.taskSnapshot ? { taskId: ctx.taskSnapshot.id } : {}) }, [
+          ...this.groupChat.buildBriefingBlocks(ctx.projectId, memberId),
+          ...(memory ? [makePromptBlock({ id: 'legacy-persistent-context', kind: 'unclassified-system', scope: 'project', source: 'Delegator.buildMemory', readStatus: 'generated', included: true, content: memory })] : []),
+          ...(task ? [makePromptBlock({ id: 'task', kind: 'task', scope: 'task', source: `task:${ctx.taskSnapshot!.id}`, readStatus: 'loaded', included: true, content: task })] : []),
+          makePromptBlock({ id: 'delegation', kind: 'delegation', scope: 'thread', source: `delegate:${ctx.actorAgentId}`, readStatus: 'generated', included: true, content: `【本次由群成员 ${actorName} 委派任务】按群规则与本群职责执行；能做就完成并给出结果，做不到就说明原因和阻塞点。` }),
+          makePromptBlock({ id: 'subtask-steer', kind: 'subtask-steer', scope: 'agent', source: 'Jeff subtask policy', readStatus: 'generated', included: true, content: SUBTASK_STEER }),
+        ])
+      }
       const reply = await this.getOc().sendMessage({
         sessionId,
         text: instructionText,
         agent: agentSlug(memberId),
-        system,
+        system: promptContext.system,
+        promptContext,
         timeoutMs: DELEGATE_TIMEOUT_MS,
         ...opts,
       })
@@ -184,11 +214,5 @@ export class Delegator {
       this.inflight.delete(sig)
       if (this.inflight.size === 0) this.onIdle?.()
     }
-  }
-
-  /** 成员执行委派时的本群上下文 */
-  private memberBriefing(projectId: string, memberId: string, actorName: string): string {
-    const base = this.groupChat.buildBriefing(projectId, memberId)
-    return `${base}\n\n【本次由群成员 ${actorName} 委派任务】按群规则与本群职责执行；能做就完成并给出结果，做不到就说明原因和阻塞点。`
   }
 }

@@ -5,7 +5,6 @@ import path from 'node:path'
 import { createServer } from 'vite'
 import WebSocket from 'ws'
 import { XIAOJIE_ID } from '../../../packages/core/src/ipc/contract.js'
-import { parseProjectWorkspaceState } from '../../../packages/core/src/project/workspace.js'
 import {
   RelayLink,
   b64ToBytes,
@@ -134,52 +133,18 @@ test('假手机经本地中转站绑定，并让桌面切到新项目群', async
     await phone.link.request(qr.desktopId, 'group:threadNew', { projectId: project.id, title: '来自手机' })
     await expect(page.getByTestId('chat-window').or(page.locator('.chat-header-name'))).toContainText('遥控器验收', { timeout: 15000 })
 
-    fs.writeFileSync(path.join(dir, 'watch.png'), Buffer.from('e2e image placeholder'))
-    const assetRegistered = await phone.link.request(qr.desktopId, 'project:campaign', {
-      projectId: project.id, action: 'register_asset', title: '腕表正面照片', kind: 'image', feature: '腕表病房呼叫',
-      path: 'watch.png', source: 'user_provided', sourceNote: '手机登记', isReal: true,
-    }) as { workspace_state: string }
-    const asset = parseProjectWorkspaceState(assetRegistered.workspace_state).assets[0]!
-    expect(asset).toMatchObject({ title: '腕表正面照片', source: 'user_provided', isReal: true, confirmed: false, path: 'watch.png' })
-    const assetConfirmed = await phone.link.request(qr.desktopId, 'project:campaign', {
-      projectId: project.id, action: 'review_asset', assetId: asset.id, confirmed: true,
-    }) as { workspace_state: string }
-    expect(parseProjectWorkspaceState(assetConfirmed.workspace_state).assets[0]?.confirmed).toBe(true)
-
-    // 手机通过真实密文中转调用桌面宣传状态机；方向审核、制作任务和成品版本都由主进程落库。
-    const created = await phone.link.request(qr.desktopId, 'project:campaign', {
-      projectId: project.id, action: 'create', kind: 'feature_video', title: '腕表病房呼叫',
-      feature: '腕表病房呼叫', story: '护士通过腕表接收病房呼叫', channels: ['渠道群'],
-      sellingPoints: ['减少漏接'], materialsNeeded: ['腕表实拍'],
-    }) as { workspace_state: string }
-    const campaign = parseProjectWorkspaceState(created.workspace_state).campaigns[0]!
-    expect(campaign.approvedRevision).toBeNull()
-    const approved = await phone.link.request(qr.desktopId, 'project:campaign', {
-      projectId: project.id, action: 'review_direction', campaignId: campaign.id, decision: 'approve',
-    }) as { workspace_state: string }
-    expect(parseProjectWorkspaceState(approved.workspace_state).campaigns[0]).toMatchObject({ approvedRevision: 1, directionReviews: [{ decision: 'approve', revision: 1 }] })
-    await expect(phone.link.request(qr.desktopId, 'project:campaign', {
-      projectId: project.id, action: 'create_task', campaignId: campaign.id,
-    })).rejects.toThrow(/待补素材/)
-    const gapResolved = await phone.link.request(qr.desktopId, 'project:campaign', {
-      projectId: project.id, action: 'resolve_material', campaignId: campaign.id, need: '腕表实拍', assetId: asset.id,
-    }) as { workspace_state: string }
-    expect(parseProjectWorkspaceState(gapResolved.workspace_state).campaigns[0]).toMatchObject({ materialsNeeded: [], assetIds: [asset.id] })
-    const taskLinked = await phone.link.request(qr.desktopId, 'project:campaign', {
-      projectId: project.id, action: 'create_task', campaignId: campaign.id,
-    }) as { workspace_state: string }
-    const linked = parseProjectWorkspaceState(taskLinked.workspace_state).campaigns[0]!
-    expect(linked.productionTaskId).toMatch(/^task_/)
-    fs.writeFileSync(path.join(dir, 'campaign-v1.mp4'), Buffer.from('e2e media placeholder'))
-    const submitted = await phone.link.request(qr.desktopId, 'project:campaign', {
-      projectId: project.id, action: 'submit_delivery', campaignId: campaign.id, path: 'campaign-v1.mp4',
-    }) as { workspace_state: string }
-    const delivery = parseProjectWorkspaceState(submitted.workspace_state).campaigns[0]!.deliveries[0]!
-    expect(delivery).toMatchObject({ status: 'in_review', path: 'campaign-v1.mp4', revision: 1 })
-    const accepted = await phone.link.request(qr.desktopId, 'project:campaign', {
-      projectId: project.id, action: 'review_delivery', campaignId: campaign.id, deliveryId: delivery.id, decision: 'accepted',
-    }) as { workspace_state: string }
-    expect(parseProjectWorkspaceState(accepted.workspace_state).campaigns[0]!.deliveries[0]).toMatchObject({ status: 'accepted' })
+    const savedTask = await phone.link.request(qr.desktopId, 'task:save', {
+      project_id: project.id,
+      title: '从手机提交的通用任务',
+      goal: '完成一项跨场景工作',
+      description: '核对背景资料并整理结果。',
+      acceptance_criteria: '结果保存到工作区，内容可复核。',
+      assignee_id: '',
+      priority: 'medium',
+    }) as { id: string; status: string; goal: string; description: string; acceptance_criteria: string }
+    expect(savedTask).toMatchObject({ status: 'todo', goal: '完成一项跨场景工作', description: '核对背景资料并整理结果。', acceptance_criteria: '结果保存到工作区，内容可复核。' })
+    const tasks = await phone.link.request(qr.desktopId, 'tasks:list', { projectId: project.id }) as Array<{ id: string; title: string; status: string }>
+    expect(tasks).toContainEqual(expect.objectContaining({ id: savedTask.id, title: '从手机提交的通用任务', status: 'todo' }))
 
     await page.getByTestId('nav-settings').click()
     await page.getByTestId('settings-nav-remote').click()
