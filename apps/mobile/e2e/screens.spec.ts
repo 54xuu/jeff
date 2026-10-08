@@ -105,6 +105,8 @@ test.describe('1.11 统一风格全屏回归', () => {
                   return agents
                 case 'projects:list':
                   return projects
+                case 'project:members':
+                  return []
                 case 'tasks:list':
                   return taskRows.filter((task) => task.project_id === p.projectId)
                 case 'task:save': {
@@ -223,7 +225,7 @@ test.describe('1.11 统一风格全屏回归', () => {
     await expect(page.getByTestId('msg-list')).toBeVisible()
   })
 
-  test('执行引擎：手机选择和保存到电脑、限制身份与窄屏弹窗', async ({ page }) => {
+  test('执行引擎：每个 Agent 均可选择并保存，窄屏弹窗无溢出', async ({ page }) => {
     await openContact(page, 'chat-agent-一个名字特别特别长的智能体用来测试顶栏省略号显示')
     await page.getByTestId('chat-more').click()
     await page.getByTestId('mobile-engine-settings').click()
@@ -239,7 +241,13 @@ test.describe('1.11 统一风格全屏回归', () => {
     await expect(page.getByTestId('mobile-engine-selector')).toHaveCount(0)
     await page.getByTestId('chat-more').click(); await page.getByTestId('mobile-engine-settings').click()
     await page.getByLabel('智能体', { exact: true }).selectOption('agt_xiaojie')
-    await expect(page.getByTestId('mobile-agent-engine').locator('option[value=codex]')).toHaveAttribute('disabled', '')
+    await expect(page.getByTestId('mobile-agent-engine').locator('option[value=codex]')).not.toHaveAttribute('disabled', '')
+    await page.getByTestId('mobile-agent-engine').selectOption('codex')
+    await page.getByTestId('mobile-engine-model').fill('gpt-6-luna')
+    await page.getByLabel('思考档位', { exact: true }).selectOption('high')
+    await page.getByRole('button', { name: '保存', exact: true }).click()
+    const savedAgents = await page.evaluate(() => window.__phone.invoke('agents:list'))
+    expect(savedAgents.find((item: any) => item.id === 'agt_xiaojie')).toMatchObject({ execution_engine: 'codex', engine_model: 'gpt-6-luna', thinking: 'high' })
   })
 
   test('会话列表：无溢出 + 未读角标可见', async ({ page }) => {
