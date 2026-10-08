@@ -44,6 +44,13 @@
 - 「纯文档 / 纯测试 / 只改 AGENTS.md」→ **不 bump**。
 - 同一会话、同一发版意图内的多处改动 → **只 bump 一次**（按整包最高级别，不按文件数累加）。
 
+## Git 暂存、提交与推送
+
+- 开始和提交前都检查 `git status --short --branch`、`git diff`、未跟踪文件及目标分支；不要把当前分支相对远端的已有提交误认为本次新改动。
+- 先审查每个文件，再用 `git add -- <明确路径...>` 暂存；默认不用 `git add -A`。暂存后检查 `git diff --cached --name-status`、`git diff --cached --check` 和完整 staged diff。
+- 排除可执行文件、安装包、APK、数据库、日志、缓存、`.tmp/` 和凭据；`.gitignore` 不能代替 staged 文件清单复核。发现可疑敏感文件时先移出暂存并调查来源，不要提交。
+- 推送前 `git fetch` 并核对目标分支、祖先关系及将发布的提交范围；只做可验证的 fast-forward push，不使用 force。若远端已分叉或前进，先重新审查提交范围。
+
 ### 每个开发任务的正式交付产物（硬性门槛）
 
 **每个包含代码、测试、资源或产品行为改动的任务，收尾都必须构建三种正式软件：Ubuntu 桌面包、Windows 桌面包、Android release APK。** 这条规则与本次改动属于 desktop、mobile 还是 relay 无关；不能只按改动目录选择产物，也不能用 debug APK 代替正式 APK。只有纯分析、纯文档（包括只改 AGENTS.md）任务不构建软件。未完成测试、版本核对、三种构建及产物校验前，任务不能报告完成。
@@ -203,6 +210,8 @@ deb：`dpkg -l jeff-desktop` 版本正确 + `/opt/Jeff` 与 `linux-unpacked` 的
 - **默认通道**：Ubuntu `192.168.3.176` → OpenSSH/SFTP → Windows `192.168.3.143`。由 Ubuntu Agent 编排，Windows 执行 PowerShell、安装器、界面运行器及 SDK ADB；不需要唤起 Windows ChatGPT/Codex。只有用户明确要求或 SSH 通道无法满足任务时才考虑 Windows Agent。
 - SSH 使用专用密钥、已核对的主机指纹和 `BatchMode=yes`；本机 SSH config / known_hosts 放忽略目录 `.tmp/deploy/`，不得关闭 `StrictHostKeyChecking`。登录用户名、路径、ADB 版本须从实际 Windows 状态发现，不能假设工作区已有源码。
 - 命令通过 `powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand <UTF-16LE base64>` 执行，设置 UTF-8 输出；分别保存 stdout、stderr、退出码。不要把口令/模型凭据放进命令、日志或报告。Windows 绝对 SFTP 路径用 `/C:/Users/...` 格式；上传后在 Windows 重新核对 SHA-256。
+- **进程保护**：区分宿主 GUI（`ChatGPT.exe`、`Cursor.exe`、`Jeff.exe`）与其子 CLI/工作进程（如 `codex.exe`、`cursor-agent.exe`、`opencode.exe`）。结束某个子进程的授权不等于关闭宿主；宿主可能自动重启子进程。结束任何进程前先核实可执行路径、PID、父 PID、启动时间、所属会话/任务、数据目录及是否有活跃工作；禁止按进程名批量 `Stop-Process` / `taskkill /IM` 或结束整个进程树来省事。用户宿主进程和活跃任务默认保留，关闭 GUI 宿主须有针对该宿主的明确授权。进程保持打开通常只会继续占用内存、CPU、文件、端口或锁；活跃流和工具任务会继续运行，关闭时则可能中断回复、工具调用或未保存内容。收尾只清理本轮启动且逐项核实归属的进程、临时任务和端口转发。
+- **PowerShell 变量**：不要把 `$HOME` 等内置变量名当普通变量覆写；用 `$jeffDataHome` 这类具体名称。交互式 GUI 必须从已登录用户的 `Interactive` 任务启动；任务已注册或 SSH 命令退出码为 0 都不等于应用启动成功，需核对落盘结果文件、实际 PID、页面和数据目录。
 - **安装**：从注册表和实际进程发现安装目录及 per-user/all-users 范围；活跃任务时暂停部署。先正常退出 Jeff、在 Windows 本机保存日常数据快照，再用 NSIS `/S` 静默升级，沿用安装范围及目录（`/D=...` 参数最后传入）。需提权时使用已建立的安装任务或已授权的管理员 SSH 会话；普通 GUI 任务不提权。核对实际 EXE 版本、已安装 `app.asar` 哈希和内置 opencode，不能用安装器退出码单独判成功。
 - **GUI**：Windows 必须保持用户登录；SSHD 会话不能直接代替交互桌面。注册当前登录用户、`Interactive` / `Limited` 的验收计划任务，启动**实际安装目录**的 `Jeff.exe`。使用独立 `JEFF_HOME`、`JEFF_SKILLS_DIR`、Electron `--user-data-dir`、`JEFF_E2E=1`；需要中转站时显式提供真实 `JEFF_RELAY_URL`，不要改日常绑定或数据。
 - GUI 调试端口仅监听 Windows `127.0.0.1`，通过 `ssh -L 127.0.0.1:<local>:127.0.0.1:<remote>` 转发给 Ubuntu。Ubuntu 用 agent-browser / 现有 Playwright CDP 运行器操作界面、截图、执行具名断言；确认页面来自安装目录 `app.asar`，不能验收开发网页后声称安装版通过。
@@ -225,6 +234,7 @@ deb：`dpkg -l jeff-desktop` 版本正确 + `/opt/Jeff` 与 `linux-unpacked` 的
 | Windows 安装器文件一致、退出码正常，应用却立即退出；包内 ASAR 的 size/offset 与数据不一致 | 发布前校验 unpacked ASAR，再解出 NSIS 内部归档复验并核对哈希；安装后再核对真实安装文件。重复安装同一坏包无效，应保留证据、重建完整安装包。 |
 | 只报 `Installed Jeff did not expose its test endpoint`，无法区分启动失败与运行器问题 | 记录实际 EXE 路径、启动参数、PID、存活/退出码、stdout/stderr、应用日志及可用的 Windows Application 事件；先查包和入口，再查启动、页面及 sidecar。进程已退出就立即诊断，不耗尽端口超时后结束任务。空日志本身不能排除故障。 |
 | 将 PowerShell 放进 Bash 双引号，`$env:USERPROFILE` 被 Bash 展开成 `:USERPROFILE`；Python 普通字符串把 Windows 路径中的 `\r` 等当成转义 | PowerShell 写入 `.tmp/*.ps1`，由固定包装器读取文件、编码 UTF-16LE base64 后传给 `-EncodedCommand`。本地生成脚本用带引号的 heredoc；Python 必须内嵌脚本时用原始字符串。避免层层拼接 Bash/Python/PowerShell 引号和路径。 |
+| 把 `$HOME` 当普通 PowerShell 变量覆写，脚本在执行主体前失败；把 CLI 子进程当成独立 GUI 宿主，误关宿主会打断开发且宿主还可能重启子进程 | PowerShell 脚本对内置变量改用具体名称；按本节逐 PID 核对路径、父子关系、会话和活跃任务。只清理本轮明确启动的实例，禁止进程名/整树批量终止；宿主关闭必须单独确认。 |
 | PowerShell CLIXML/进度输出与 JSON 混在一起、中文变乱码；直接序列化 `Get-Content -Raw` 导致附加 PS 元数据大量输出 | 设置 `$ProgressPreference='SilentlyContinue'`、`$ErrorActionPreference='Stop'` 和 `[Console]::OutputEncoding=[Text.UTF8Encoding]::new()`；结构化结果写 UTF-8 JSON 文件，经 SFTP 拉取解析。序列化文件正文前转 `[string]`，查询只选所需字段，分别保存 stdout、stderr、退出码。旧日志乱码先查原始文件，不推断测试结果。 |
 | SSH 会话与交互桌面不同；旧端口/PID/任务、页面未就绪会干扰判断 | 使用当前交互用户的 GUI 计划任务与隔离目录；每轮重新发现进程和端口，等待页面出现并确认 URL 来自真实安装目录的 `app.asar`，再运行断言。监测安装器/运行器进程和结果文件，区分任务已受理、安装完成与界面通过。 |
 | 文档提交号与 manifest 不一致；同版本重建后安装器 SHA-256 变化 | 构建输入冻结，构建过程中不改源码、不替换归档内文件、不让多个任务共用并覆盖 release/current/结果目录。manifest 记录实际构建提交、版本、每个产物大小和 SHA-256；重建后更新哈希，已变更产物须重新安装核对。引用历史验收必须确认产物哈希、测试范围及环境仍适用，注明原运行编号。 |
