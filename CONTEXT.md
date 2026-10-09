@@ -22,4 +22,4 @@ OpenCode（Jeff）使用 Jeff 管理的 OpenCode 实例和模型提供商配置�
 
 ## 思源知识库
 
-思源是 Jeff 的外部知识来源。Agent 可在对话中自动搜索相关资料，也响应用户明确的搜索要求；项目群先查本群绑定目录，必要时扩展全库。明确写入时，目标按用户指定位置、当前项目群绑定、Jeff 全局默认、询问用户的顺序解析。第一阶段只创建文档或向文末追加，不修改、覆盖或删除；Kernel Token 只保存在当前电脑，知识库访问统一走 Jeff 内置工具。详见 [ADR 0004](docs/adr/0004-siyuan-knowledge-and-credential-boundary.md)。
+思源是 Jeff 的外部知识来源。Agent 可在对话中自动搜索相关资料，也响应用户明确的搜索要求；项目群先查本群绑定目录，必要时扩展全库。明确写入时，目标按用户指定位置、当前项目群绑定、Jeff 全局默认、询问用户的顺序解析；工具参数只有显式标记用户已选择时才能覆盖默认位置。第一阶段只创建文档或向文末追加，不修改、覆盖或删除；Kernel Token 只保存在当前电脑，知识库访问统一走 Jeff 内置工具。详见 [ADR 0004](docs/adr/0004-siyuan-knowledge-and-credential-boundary.md)。
