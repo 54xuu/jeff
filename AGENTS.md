@@ -27,7 +27,7 @@
 
 ### 核心原则：默认 PATCH，MINOR 要克制
 
-版本号是**用户可见的发版信号**，不是每次改代码的进度条。当前版本线为 `2.0.x`，后续优先慢升。
+版本号是**用户可见的发版信号**，不是每次改代码的进度条。当前版本线为 `2.1.x`，后续优先慢升。
 
 判定顺序（从上往下，命中即停）：
 
@@ -43,6 +43,14 @@
 - 「修 bug + 顺手补一小块配置进已有同步」→ **PATCH**（例如同步刷新失败 + 把 MCP 塞进已有 settings 包）。
 - 「纯文档 / 纯测试 / 只改 AGENTS.md」→ **不 bump**。
 - 同一会话、同一发版意图内的多处改动 → **只 bump 一次**（按整包最高级别，不按文件数累加）。
+
+### 构建产物清理与保留
+
+- 正式桌面打包入口会先清理对应平台的可重建中间目录：Linux 清 `apps/desktop/out` 与 `release/linux-unpacked`；Windows 清 `apps/desktop/out` 与 `release/win-unpacked`。`apps/mobile` 的 `cap:sync` 清 `dist` 和 Android 中间目录但保留正式 APK；Android `assembleRelease` 另外裁剪旧正式包，`preBuild` 清 `android/build`、`android/app/build`。
+- 清理脚本只操作上述明确路径，并拒绝路径中的符号链接；保留 `node_modules`、Gradle 依赖缓存、`.tmp` 和本机验收证据。混合用途的 `.tmp` 不自动清理；可用 `du -h -d 2 .tmp` 单独列出解包候选，再人工核验。始终保留 `.tmp/deploy` 证据和近期工作目录。不要用 `rm -rf release` 或清空 `.tmp` 代替受控清理。
+- 正式包保留最近两个完整验收通过的三平台版本；新版本构建期间额外保留当前候选版本。首轮把用户指定的 2.1.0 作为已知回退基线，删除更旧的版本包。`deploy:windows` 端到端成功后写入本机验收记录并裁掉更旧包；如果没有完整验收通过的回退版本，保留现有所有正式包。手工绕过正式入口不会登记验收状态。
+- Windows 部署快照保留最近 3 份成功、最近 1 份失败；结果不明的快照不自动删除。`deploy:windows` 只有在结果 run ID 匹配且验收证据成功回传到 Ubuntu 后，才清理该任务的临时包、隔离运行数据和远端证据副本；超时、仍有待处理 worker 请求或证据回传失败时保留现场。
+- Windows 清理按正式包文件名、run ID 和 `results/<runId>/outcome.json` 核验，不清空 `incoming`、`current` 等目录；目录中的自建脚本与测试场景必须保留。正式部署使用 `npm run deploy:windows`，绕过该入口的手工操作不会触发回传后清理。
 
 ## Git 暂存、提交与推送
 

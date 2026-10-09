@@ -1,6 +1,6 @@
 {
   "name": "@jeff/mobile",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "private": true,
   "type": "module",
   "scripts": {
@@ -8,7 +8,7 @@
     "build": "tsc -p tsconfig.json --noEmit && vite build",
     "test": "vitest run",
     "test:e2e": "playwright test -c e2e/playwright.config.ts",
-    "cap:sync": "npm run build && cap sync android",
+    "cap:sync": "node ../../scripts/clean-build-outputs.mjs --scope mobile --outputs-only && npm run build && cap sync android",
     "cap:open": "cap open android"
   },
   "dependencies": {

@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import crypto from 'node:crypto'
-import { parseArgs, parseAdbDevices, chooseAndroidDevice, chooseWindowsAndroidPath, preferConfiguredUsb, verifyArtifactManifest, windowsRunnerDestination } from './deploy-windows.mjs'
+import { parseArgs, parseAdbDevices, chooseAndroidDevice, chooseWindowsAndroidPath, preferConfiguredUsb, verifyArtifactManifest, windowsRunnerDestination, windowsIncomingFileDestination, evidenceTransferVerified, expectedAndroidVersionCode, validateAndroidReleaseMetadata, windowsAdbScript } from './deploy-windows.mjs'
 
 test('deployment CLI accepts explicit target, Android fallback mode, and a named suite', () => {
   assert.deepEqual(
@@ -70,4 +70,32 @@ test('Windows UI runner is synced beside the persistent worker before a suite st
   assert.equal(windowsRunnerDestination('/C:/Users/xujia/.jeff-deploy/incoming/'), '/C:/Users/xujia/.jeff-deploy/desktop-runner.cjs')
   assert.equal(windowsRunnerDestination('C:\\Users\\xujia\\.jeff-deploy\\incoming'), 'C:/Users/xujia/.jeff-deploy/desktop-runner.cjs')
   assert.throws(() => windowsRunnerDestination('/C:/Users/xujia/.jeff-deploy/current'), /must end with \/incoming/)
+  assert.equal(windowsIncomingFileDestination('/C:/Users/xujia/.jeff-deploy/incoming/', 'deploy-cleanup-run.mjs'), '/C:/Users/xujia/.jeff-deploy/incoming/deploy-cleanup-run.mjs')
+  assert.throws(() => windowsIncomingFileDestination('/C:/Users/xujia/.jeff-deploy/incoming/', '../cleanup.mjs'), /file name is invalid/)
+})
+
+test('Android release acceptance checks exact package, version, versionCode, and signing tool version', () => {
+  const badging = "package: name='app.jeff.mobile' versionCode='20101' versionName='2.1.1' platformBuildVersionName='15'\n"
+  assert.equal(expectedAndroidVersionCode('2.1.1'), 20101)
+  assert.deepEqual(validateAndroidReleaseMetadata(badging, '2.1.1'), {
+    packageName: 'app.jeff.mobile', versionName: '2.1.1', versionCode: 20101,
+  })
+  assert.throws(() => validateAndroidReleaseMetadata(badging.replace('20101', '20100'), '2.1.1'), /metadata mismatch/)
+  assert.throws(() => expectedAndroidVersionCode('2.1'), /Invalid Android release version/)
+})
+
+test('Windows ADB commands are assembled as PowerShell script for encoded SSH transport', () => {
+  const config = { windowsAdb: "D:\\soft\\android\\sdk\\it's-adb.exe" }
+  assert.equal(windowsAdbScript(config), "$p='D:\\soft\\android\\sdk\\it''s-adb.exe'; if(Test-Path -LiteralPath $p){ & $p devices }")
+  assert.equal(windowsAdbScript(config, { connectNetworkPhone: true }), "$p='D:\\soft\\android\\sdk\\it''s-adb.exe'; if(Test-Path -LiteralPath $p){ & $p connect '192.168.3.121:5555'; & $p devices }")
+  assert.match(windowsAdbScript({}), /Join-Path \$env:LOCALAPPDATA/)
+})
+
+test('Windows cleanup is allowed only after a successful, matching evidence transfer', () => {
+  const remoteOutcome = { runId: '2026-10-09T120000-000Z', ok: false }
+  const downloadedOutcome = { runId: remoteOutcome.runId, ok: false }
+  assert.equal(evidenceTransferVerified({ pullStatus: 0, remoteOutcome, downloadedOutcome }), true)
+  assert.equal(evidenceTransferVerified({ pullStatus: 1, remoteOutcome, downloadedOutcome }), false)
+  assert.equal(evidenceTransferVerified({ pullStatus: 0, remoteOutcome, downloadedOutcome: { ...downloadedOutcome, runId: 'other' } }), false)
+  assert.equal(evidenceTransferVerified({ pullStatus: 0, remoteOutcome, downloadedOutcome: { ...downloadedOutcome, ok: true } }), false)
 })

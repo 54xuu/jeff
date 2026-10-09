@@ -1,7 +1,7 @@
 {
   "name": "jeff-monorepo",
   "private": true,
-  "version": "2.1.0",
+  "version": "2.1.1",
   "description": "Jeff — 个人「开发 + 项目管理」agent 桌面应用",
   "workspaces": [
     "packages/*",
@@ -18,7 +18,7 @@
     "package:linux": "npm run package:linux -w jeff-desktop",
     "package:win": "npm run package:win -w jeff-desktop",
     "deploy:windows": "node scripts/deploy-windows.mjs",
-    "test:deploy": "node --test scripts/deploy-windows.test.mjs scripts/verify-asar.test.mjs"
+    "test:deploy": "node --test scripts/deploy-windows.test.mjs scripts/clean-build-outputs.test.mjs scripts/deploy-cleanup.test.mjs scripts/verify-asar.test.mjs"
   },
   "devDependencies": {
     "typescript": "^5.7.0"

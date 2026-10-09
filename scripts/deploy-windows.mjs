@@ -5,6 +5,8 @@ import os from 'node:os'
 import crypto from 'node:crypto'
 import { spawn, spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
+import { isValidRunId } from './deploy-cleanup.mjs'
+import { markReleaseAccepted } from './clean-build-outputs.mjs'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const CONFIG = path.join(ROOT, '.tmp/deploy/config.json')
@@ -90,6 +92,124 @@ export function windowsRunnerDestination(incomingPath) {
   return `${normalized.slice(0, -'/incoming'.length)}/desktop-runner.cjs`
 }
 
+export function windowsIncomingFileDestination(incomingPath, fileName) {
+  if (!/^[a-z0-9][a-z0-9.-]*\.mjs$/i.test(fileName)) throw new Error('Windows helper file name is invalid')
+  const normalized = incomingPath.replaceAll('\\', '/').replace(/\/+$/, '')
+  if (!normalized.endsWith('/incoming')) throw new Error('Windows incoming path must end with /incoming')
+  return `${normalized}/${fileName}`
+}
+
+export function expectedAndroidVersionCode(version) {
+  const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(version)
+  if (!match) throw new Error(`Invalid Android release version: ${version}`)
+  return Number(match[1]) * 10000 + Number(match[2]) * 100 + Number(match[3])
+}
+
+export function validateAndroidReleaseMetadata(badging, version) {
+  const code = expectedAndroidVersionCode(version)
+  const packageLine = badging.split(/\r?\n/).find((line) => line.startsWith('package: ')) || ''
+  const packageName = /\bname='([^']+)'/.exec(packageLine)?.[1]
+  const versionCode = /\bversionCode='([^']+)'/.exec(packageLine)?.[1]
+  const versionName = /\bversionName='([^']+)'/.exec(packageLine)?.[1]
+  if (packageName !== 'app.jeff.mobile' || versionCode !== String(code) || versionName !== version) {
+    throw new Error(`Android APK metadata mismatch: expected app.jeff.mobile ${version} (${code}); got ${packageName || 'unknown'} ${versionName || 'unknown'} (${versionCode || 'unknown'})`)
+  }
+  return { packageName, versionName, versionCode: code }
+}
+
+export function windowsAdbScript(config, { connectNetworkPhone = false } = {}) {
+  const adb = config.windowsAdb
+    ? `$p='${String(config.windowsAdb).replaceAll("'", "''")}'`
+    : "$p=Join-Path $env:LOCALAPPDATA 'Android\\Sdk\\platform-tools\\adb.exe'"
+  const connect = connectNetworkPhone ? "& $p connect '192.168.3.121:5555'; " : ''
+  return `${adb}; if(Test-Path -LiteralPath $p){ ${connect}& $p devices }`
+}
+
+export function evidenceTransferVerified({ pullStatus, remoteOutcome, downloadedOutcome }) {
+  return pullStatus === 0
+    && typeof remoteOutcome?.runId === 'string'
+    && remoteOutcome.runId === downloadedOutcome?.runId
+    && typeof remoteOutcome.ok === 'boolean'
+    && remoteOutcome.ok === downloadedOutcome?.ok
+}
+
+function powershellEncodedCommand(script) {
+  const body = `$OutputEncoding=[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); ${script}`
+  return Buffer.from(body, 'utf16le').toString('base64')
+}
+
+function sshPowerShell(config, script) {
+  return sshOutput(config, `powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand ${powershellEncodedCommand(script)}`)
+}
+
+function acquireDeploymentLock() {
+  const directory = path.join(ROOT, '.tmp/deploy')
+  fs.mkdirSync(directory, { recursive: true })
+  const lockPath = path.join(directory, 'windows-deploy.lock')
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const fd = fs.openSync(lockPath, 'wx', 0o600)
+      fs.writeFileSync(fd, JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }))
+      fs.closeSync(fd)
+      return () => {
+        const lock = readJson(lockPath)
+        if (lock?.pid === process.pid) fs.rmSync(lockPath, { force: true })
+      }
+    } catch (error) {
+      if (error.code !== 'EEXIST') throw error
+      const lock = readJson(lockPath)
+      if (!Number.isInteger(lock?.pid) || lock.pid <= 0) {
+        throw new Error(`Windows deployment lock is unreadable at ${lockPath}; inspect it before removing it`)
+      }
+      let alive = true
+      try { process.kill(lock.pid, 0) } catch (probeError) {
+        if (probeError.code === 'ESRCH') alive = false
+        else throw probeError
+      }
+      if (alive) throw new Error(`Another Windows deployment is active (pid ${lock.pid})`)
+      fs.rmSync(lockPath, { force: true })
+    }
+  }
+  throw new Error('Could not acquire the Windows deployment lock')
+}
+
+function verifiedLocalEvidenceRunIds(deployDirectory) {
+  if (!fs.existsSync(deployDirectory)) return []
+  const directoryStat = fs.lstatSync(deployDirectory)
+  if (directoryStat.isSymbolicLink() || !directoryStat.isDirectory()) throw new Error('Local deployment evidence path is not a real directory')
+  return fs.readdirSync(deployDirectory, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && isValidRunId(entry.name))
+    .filter((entry) => {
+      const runId = entry.name
+      const localRunDir = path.join(deployDirectory, runId)
+      const localRecord = path.join(deployDirectory, runId, 'outcome.json')
+      const copiedRunDir = path.join(localRunDir, runId)
+      const copiedRecord = path.join(copiedRunDir, 'outcome.json')
+      let localRunStat
+      let copiedRunStat
+      let localStat
+      let copiedStat
+      try {
+        localRunStat = fs.lstatSync(localRunDir)
+        copiedRunStat = fs.lstatSync(copiedRunDir)
+        localStat = fs.lstatSync(localRecord)
+        copiedStat = fs.lstatSync(copiedRecord)
+      } catch (error) {
+        if (error.code === 'ENOENT') return false
+        throw error
+      }
+      if (localRunStat.isSymbolicLink() || !localRunStat.isDirectory()
+        || copiedRunStat.isSymbolicLink() || !copiedRunStat.isDirectory()
+        || localStat.isSymbolicLink() || !localStat.isFile()
+        || copiedStat.isSymbolicLink() || !copiedStat.isFile()) return false
+      const local = readJson(localRecord)
+      const copied = readJson(copiedRecord)
+      return local?.runId === runId && typeof local.ok === 'boolean'
+        && copied?.runId === runId && local.ok === copied.ok
+    })
+    .map((entry) => entry.name)
+}
+
 function run(label, command, args, options = {}) {
   console.log(`\n[deploy] ${label}`)
   const result = spawnSync(command, args, { cwd: ROOT, stdio: 'inherit', ...options })
@@ -98,7 +218,7 @@ function run(label, command, args, options = {}) {
 }
 
 function readJson(file) {
-  return JSON.parse(fs.readFileSync(file, 'utf8'))
+  return JSON.parse(fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, ''))
 }
 
 function adbDevices(adb) {
@@ -175,6 +295,21 @@ function sha256File(file) {
   return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex')
 }
 
+function verifyAndroidReleaseArtifact(apk, version) {
+  const buildTools = path.join(os.homedir(), 'Android/Sdk/build-tools/35.0.1')
+  const aapt = path.join(buildTools, 'aapt')
+  const apksigner = path.join(buildTools, 'apksigner')
+  const badging = spawnSync(aapt, ['dump', 'badging', apk], { encoding: 'utf8' })
+  if (badging.error) throw badging.error
+  if (badging.status !== 0) throw new Error(`aapt failed to inspect release APK: ${badging.stderr.trim()}`)
+  const metadata = validateAndroidReleaseMetadata(badging.stdout, version)
+  const signature = spawnSync(apksigner, ['verify', '--verbose', '--print-certs', apk], { encoding: 'utf8' })
+  if (signature.error) throw signature.error
+  if (signature.status !== 0) throw new Error(`apksigner rejected release APK: ${(signature.stderr || signature.stdout).trim()}`)
+  const digest = sha256File(apk)
+  console.log(`[deploy] Signed APK verified: ${apk}; package=${metadata.packageName}; version=${metadata.versionName} (${metadata.versionCode}); SHA-256=${digest}`)
+}
+
 function sshOutput(config, remoteCommand) {
   const result = spawnSync('ssh', ['-F', config.sshConfig, config.sshAlias, remoteCommand], { cwd: ROOT, encoding: 'utf8' })
   if (result.status !== 0) throw new Error(`Windows SSH command failed: ${result.stderr.trim()}`)
@@ -182,19 +317,11 @@ function sshOutput(config, remoteCommand) {
 }
 
 function windowsDevices(config) {
-  const adb = config.windowsAdb
-    ? `$p='${String(config.windowsAdb).replaceAll("'", "''")}'`
-    : "$p=Join-Path $env:LOCALAPPDATA 'Android\\Sdk\\platform-tools\\adb.exe'"
-  const command = `powershell.exe -NoProfile -Command "${adb}; if(Test-Path $p){ & $p devices }"`
-  return parseAdbDevices(sshOutput(config, command))
+  return parseAdbDevices(sshPowerShell(config, windowsAdbScript(config)))
 }
 
 function connectWindowsNetworkAdb(config) {
-  const adb = config.windowsAdb
-    ? `$p='${String(config.windowsAdb).replaceAll("'", "''")}'`
-    : "$p=Join-Path $env:LOCALAPPDATA 'Android\\Sdk\\platform-tools\\adb.exe'"
-  const command = `powershell.exe -NoProfile -Command "${adb}; if(Test-Path $p){ & $p connect 192.168.3.121:5555; & $p devices }"`
-  return parseAdbDevices(sshOutput(config, command))
+  return parseAdbDevices(sshPowerShell(config, windowsAdbScript(config, { connectNetworkPhone: true })))
 }
 
 function scp(config, files, destination) {
@@ -236,6 +363,42 @@ function buildArtifacts(environment) {
   })
 }
 
+function cleanupWindowsDeployment(config, runDir, runId, outcome, suite, files) {
+  const deployDirectory = path.join(ROOT, '.tmp/deploy')
+  const localEvidenceRunIds = verifiedLocalEvidenceRunIds(deployDirectory)
+  if (!localEvidenceRunIds.includes(runId)) {
+    throw new Error(`Local evidence for ${runId} is not complete; Windows cleanup was skipped`)
+  }
+  const requestFile = path.join(runDir, `${runId}.cleanup.json`)
+  fs.writeFileSync(requestFile, JSON.stringify({
+    runId,
+    outcome: { runId, ok: outcome.ok },
+    suite,
+    evidenceVerified: true,
+    localEvidenceRunIds,
+    stagedPackageNames: files.map((file) => path.basename(file)),
+  }, null, 2))
+  const cleanupScript = path.join(ROOT, 'scripts/deploy-cleanup.mjs')
+  const cleanupName = `deploy-cleanup-${runId}.mjs`
+  scp(config, [cleanupScript], windowsIncomingFileDestination(config.incomingPath, cleanupName))
+  scp(config, [requestFile], config.incomingPath)
+  const script = [
+    "$ErrorActionPreference='Stop'",
+    "$root=Join-Path $env:USERPROFILE '.jeff-deploy'",
+    "$node=(Get-Command node.exe -ErrorAction Stop).Source",
+    `$cleanup=Join-Path (Join-Path $root 'incoming') '${cleanupName}'`,
+    `$request=Join-Path (Join-Path $root 'incoming') '${runId}.cleanup.json'`,
+    '$raw=& $node $cleanup --request $request',
+    'if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }',
+    'Remove-Item -LiteralPath $cleanup -Force',
+    '$raw',
+  ].join('; ')
+  const raw = sshPowerShell(config, script).trim().replace(/^\uFEFF/, '')
+  const report = JSON.parse(raw)
+  if (report.runId !== runId) throw new Error('Windows cleanup returned a mismatched run ID')
+  console.log(`[deploy] Windows cleanup: ${report.removedSnapshots.length} old snapshots; ${report.removedStagedPackages.length} staged packages; ${report.removedRuns.length} run directories${report.stageCleanupDeferred ? '; shared staging retained because another worker request is pending' : ''}`)
+}
+
 function locateArtifacts(version) {
   const files = [
     path.join(ROOT, 'apps/desktop/release', `jeff-Setup-${version}.exe`),
@@ -267,101 +430,119 @@ async function main() {
     throw new Error('Local deploy config must name Windows 192.168.3.143, Ubuntu 192.168.3.176, and the relay URL.')
   }
 
-  const started = new Date().toISOString().replaceAll(':', '').replaceAll('.', '-')
-  const runDir = path.join(ROOT, '.tmp/deploy', started)
-  fs.mkdirSync(runDir, { recursive: true })
-  performLocalChecks()
-  const env = loadSigningEnvironment(process.env)
-  buildArtifacts(env)
-  const version = readJson(path.join(ROOT, 'package.json')).version
-  const files = locateArtifacts(version)
-  const desktopAsar = path.join(ROOT, 'apps/desktop/release/win-unpacked/resources/app.asar')
-  if (!fs.existsSync(desktopAsar) || !fs.existsSync(path.join(ROOT, 'apps/desktop/release/win-unpacked/resources/oc-bin/windows-x64/opencode.exe'))) {
-    throw new Error('Windows unpacked app is missing app.asar or bundled opencode.exe')
-  }
-  const androidSerial = startEmulator()
-  const apk = files.find((file) => file.endsWith('.apk') && file.includes('/release/jeff-'))
-  const testApk = files.find((file) => file.endsWith('app-release-androidTest.apk'))
-  installAvdApk(androidSerial, apk, 'app.jeff.mobile')
-  installAvdApk(androidSerial, testApk, 'app.jeff.mobile.test')
-  prepareAvd(androidSerial)
+  const releaseLock = acquireDeploymentLock()
   try {
-    run('Run AVD instrumentation acceptance', ANDROID_ADB, ['-s', androidSerial, 'shell', 'am', 'instrument', '-w', '-e', 'class', `app.jeff.mobile.${suite.androidTestClass}`, 'app.jeff.mobile.test/androidx.test.runner.AndroidJUnitRunner'])
-  } catch (error) {
-    captureAvdDiagnostics(androidSerial, runDir, 'emulator')
-    throw error
-  }
-  captureAvdDiagnostics(androidSerial, runDir, 'emulator')
-  run('Capture AVD screenshot', ANDROID_ADB, ['-s', androidSerial, 'exec-out', 'screencap', '-p'], {
-    stdio: ['ignore', fs.openSync(path.join(runDir, 'android-emulator.png'), 'w'), 'inherit'],
-  })
-  let android = { kind: 'emulator', serial: androidSerial, connection: null, reason: null }
-  if (args.android !== 'emulator') {
-    let usbFirst = windowsDevices(config)
-    if (config.phoneSerial && !preferConfiguredUsb(usbFirst, config.phoneSerial)) {
-      const usbDeadline = Date.now() + 15_000
-      while (Date.now() < usbDeadline && !preferConfiguredUsb(usbFirst, config.phoneSerial)) {
-        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1000)
-        usbFirst = windowsDevices(config)
-      }
+    const started = new Date().toISOString().replaceAll(':', '').replaceAll('.', '-')
+    const runDir = path.join(ROOT, '.tmp/deploy', started)
+    fs.mkdirSync(runDir, { recursive: true })
+    performLocalChecks()
+    const env = loadSigningEnvironment(process.env)
+    buildArtifacts(env)
+    const version = readJson(path.join(ROOT, 'package.json')).version
+    const files = locateArtifacts(version)
+    verifyAndroidReleaseArtifact(files.find((file) => file.endsWith(`/release/jeff-${version}.apk`)), version)
+    const desktopAsar = path.join(ROOT, 'apps/desktop/release/win-unpacked/resources/app.asar')
+    if (!fs.existsSync(desktopAsar) || !fs.existsSync(path.join(ROOT, 'apps/desktop/release/win-unpacked/resources/oc-bin/windows-x64/opencode.exe'))) {
+      throw new Error('Windows unpacked app is missing app.asar or bundled opencode.exe')
     }
-    android = chooseWindowsAndroidPath(usbFirst, config.phoneSerial, 'auto')
-    if (android.kind !== 'physical') {
-      const afterNetworkConnect = connectWindowsNetworkAdb(config)
-      android = chooseWindowsAndroidPath(afterNetworkConnect, config.phoneSerial, args.android)
-    } else if (args.android === 'physical') {
-      // USB has higher priority than the configured network ADB target.
-    }
-  }
-  const entries = artifactEntries(files)
-  const manifest = { runId: started, version, commit: spawnSync('git', ['rev-parse', 'HEAD'], { cwd: ROOT, encoding: 'utf8' }).stdout.trim(), android, artifacts: entries }
-  fs.writeFileSync(path.join(runDir, 'manifest.json'), JSON.stringify(manifest, null, 2))
-  const request = {
-    runId: started, version, suite: args.suite, androidMode: android.kind,
-    phoneSerial: android.connection === 'usb' ? android.serial : android.connection === 'network' ? android.serial : '',
-    androidConnection: android.connection, androidPolicy: args.android,
-    relayUrl: config.relayUrl, androidTestClass: suite.androidTestClass, windowsAdb: config.windowsAdb,
-    desktopAsarSha256: sha256File(desktopAsar),
-    artifacts: entries,
-  }
-  const requestFile = path.join(runDir, `${started}.request.json`)
-  fs.writeFileSync(requestFile, JSON.stringify(request, null, 2))
-  const desktopRunner = path.join(ROOT, 'deploy/windows/desktop-runner.cjs')
-  scp(config, [desktopRunner], windowsRunnerDestination(config.incomingPath))
-  // Upload the request marker last; the Windows worker only starts after every referenced file exists.
-  scp(config, [...files, path.join(runDir, 'manifest.json'), suiteFile, requestFile], config.incomingPath)
-  sshOutput(config, `schtasks.exe /Run /TN JeffDeployWorker`)
-  const deadline = Date.now() + 20 * 60_000
-  let outcome
-  while (Date.now() < deadline) {
-    const raw = sshOutput(config, `powershell.exe -NoProfile -Command "$p=Join-Path $env:USERPROFILE '.jeff-deploy\\results\\${started}\\outcome.json'; if(Test-Path $p){ Get-Content $p -Raw }"`)
-    if (raw.trim()) { outcome = JSON.parse(raw.replace(/^\uFEFF/, '')); break }
-    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 2000)
-  }
-  if (!outcome) throw new Error('Windows deployment worker did not report a result within 20 minutes')
-  if (outcome.androidRetryRequired) {
-    console.log('[deploy] Windows reports that the physical device disconnected mid-test; rerun the complete Android suite on Ubuntu AVD.')
+    const androidSerial = startEmulator()
+    const apk = files.find((file) => file.endsWith('.apk') && file.includes('/release/jeff-'))
+    const testApk = files.find((file) => file.endsWith('app-release-androidTest.apk'))
+    installAvdApk(androidSerial, apk, 'app.jeff.mobile')
+    installAvdApk(androidSerial, testApk, 'app.jeff.mobile.test')
+    prepareAvd(androidSerial)
     try {
-      run('Rerun Android instrumentation on Ubuntu AVD after physical disconnect', ANDROID_ADB, ['-s', androidSerial, 'shell', 'am', 'instrument', '-w', '-e', 'class', `app.jeff.mobile.${suite.androidTestClass}`, 'app.jeff.mobile.test/androidx.test.runner.AndroidJUnitRunner'])
+      run('Run AVD instrumentation acceptance', ANDROID_ADB, ['-s', androidSerial, 'shell', 'am', 'instrument', '-w', '-e', 'class', `app.jeff.mobile.${suite.androidTestClass}`, 'app.jeff.mobile.test/androidx.test.runner.AndroidJUnitRunner'])
     } catch (error) {
-      captureAvdDiagnostics(androidSerial, runDir, 'emulator-after-disconnect')
+      captureAvdDiagnostics(androidSerial, runDir, 'emulator')
       throw error
     }
-    captureAvdDiagnostics(androidSerial, runDir, 'emulator-after-disconnect')
-    run('Capture post-disconnect AVD screenshot', ANDROID_ADB, ['-s', androidSerial, 'exec-out', 'screencap', '-p'], {
-      stdio: ['ignore', fs.openSync(path.join(runDir, 'android-emulator-after-disconnect.png'), 'w'), 'inherit'],
+    captureAvdDiagnostics(androidSerial, runDir, 'emulator')
+    run('Capture AVD screenshot', ANDROID_ADB, ['-s', androidSerial, 'exec-out', 'screencap', '-p'], {
+      stdio: ['ignore', fs.openSync(path.join(runDir, 'android-emulator.png'), 'w'), 'inherit'],
     })
-    outcome.androidResult = 'Ubuntu 模拟器通过；Windows 真机途中断连，已留证并在模拟器重跑全套通过'
+    let android = { kind: 'emulator', serial: androidSerial, connection: null, reason: null }
+    if (args.android !== 'emulator') {
+      let usbFirst = windowsDevices(config)
+      if (config.phoneSerial && !preferConfiguredUsb(usbFirst, config.phoneSerial)) {
+        const usbDeadline = Date.now() + 15_000
+        while (Date.now() < usbDeadline && !preferConfiguredUsb(usbFirst, config.phoneSerial)) {
+          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1000)
+          usbFirst = windowsDevices(config)
+        }
+      }
+      android = chooseWindowsAndroidPath(usbFirst, config.phoneSerial, 'auto')
+      if (android.kind !== 'physical') {
+        const afterNetworkConnect = connectWindowsNetworkAdb(config)
+        android = chooseWindowsAndroidPath(afterNetworkConnect, config.phoneSerial, args.android)
+      } else if (args.android === 'physical') {
+        // USB has higher priority than the configured network ADB target.
+      }
+    }
+    const entries = artifactEntries(files)
+    const manifest = { runId: started, version, commit: spawnSync('git', ['rev-parse', 'HEAD'], { cwd: ROOT, encoding: 'utf8' }).stdout.trim(), android, artifacts: entries }
+    fs.writeFileSync(path.join(runDir, 'manifest.json'), JSON.stringify(manifest, null, 2))
+    const request = {
+      runId: started, version, suite: args.suite, androidMode: android.kind,
+      phoneSerial: android.connection === 'usb' ? android.serial : android.connection === 'network' ? android.serial : '',
+      androidConnection: android.connection, androidPolicy: args.android,
+      relayUrl: config.relayUrl, androidTestClass: suite.androidTestClass, windowsAdb: config.windowsAdb,
+      desktopAsarSha256: sha256File(desktopAsar),
+      artifacts: entries,
+    }
+    const requestFile = path.join(runDir, `${started}.request.json`)
+    fs.writeFileSync(requestFile, JSON.stringify(request, null, 2))
+    const desktopRunner = path.join(ROOT, 'deploy/windows/desktop-runner.cjs')
+    scp(config, [desktopRunner], windowsRunnerDestination(config.incomingPath))
+    // Upload the request marker last; the Windows worker only starts after every referenced file exists.
+    scp(config, [...files, path.join(runDir, 'manifest.json'), suiteFile, requestFile], config.incomingPath)
+    sshOutput(config, `schtasks.exe /Run /TN JeffDeployWorker`)
+    const deadline = Date.now() + 20 * 60_000
+    let outcome
+    while (Date.now() < deadline) {
+      const script = `$p=Join-Path (Join-Path (Join-Path $env:USERPROFILE '.jeff-deploy') 'results') '${started}\\outcome.json'; if(Test-Path $p){ Get-Content $p -Raw -Encoding UTF8 }`
+      const raw = sshPowerShell(config, script)
+      if (raw.trim()) { outcome = JSON.parse(raw.replace(/^\uFEFF/, '')); break }
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 2000)
+    }
+    if (!outcome) throw new Error('Windows deployment worker did not report a result within 20 minutes')
+    if (outcome.runId !== started || typeof outcome.ok !== 'boolean') {
+      throw new Error('Windows deployment worker returned an invalid or mismatched outcome; cleanup was skipped')
+    }
+    if (outcome.androidRetryRequired) {
+      console.log('[deploy] Windows reports that the physical device disconnected mid-test; rerun the complete Android suite on Ubuntu AVD.')
+      try {
+        run('Rerun Android instrumentation on Ubuntu AVD after physical disconnect', ANDROID_ADB, ['-s', androidSerial, 'shell', 'am', 'instrument', '-w', '-e', 'class', `app.jeff.mobile.${suite.androidTestClass}`, 'app.jeff.mobile.test/androidx.test.runner.AndroidJUnitRunner'])
+      } catch (error) {
+        captureAvdDiagnostics(androidSerial, runDir, 'emulator-after-disconnect')
+        throw error
+      }
+      captureAvdDiagnostics(androidSerial, runDir, 'emulator-after-disconnect')
+      run('Capture post-disconnect AVD screenshot', ANDROID_ADB, ['-s', androidSerial, 'exec-out', 'screencap', '-p'], {
+        stdio: ['ignore', fs.openSync(path.join(runDir, 'android-emulator-after-disconnect.png'), 'w'), 'inherit'],
+      })
+      outcome.androidResult = 'Ubuntu 模拟器通过；Windows 真机途中断连，已留证并在模拟器重跑全套通过'
+    }
+    shutdownOwnedAvd(androidSerial)
+    const pull = spawnSync('scp', ['-r', '-F', config.sshConfig, `${config.sshAlias}:${config.resultPath}/${started}`, runDir], { cwd: ROOT, stdio: 'inherit' })
+    fs.writeFileSync(path.join(runDir, 'outcome.json'), JSON.stringify(outcome, null, 2))
+    const downloadedOutcomeFile = path.join(runDir, started, 'outcome.json')
+    const downloadedOutcome = fs.existsSync(downloadedOutcomeFile) ? readJson(downloadedOutcomeFile) : null
+    if (!evidenceTransferVerified({ pullStatus: pull.status, remoteOutcome: outcome, downloadedOutcome })) {
+      const detail = pull.error?.message || `scp exit ${pull.status ?? 'unknown'} or the downloaded outcome did not match run ${started}`
+      throw new Error(`Windows evidence was not verified on Ubuntu; remote cleanup was skipped: ${detail}`)
+    }
+    cleanupWindowsDeployment(config, runDir, started, outcome, args.suite, files)
+    if (!outcome.ok) throw new Error(`Windows deployment or acceptance failed: ${outcome.message}`)
+    const accepted = markReleaseAccepted({ root: ROOT, version, acceptedAt: new Date().toISOString() })
+    console.log(`[deploy] Accepted package versions retained: ${accepted.acceptedVersions.join(', ')}; pruned ${accepted.removedPackages.length} older release files`)
+    const androidLabel = outcome.androidResult || (android.kind === 'emulator'
+      ? `Ubuntu 模拟器通过${android.reason ? `（${android.reason}）` : ''}`
+      : `Windows ${android.connection === 'usb' ? 'USB 真机' : '网络 ADB 真机'}通过`)
+    console.log(`\n[deploy] Ubuntu AVD 基线通过；${androidLabel}; Windows installed and accepted; evidence: ${runDir}`)
+  } finally {
+    releaseLock()
   }
-  shutdownOwnedAvd(androidSerial)
-  const pull = spawnSync('scp', ['-r', '-F', config.sshConfig, `${config.sshAlias}:${config.resultPath}/${started}`, runDir], { cwd: ROOT, stdio: 'inherit' })
-  if (pull.status !== 0) console.warn('[deploy] Windows screenshots/logs could not be copied; result is still available on Windows.')
-  fs.writeFileSync(path.join(runDir, 'outcome.json'), JSON.stringify(outcome, null, 2))
-  if (!outcome.ok) throw new Error(`Windows deployment or acceptance failed: ${outcome.message}`)
-  const androidLabel = outcome.androidResult || (android.kind === 'emulator'
-    ? `Ubuntu 模拟器通过${android.reason ? `（${android.reason}）` : ''}`
-    : `Windows ${android.connection === 'usb' ? 'USB 真机' : '网络 ADB 真机'}通过`)
-  console.log(`\n[deploy] Ubuntu AVD 基线通过；${androidLabel}; Windows installed and accepted; evidence: ${runDir}`)
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

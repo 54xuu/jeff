@@ -86,6 +86,24 @@ tasks.register('copyCryptoVectors', Copy) {
 }
 tasks.named('preBuild').configure { dependsOn 'copyCryptoVectors' }
 
+// A release build always starts from fresh app/root build outputs. Keep Gradle's
+// dependency cache and the versioned signed APKs under android/release untouched.
+tasks.register('cleanJeffIntermediateOutputs', Delete) {
+    delete rootProject.layout.buildDirectory
+    delete project.layout.buildDirectory
+}
+tasks.named('preBuild').configure { dependsOn 'cleanJeffIntermediateOutputs' }
+
+// Release builds prune only versioned deliverables; preBuild above handles intermediates.
+def jeffBuildCleaner = new File(rootProject.projectDir, '../../../scripts/clean-build-outputs.mjs').canonicalPath
+tasks.register('cleanJeffReleasePackages', Exec) {
+    workingDir rootProject.projectDir
+    commandLine 'node', jeffBuildCleaner, '--scope', 'mobile', '--packages-only'
+}
+tasks.matching { it.name == 'assembleRelease' }.configureEach {
+    dependsOn 'cleanJeffReleasePackages'
+}
+
 tasks.matching { it.name == 'assembleRelease' }.configureEach {
     doLast {
         def version = android.defaultConfig.versionName
