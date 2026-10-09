@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import type { JeffPaths } from './paths.js'
+import { redactText } from './secrets/redact.js'
 
 /** 调试日志回调（OcClient / hooks / Delegator 等注入用，避免各自依赖 logger 实例） */
 export type DebugLogFn = (tag: string, detail: unknown) => void
@@ -51,7 +52,7 @@ export class DebugLogger {
       } catch {
         /* 文件不存在等，忽略 */
       }
-      const body = typeof detail === 'string' ? detail : JSON.stringify(detail)
+      const body = redactText(typeof detail === 'string' ? detail : JSON.stringify(detail))
       fs.appendFileSync(file, `[${formatLocalTime()}] [${tag}] ${body}\n`)
     } catch {
       /* 忽略 */

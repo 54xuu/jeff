@@ -19,6 +19,7 @@ const SETTINGS_SECTIONS: Array<[SettingsSection, string]> = [
   ['notification', '通知'],
   ['appearance', '外观'],
   ['remote', '远程控制'],
+  ['secrets', '密码'],
   ['about', '关于'],
 ]
 

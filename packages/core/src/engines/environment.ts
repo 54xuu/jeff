@@ -5,6 +5,7 @@ import { parse, stringify } from 'smol-toml'
 import type { EngineId } from './contract.js'
 import type { McpServerCfg } from '../mcp/parse.js'
 import { skillsMount, userSkillsDir } from '../paths.js'
+import { injectableEnv } from '../secrets/vault.js'
 
 const json = (file: string, value: unknown) => fs.writeFileSync(file, JSON.stringify(value, null, 2), { mode: 0o600 })
 function copy(source: string, target: string): void {
@@ -135,10 +136,10 @@ function openCodeMcp(servers: Record<string, McpServerCfg>, bridgeUrl: string): 
 
 /** Only generated runtime files live here. Target projects and global CLI config remain untouched. */
 export function prepareEnvironment(root: string, id: string, engine: EngineId, system: string, workspace: string,
-  bridgeUrl: string, servers: Record<string, McpServerCfg>): { cwd: string; env: NodeJS.ProcessEnv; extraArgs: string[]; instructions: string } {
+  bridgeUrl: string, servers: Record<string, McpServerCfg>, extraEnv: Record<string, string> = {}): { cwd: string; env: NodeJS.ProcessEnv; extraArgs: string[]; instructions: string } {
   const cwd = path.join(root, 'engines', engine, id)
   fs.mkdirSync(cwd, { recursive: true, mode: 0o700 })
-  const env = { ...process.env }
+  const env = { ...process.env, ...injectableEnv(extraEnv) }
   const skills = userSkillsDir()
   const skillGuide = fs.existsSync(skills) ? fs.readdirSync(skills).filter((name) => fs.existsSync(path.join(skills, name, 'SKILL.md')))
     .map((name) => `${name}: ${path.join(skills, name, 'SKILL.md')}`).join('\n') : ''

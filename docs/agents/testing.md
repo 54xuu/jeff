@@ -19,6 +19,15 @@ mock 只覆盖 happy path；流式一致性、权限挂起、MCP 拉起这类跨
 11. **验收要落在服务端事实**：表单断言**服务端收到的字段**、上传断言**服务端收到的字节**、插件断言 **MCP 服务端收到的调用与请求头**、定时任务断言 **DB 运行记录**。只看 DOM 或模型回复会漏掉「说成功了其实没落地」。
 12. **「测试没通过」先分清是谁的锅**：v1.8.3 的 27 轮里，初版失败的 8 轮有 5 轮是**测试台自己的假设错了**（按旧标题查库、把 `plugin.json` 当越权靶子——它其实是 `jeff_plugin_update` 的正当对象、误判「软删要顺手改 enabled」、跨轮复用 home 导致旧 URL 残留）。改测试断言前先问一句：这是产品语义错了，还是我的预期错了？
 
+## 密码库注入
+
+封闭验收不依赖模型成功回复：
+
+1. 设置 → 密码写入变量（例如 `PROBE_SECRET`），确认页面默认只显示末 4 位，数据库在钥匙串可用时不含明文。
+2. 点「立即重启引擎」。`JEFF_E2E=1` 时 `debug:sidecarEnvKeys` 只返回变量名和值的 SHA-256 前 8 位，用它核对注入的是密码库的值，而不是系统里的同名变量。
+3. 真实模型抽查：临时 skill 只把变量的哈希写到工作区文件，不断言模型回复文本。停用该条目并重启后，同一脚本应报告变量缺失。
+4. 让模型执行 `echo $PROBE_SECRET` 时，Jeff 的 `chat_message` 和 `logs/debug-*.log` 不应再含明文。模型提供商已经收到的工具结果无法撤回。
+
 ## 第三层：打包后产物验证
 
 deb：`dpkg -l jeff-desktop` 版本正确 + `/opt/Jeff` 与 `linux-unpacked` 的 app.asar md5 一致；exe：`file` 为 PE32 Nullsoft + `grep -a <本次改动特征串> win-unpacked/resources/app.asar` 命中 + `oc-bin/windows-x64/opencode.exe` 在位。

@@ -22,5 +22,6 @@ export default defineConfig({
     { name: 'live-file-links', testMatch: /live-file-links\.spec\.ts/ },
     { name: 'remote', testMatch: /remote\.spec\.ts/ },
     { name: 'file-links', testMatch: /file-links\.spec\.ts/ },
+    { name: 'secrets', testMatch: /secrets\.spec\.ts/ },
   ],
 })

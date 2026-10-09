@@ -1,9 +1,9 @@
-import { app, BrowserWindow, session, shell, Tray, Menu, dialog, nativeImage, Notification, globalShortcut } from 'electron'
+import { app, BrowserWindow, session, shell, Tray, Menu, dialog, nativeImage, Notification, globalShortcut, safeStorage } from 'electron'
 import type { MenuItemConstructorOptions } from 'electron'
 import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
-import { JeffCore, BridgeBrowserControl, osNotificationInit, visualNotifyChannel } from '@jeff/core'
+import { JeffCore, BridgeBrowserControl, osNotificationInit, visualNotifyChannel, windowTitle } from '@jeff/core'
 import type { BrowserResult, BrowserState } from '@jeff/core'
 import { registerIpc } from './ipc.js'
 import { startRemoteGateway, type RemoteGateway } from './remote/gateway.js'
@@ -12,6 +12,30 @@ import { destroyWindowsBalloon, showWindowsBalloon } from './win-balloon.js'
 // Windows 下 Toast 通知必须带 AppUserModelID，否则静默丢弃；取值需与 electron-builder 的 appId、
 // 安装器写入的开始菜单快捷方式 AUMID 一致。必须在 app ready 之前设置（越早越稳）。
 if (process.platform === 'win32') app.setAppUserModelId('com.jeffxuu.jeff')
+
+/** 系统钥匙串加密。Linux 上 basic_text 只是硬编码口令，视为不可用并降级明文。 */
+function electronSecretCipher() {
+  return {
+    isAvailable(): boolean {
+      try {
+        if (!safeStorage.isEncryptionAvailable()) return false
+        if (process.platform === 'linux') {
+          const backend = safeStorage.getSelectedStorageBackend?.()
+          if (!backend || backend === 'basic_text') return false
+        }
+        return true
+      } catch {
+        return false
+      }
+    },
+    encrypt(plain: string): string {
+      return safeStorage.encryptString(plain).toString('base64')
+    },
+    decrypt(blob: string): string {
+      return safeStorage.decryptString(Buffer.from(blob, 'base64'))
+    },
+  }
+}
 
 let win: BrowserWindow | null = null
 let core: JeffCore | null = null
@@ -126,7 +150,7 @@ if (!gotLock) {
     core = new JeffCore()
     const resourceBinDir = app.isPackaged ? path.join(process.resourcesPath, 'oc-bin') : undefined
     try {
-      await core.init({ resourceBinDir })
+      await core.init({ resourceBinDir, secretCipher: electronSecretCipher() })
     } catch (err) {
       // sidecar 启动失败也先开窗展示错误（SidecarManager 会持续重试）
       console.error('[jeff] core init 失败:', err)
@@ -555,7 +579,7 @@ function createWindow(): void {
     height: 900,
     minWidth: 1000,
     minHeight: 680,
-    title: 'Jeff',
+    title: windowTitle(),
     ...(icon ? { icon } : {}),
     backgroundColor: '#ededed',
     webPreferences: {
@@ -567,6 +591,7 @@ function createWindow(): void {
       webviewTag: true,
     },
   })
+  win.on('page-title-updated', (event) => event.preventDefault())
   win.webContents.setWindowOpenHandler(({ url }) => {
     void shell.openExternal(url)
     return { action: 'deny' }

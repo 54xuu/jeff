@@ -9,7 +9,7 @@ import type { ComposerSeed } from './components/composerState'
 
 export type Tab = 'chats' | 'contacts' | 'schedules' | 'plugins' | 'settings'
 export type ActiveChat = { kind: 'agent'; id: string } | { kind: 'group'; id: string } | null
-export type SettingsSection = 'providers' | 'mcp' | 'memory' | 'engine' | 'sync' | 'siyuan' | 'notification' | 'appearance' | 'remote' | 'about'
+export type SettingsSection = 'providers' | 'mcp' | 'memory' | 'engine' | 'sync' | 'siyuan' | 'notification' | 'appearance' | 'remote' | 'secrets' | 'about'
 
 /** 插件快捷指令（`/` 菜单条目） */
 export interface SlashCommand {

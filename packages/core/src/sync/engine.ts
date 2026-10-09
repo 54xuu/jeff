@@ -10,6 +10,8 @@ import { parseEntries, ENTRY_DELIMITER } from '../memory/store.js'
 import type { MemoryStore, MemoryScope } from '../memory/store.js'
 import type { SkillsBackupReport, SkillsRestoreApply, SkillsRestoreStage } from '../ipc/contract.js'
 import { syncedNextRun } from '../cron/expr.js'
+import { SECRETS_VAULT_KEY, exportSecretMeta, mergeSecretMeta } from '../secrets/vault.js'
+import type { SecretMeta, StoredSecret } from '../secrets/types.js'
 
 export interface WebdavConfig {
   url: string
@@ -589,7 +591,8 @@ export class SyncEngine {
       notifyOnlyBackground: this.kvGet('settings:notifyOnlyBackground'),
       mcp: this.kvGet('settings:mcp'),
       siyuanArchiveTarget: this.kvGet('settings:siyuanArchiveTarget'),
-      // webdav 配置本身不同步（每台设备自己的连接信息）
+      secretsMeta: exportSecretMeta((this.kvGet(SECRETS_VAULT_KEY) as StoredSecret[] | null) || []),
+      // webdav 配置本身不同步（每台设备自己的连接信息）；密码值只留在 secrets:vault
     }
     const settingsUpdated = Math.max(
       this.kvUpdatedAt('settings:providers'),
@@ -601,6 +604,7 @@ export class SyncEngine {
       this.kvUpdatedAt('settings:notifyOnlyBackground'),
       this.kvUpdatedAt('settings:mcp'),
       this.kvUpdatedAt('settings:siyuanArchiveTarget'),
+      this.kvUpdatedAt(SECRETS_VAULT_KEY),
     )
     out.set('settings', { id: 'settings', updatedAt: settingsUpdated, deletedAt: null, data: settings, memoryFile: null })
     // 记忆文件（mtime 作为版本）
@@ -670,6 +674,7 @@ export class SyncEngine {
             notifyOnlyBackground?: unknown
             mcp?: unknown
             siyuanArchiveTarget?: unknown
+            secretsMeta?: SecretMeta[]
           }
           this.kvSetJSON('settings:providers', d.providers ?? [])
           this.kvSetJSON('settings:defaultModel', d.defaultModel ?? null)
@@ -681,6 +686,10 @@ export class SyncEngine {
           if (typeof d.notifyOnlyBackground === 'boolean') this.kvSetJSON('settings:notifyOnlyBackground', d.notifyOnlyBackground)
           this.kvSetJSON('settings:mcp', d.mcp ?? {})
           if (d.siyuanArchiveTarget && typeof d.siyuanArchiveTarget === 'object') this.kvSetJSON('settings:siyuanArchiveTarget', d.siyuanArchiveTarget)
+          if (Array.isArray(d.secretsMeta)) {
+            const local = (this.kvGet(SECRETS_VAULT_KEY) as StoredSecret[] | null) || []
+            this.kvSetJSON(SECRETS_VAULT_KEY, mergeSecretMeta(Array.isArray(local) ? local : [], d.secretsMeta))
+          }
           n += 1
           continue
         }

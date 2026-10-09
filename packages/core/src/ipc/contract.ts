@@ -167,6 +167,13 @@ export const IPC = {
   remoteSettings: 'remote:settings',
   remoteFocus: 'remote:focus',
   remoteReconnect: 'remote:reconnect',
+  secretsList: 'secrets:list',
+  secretsSave: 'secrets:save',
+  secretsDelete: 'secrets:delete',
+  secretsReveal: 'secrets:reveal',
+  secretsBusy: 'secrets:busy',
+  secretsApplyRestart: 'secrets:applyRestart',
+  debugSidecarEnvKeys: 'debug:sidecarEnvKeys',
   // 冒烟钩子（仅 JEFF_SMOKE=1 时注册）
   smokeShot: 'smoke:shot',
   smokeDone: 'smoke:done',
@@ -856,13 +863,36 @@ export type InvokeMap = {
   [IPC.browserHandoffCancel]: void
   [IPC.smokeShot]: { name: string }
   [IPC.smokeDone]: void
+  [IPC.secretsList]: void
+  [IPC.secretsSave]: { name: string; value?: string; note?: string; enabled?: boolean; originalName?: string }
+  [IPC.secretsDelete]: { name: string }
+  [IPC.secretsReveal]: { name: string }
+  [IPC.secretsBusy]: void
+  [IPC.secretsApplyRestart]: { confirm?: boolean }
+  [IPC.debugSidecarEnvKeys]: void
+}
+
+export interface SecretListItem {
+  name: string
+  note: string
+  enabled: boolean
+  hasValue: boolean
+  last4: string
+  pending: boolean
+  undecryptable: boolean
+}
+
+export interface SecretListResult {
+  items: SecretListItem[]
+  encrypted: boolean
+  restartNeeded: boolean
 }
 
 export type EventPayloads = {
   [IPC.evStatus]: { status: string; error?: string }
   [IPC.evSidecarLog]: { line: string }
   [IPC.evChatUpdated]: { agentId: string; sessionId: string }
-  [IPC.evDataChanged]: { what: 'agents' | 'projects' | 'tasks' | 'settings' | 'memory' | 'agentsmd' | 'plugins' | 'cron' }
+  [IPC.evDataChanged]: { what: 'agents' | 'projects' | 'tasks' | 'settings' | 'memory' | 'agentsmd' | 'plugins' | 'cron' | 'secrets' }
   [IPC.evGroupUpdated]: { projectId: string; threadId?: string }
   [IPC.evSync]: { state: string; detail?: string }
   [IPC.evChatStream]: { kind: 'private' | 'group'; agentId: string; projectId?: string; threadId?: string; messageId: string; text: string; reasoning?: string; currentTool?: string; tools?: Array<{ tool: string; status?: string }>; done: boolean }

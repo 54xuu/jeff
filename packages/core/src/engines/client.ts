@@ -40,6 +40,7 @@ export class EngineClient extends OcClient {
   private completions = new Map<string, Promise<void>>()
   constructor(port: number, private deps: {
     db: DB; root: string; workspace: string; bridge: ToolBridge; mcp: () => Record<string, McpServerCfg>; bundledOpenCode?: () => string | null; promptSnapshots?: PromptSnapshotStore
+    secretEnv?: () => Record<string, string>
   }, log?: DebugLogFn) { super(port, log); this.externalLog = log }
   private externalLog?: DebugLogFn
   private kv() { return kvRepo(this.deps.db) }
@@ -104,7 +105,7 @@ export class EngineClient extends OcClient {
       return { models, manual: true }
     }
     if (id === 'codex') {
-      const environment = prepareEnvironment(this.deps.root, 'model-catalog', id, '', this.deps.workspace, 'http://127.0.0.1:1', {})
+      const environment = prepareEnvironment(this.deps.root, 'model-catalog', id, '', this.deps.workspace, 'http://127.0.0.1:1', {}, this.deps.secretEnv?.() ?? {})
       const rpc = new RpcProcess(status.path, ['app-server', '--listen', 'stdio://'], environment.cwd, environment.env)
       try {
         await rpc.request('initialize', { clientInfo: { name: 'jeff', version: APP_VERSION } }); rpc.notify('initialized')
@@ -226,7 +227,7 @@ export class EngineClient extends OcClient {
     } }))
     const mcp = this.deps.bridge.openMcpSession(binding.id, agentSlug(agent.id), new Set())
     try {
-      const environment = prepareEnvironment(this.deps.root, binding.id, binding.engine, `${agent.instructions}\n${input.system || ''}`, binding.directory, mcp.url, this.deps.mcp())
+      const environment = prepareEnvironment(this.deps.root, binding.id, binding.engine, `${agent.instructions}\n${input.system || ''}`, binding.directory, mcp.url, this.deps.mcp(), this.deps.secretEnv?.() ?? {})
       this.savePromptSnapshot(input, binding.agentId, binding.engine, environment.instructions)
       const selectedModel = input.engineModel?.trim() || (input.model ? `${input.model.providerID}/${input.model.modelID}` : '')
       const runtimeModel = currentEngine === binding.engine ? selectedModel || agent.engine_model || '' : binding.model || ''

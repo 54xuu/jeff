@@ -8,6 +8,8 @@ import { buildPaths, ensureDirs, type JeffPaths } from '../src/paths.js'
 import { agentRepo, projectRepo, projectAgentRepo, taskActivityRepo, taskRepo, kvRepo } from '../src/db/repos.js'
 import { MemoryStore } from '../src/memory/store.js'
 import { SyncEngine } from '../src/sync/engine.js'
+import { SecretVault } from '../src/secrets/vault.js'
+import type { SecretCipher } from '../src/secrets/types.js'
 import { XIAOJIE_ID } from '../src/ipc/contract.js'
 import type { Server } from 'node:http'
 import type { DB } from '../src/db/db.js'
@@ -309,6 +311,36 @@ describe('SyncEngine（实体级双向合并）', () => {
     expect(rB.conflicts.length + rA.conflicts.length).toBeGreaterThanOrEqual(1)
     fs.rmSync(A.home, { recursive: true, force: true })
     fs.rmSync(B.home, { recursive: true, force: true })
+  })
+
+  it('密码只同步元数据，远端文件不含值', async () => {
+    const A = makeSide('sec-a', 'secrets-meta')
+    const B = makeSide('sec-b', 'secrets-meta')
+    const cipher: SecretCipher = {
+      isAvailable: () => true,
+      encrypt: (plain) => Buffer.from(plain, 'utf8').toString('base64'),
+      decrypt: (blob) => Buffer.from(blob, 'base64').toString('utf8'),
+    }
+    try {
+      seed(A)
+      seed(B)
+      const vaultA = new SecretVault(kvRepo(A.db), cipher)
+      vaultA.save({ name: 'WEB_SEARCH_API_KEY', value: 'must-not-sync-value', note: '搜索' })
+      expect((await A.engine.sync()).ok).toBe(true)
+      const remote = fs.readFileSync(path.join(davRoot, 'dav/secrets-meta/settings.json'), 'utf8')
+      expect(remote).not.toContain('must-not-sync-value')
+      expect(remote).not.toContain(Buffer.from('must-not-sync-value', 'utf8').toString('base64'))
+      expect(remote).toContain('WEB_SEARCH_API_KEY')
+      expect((await B.engine.sync()).ok).toBe(true)
+      const vaultB = new SecretVault(kvRepo(B.db), cipher)
+      const item = vaultB.list().items.find((entry) => entry.name === 'WEB_SEARCH_API_KEY')
+      expect(item).toMatchObject({ pending: true, hasValue: false, note: '搜索' })
+      expect(JSON.stringify(vaultB.read())).not.toContain('must-not-sync-value')
+    } finally {
+      A.db.close(); B.db.close()
+      fs.rmSync(A.home, { recursive: true, force: true })
+      fs.rmSync(B.home, { recursive: true, force: true })
+    }
   })
 
   it('未配置时 sync 报错但不抛出', async () => {

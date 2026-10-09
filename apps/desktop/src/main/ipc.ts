@@ -55,6 +55,20 @@ export function registerIpc(core: JeffCore): Record<string, Handler> {
     [IPC.enginesProbe]: async (p) => core.oc.probe(engineId((p as { engine: string }).engine)),
     [IPC.enginesModels]: async (p) => core.oc.models(engineId((p as { engine: string }).engine)),
     [IPC.enginesPathSave]: async (p) => { const d = p as { engine: string; path: string }; return core.oc.savePath(engineId(d.engine), d.path) },
+    [IPC.secretsList]: async () => core.listSecrets(),
+    [IPC.secretsSave]: async (p) => {
+      const d = p as { name: string; value?: string; note?: string; enabled?: boolean; originalName?: string }
+      return core.saveSecret(d)
+    },
+    [IPC.secretsDelete]: async (p) => {
+      core.deleteSecret((p as { name: string }).name)
+    },
+    [IPC.secretsReveal]: async (p) => ({ value: core.revealSecret((p as { name: string }).name) }),
+    [IPC.secretsBusy]: async () => ({ running: core.secretsBusyCount() }),
+    [IPC.secretsApplyRestart]: async (p) => {
+      await core.applySecretsRestart(!!(p as { confirm?: boolean } | undefined)?.confirm)
+    },
+    [IPC.debugSidecarEnvKeys]: async () => ({ items: core.debugSidecarEnvKeys() }),
     [IPC.appInfo]: async (): Promise<AppInfo> => ({
       version: app.getVersion(),
       jeffVersion: APP_VERSION,

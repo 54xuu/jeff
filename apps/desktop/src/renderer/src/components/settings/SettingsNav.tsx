@@ -87,6 +87,17 @@ const SECTIONS: Array<{ id: SettingsSection; label: string; desc: string; icon: 
     ),
   },
   {
+    id: 'secrets',
+    label: '密码',
+    desc: '密钥 / Token / 账号',
+    icon: (
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        <rect x="5" y="11" width="14" height="9" rx="2" />
+        <path d="M8 11V8a4 4 0 0 1 8 0v3" />
+      </svg>
+    ),
+  },
+  {
     id: 'about',
     label: '关于',
     desc: '版本与数据目录',

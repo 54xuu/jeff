@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { assertAgentEngine, engineId, type EngineId } from '../engines/contract.js'
 import type { DB } from './db.js'
+import { redactText } from '../secrets/redact.js'
 import { now } from './db.js'
 import { genId } from '../util/id.js'
 import { normalizeProjectRole } from '../util/projectRole.js'
@@ -660,8 +661,8 @@ export const chatMessageRepo = (db: DB) => ({
       scope: row.scope,
       sender_type: row.sender_type,
       sender_id: row.sender_id || '',
-      content: row.content || '',
-      meta: row.meta ? JSON.stringify(row.meta) : '{}',
+      content: redactText(row.content || ''),
+      meta: redactText(row.meta ? JSON.stringify(row.meta) : '{}'),
       created_at: now(),
     }
     db.prepare(

@@ -43,8 +43,11 @@ import { compactionThreshold, splitContextMessages } from './chat/context.js'
 import { DebugLogger, type DebugLogFn } from './logger.js'
 import { SiYuanClient, type SiYuanStoredConfig } from './siyuan/client.js'
 import { composePromptContext, makePromptBlock, PromptSnapshotStore, type PromptContext, type PromptContextBlock } from './prompt/context.js'
+import { redactText } from './secrets/redact.js'
+import { hash8, SecretVault, unavailableCipher } from './secrets/vault.js'
+import type { SecretCipher, SecretListItem, SecretListResult } from './secrets/types.js'
 
-export { APP_VERSION } from './version.js'
+export { APP_VERSION, windowTitle } from './version.js'
 
 export type { McpServerCfg } from './mcp/parse.js'
 export { buildPaths, ensureDirs, jeffRoot } from './paths.js'
@@ -218,6 +221,9 @@ export class JeffCore extends EventEmitter {
   }[]>()
   /** 调试日志（设置 → 引擎服务 开启；写 ~/.jeff/logs/debug-YYYYMMDD.log） */
   debugLog!: DebugLogger
+  /** 本机密码库。值注入 sidecar / 外部引擎，不进同步正文。 */
+  secrets!: SecretVault
+  private secretCipher: SecretCipher = unavailableCipher()
   promptSnapshots!: PromptSnapshotStore
   bus = new EventEmitter()
   private started = false
@@ -230,7 +236,7 @@ export class JeffCore extends EventEmitter {
     this.paths = buildPaths(jeffRoot(home))
   }
 
-  async init(opts: { resourceBinDir?: string; binaryPath?: string } = {}): Promise<void> {
+  async init(opts: { resourceBinDir?: string; binaryPath?: string; secretCipher?: SecretCipher } = {}): Promise<void> {
     if (this.started) return
     ensureDirs(this.paths)
     this.db = openDb(this.paths)
@@ -246,6 +252,9 @@ export class JeffCore extends EventEmitter {
     if (this.browserHandoffs.current()) this.browser.setUserControl?.(true)
     this.promptSnapshots = new PromptSnapshotStore(this.paths.root)
     this.seedXiaojie()
+    if (opts.secretCipher) this.secretCipher = opts.secretCipher
+    this.secrets = new SecretVault(this.kv(), this.secretCipher)
+    this.secrets.load()
     this.debugLog = new DebugLogger(this.paths)
     // 默认开启：卡死/超时类问题只有事前开着日志才留得下现场（用户无须预先设置）；用户可在设置里关掉
     this.debugLog.setEnabled(this.kv().getJSON<{ enabled?: boolean } | null>('settings:debugLog', null)?.enabled ?? true)
@@ -471,12 +480,14 @@ export class JeffCore extends EventEmitter {
       this.emit('sidecar-status', { status, error })
     })
     this.sidecar.on('log', (line: string) => {
-      this.debugLog.log('sidecar', line)
-      this.emit('sidecar-log', line)
+      const safe = redactText(line)
+      this.debugLog.log('sidecar', safe)
+      this.emit('sidecar-log', safe)
     })
     // 崩溃自动重启会换端口：ready 后统一重绑 OcClient（含手动 restartSidecar 触发的启动，rebind 内部按代际判重）
     this.sidecar.on('ready', (info: { port: number; generation: number }) => {
       this.debugLog.log('sidecar-ready', info)
+      this.secrets?.markApplied()
       this.rebindOcClient()
     })
     await this.sidecar.start()
@@ -510,7 +521,7 @@ export class JeffCore extends EventEmitter {
   /** sidecar 附加环境变量：跳过 LLM 证书校验开关（Bun 支持 NODE_TLS_REJECT_UNAUTHORIZED=0；企业网络中间人场景） */
   private sidecarExtraEnv(): Record<string, string> {
     const cfg = this.kv().getJSON<{ skipVerify?: boolean } | null>('settings:llmTls', null)
-    return cfg?.skipVerify ? { NODE_TLS_REJECT_UNAUTHORIZED: '0' } : {}
+    return { ...(this.secrets?.env() ?? {}), ...(cfg?.skipVerify ? { NODE_TLS_REJECT_UNAUTHORIZED: '0' } : {}) }
   }
 
   /** 数据变化后防抖自动同步 */
@@ -535,6 +546,8 @@ export class JeffCore extends EventEmitter {
       this.bus.emit('data-changed', 'agents')
       this.bus.emit('data-changed', 'projects')
       this.bus.emit('data-changed', 'settings')
+      this.secrets?.load()
+      this.bus.emit('data-changed', 'secrets')
     }
     return report
   }
@@ -2115,7 +2128,7 @@ export class JeffCore extends EventEmitter {
     if (this.oc) {
       this.oc.port = this.sidecar.port
     } else {
-      this.oc = new EngineClient(this.sidecar.port, { db: this.db, root: this.paths.root, workspace: this.paths.workspaceDir, bridge: this.bridge, mcp: () => this.listMcp(), bundledOpenCode: () => this.sidecar?.resolveBinary() || null, promptSnapshots: this.promptSnapshots }, this.debugLog.fn())
+      this.oc = new EngineClient(this.sidecar.port, { db: this.db, root: this.paths.root, workspace: this.paths.workspaceDir, bridge: this.bridge, mcp: () => this.listMcp(), bundledOpenCode: () => this.sidecar?.resolveBinary() || null, promptSnapshots: this.promptSnapshots, secretEnv: () => this.secrets?.env() ?? {} }, this.debugLog.fn())
       this.wireOcClient()
     }
     this.oc.startEventStream()
@@ -2275,6 +2288,54 @@ Jeff 把「开发 + 项目管理」组织成三个概念（微信心智模型）
     this.kv().setJSON('settings:providers', providers)
     this.writeSidecarConfig()
     await this.restartSidecar()
+  }
+
+  listSecrets(): SecretListResult {
+    return this.secrets.list()
+  }
+
+  saveSecret(input: { name: string; value?: string; note?: string; enabled?: boolean; originalName?: string }): SecretListItem {
+    const item = this.secrets.save(input)
+    this.bus.emit('data-changed', 'secrets')
+    return item
+  }
+
+  deleteSecret(name: string): void {
+    this.secrets.delete(name)
+    this.bus.emit('data-changed', 'secrets')
+  }
+
+  revealSecret(name: string): string {
+    return this.secrets.reveal(name)
+  }
+
+  /** 重启引擎前要告知的在途工作数量（私聊 / 群 / 委派 / 定时任务）。 */
+  secretsBusyCount(): number {
+    let n = 0
+    if (this.oc?.hasInflight()) n += 1
+    if (this.groupChat?.hasBusyPipeline()) n += 1
+    n += this.delegator?.activeCount ?? 0
+    try {
+      const row = this.db.prepare("SELECT COUNT(*) AS c FROM cron_run WHERE status IN ('running', 'waiting_browser')").get() as { c?: number } | undefined
+      n += Number(row?.c || 0)
+    } catch {
+      /* 表尚未就绪 */
+    }
+    return n
+  }
+
+  async applySecretsRestart(confirm = false): Promise<void> {
+    const busy = this.secretsBusyCount()
+    if (busy > 0 && !confirm) throw new Error(`有 ${busy} 项正在运行。确认后才会重启引擎，未完成的回复会被打断。`)
+    await this.restartSidecar()
+  }
+
+  /** 仅 JEFF_E2E：返回 sidecar 实际注入变量的名字和值哈希前 8 位，不含明文。 */
+  debugSidecarEnvKeys(): Array<{ name: string; hash8: string }> {
+    if (process.env.JEFF_E2E !== '1') throw new Error('仅测试环境可用')
+    return Object.entries(this.sidecar?.lastInjected ?? {})
+      .map(([name, value]) => ({ name, hash8: hash8(value) }))
+      .sort((a, b) => a.name.localeCompare(b.name))
   }
 
   /** 小杰默认模型兜底 */

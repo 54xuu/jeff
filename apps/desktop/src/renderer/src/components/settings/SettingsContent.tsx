@@ -9,6 +9,7 @@ import AppearanceSettings from './AppearanceSettings'
 import AboutSettings from './AboutSettings'
 import RemoteSettings from './RemoteSettings'
 import SiyuanSettings from './SiyuanSettings'
+import SecretsSettings from './SecretsSettings'
 
 /** 设置页右侧内容区：按左侧导航选中的分组渲染 */
 export default function SettingsContent(): React.JSX.Element {
@@ -24,6 +25,7 @@ export default function SettingsContent(): React.JSX.Element {
     { id: 'notification', content: <NotificationSettings /> },
     { id: 'appearance', content: <AppearanceSettings /> },
     { id: 'remote', content: <RemoteSettings /> },
+    { id: 'secrets', content: <SecretsSettings /> },
     { id: 'about', content: <AboutSettings /> },
   ]
   return (

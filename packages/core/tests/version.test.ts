@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { APP_VERSION } from '../src/version.js'
+import { APP_VERSION, windowTitle } from '../src/version.js'
 
 /** 防版本漂移：core 常量必须与各包 package.json 完全一致（AGENTS.md 发版规范） */
 describe('版本一致性', () => {
@@ -21,5 +21,10 @@ describe('版本一致性', () => {
       relay: readVersion(path.join(coreDir, '../../../apps/relay/package.json')),
     }
     expect(new Set(Object.values(versions)).size).toBe(1)
+  })
+
+  it('窗口标题带版本号', () => {
+    expect(windowTitle('2.2.4')).toBe('Jeff v2.2.4')
+    expect(windowTitle()).toBe(`Jeff v${APP_VERSION}`)
   })
 })

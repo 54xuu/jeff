@@ -30,6 +30,13 @@ const DENY: Record<string, string> = {
   [IPC.siyuanConfigSave]: '思源 API 令牌只允许在桌面端本地保存',
   [IPC.contextPromptDetails]: '完整 Prompt 快照含本机记忆与规则，仅允许在桌面本机查看',
   [IPC.remoteReconnect]: '重新连接中转站只在电脑上操作',
+  [IPC.secretsList]: '密码只在电脑本机管理，手机遥控不可读写',
+  [IPC.secretsSave]: '密码只在电脑本机管理，手机遥控不可读写',
+  [IPC.secretsDelete]: '密码只在电脑本机管理，手机遥控不可读写',
+  [IPC.secretsReveal]: '密码只在电脑本机管理，手机遥控不可读写',
+  [IPC.secretsBusy]: '密码只在电脑本机管理，手机遥控不可读写',
+  [IPC.secretsApplyRestart]: '密码只在电脑本机管理，手机遥控不可读写',
+  [IPC.debugSidecarEnvKeys]: '引擎环境探针只在本机测试时使用',
 }
 
 const REPLACE: Record<string, string> = {

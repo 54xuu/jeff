@@ -5,8 +5,21 @@ import path from 'node:path'
 import { EventEmitter } from 'node:events'
 import type { JeffPaths } from '../paths.js'
 import { augmentedPath } from '../util/nodePath.js'
+import { injectableEnv } from '../secrets/vault.js'
 
 export type SidecarStatus = 'stopped' | 'starting' | 'running' | 'crashed'
+
+/** 固定隔离变量在前，密码库在后覆盖同名系统变量。保留名会被丢掉。 */
+export function mergeSidecarEnv(base: NodeJS.ProcessEnv, fixed: NodeJS.ProcessEnv, extra: Record<string, string>): { env: NodeJS.ProcessEnv; injected: Record<string, string> } {
+  const clean = injectableEnv(extra)
+  const env: NodeJS.ProcessEnv = { ...base, ...fixed, ...clean }
+  const injected: Record<string, string> = {}
+  for (const key of Object.keys(clean)) {
+    const value = env[key]
+    if (typeof value === 'string') injected[key] = value
+  }
+  return { env, injected }
+}
 
 export interface SidecarOptions {
   paths: JeffPaths
@@ -24,6 +37,8 @@ export interface SidecarOptions {
 export class SidecarManager extends EventEmitter {
   /** 健康检查连续失败阈值（15s 一次，3 次 ≈ 45s），达到即判假运行并杀进程重启 */
   private static readonly HEALTH_FAIL_LIMIT = 3
+  /** 最近一次 spawn 时实际注入、且通过保留名过滤的变量（值留在内存，供 E2E 对哈希） */
+  lastInjected: Record<string, string> = {}
 
   private proc: ChildProcess | null = null
   private opts: SidecarOptions
@@ -84,8 +99,8 @@ export class SidecarManager extends EventEmitter {
 
   /** 隔离环境变量（XDG + OPENCODE_CONFIG_DIR 重定向，不碰用户全局 opencode 配置） */
   private sidecarEnv(): NodeJS.ProcessEnv {
-    return {
-      ...process.env,
+    const raw = this.opts.extraEnv?.() ?? {}
+    const merged = mergeSidecarEnv(process.env, {
       // GUI 启动时 PATH 常缺 nvm 的 bin，opencode 拉起的 MCP local 命令（npx/uvx）会找不到
       PATH: augmentedPath(),
       XDG_CONFIG_HOME: this.opts.paths.ocConfigHome,
@@ -99,9 +114,11 @@ export class SidecarManager extends EventEmitter {
       OPENCODE_DISABLE_EXTERNAL_SKILLS: '1',
       // 阻止 opencode 读取项目级 .opencode 配置造成串扰：cwd 固定在 Jeff 工作区
       HOME: process.env.HOME,
-      // 动态附加项放最后，允许覆盖（如 NODE_TLS_REJECT_UNAUTHORIZED=0 跳过 LLM 证书校验）
-      ...(this.opts.extraEnv?.() ?? {}),
-    }
+      // 证书开关是运行参数，不走密码库过滤
+      ...(raw.NODE_TLS_REJECT_UNAUTHORIZED ? { NODE_TLS_REJECT_UNAUTHORIZED: raw.NODE_TLS_REJECT_UNAUTHORIZED } : {}),
+    }, raw)
+    this.lastInjected = merged.injected
+    return merged.env
   }
 
   async start(): Promise<number> {
