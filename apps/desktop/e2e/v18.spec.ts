@@ -17,8 +17,9 @@ test.describe.configure({ mode: 'serial' })
  * 判据不只靠界面：涉及落库与配置的断言都直连 jeff.db 对账（agent.category、
  * cron_task 行、settings:mcp 的 plugin-* 注入），避免「界面看起来对、数据没写」。
  */
-const HOME = path.join(REPO_ROOT, '.tmp/jeff-v18-home')
-const EVIDENCE = path.join(REPO_ROOT, '.tmp/v18/evidence')
+const V18_RUN_ID = Date.now().toString()
+const HOME = path.join(REPO_ROOT, `.tmp/jeff-v18-home-${V18_RUN_ID}`)
+const EVIDENCE = path.join(REPO_ROOT, `.tmp/v18/evidence-${V18_RUN_ID}`)
 
 function dbQuery<T = Record<string, unknown>>(sql: string, ...params: unknown[]): T[] {
   const db = new DatabaseSync(path.join(HOME, 'jeff.db'), { readOnly: true })

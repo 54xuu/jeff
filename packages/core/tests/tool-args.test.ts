@@ -65,6 +65,17 @@ describe('工具定义与实现的一致性', () => {
       duties: { type: 'string' }, model_override: { type: 'string' }, thinking_override: { type: 'string' },
       reset_model: { type: 'boolean' }, reset_thinking: { type: 'boolean' },
     })
+    expect(d?.args).toMatchObject({ siyuan_notebook_id: { type: 'string' }, siyuan_parent_doc_id: { type: 'string' }, clear_siyuan_target: { type: 'boolean' } })
+  })
+
+  it('思源内置能力工具已暴露，模型参数保持平铺', () => {
+    const defs = allToolDefs()
+    for (const name of ['jeff_siyuan_list_notebooks', 'jeff_siyuan_search', 'jeff_siyuan_read', 'jeff_siyuan_create', 'jeff_siyuan_append']) {
+      const def = defs.find((item) => item.name === name)
+      expect(def, `缺少工具定义 ${name}`).toBeTruthy()
+      expect(Object.values(def!.args).every((arg) => ['string', 'boolean', 'number', 'array'].includes(arg.type))).toBe(true)
+    }
+    expect(defs.find((item) => item.name === 'jeff_siyuan_search')?.args.scope?.enum).toEqual(['project', 'all'])
   })
 
   it('会改数据的工具都要声明 id/必填参数说明（防止「模型看不到字段」这类漂移）', () => {

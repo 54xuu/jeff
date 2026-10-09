@@ -250,7 +250,7 @@ export default function RemoteSettings(): React.JSX.Element {
           <span>已绑定手机时防止系统睡眠</span>
         </label>
       </div>
-      {error ? <p className="settings-tip">{error}</p> : null}
+      {error ? <p className="settings-error" role="alert">{error}</p> : null}
     </div>
   )
 }

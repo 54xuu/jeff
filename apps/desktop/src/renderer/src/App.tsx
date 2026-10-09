@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useStore, applyTheme } from './store'
 import { api } from './api'
 import { IPC, type BrowserConsoleEntry, type BrowserRequest } from '@jeff/core'
@@ -24,6 +24,8 @@ import type { SettingsSection } from './store'
 
 export default function App(): React.JSX.Element {
   const { tab, active, agents, projects, refreshAgents, refreshProjects, refreshAppInfo, refreshSettings, refreshCatalog, refreshCron, refreshPlugins, handlePush, layout, setLayout, persistLayout } = useStore()
+  const [settingsVisited, setSettingsVisited] = useState(tab === 'settings')
+  useEffect(() => { if (tab === 'settings') setSettingsVisited(true) }, [tab])
   const winWidth = useViewportWidth()
   // 布局里存的是「偏好宽度」，渲染时按当前窗口夹一次：窗口临时变小只是把栏挤窄，偏好值不会被改掉
   const listWidth = clampListWidth(layout.listWidth, winWidth)
@@ -168,7 +170,7 @@ export default function App(): React.JSX.Element {
         {tab === 'contacts' && <AgentsPage />}
         {tab === 'schedules' && <SchedulesPage />}
         {tab === 'plugins' && <PluginsPage />}
-        {tab === 'settings' && <SettingsContent />}
+        {(settingsVisited || tab === 'settings') && <div className={`settings-root ${tab === 'settings' ? '' : 'is-hidden'}`} aria-hidden={tab !== 'settings'}><SettingsContent /></div>}
       </div>
       {/* 内置浏览器（右侧独立面板，可拖拽宽度；关闭即销毁 webview） */}
       <BrowserPanel />

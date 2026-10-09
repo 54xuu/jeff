@@ -49,7 +49,7 @@ const PUSH = new Set<string>([
 ])
 
 // 通用任务执行和验收通过现有加密 IPC 链路；运行历史只含本地诊断信息，远端仅查询状态。
-const ALLOW = new Set<string>([IPC.siyuanSearch, IPC.tasksList, IPC.taskSave, IPC.taskDelete, IPC.taskStart, IPC.taskStop, IPC.taskRuns, IPC.taskReview, IPC.browserHandoffGet, IPC.browserHandoffOpen, IPC.browserQueueGet, IPC.browserHandoffCancel])
+const ALLOW = new Set<string>([IPC.siyuanSearch, IPC.siyuanNotebooks, IPC.siyuanDocuments, IPC.siyuanTargetGet, IPC.siyuanTargetSave, IPC.tasksList, IPC.taskSave, IPC.taskDelete, IPC.taskStart, IPC.taskStop, IPC.taskRuns, IPC.taskReview, IPC.browserHandoffGet, IPC.browserHandoffOpen, IPC.browserQueueGet, IPC.browserHandoffCancel])
 
 function build(): Record<string, RemoteRule> {
   const out: Record<string, RemoteRule> = {}

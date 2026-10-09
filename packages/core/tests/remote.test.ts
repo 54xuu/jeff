@@ -117,6 +117,7 @@ describe('远程白名单', () => {
       expect(REMOTE_POLICY[channel]).toEqual({ policy: 'allow' })
     }
     expect(REMOTE_POLICY[IPC.siyuanSearch]).toEqual({ policy: 'allow' })
+    for (const channel of [IPC.siyuanNotebooks, IPC.siyuanDocuments, IPC.siyuanTargetGet, IPC.siyuanTargetSave]) expect(REMOTE_POLICY[channel]).toEqual({ policy: 'allow' })
     expect(REMOTE_POLICY[IPC.browserHandoffOpen]).toEqual({ policy: 'allow' })
     expect(REMOTE_POLICY[IPC.contextPromptDetails]).toMatchObject({ policy: 'deny', note: expect.stringContaining('本机记忆与规则') })
   })

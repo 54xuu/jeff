@@ -14,6 +14,7 @@ import { ToolBridge, renderBridgePlugin } from './tools/bridge.js'
 import { registerAdminTools } from './tools/adminTools.js'
 import { registerSelfTools } from './tools/selfTools.js'
 import { registerProjectTools, taskCardMessage } from './tools/projectTools.js'
+import { registerSiYuanTools } from './siyuan/tools.js'
 import { containsCredentialValue } from './memory/routing.js'
 import { registerMemoryTools, DELEGATE_TOOL, sesMetaKey, type SessionScopeCtx } from './tools/memoryTools.js'
 import { registerCronTools, CRON_TOOL_NAMES } from './tools/cronTools.js'
@@ -40,6 +41,7 @@ import type { SkillsBackupReport, SkillsRestoreStage, SkillsRestoreApply, Contex
 import { SyncEngine, type WebdavConfig, type SyncReport, normalizeWebdavBasePath } from './sync/engine.js'
 import { compactionThreshold, splitContextMessages } from './chat/context.js'
 import { DebugLogger, type DebugLogFn } from './logger.js'
+import { SiYuanClient, type SiYuanStoredConfig } from './siyuan/client.js'
 import { composePromptContext, makePromptBlock, PromptSnapshotStore, type PromptContext, type PromptContextBlock } from './prompt/context.js'
 
 export { APP_VERSION } from './version.js'
@@ -48,6 +50,8 @@ export type { McpServerCfg } from './mcp/parse.js'
 export { buildPaths, ensureDirs, jeffRoot } from './paths.js'
 export { openDb } from './db/db.js'
 export { inferDefaultContextLimit } from './oc/configWriter.js'
+export { SiYuanClient, normalizeSiYuanBaseUrl, isSiYuanDocumentId } from './siyuan/client.js'
+export type { SiYuanStoredConfig, SiYuanNotebook, SiYuanSearchResult, SiYuanDocument } from './siyuan/client.js'
 
 const NUDGE_INTERVAL = 10 // 每 N 个用户触发一次后台记忆自省
 const NUDGE_REVIEW_MAX_CHARS = 6000
@@ -299,7 +303,9 @@ export class JeffCore extends EventEmitter {
         this.bus.emit('data-changed', 'agents')
       },
     })
+    const siyuan = new SiYuanClient(() => this.kv().getJSON<SiYuanStoredConfig | null>('integration:siyuan', null) || { baseUrl: '', token: '' })
     registerProjectTools(this.bridge, {
+      siyuan,
       db: this.db,
       isTaskActive: (taskId) => this.tasks.hasActiveTask(taskId),
       onProjectChanged: () => {
@@ -313,6 +319,13 @@ export class JeffCore extends EventEmitter {
         this.bus.emit('data-changed', 'tasks')
         this.bus.emit('group-updated', { projectId })
       },
+    })
+    registerSiYuanTools(this.bridge, {
+      db: this.db,
+      client: siyuan,
+      resolveSession: (sessionId) => this.resolveSession(sessionId),
+      getDefaultTarget: () => this.kv().getJSON('settings:siyuanArchiveTarget', {}),
+      onChanged: () => this.bus.emit('data-changed', 'siyuan'),
     })
     this.bridge.register('jeff_task_submit', async (raw: Record<string, unknown>) => {
       const ctx = raw.__ctx as { sessionID?: string } | undefined
@@ -611,6 +624,13 @@ export class JeffCore extends EventEmitter {
       id: 'agent-instructions', kind: 'agent-instructions', scope: 'agent', source: `agent:${agentId}.instructions`,
       readStatus: agent.instructions.trim() ? 'loaded' : 'empty', included: !!agent.instructions.trim(), delivery: 'agent-definition', content: agent.instructions,
     })]
+    blocks.push(makePromptBlock({
+      id: 'siyuan-knowledge-policy', kind: 'unclassified-system', scope: projectId ? 'project' : 'agent', source: 'Jeff 内置思源知识库策略',
+      readStatus: 'generated', included: true, content: [
+        '思源知识库使用规则：当用户询问 Jeff/项目已有资料、历史决策、笔记内容，或明确要求搜索思源时，主动调用 jeff_siyuan_search，不要让用户先提醒。项目群先在当前项目群绑定目录搜索；结果不足或用户明确要求全库时再以 scope="all" 扩展到全库，跨笔记本查询也必须传 scope="all"。读取扩展结果时 jeff_siyuan_read 也传 scope="all"；未扩展时只读项目目录。私聊默认全库搜索。',
+        '引用知识库内容时标注文档标题与路径；候选歧义时先询问，不能猜文档 ID。只有用户明确要求保存/写入时才调用写工具；新建位置按用户明确指定→项目群绑定→全局默认→询问用户。项目群追加只能写入本群绑定目录；用户明确要求全库追加时传 scope="all"。只允许新建或追加，不覆盖、更新或删除；日报追加到已有目标文档末尾。',
+      ].join('\n'),
+    }))
     if (projectId) blocks.push(...this.groupChat.buildBriefingBlocks(projectId, agentId))
     blocks.push(...this.buildPersistentPromptBlocks(agentId, projectId, { isSubtask: options.isSubtask }))
 

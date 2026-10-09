@@ -20,6 +20,8 @@ export default function McpSettings(): React.JSX.Element {
   const [importOpen, setImportOpen] = useState(false)
   const [editingName, setEditingName] = useState<string | null>(null)
   const [restarting, setRestarting] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState('')
 
   const refresh = async () => {
     const s = await api.invoke<Record<string, McpServerCfg>>(IPC.mcpList)
@@ -48,16 +50,25 @@ export default function McpSettings(): React.JSX.Element {
   }, [loaded, servers])
 
   const save = async (next: Record<string, McpServerCfg>) => {
-    setServers(next)
-    await api.invoke(IPC.mcpSave, { servers: next })
-    await useStore.getState().refreshCatalog()
-    setProbes({})
+    setSaving(true); setSaveError('')
+    try {
+      await api.invoke(IPC.mcpSave, { servers: next })
+      setServers(next)
+      await useStore.getState().refreshCatalog()
+      setProbes({})
+      return true
+    } catch (error) {
+      setSaveError(`保存失败：${String((error as Error).message).slice(0, 180)}`)
+      return false
+    } finally { setSaving(false) }
   }
 
   const restartEngine = async () => {
     setRestarting(true)
     try {
       await api.invoke(IPC.sidecarRestart)
+    } catch (error) {
+      setSaveError(`重启失败：${String((error as Error).message).slice(0, 180)}`)
     } finally {
       setRestarting(false)
     }
@@ -72,8 +83,9 @@ export default function McpSettings(): React.JSX.Element {
       </p>
 
       <div className="settings-card">
+        {saveError && <p className="settings-error" role="alert">{saveError}</p>}
         <div className="settings-actions">
-          <button className="btn primary" data-testid="mcp-import" onClick={() => setImportOpen(true)}>导入 JSON…</button>
+          <button className="btn primary" data-testid="mcp-import" disabled={saving || restarting} onClick={() => setImportOpen(true)}>导入 JSON…</button>
           <button className="btn" data-testid="mcp-probe" disabled={probing || names.length === 0} onClick={() => void probe()}>{probing ? '探测中…' : '重新检测状态'}</button>
           <button className="btn" data-testid="mcp-restart" disabled={restarting} onClick={() => void restartEngine()}>{restarting ? '重启中…' : '重启引擎'}</button>
         </div>
@@ -108,11 +120,11 @@ export default function McpSettings(): React.JSX.Element {
                 </details>
               )}
             </div>
-            <button className="text-btn" data-testid={`mcp-edit-${name}`} onClick={() => setEditingName(name)}>编辑</button>
-            <button className="text-btn" onClick={() => void save({ ...servers, [name]: { ...cfg, enabled: !cfg.enabled } })}>
+            <button className="text-btn" data-testid={`mcp-edit-${name}`} disabled={saving} onClick={() => setEditingName(name)}>编辑</button>
+            <button className="text-btn" disabled={saving} onClick={() => void save({ ...servers, [name]: { ...cfg, enabled: !cfg.enabled } })}>
               {cfg.enabled ? '禁用' : '启用'}
             </button>
-            <button className="text-btn danger" onClick={() => {
+            <button className="text-btn danger" disabled={saving} onClick={() => {
               if (!confirm(`删除 MCP「${name}」？`)) return
               const next = { ...servers }
               delete next[name]
@@ -131,8 +143,7 @@ export default function McpSettings(): React.JSX.Element {
           existing={servers}
           onClose={() => setImportOpen(false)}
           onConfirm={async (parsed) => {
-            await save({ ...servers, ...parsed })
-            setImportOpen(false)
+            if (await save({ ...servers, ...parsed })) setImportOpen(false)
           }}
         />
       )}
@@ -147,8 +158,7 @@ export default function McpSettings(): React.JSX.Element {
             // 支持改名：新名写入，旧名移除（同名则直接覆盖）
             const newNames = Object.keys(parsed)
             if (!newNames.includes(editingName)) delete next[editingName]
-            await save({ ...next, ...parsed })
-            setEditingName(null)
+            if (await save({ ...next, ...parsed })) setEditingName(null)
           }}
         />
       )}

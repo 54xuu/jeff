@@ -125,7 +125,11 @@ test.describe('1.11 统一风格全屏回归', () => {
                     return { ...project, ...p, updated_at: Date.now(), memberCount: 3 }
                   }
                 case 'siyuan:search':
-                  return [{ docId: '20261005123456-abc1234', title: '测试日报 2026-10-05', path: '/日报/2026/10/05', snippet: '完成接口联调' }]
+                  return [{ docId: '20261005123456-abc1234', notebookId: '20261005111111-nb12345', title: '测试日报 2026-10-05', path: '/日报/2026/10/05', snippet: '完成接口联调' }]
+                case 'siyuan:notebooks':
+                  return [{ id: '20261005111111-nb12345', name: '项目知识', closed: false }]
+                case 'siyuan:documents':
+                  return [{ docId: '20261005123456-abc1234', notebookId: p.notebookId, title: '会议资料', path: '/项目/会议资料', snippet: '' }]
                 case 'chat:history':
                   return chat[''] || []
                 case 'group:history':
@@ -346,7 +350,7 @@ test.describe('1.11 统一风格全屏回归', () => {
     await expect(page.getByTestId('mobile-project-task-detail')).toContainText('任务已保存。保存不会自动开始执行。')
     await expect(page.getByTestId('mobile-project-task-detail')).toContainText('让项目组获得一份可复核的周度结果')
     await expect(page.getByTestId('mobile-project-task-detail')).toContainText('异常均附来源')
-    await page.screenshot({ path: '../../.tmp/e2e-screens/15-project-task.png' })
+    await page.screenshot({ path: '../../.tmp/e2e-screens/15-project-task-siyuan.png' })
 
     await page.getByTestId('mobile-project-section-tasks').click()
     await expect(page.getByTestId('mobile-project-task-task_mobile_1')).toContainText('整理本周巡检结论')
@@ -355,9 +359,18 @@ test.describe('1.11 统一风格全屏回归', () => {
     await page.getByTestId('mobile-project-section-profile').click()
     await page.getByTestId('mobile-group-description').fill('仅用于验收的项目背景。')
     await page.getByTestId('mobile-group-rules').fill('本群规则只约束当前项目群。')
+    await page.getByTestId('mobile-group-siyuan-notebook').selectOption('20261005111111-nb12345')
+    await expect(page.getByTestId('mobile-group-siyuan-parent').locator('option', { hasText: '会议资料' })).toHaveCount(1)
+    await page.getByTestId('mobile-group-siyuan-parent').selectOption('20261005123456-abc1234')
     await page.getByTestId('mobile-group-profile-save').click()
     await expect(page.getByRole('status')).toContainText('群资料已保存')
-    await page.screenshot({ path: '../../.tmp/e2e-screens/16-group-profile.png' })
+    for (const width of [360, 430]) {
+      await page.setViewportSize({ width, height: 844 })
+      await expect(page.getByTestId('mobile-group-siyuan-notebook')).toHaveValue('20261005111111-nb12345')
+      await noOverflow(page, `project-siyuan-target-${width}`)
+    }
+    await page.setViewportSize({ width: 390, height: 844 })
+    await page.screenshot({ path: '../../.tmp/e2e-screens/16-group-profile-siyuan.png' })
 
     await page.getByTestId('mobile-project-section-members').click()
     await expect(page.getByTestId('mobile-group-member-duties')).toHaveValue('负责当前群的执行与复核。')
@@ -372,6 +385,8 @@ test.describe('1.11 统一风格全屏回归', () => {
     await page.getByTestId('mobile-project-section-profile').click()
     await expect(page.getByTestId('mobile-group-description')).toHaveValue('仅用于验收的项目背景。')
     await expect(page.getByTestId('mobile-group-rules')).toHaveValue('本群规则只约束当前项目群。')
+    await expect(page.getByTestId('mobile-group-siyuan-notebook')).toHaveValue('20261005111111-nb12345')
+    await expect(page.getByTestId('mobile-group-siyuan-parent')).toHaveValue('20261005123456-abc1234')
     await page.locator('.project-management-screen .btn-nav-back').click()
   })
 

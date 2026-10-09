@@ -588,6 +588,7 @@ export class SyncEngine {
       notifySound: this.kvGet('settings:notifySound'),
       notifyOnlyBackground: this.kvGet('settings:notifyOnlyBackground'),
       mcp: this.kvGet('settings:mcp'),
+      siyuanArchiveTarget: this.kvGet('settings:siyuanArchiveTarget'),
       // webdav 配置本身不同步（每台设备自己的连接信息）
     }
     const settingsUpdated = Math.max(
@@ -599,6 +600,7 @@ export class SyncEngine {
       this.kvUpdatedAt('settings:notifySound'),
       this.kvUpdatedAt('settings:notifyOnlyBackground'),
       this.kvUpdatedAt('settings:mcp'),
+      this.kvUpdatedAt('settings:siyuanArchiveTarget'),
     )
     out.set('settings', { id: 'settings', updatedAt: settingsUpdated, deletedAt: null, data: settings, memoryFile: null })
     // 记忆文件（mtime 作为版本）
@@ -667,6 +669,7 @@ export class SyncEngine {
             notifySound?: unknown
             notifyOnlyBackground?: unknown
             mcp?: unknown
+            siyuanArchiveTarget?: unknown
           }
           this.kvSetJSON('settings:providers', d.providers ?? [])
           this.kvSetJSON('settings:defaultModel', d.defaultModel ?? null)
@@ -677,6 +680,7 @@ export class SyncEngine {
           if (typeof d.notifySound === 'boolean') this.kvSetJSON('settings:notifySound', d.notifySound)
           if (typeof d.notifyOnlyBackground === 'boolean') this.kvSetJSON('settings:notifyOnlyBackground', d.notifyOnlyBackground)
           this.kvSetJSON('settings:mcp', d.mcp ?? {})
+          if (d.siyuanArchiveTarget && typeof d.siyuanArchiveTarget === 'object') this.kvSetJSON('settings:siyuanArchiveTarget', d.siyuanArchiveTarget)
           n += 1
           continue
         }
@@ -755,14 +759,16 @@ export class SyncEngine {
           const existingMembers = new Map(projectAgentRepo(this.db).listByProject(id).map((member) => [member.agent_id, member]))
           // workspace_dir 按设备保留：已有保留本机；新建留空（不拷贝远端路径）
           const workspaceDir = exists ? exists.workspace_dir || '' : ''
+          const siyuanNotebookId = d.project.siyuan_notebook_id ?? exists?.siyuan_notebook_id ?? ''
+          const siyuanParentDocId = d.project.siyuan_parent_doc_id ?? exists?.siyuan_parent_doc_id ?? ''
           if (!exists) {
             this.db
-              .prepare(`INSERT INTO project (id, title, description, system_prompt, icon, status, leader_agent_id, workspace_dir, created_at, updated_at, deleted_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)`)
-              .run(id, d.project.title, d.project.description, d.project.system_prompt || '', d.project.icon, d.project.status, d.project.leader_agent_id, workspaceDir, d.project.created_at, rec.updatedAt, rec.deletedAt)
+              .prepare(`INSERT INTO project (id, title, description, system_prompt, icon, status, leader_agent_id, workspace_dir, siyuan_notebook_id, siyuan_parent_doc_id, created_at, updated_at, deleted_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+              .run(id, d.project.title, d.project.description, d.project.system_prompt || '', d.project.icon, d.project.status, d.project.leader_agent_id, workspaceDir, siyuanNotebookId, siyuanParentDocId, d.project.created_at, rec.updatedAt, rec.deletedAt)
           } else {
             this.db
-              .prepare(`UPDATE project SET title=?, description=?, system_prompt=?, icon=?, status=?, leader_agent_id=?, updated_at=?, deleted_at=? WHERE id=?`)
-              .run(d.project.title, d.project.description, d.project.system_prompt ?? exists.system_prompt ?? '', d.project.icon, d.project.status, d.project.leader_agent_id, rec.updatedAt, rec.deletedAt, id)
+              .prepare(`UPDATE project SET title=?, description=?, system_prompt=?, icon=?, status=?, leader_agent_id=?, siyuan_notebook_id=?, siyuan_parent_doc_id=?, updated_at=?, deleted_at=? WHERE id=?`)
+              .run(d.project.title, d.project.description, d.project.system_prompt ?? exists.system_prompt ?? '', d.project.icon, d.project.status, d.project.leader_agent_id, siyuanNotebookId, siyuanParentDocId, rec.updatedAt, rec.deletedAt, id)
           }
           const incomingIds = new Set<string>()
           for (const m of d.members) {

@@ -80,15 +80,17 @@ export default function SyncSettings(): React.JSX.Element {
     try {
       const r = await api.invoke<SyncReportInfo>(IPC.syncNow)
       setReport(r)
+    } catch (err) {
+      setReport({ ok: false, at: Date.now(), uploaded: 0, downloaded: 0, conflicts: [], error: String((err as Error).message).slice(0, 200) })
     } finally {
       setBusy(false)
     }
   }
 
-  if (!loaded) return <div className="settings-content"><p className="settings-tip">加载中…</p></div>
+  if (!loaded) return <div className="settings-content" data-testid="sync-settings"><p className="settings-tip">加载中…</p></div>
   return (
-    <div className="settings-content">
-      <h2 className="settings-title">WebDAV 同步</h2>
+    <div className="settings-content" data-testid="sync-settings">
+      <h2 className="settings-title">同步与备份</h2>
       <p className="settings-tip">
         同步智能体、项目群、任务、定时任务、设置（含 MCP）、记忆与 AGENTS.md 到你的 WebDAV 服务器；不含会话聊天数据。同步成功后会刷新通讯录与项目群。实体级双向合并，多台机器交替使用不丢数据。定时任务只同步定义（运行历史留本机）；Skills 目录与插件目录属于整目录文件，仍需在下方手动备份/恢复。
       </p>

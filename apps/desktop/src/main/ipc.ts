@@ -13,7 +13,9 @@ import type {
   AppInfo,
   FileNode,
   SiYuanConfigInfo,
+  SiYuanNotebook,
   SiYuanSearchResult,
+  SiYuanTarget,
 } from '@jeff/core'
 import {
   IPC, XIAOJIE_ID, engineId, agentRepo, projectRepo, projectAgentRepo, taskRepo, taskCardMessage, snapshotInstructions, APP_VERSION,
@@ -24,7 +26,7 @@ import { listDirs, makeDir } from '../../../../packages/core/src/remote/dirs.js'
 import type { MemoryScopeInfo } from '@jeff/core'
 import type { JeffCore, TaskRow } from '@jeff/core'
 import { getMainWindow, getSidecarLogs, showDesktopNotification, setBrowserResult, setBrowserState } from './index.js'
-import { getSiYuanConfig, saveSiYuanConfig, searchSiYuan } from './siyuan.js'
+import { getSiYuanConfig, getSiYuanTarget, listSiYuanDocuments, listSiYuanNotebooks, saveSiYuanConfig, saveSiYuanTarget, searchSiYuan, siYuanClient } from './siyuan.js'
 
 type Handler = (payload: unknown) => Promise<unknown>
 
@@ -516,7 +518,7 @@ export function registerIpc(core: JeffCore): Record<string, Handler> {
       return projects.map((p) => toProjectInfo(core, p))
     },
     [IPC.projectSave]: async (p): Promise<ProjectInfo> => {
-      const d = p as { id?: string; title: string; description?: string; system_prompt?: string; icon?: string; leader_agent_id?: string | null; memberAgentIds?: string[]; memberConfigs?: Array<{ agent_id: string; duties?: string; model_override?: string | null; thinking_override?: string | null }>; workspace_dir?: string }
+      const d = p as { id?: string; title: string; description?: string; system_prompt?: string; icon?: string; leader_agent_id?: string | null; memberAgentIds?: string[]; memberConfigs?: Array<{ agent_id: string; duties?: string; model_override?: string | null; thinking_override?: string | null }>; workspace_dir?: string; siyuan_notebook_id?: string; siyuan_parent_doc_id?: string }
       if (!d.leader_agent_id) throw new Error('必须选择群主（leader）')
       // 成员快照语义：memberAgentIds 是完整集合，群主自动并入
       const existingMemberIds = d.id ? projectAgentRepo(core.db).listByProject(d.id).map((member) => member.agent_id) : []
@@ -545,6 +547,15 @@ export function registerIpc(core: JeffCore): Record<string, Handler> {
         }
         return { agent_id: config.agent_id, patch }
       })
+      const currentProject = d.id ? projectRepo(core.db).get(d.id) : undefined
+      if ((d.siyuan_notebook_id !== undefined || d.siyuan_parent_doc_id !== undefined) && (d.siyuan_notebook_id?.trim() || d.siyuan_parent_doc_id?.trim())) {
+        if (!getSiYuanConfig(core).tokenConfigured) throw new Error('先在「设置 → 思源知识库」配置服务，再绑定项目群目录')
+        const notebookId = d.siyuan_notebook_id?.trim() ?? currentProject?.siyuan_notebook_id ?? ''
+        const parentDocId = d.siyuan_parent_doc_id?.trim() ?? currentProject?.siyuan_parent_doc_id ?? ''
+        const client = siYuanClient(core)
+        if (notebookId && !(await client.listNotebooks()).some((notebook) => notebook.id === notebookId)) throw new Error('所选思源笔记本不存在或不可用')
+        if (parentDocId && (!notebookId || (await client.documentMeta(parentDocId)).notebookId !== notebookId)) throw new Error('思源父文档不属于所选笔记本')
+      }
       let row: import('@jeff/core').ProjectRow | undefined
       if (d.id) {
         const existing = projectRepo(core.db).get(d.id)
@@ -552,10 +563,12 @@ export function registerIpc(core: JeffCore): Record<string, Handler> {
         row = projectRepo(core.db).update(d.id, {
           title: d.title, description: d.description, system_prompt: d.system_prompt, icon: d.icon, leader_agent_id: d.leader_agent_id,
           ...(d.workspace_dir !== undefined ? { workspace_dir: d.workspace_dir } : {}),
+          ...(d.siyuan_notebook_id !== undefined ? { siyuan_notebook_id: d.siyuan_notebook_id.trim() } : {}),
+          ...(d.siyuan_parent_doc_id !== undefined ? { siyuan_parent_doc_id: d.siyuan_parent_doc_id.trim() } : {}),
         })
         if (!row) throw new Error('项目不存在')
       } else {
-        row = projectRepo(core.db).create({ title: d.title, description: d.description, system_prompt: d.system_prompt, icon: d.icon, leader_agent_id: d.leader_agent_id, workspace_dir: d.workspace_dir || '' })
+        row = projectRepo(core.db).create({ title: d.title, description: d.description, system_prompt: d.system_prompt, icon: d.icon, leader_agent_id: d.leader_agent_id, workspace_dir: d.workspace_dir || '', siyuan_notebook_id: d.siyuan_notebook_id, siyuan_parent_doc_id: d.siyuan_parent_doc_id })
       }
       // 事务化成员快照：差集删除 + 群主唯一（直接用 create/update 返回的 row，不按可重复的 title 回查）
       projectAgentRepo(core.db).replaceMembers(row.id, d.leader_agent_id, memberIds)
@@ -571,8 +584,22 @@ export function registerIpc(core: JeffCore): Record<string, Handler> {
       return saved
     },
     [IPC.siyuanSearch]: async (p): Promise<SiYuanSearchResult[]> => {
-      const { keyword } = p as { keyword: string }
-      return searchSiYuan(core, keyword)
+      const { keyword, notebookId } = p as { keyword: string; notebookId?: string }
+      return searchSiYuan(core, keyword, notebookId || '')
+    },
+    [IPC.siyuanNotebooks]: async (): Promise<SiYuanNotebook[]> => listSiYuanNotebooks(core),
+    [IPC.siyuanDocuments]: async (p): Promise<SiYuanSearchResult[]> => listSiYuanDocuments(core, (p as { notebookId: string }).notebookId),
+    [IPC.siyuanTargetGet]: async (): Promise<SiYuanTarget> => getSiYuanTarget(core),
+    [IPC.siyuanTargetSave]: async (p): Promise<SiYuanTarget> => {
+      const target = p as SiYuanTarget
+      if (target.notebookId) {
+        const client = siYuanClient(core)
+        if (!(await client.listNotebooks()).some((notebook) => notebook.id === target.notebookId)) throw new Error('所选思源笔记本不存在或不可用')
+        if (target.parentDocId && (await client.documentMeta(target.parentDocId)).notebookId !== target.notebookId) throw new Error('所选父文档不属于笔记本')
+      }
+      const saved = saveSiYuanTarget(core, target)
+      core.bus.emit('data-changed', 'settings')
+      return saved
     },
     [IPC.projectDelete]: async (p): Promise<{ ok: boolean }> => {
       const { id } = p as { id: string }
@@ -901,6 +928,8 @@ function toProjectInfo(core: JeffCore, row: import('@jeff/core').ProjectRow): Pr
     status: row.status,
     leader_agent_id: row.leader_agent_id,
     workspace_dir: row.workspace_dir || '',
+    siyuan_notebook_id: row.siyuan_notebook_id || '',
+    siyuan_parent_doc_id: row.siyuan_parent_doc_id || '',
     updated_at: row.updated_at,
     memberCount: projectAgentRepo(core.db).listByProject(row.id).length,
   }

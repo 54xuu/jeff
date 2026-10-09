@@ -1,0 +1,19 @@
+{
+  "description": "安装版回归：思源知识库设置入口、凭据掩码、默认归档位置和宽屏搜索框；Android release bundle 包含项目群笔记本/父文档绑定控件。真实思源读写由独立只读链路和核心工具测试验证。",
+  "desktop": {
+    "visible": ["[data-testid=nav-rail]"],
+    "actions": [
+      { "type": "click", "selector": "[data-testid=nav-settings]" },
+      { "type": "click", "selector": "[data-testid=settings-nav-siyuan]" },
+      { "type": "expect-visible", "selector": "[data-testid=siyuan-settings]" },
+      { "type": "expect-visible", "selector": "[data-testid=siyuan-base-url]" },
+      { "type": "expect-visible", "selector": "[data-testid=siyuan-token]" },
+      { "type": "expect-visible", "selector": "[data-testid=siyuan-target-notebook]" },
+      { "type": "expect-visible", "selector": "[data-testid=siyuan-target-parent]" },
+      { "type": "expect-visible", "selector": "[data-testid=siyuan-search-keyword]" },
+      { "type": "expect-visible", "selector": "[data-testid=siyuan-search]" },
+      { "type": "expect-text", "selector": "[data-testid=siyuan-settings]", "value": "写入只支持新建和追加" }
+    ]
+  },
+  "androidTestClass": "MobileSiyuanSettingsBundleTest"
+}

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { IPC, projectRoleLabel, type GroupMessage, type GroupThreadBrief, type ProjectInfo, type ProjectMember } from '@jeff/core'
+import { IPC, projectRoleLabel, type GroupMessage, type GroupThreadBrief, type ProjectInfo, type ProjectMember, type SiYuanNotebook, type SiYuanSearchResult } from '@jeff/core'
 import { useStore } from '../store'
 import { api } from '../api'
 import Avatar from './Avatar'
@@ -31,6 +31,10 @@ export default function GroupInfoDrawer(props: { project: ProjectInfo; busy?: bo
   const [description, setDescription] = useState(project.description || '')
   const [groupRules, setGroupRules] = useState(project.system_prompt || '')
   const [workspaceDir, setWorkspaceDir] = useState(project.workspace_dir || '')
+  const [siyuanNotebookId, setSiyuanNotebookId] = useState(project.siyuan_notebook_id || '')
+  const [siyuanParentDocId, setSiyuanParentDocId] = useState(project.siyuan_parent_doc_id || '')
+  const [siyuanNotebooks, setSiyuanNotebooks] = useState<SiYuanNotebook[]>([])
+  const [siyuanDocuments, setSiyuanDocuments] = useState<SiYuanSearchResult[]>([])
   const [leaderId, setLeaderId] = useState(project.leader_agent_id || '')
   const [saving, setSaving] = useState(false)
   const [saveMsg, setSaveMsg] = useState('')
@@ -41,8 +45,25 @@ export default function GroupInfoDrawer(props: { project: ProjectInfo; busy?: bo
     setDescription(project.description || '')
     setGroupRules(project.system_prompt || '')
     setWorkspaceDir(project.workspace_dir || '')
+    setSiyuanNotebookId(project.siyuan_notebook_id || '')
+    setSiyuanParentDocId(project.siyuan_parent_doc_id || '')
     setLeaderId(project.leader_agent_id || '')
-  }, [project.id, project.title, project.icon, project.description, project.system_prompt, project.workspace_dir, project.leader_agent_id])
+  }, [project.id, project.title, project.icon, project.description, project.system_prompt, project.workspace_dir, project.siyuan_notebook_id, project.siyuan_parent_doc_id, project.leader_agent_id])
+
+  useEffect(() => {
+    let active = true
+    void api.invoke<SiYuanNotebook[]>(IPC.siyuanNotebooks).then((items) => { if (active) setSiyuanNotebooks(items.filter((item) => !item.closed)) })
+      .catch((error) => { if (active) setSaveMsg('思源位置不可用：' + String(error)) })
+    return () => { active = false }
+  }, [])
+
+  useEffect(() => {
+    let active = true
+    if (!siyuanNotebookId) { setSiyuanDocuments([]); return }
+    void api.invoke<SiYuanSearchResult[]>(IPC.siyuanDocuments, { notebookId: siyuanNotebookId }).then((items) => { if (active) setSiyuanDocuments(items) })
+      .catch((error) => { if (active) setSaveMsg('无法读取思源目录：' + String(error)) })
+    return () => { active = false }
+  }, [siyuanNotebookId])
 
   const refreshMembers = async () => {
     setMembersLoading(true)
@@ -71,6 +92,7 @@ export default function GroupInfoDrawer(props: { project: ProjectInfo; busy?: bo
   const memberDraft = JSON.stringify(members.map(({ agent_id, duties, model_override, thinking_override }) => ({ agent_id, duties, model_override, thinking_override })))
   const dirty = title !== project.title || icon !== (project.icon || '👥') || description !== (project.description || '') ||
     groupRules !== (project.system_prompt || '') || workspaceDir !== (project.workspace_dir || '') ||
+    siyuanNotebookId !== (project.siyuan_notebook_id || '') || siyuanParentDocId !== (project.siyuan_parent_doc_id || '') ||
     leaderId !== (project.leader_agent_id || '') || memberDraft !== memberConfigBaseline.current
   const { requestClose, guard } = useDirtyClose({ dirty, onClose, disabled: addingMember })
 
@@ -82,6 +104,7 @@ export default function GroupInfoDrawer(props: { project: ProjectInfo; busy?: bo
       await api.invoke<ProjectInfo>(IPC.projectSave, {
         id: project.id, title: title.trim(), icon: icon.trim() || '👥', description: description.trim(),
         system_prompt: groupRules.trim(), leader_agent_id: leaderId, workspace_dir: workspaceDir.trim(),
+        siyuan_notebook_id: siyuanNotebookId.trim(), siyuan_parent_doc_id: siyuanParentDocId.trim(),
         memberAgentIds: members.map((member) => member.agent_id),
         memberConfigs: members.map(({ agent_id, duties, model_override, thinking_override }) => ({ agent_id, duties, model_override, thinking_override })),
       })
@@ -111,6 +134,11 @@ export default function GroupInfoDrawer(props: { project: ProjectInfo; busy?: bo
   const openProjectMemory = () => {
     setMainTab('settings')
     setSettingsSection('memory')
+    onClose()
+  }
+  const openSiyuanSettings = () => {
+    setMainTab('settings')
+    setSettingsSection('siyuan')
     onClose()
   }
 
@@ -156,6 +184,13 @@ export default function GroupInfoDrawer(props: { project: ProjectInfo; busy?: bo
             <label className="field"><span>群简介 · 项目背景</span><textarea rows={4} value={description} data-testid="group-settings-desc" onChange={(event) => setDescription(event.target.value)} placeholder="当前项目的背景和事实。不要把成员职责或一次性任务写在这里。" /></label>
             <label className="field"><span>群规则 · 仅本群有效</span><textarea rows={7} value={groupRules} data-testid="group-settings-rules" onChange={(event) => setGroupRules(event.target.value)} placeholder="本群长期协作方式、质量要求和边界。" /><small className="settings-tip">群规则会作为本群约束注入；具体任务要求写在任务的三个文本域中。</small></label>
             <label className="field"><span>工作区目录</span><div className="project-path-row"><input value={workspaceDir} data-testid="group-settings-workspace" onChange={(event) => setWorkspaceDir(event.target.value)} placeholder="留空使用 Jeff 默认工作区" /><button className="btn" type="button" onClick={() => void pickDir()}>浏览…</button></div></label>
+            <section className="project-siyuan-binding" data-testid="group-siyuan-binding">
+              <div><strong>思源知识库位置</strong><p>本群先在此目录查找资料；未指定写入位置时也归档到这里。留空继承 Jeff 全局默认。</p></div>
+              {siyuanNotebooks.length ? <>
+                <label className="field"><span>笔记本</span><select data-testid="group-siyuan-notebook" value={siyuanNotebookId} onChange={(event) => { setSiyuanNotebookId(event.target.value); setSiyuanParentDocId('') }}><option value="">继承 Jeff 默认位置</option>{siyuanNotebooks.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+                <label className="field"><span>父文档 · 留空为笔记本根目录</span><select data-testid="group-siyuan-parent" value={siyuanParentDocId} disabled={!siyuanNotebookId} onChange={(event) => setSiyuanParentDocId(event.target.value)}><option value="">笔记本根目录</option>{siyuanDocuments.map((doc) => <option key={doc.docId} value={doc.docId}>{doc.path || doc.title}</option>)}</select></label>
+              </> : <div className="project-siyuan-unavailable"><span>尚未读取到可用笔记本。请先配置思源连接。</span><button type="button" className="text-btn" onClick={openSiyuanSettings}>打开思源设置</button></div>}
+            </section>
             <div className="project-context-links">
               <div><strong>项目记忆与 AGENTS.md</strong><p>记忆保存长期事实；AGENTS.md 保存只对本项目生效的持续规则。</p></div>
               <button className="btn" onClick={openProjectMemory}>打开记忆与规则设置</button>

@@ -7,7 +7,7 @@ import { closeJeff, launchJeff, loadE2eEnv, REPO_ROOT } from './helpers/launch.j
 test.describe.configure({ mode: 'serial' })
 
 /** 测试进程直连 e2e home 的 jeff.db（读多写少：mermaid 段往群里直插一条预置消息） */
-const UI_HOME = path.join(REPO_ROOT, '.tmp/jeff-e2e-ui-home')
+const UI_HOME = path.join(REPO_ROOT, '.tmp/jeff-e2e-ui-home-siyuan')
 
 function dbQuery(sql: string, ...params: unknown[]): Array<Record<string, unknown>> {
   const db = new DatabaseSync(path.join(UI_HOME, 'jeff.db'), { readOnly: true })
@@ -42,7 +42,7 @@ function dbExec(sql: string, ...params: unknown[]): void {
 test.describe('Jeff UI 封闭清单', () => {
   test('导航轨 / 主题 / 通讯录模型保存 / 设置 / 私聊 / 建群 / mermaid', async () => {
     test.setTimeout(720_000)
-    const home = path.join(REPO_ROOT, '.tmp/jeff-e2e-ui-home')
+    const home = UI_HOME
     const env = loadE2eEnv()
     const { app, page } = await launchJeff({
       home,
@@ -58,10 +58,39 @@ test.describe('Jeff UI 封闭清单', () => {
       await expect(page.getByTestId('agents-page')).toBeVisible()
       await page.getByTestId('nav-settings').click()
       await expect(page.getByTestId('settings-nav-engine')).toBeVisible()
+      await page.setViewportSize({ width: 1600, height: 1000 })
+      const settingsScreens = path.join(REPO_ROOT, '.tmp/e2e-screens/settings')
+      fs.mkdirSync(settingsScreens, { recursive: true })
+      const settingsPages = [
+        ['mcp', 'mcp-settings'], ['memory', 'memory-settings'], ['engine', 'engine-settings'],
+        ['sync', 'sync-settings'], ['siyuan', 'siyuan-settings'], ['notification', 'notification-settings'],
+        ['appearance', 'appearance-settings'], ['remote', 'remote-settings'], ['about', 'about-settings'],
+      ] as const
+      for (const [section, testId] of settingsPages) {
+        await page.getByTestId(`settings-nav-${section}`).click()
+        await expect(page.getByTestId(testId)).toBeVisible({ timeout: 15000 })
+        await page.screenshot({ path: path.join(settingsScreens, `settings-${section}-1600-light.png`), fullPage: true })
+      }
+      await page.getByTestId('settings-nav-appearance').click()
+      await page.getByTestId('theme-mode-dark').click()
+      await expect.poll(async () => page.evaluate(() => document.documentElement.dataset.theme)).toBe('dark')
+      await page.getByTestId('settings-nav-siyuan').click()
+      await page.screenshot({ path: path.join(settingsScreens, 'settings-siyuan-1600-dark.png'), fullPage: true })
+      await page.setViewportSize({ width: 900, height: 820 })
+      await page.screenshot({ path: path.join(settingsScreens, 'settings-siyuan-900-dark.png'), fullPage: true })
+      const narrowSearch = await page.getByTestId('siyuan-search-keyword').boundingBox()
+      expect(narrowSearch?.width || 0).toBeGreaterThan(300)
       await page.getByTestId('settings-nav-siyuan').click()
       await expect(page.getByTestId('siyuan-settings')).toBeVisible()
       await expect(page.getByTestId('siyuan-base-url')).toBeVisible()
       await expect(page.getByTestId('siyuan-token')).toHaveAttribute('type', 'password')
+      const knowledgeSearch = page.getByTestId('siyuan-search-keyword')
+      const searchBounds = await knowledgeSearch.boundingBox()
+      expect(searchBounds?.width || 0).toBeGreaterThan(300)
+      await knowledgeSearch.fill('保留未保存的搜索草稿')
+      await page.getByTestId('settings-nav-appearance').click()
+      await page.getByTestId('settings-nav-siyuan').click()
+      await expect(knowledgeSearch).toHaveValue('保留未保存的搜索草稿')
       await page.getByTestId('nav-chats').click()
 
       // ---- 主题快捷切换 ----

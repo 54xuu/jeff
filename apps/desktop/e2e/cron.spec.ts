@@ -14,8 +14,9 @@ test.describe.configure({ mode: 'serial' })
  * 立即执行若无可用模型会 failed，但专属会话/话题在投递前就会落 kv / chat_message，
  * 所以隔离断言不靠模型正文。
  */
-const HOME = path.join(REPO_ROOT, '.tmp/jeff-cron-e2e-home')
-const EVIDENCE = path.join(REPO_ROOT, '.tmp/cron/evidence')
+const CRON_RUN_ID = Date.now().toString()
+const HOME = path.join(REPO_ROOT, `.tmp/jeff-cron-e2e-home-${CRON_RUN_ID}`)
+const EVIDENCE = path.join(REPO_ROOT, `.tmp/cron/evidence-${CRON_RUN_ID}`)
 
 function dbQuery<T = Record<string, unknown>>(sql: string, ...params: unknown[]): T[] {
   let lastErr: unknown

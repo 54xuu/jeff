@@ -50,6 +50,8 @@ function seed(side: Side): void {
     system_prompt: '群规则：销小美协调；成员按本群职责执行。',
     leader_agent_id: leader.id,
     workspace_dir: '/home/linux/project-a',
+    siyuan_notebook_id: '20261005111111-nb12345',
+    siyuan_parent_doc_id: '20261005123456-abc1234',
   })
   projectAgentRepo(side.db).add(p.id, leader.id, 'leader')
   projectAgentRepo(side.db).add(p.id, dev.id, 'worker')
@@ -65,6 +67,8 @@ function seed(side: Side): void {
   // 提醒开关随 settings 包同步（notifySound=false 是关键用例：关掉的「假值」不能被当成「没配」丢掉）
   kvRepo(side.db).setJSON('settings:notifySound', false)
   kvRepo(side.db).setJSON('settings:notifyDesktop', true)
+  kvRepo(side.db).setJSON('settings:siyuanArchiveTarget', { notebookId: '20261005111111-nb12345', parentDocId: '' })
+  kvRepo(side.db).setJSON('integration:siyuan', { baseUrl: 'http://192.168.3.249:6806', token: 'must-stay-local' })
   fs.writeFileSync(side.paths.agentsMdUser, '# 用户级 AGENTS\n用简体中文', 'utf8')
   fs.writeFileSync(path.join(side.paths.agentsMdDir, `${p.id}.md`), '# 项目 AGENTS\n用 vite', 'utf8')
 }
@@ -146,6 +150,7 @@ describe('SyncEngine（实体级双向合并）', () => {
     // 新建项目：workspace_dir 按设备留空，不拷贝 Linux 路径
     expect(projects[0].workspace_dir).toBe('')
     expect(projects[0].system_prompt).toBe('群规则：销小美协调；成员按本群职责执行。')
+    expect(projects[0]).toMatchObject({ siyuan_notebook_id: '20261005111111-nb12345', siyuan_parent_doc_id: '20261005123456-abc1234' })
     expect(projectAgentRepo(B.db).listByProject(projects[0].id)).toMatchObject([
       { duties: '本群协调、拆解和验收', model_override: 'openai/gpt-5.1', thinking_override: 'high' },
       { duties: '本群按分配提交实现', model_override: 'openai/gpt-5.1-mini', thinking_override: 'low' },
@@ -164,6 +169,9 @@ describe('SyncEngine（实体级双向合并）', () => {
     })
     expect(kvRepo(B.db).getJSON<boolean>('settings:notifySound', true)).toBe(false)
     expect(kvRepo(B.db).getJSON<boolean>('settings:notifyDesktop', true)).toBe(true)
+    expect(kvRepo(B.db).getJSON('settings:siyuanArchiveTarget', {})).toEqual({ notebookId: '20261005111111-nb12345', parentDocId: '' })
+    expect(kvRepo(B.db).getJSON('integration:siyuan', null)).toBeNull()
+    expect(fs.readFileSync(path.join(davRoot, 'dav/r1/settings.json'), 'utf8')).not.toContain('must-stay-local')
     expect(fs.readFileSync(B.paths.agentsMdUser, 'utf8')).toContain('用户级 AGENTS')
     expect(fs.readFileSync(path.join(B.paths.agentsMdDir, `${projects[0].id}.md`), 'utf8')).toContain('用 vite')
     fs.rmSync(A.home, { recursive: true, force: true })

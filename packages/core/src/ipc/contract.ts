@@ -59,6 +59,10 @@ export const IPC = {
   siyuanConfigGet: 'siyuan:configGet',
   siyuanConfigSave: 'siyuan:configSave',
   siyuanSearch: 'siyuan:search',
+  siyuanNotebooks: 'siyuan:notebooks',
+  siyuanDocuments: 'siyuan:documents',
+  siyuanTargetGet: 'siyuan:targetGet',
+  siyuanTargetSave: 'siyuan:targetSave',
   projectDelete: 'project:delete',
   projectMembers: 'project:members',
   projectAddMember: 'project:addMember',
@@ -205,12 +209,18 @@ export interface ProjectInfo {
   leader_agent_id: string | null
   /** 工作空间目录（空 = 全局 workspace；未指定输出目录时文件都保存到工作空间） */
   workspace_dir: string
+  /** 知识归档笔记本；空值继承 Jeff 全局默认 */
+  siyuan_notebook_id: string
+  /** 知识归档父文档；空值表示所选笔记本根目录 */
+  siyuan_parent_doc_id: string
   updated_at: number
   memberCount: number
 }
 
 export interface SiYuanConfigInfo { baseUrl: string; tokenConfigured: boolean }
-export interface SiYuanSearchResult { docId: string; title: string; path: string; snippet: string }
+export interface SiYuanNotebook { id: string; name: string; closed: boolean }
+export interface SiYuanTarget { notebookId: string; parentDocId: string }
+export interface SiYuanSearchResult { docId: string; notebookId: string; title: string; path: string; snippet: string }
 
 export interface ProjectMember {
   agent_id: string
@@ -716,10 +726,14 @@ export type InvokeMap = {
   [IPC.chatNew]: { agentId: string }
   [IPC.chatStop]: { agentId: string }
   [IPC.projectsList]: void
-  [IPC.projectSave]: { id?: string; title: string; description?: string; system_prompt?: string; icon?: string; leader_agent_id?: string | null; memberAgentIds?: string[]; memberConfigs?: Array<{ agent_id: string; duties?: string; model_override?: string | null; thinking_override?: string | null }>; workspace_dir?: string }
+  [IPC.projectSave]: { id?: string; title: string; description?: string; system_prompt?: string; icon?: string; leader_agent_id?: string | null; memberAgentIds?: string[]; memberConfigs?: Array<{ agent_id: string; duties?: string; model_override?: string | null; thinking_override?: string | null }>; workspace_dir?: string; siyuan_notebook_id?: string; siyuan_parent_doc_id?: string }
   [IPC.siyuanConfigGet]: void
   [IPC.siyuanConfigSave]: { baseUrl: string; token?: string }
-  [IPC.siyuanSearch]: { keyword: string }
+  [IPC.siyuanSearch]: { keyword: string; notebookId?: string }
+  [IPC.siyuanNotebooks]: void
+  [IPC.siyuanDocuments]: { notebookId: string }
+  [IPC.siyuanTargetGet]: void
+  [IPC.siyuanTargetSave]: SiYuanTarget
   [IPC.projectDelete]: { id: string }
   [IPC.projectMembers]: { projectId: string }
   [IPC.projectAddMember]: { projectId: string; agentId: string; role?: string }

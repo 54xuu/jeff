@@ -5,7 +5,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   IPC, ENGINE_LABELS, XIAOJIE_ID, TOOL_ACTION_LABEL, extractThinkTags, mergeReasoning, sortedPinKeys, decodePluginUserMessage,
 } from '@jeff/core'
-import type { AgentInfo, AppInfo, ChatMsg, FileNode, FsDirEntry, GroupMessage, ProjectInfo, ProjectMember, ContextPreviewInfo, PluginCommand, PluginInfo, TaskInfo, GroupThreadBrief, TaskRunInfo, BrowserHandoffInfo } from '@jeff/core'
+import type { AgentInfo, AppInfo, ChatMsg, FileNode, FsDirEntry, GroupMessage, ProjectInfo, ProjectMember, ContextPreviewInfo, PluginCommand, PluginInfo, TaskInfo, GroupThreadBrief, TaskRunInfo, BrowserHandoffInfo, SiYuanNotebook, SiYuanSearchResult } from '@jeff/core'
 import type { RemoteStreamFrame } from '@jeff/core/remote'
 import { consumeBack } from './backstack'
 import Mascot from './Mascot'
@@ -501,6 +501,10 @@ export function App() {
   const [projectDescription, setProjectDescription] = useState('')
   const [projectWorkspaceDir, setProjectWorkspaceDir] = useState('')
   const [projectLeaderId, setProjectLeaderId] = useState('')
+  const [projectSiyuanNotebookId, setProjectSiyuanNotebookId] = useState('')
+  const [projectSiyuanParentDocId, setProjectSiyuanParentDocId] = useState('')
+  const [siyuanNotebooks, setSiyuanNotebooks] = useState<SiYuanNotebook[]>([])
+  const [siyuanDocuments, setSiyuanDocuments] = useState<SiYuanSearchResult[]>([])
   const [groupRules, setGroupRules] = useState('')
   const [projectMembers, setProjectMembers] = useState<ProjectMember[]>([])
   const [selectedMemberId, setSelectedMemberId] = useState('')
@@ -1335,6 +1339,11 @@ export function App() {
     setGroupRules(project.system_prompt || '')
     setProjectWorkspaceDir(project.workspace_dir || '')
     setProjectLeaderId(project.leader_agent_id || '')
+    setProjectSiyuanNotebookId(project.siyuan_notebook_id || '')
+    setProjectSiyuanParentDocId(project.siyuan_parent_doc_id || '')
+    setSiyuanDocuments([])
+    void phone.invoke<SiYuanNotebook[]>(IPC.siyuanNotebooks).then((items) => setSiyuanNotebooks(items.filter((item) => !item.closed))).catch((error) => setWorkspaceSaved('无法读取思源笔记本：' + String(error)))
+    if (project.siyuan_notebook_id) void phone.invoke<SiYuanSearchResult[]>(IPC.siyuanDocuments, { notebookId: project.siyuan_notebook_id }).then(setSiyuanDocuments).catch((error) => setWorkspaceSaved('无法读取思源目录：' + String(error)))
     setWorkspaceSaved('')
     setProjectSection('tasks')
     setFilesData(null)
@@ -1458,6 +1467,8 @@ export function App() {
         id: target.id, title: projectTitle.trim(), icon: projectIcon.trim() || '👥',
         description: projectDescription, system_prompt: groupRules, leader_agent_id: projectLeaderId || null,
         workspace_dir: projectWorkspaceDir, memberAgentIds: projectMembers.map((member) => member.agent_id),
+        siyuan_notebook_id: projectSiyuanNotebookId,
+        siyuan_parent_doc_id: projectSiyuanParentDocId,
         memberConfigs: projectMembers.map(({ agent_id, duties, model_override, thinking_override }) => ({ agent_id, duties, model_override, thinking_override })),
       })
       setProjects((items) => items.map((item) => item.id === saved.id ? saved : item))
@@ -2474,6 +2485,16 @@ export function App() {
             <label><span>群简介 · 项目背景</span><textarea rows={4} data-testid="mobile-group-description" value={projectDescription} onChange={(event) => setProjectDescription(event.target.value)} placeholder="只写当前项目的背景事实。" /></label>
             <label><span>群规则 · 只在本群生效</span><textarea rows={7} data-testid="mobile-group-rules" value={groupRules} onChange={(event) => setGroupRules(event.target.value)} placeholder="本群长期协作方式、质量要求和边界。" /></label>
             <label><span>工作区目录</span><input data-testid="mobile-group-workspace" value={projectWorkspaceDir} onChange={(event) => setProjectWorkspaceDir(event.target.value)} placeholder="留空使用 Jeff 默认工作区" /></label>
+            <div className="project-siyuan-target">
+              <strong>思源知识库位置</strong>
+              <p>项目群优先在此目录搜索资料；写入未指定位置时也会归档到这里。留空继承 Jeff 全局默认位置。</p>
+              <label><span>笔记本</span><select data-testid="mobile-group-siyuan-notebook" value={projectSiyuanNotebookId} onChange={(event) => {
+                const notebookId = event.target.value
+                setProjectSiyuanNotebookId(notebookId); setProjectSiyuanParentDocId(''); setSiyuanDocuments([])
+                if (notebookId) void phone.invoke<SiYuanSearchResult[]>(IPC.siyuanDocuments, { notebookId }).then(setSiyuanDocuments).catch((error) => setWorkspaceSaved('无法读取思源目录：' + String(error)))
+              }}><option value="">继承 Jeff 默认位置</option>{siyuanNotebooks.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+              <label><span>父文档 · 留空为笔记本根目录</span><select data-testid="mobile-group-siyuan-parent" value={projectSiyuanParentDocId} disabled={!projectSiyuanNotebookId} onChange={(event) => setProjectSiyuanParentDocId(event.target.value)}><option value="">笔记本根目录</option>{siyuanDocuments.map((doc) => <option key={doc.docId} value={doc.docId}>{doc.path || doc.title}</option>)}</select></label>
+            </div>
             <div className="project-context-links"><strong>项目记忆与 AGENTS.md</strong><p>记忆保存长期事实；AGENTS.md 保存本项目持续规则。</p><button type="button" onClick={() => setMemorySettingsOpen(true)}>打开记忆与规则设置</button></div>
             <button type="button" className="btn-primary" data-testid="mobile-group-profile-save" disabled={workspaceSaving || !projectTitle.trim() || !projectLeaderId} onClick={() => void saveProjectProfile()}>{workspaceSaving ? '保存中…' : '保存群资料'}</button>
           </div>}

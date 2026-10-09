@@ -1870,6 +1870,10 @@ html[data-theme='dark'] .wechat-file-tip { color: #fbbf24; }
   font: inherit;
   font-size: 14px;
 }
+.project-siyuan-target { display: flex; flex-direction: column; gap: 10px; padding: 13px; border: 1px solid var(--border); border-radius: 12px; background: var(--card); }
+.project-siyuan-target > strong { font-size: 13px; color: var(--text); }
+.project-siyuan-target > p { margin: -5px 0 2px; color: var(--text-2); font-size: 12px; line-height: 1.5; }
+.project-siyuan-target label span { color: var(--text-2); font-size: 12px; }
 .wechat-fileview {
   flex: 1;
   display: flex;

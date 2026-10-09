@@ -1,6 +1,7 @@
 import type { ToolBridge } from './bridge.js'
 import type { DB } from '../db/db.js'
 import { PROJECT_STATUSES, TASK_PRIORITIES, TASK_STATUSES, agentRepo, projectAgentRepo, projectRepo, taskRepo } from '../db/repos.js'
+import type { SiYuanClient } from '../siyuan/client.js'
 
 export interface ProjectToolDeps {
   db: DB
@@ -8,6 +9,7 @@ export interface ProjectToolDeps {
   onTaskChanged: (projectId: string, taskId?: string) => void
   onProjectChanged: () => void
   isTaskActive?: (taskId: string) => boolean
+  siyuan?: SiYuanClient
 }
 
 /**
@@ -66,7 +68,7 @@ export function registerProjectTools(reg: ToolBridge, deps: ProjectToolDeps): vo
     return { id: p.id, title: p.title, leader_agent_id: p.leader_agent_id, workspace_dir: p.workspace_dir || '' }
   })
 
-  reg.register('jeff_project_update', async (args: { id?: string; title?: string; description?: string; system_prompt?: string; clear_system_prompt?: boolean; icon?: string; status?: string; leader_agent_id?: string; workspace_dir?: string }) => {
+  reg.register('jeff_project_update', async (args: { id?: string; title?: string; description?: string; system_prompt?: string; clear_system_prompt?: boolean; icon?: string; status?: string; leader_agent_id?: string; workspace_dir?: string; siyuan_notebook_id?: string; siyuan_parent_doc_id?: string; clear_siyuan_target?: boolean }) => {
     if (!args.id) throw new Error('id 不能为空')
     const patch = onlyProvided({
       title: nonBlank(args.title),
@@ -77,10 +79,21 @@ export function registerProjectTools(reg: ToolBridge, deps: ProjectToolDeps): vo
       leader_agent_id: nonBlank(args.leader_agent_id),
       // 例外：工作空间目录明确支持「传空串 = 清除为默认工作区」（工具说明里写明了）
       ...(args.workspace_dir !== undefined ? { workspace_dir: String(args.workspace_dir).trim() } : {}),
+      ...(args.clear_siyuan_target ? { siyuan_notebook_id: '', siyuan_parent_doc_id: '' } : {}),
+      ...(!args.clear_siyuan_target && nonBlank(args.siyuan_notebook_id) !== undefined ? { siyuan_notebook_id: nonBlank(args.siyuan_notebook_id) } : {}),
+      ...(!args.clear_siyuan_target && nonBlank(args.siyuan_parent_doc_id) !== undefined ? { siyuan_parent_doc_id: nonBlank(args.siyuan_parent_doc_id) } : {}),
     })
-    if (Object.keys(patch).length === 0) throw new Error('没有要修改的字段（title / description / system_prompt / icon / status / leader_agent_id / workspace_dir 至少要传一个有值的）')
+    if (Object.keys(patch).length === 0) throw new Error('没有要修改的字段')
     if (patch.status && !(PROJECT_STATUSES as readonly string[]).includes(String(patch.status))) {
       throw new Error(`status 非法：${String(patch.status)}（可用：${PROJECT_STATUSES.join('/')}）`)
+    }
+    if ((patch.siyuan_notebook_id !== undefined || patch.siyuan_parent_doc_id !== undefined) && !args.clear_siyuan_target) {
+      if (!deps.siyuan) throw new Error('Jeff 思源服务不可用')
+      const notebookId = String(patch.siyuan_notebook_id ?? projects.get(args.id)?.siyuan_notebook_id ?? '')
+      const parentDocId = String(patch.siyuan_parent_doc_id ?? projects.get(args.id)?.siyuan_parent_doc_id ?? '')
+      if (!notebookId) throw new Error('设置思源父文档前必须先指定笔记本')
+      if (!(await deps.siyuan.listNotebooks()).some((item) => item.id === notebookId)) throw new Error('思源笔记本不存在或不可用')
+      if (parentDocId && (await deps.siyuan.documentMeta(parentDocId)).notebookId !== notebookId) throw new Error('思源父文档不属于所选笔记本')
     }
     const row = projects.update(args.id, patch)
     if (!row) throw new Error(`项目不存在或更新失败: ${args.id}`)
@@ -99,6 +112,8 @@ export function registerProjectTools(reg: ToolBridge, deps: ProjectToolDeps): vo
       system_prompt: p.system_prompt,
       leader_agent_id: p.leader_agent_id,
       workspace_dir: p.workspace_dir || '',
+      siyuan_notebook_id: p.siyuan_notebook_id || '',
+      siyuan_parent_doc_id: p.siyuan_parent_doc_id || '',
       members: members.listByProject(p.id).map((m) => {
         const agent = agents.get(m.agent_id)
         return {

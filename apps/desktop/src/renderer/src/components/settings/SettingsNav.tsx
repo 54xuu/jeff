@@ -23,7 +23,7 @@ const SECTIONS: Array<{ id: SettingsSection; label: string; desc: string; icon: 
   },
   {
     id: 'engine',
-    label: '引擎服务',
+    label: '执行引擎',
     desc: 'CLI 选择与运行状态',
     icon: (
       <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -45,7 +45,7 @@ const SECTIONS: Array<{ id: SettingsSection; label: string; desc: string; icon: 
   {
     id: 'siyuan',
     label: '思源知识库',
-    desc: '日报搜索与报告来源',
+    desc: '自动查阅与知识归档',
     icon: (
       <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
         <path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H20v16H5.5A1.5 1.5 0 0 1 4 18.5z" />
@@ -103,9 +103,9 @@ const SECTIONS: Array<{ id: SettingsSection; label: string; desc: string; icon: 
 export default function SettingsNav(): React.JSX.Element {
   const { settingsSection, setSettingsSection } = useStore()
   return (
-    <div className="settings-nav">
+    <nav className="settings-nav" aria-label="设置菜单">
       <div className="list-header">
-        <span>设置</span>
+        <span>设置</span><small>偏好与连接</small>
       </div>
       <div className="settings-nav-list">
         {SECTIONS.map((s) => (
@@ -113,6 +113,7 @@ export default function SettingsNav(): React.JSX.Element {
             key={s.id}
             className={`settings-nav-item ${(settingsSection === 'providers' ? 'engine' : settingsSection) === s.id ? 'on' : ''}`}
             data-testid={`settings-nav-${s.id}`}
+            aria-current={(settingsSection === 'providers' ? 'engine' : settingsSection) === s.id ? 'page' : undefined}
             onClick={() => setSettingsSection(s.id)}
           >
             <span className="settings-nav-icon">{s.icon}</span>
@@ -123,6 +124,6 @@ export default function SettingsNav(): React.JSX.Element {
           </button>
         ))}
       </div>
-    </div>
+    </nav>
   )
 }

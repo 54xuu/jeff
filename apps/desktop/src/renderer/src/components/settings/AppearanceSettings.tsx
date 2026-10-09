@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useStore, applyTheme, applyThemePack, effectiveTheme } from '../../store'
 import { api } from '../../api'
 import { IPC } from '@jeff/core'
@@ -20,17 +21,32 @@ export default function AppearanceSettings(): React.JSX.Element {
   const current = settings?.theme ?? 'system'
   const pack = settings?.themePack ?? 'cue'
   const eff = effectiveTheme(current)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const [saved, setSaved] = useState(false)
 
   const setTheme = async (theme: 'system' | 'light' | 'dark') => {
-    await api.invoke(IPC.settingsSet, { theme })
-    applyTheme(theme)
-    void refreshSettings()
+    if (saving) return
+    setSaving(true); setError(''); setSaved(false)
+    try {
+      await api.invoke(IPC.settingsSet, { theme })
+      applyTheme(theme)
+      await refreshSettings()
+      setSaved(true)
+    } catch (err) { setError(`颜色模式保存失败：${String((err as Error).message)}`) }
+    finally { setSaving(false) }
   }
 
   const setPack = async (themePack: 'cue' | 'weui' | 'catppuccin') => {
-    await api.invoke(IPC.settingsSet, { themePack })
-    applyThemePack(themePack)
-    void refreshSettings()
+    if (saving) return
+    setSaving(true); setError(''); setSaved(false)
+    try {
+      await api.invoke(IPC.settingsSet, { themePack })
+      applyThemePack(themePack)
+      await refreshSettings()
+      setSaved(true)
+    } catch (err) { setError(`主题保存失败：${String((err as Error).message)}`) }
+    finally { setSaving(false) }
   }
 
   return (
@@ -39,6 +55,7 @@ export default function AppearanceSettings(): React.JSX.Element {
       <p className="settings-tip">
         主题包控制视觉语言；颜色模式控制亮/暗。当前生效：{eff === 'dark' ? '深夜' : '亮色'} · {PACK_OPTIONS.find((p) => p.id === pack)?.label || pack}。左侧导航栏底部可快捷切换亮暗。
       </p>
+      {(error || saved) && <p className={error ? 'settings-error' : 'settings-success'} role={error ? 'alert' : 'status'}>{error || '外观已保存'}</p>}
 
       <h3 className="settings-subtitle">主题</h3>
       <div className="appearance-cards">
@@ -47,6 +64,8 @@ export default function AppearanceSettings(): React.JSX.Element {
             key={o.id}
             className={`appearance-card ${pack === o.id ? 'on' : ''}`}
             data-testid={`theme-pack-${o.id}`}
+            disabled={saving}
+            aria-pressed={pack === o.id}
             onClick={() => void setPack(o.id)}
           >
             <span className="appearance-preview" data-preview={o.id}>
@@ -70,6 +89,8 @@ export default function AppearanceSettings(): React.JSX.Element {
             key={o.id}
             className={`appearance-card ${current === o.id ? 'on' : ''}`}
             data-testid={`theme-mode-${o.id}`}
+            disabled={saving}
+            aria-pressed={current === o.id}
             onClick={() => void setTheme(o.id)}
           >
             <span className="appearance-preview" data-preview={o.id}>

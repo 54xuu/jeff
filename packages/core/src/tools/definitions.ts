@@ -90,8 +90,55 @@ export function allToolDefs(): ToolDef[] {
       },
     },
     {
+      name: 'jeff_siyuan_list_notebooks',
+      description: '读取当前 Jeff 已配置思源服务中的可用笔记本。用户不确定归档位置时先列出选项并询问；不得猜测笔记本 ID。',
+      args: {},
+    },
+    {
+      name: 'jeff_siyuan_search',
+      description:
+        '搜索 Jeff 连接的思源知识库。用户问到已有资料、项目背景、某篇笔记，或明确要求查思源时主动搜索；项目群先用 scope="project" 搜索该群绑定的笔记本，结果不足时再用 scope="all" 扩展到全库。' +
+        '私聊默认全库搜索。返回文档 ID、标题、笔记本和路径；候选含义不明确时向用户确认后再读。回答知识库事实时引用文档标题与路径。',
+      args: {
+        keyword: { type: 'string', description: '标题或正文关键词（至少 2 个字符）' },
+        scope: { type: 'string', description: 'project=仅当前项目群绑定笔记本；all=全库。项目群默认先 project，未绑定时须询问或改为 all。', enum: ['project', 'all'] },
+        notebook_id: { type: 'string', description: '限定笔记本 ID（可选；项目群指定绑定笔记本以外的目标时必须同时传 scope="all"）' },
+      },
+    },
+    {
+      name: 'jeff_siyuan_read',
+      description: '读取思源单篇 Markdown 文档。必须使用 jeff_siyuan_search 返回的真实文档 ID，不能猜 ID；候选不明确时先询问用户选择。项目群默认只能读取本群绑定目录；读取此前 scope="all" 扩展查询得到的全库文档时传 scope="all"。',
+      args: {
+        doc_id: { type: 'string', description: '思源文档 ID' },
+        scope: { type: 'string', description: 'project=当前项目群绑定目录；all=用户明确要求或项目搜索扩展后允许读取全库文档。', enum: ['project', 'all'] },
+      },
+    },
+    {
+      name: 'jeff_siyuan_create',
+      description:
+        '在思源创建新 Markdown 文档。只在用户明确要求写入/保存时调用；目标按用户明确指定位置→当前项目群绑定→Jeff 全局默认的顺序解析，仍不明确时询问用户。' +
+        '仅创建新文档，不覆盖同路径文档；路径可含子目录，内容使用 Markdown。每日/周期报告应优先追加到已有文档，不要反复创建同名文档。',
+      args: {
+        title_path: { type: 'string', description: '文档标题或相对层级路径，例如「调研/方案评估」；不要以斜杠开头' },
+        markdown: { type: 'string', description: '完整 Markdown 文档内容' },
+        notebook_id: { type: 'string', description: '用户明确指定或刚确认的目标笔记本 ID（可选）' },
+        parent_doc_id: { type: 'string', description: '用户明确指定或刚确认的父文档 ID（可选）' },
+      },
+    },
+    {
+      name: 'jeff_siyuan_append',
+      description:
+        '把 Markdown 追加到指定思源文档末尾。只在用户明确要求写入/保存时调用；不得更新、覆盖或删除已有内容。' +
+        '项目群只能追加到本群绑定目录；用户明确要求全库追加时传 scope="all"。优先使用用户明确指定的文档 ID；否则先在当前项目群绑定目录或全局默认目标中搜索并确认唯一候选。日报必须追加到文档末尾。',
+      args: {
+        doc_id: { type: 'string', description: '目标思源文档 ID，必须来自搜索结果或用户明确提供' },
+        markdown: { type: 'string', description: '要追加的 Markdown 内容' },
+        scope: { type: 'string', description: '仅项目群可用：用户明确要求全库追加时传 all；默认 project 并校验项目绑定目录。', enum: ['project', 'all'] },
+      },
+    },
+    {
       name: 'jeff_project_update',
-      description: '修改项目群规则或资料（名称/简介/群级 System Prompt/图标/状态/群主/工作空间目录）。群规则和成员分工只在这个群生效，不写入 Agent 个人 Prompt。没传或传空串的字段保持不变；clear_system_prompt=true 可清除群规则。',
+      description: '修改项目群规则或资料（名称/简介/群级 System Prompt/图标/状态/群主/工作空间目录/思源归档位置）。群规则和成员分工只在这个群生效，不写入 Agent 个人 Prompt。没传或传空串的字段保持不变；clear_system_prompt=true 可清除群规则，clear_siyuan_target=true 可恢复继承 Jeff 全局归档目标。',
       args: {
         id: { type: 'string', description: '项目 id' },
         title: { type: 'string', description: '新群名（可选）' },
@@ -102,6 +149,9 @@ export function allToolDefs(): ToolDef[] {
         status: { type: 'string', description: '状态', enum: [...PROJECT_STATUSES] },
         leader_agent_id: { type: 'string', description: '新群主 id（可选）' },
         workspace_dir: { type: 'string', description: '工作空间目录（可选；传空串清除为默认工作区）' },
+        siyuan_notebook_id: { type: 'string', description: '当前项目群的思源归档笔记本 ID（可选，必须来自 jeff_siyuan_list_notebooks）' },
+        siyuan_parent_doc_id: { type: 'string', description: '当前项目群的思源归档父文档 ID（可选，必须属于指定笔记本）' },
+        clear_siyuan_target: { type: 'boolean', description: 'true 时清除项目群思源位置，恢复继承 Jeff 全局归档目标' },
       },
     },
     {

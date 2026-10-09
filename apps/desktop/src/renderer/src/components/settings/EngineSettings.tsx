@@ -13,7 +13,7 @@ const STATUS_LABELS: Record<string, string> = {
 
 type PendingEngine = { next: EngineId } | null
 
-/** 设置 → 引擎服务：opencode sidecar 状态 / 版本 / 重启 / 日志 / TLS 与调试开关 */
+/** 设置 → 执行引擎：CLI 选择、运行状态与本机诊断 */
 export default function EngineSettings(): React.JSX.Element {
   const { appInfo, refreshAppInfo } = useStore()
   const [engines, setEngines] = useState<EngineStatus[]>([])
@@ -151,11 +151,11 @@ export default function EngineSettings(): React.JSX.Element {
 
   return (
     <div className="settings-content" data-testid="engine-settings">
-      <h2 className="settings-title">引擎服务</h2>
+      <h2 className="settings-title">执行引擎</h2>
       <p className="settings-tip">每个 Agent 可独立选择本机可用的 CLI。选择一个引擎查看状态与配置；只有 OpenCode（Jeff）在此管理模型提供商。</p>
       {engineError && <p role="alert" data-testid="engine-error">{engineError}</p>}
       <label className="field" style={{ maxWidth: 620 }}>
-        <span>引擎服务</span>
+        <span>默认查看的引擎</span>
         <select data-testid="engine-service-select" value={selectedEngine} onChange={(event) => requestEngineSwitch(event.target.value as EngineId)}>
           {engines.filter((engine) => engine.id === 'opencode' || engine.available || !!engine.configuredPath || engine.id === selectedEngine).map((engine) => (
             <option key={engine.id} value={engine.id}>{engine.label}{engine.available ? ' · 可用' : ' · 未就绪'}</option>

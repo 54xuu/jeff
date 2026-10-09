@@ -11,7 +11,7 @@ import { readBridge } from './helpers/bridge.js'
  * 小杰推荐、草稿跨会话、Esc 后斜杠不复弹、插件试一下、回底、会话内查找、
  * 定时卡片上次状态、浏览器被操作时的顶栏。
  */
-const HOME = path.join(REPO_ROOT, '.tmp/jeff-e2e-p0-home')
+const HOME = path.join(REPO_ROOT, '.tmp/jeff-e2e-p0-home-siyuan')
 
 function dbQuery<T = Record<string, unknown>>(sql: string, ...params: unknown[]): T[] {
   const db = new DatabaseSync(path.join(HOME, 'jeff.db'), { readOnly: true })
