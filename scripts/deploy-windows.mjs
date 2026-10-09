@@ -133,6 +133,12 @@ export function evidenceTransferVerified({ pullStatus, remoteOutcome, downloaded
     && remoteOutcome.ok === downloadedOutcome?.ok
 }
 
+export function instrumentationResultSucceeded(exitCode, output) {
+  return exitCode === 0
+    && !/FAILURES!!!|INSTRUMENTATION_FAILED/.test(output)
+    && /\bOK \([1-9]\d* tests?\)/.test(output)
+}
+
 function powershellEncodedCommand(script) {
   const body = `$OutputEncoding=[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); ${script}`
   return Buffer.from(body, 'utf16le').toString('base64')
@@ -215,6 +221,18 @@ function run(label, command, args, options = {}) {
   const result = spawnSync(command, args, { cwd: ROOT, stdio: 'inherit', ...options })
   if (result.error) throw result.error
   if (result.status !== 0) throw new Error(`${label} failed (exit ${result.status ?? 'signal'})`)
+}
+
+function runInstrumentationAcceptance(label, args) {
+  console.log(`\n[deploy] ${label}`)
+  const result = spawnSync(ANDROID_ADB, args, { cwd: ROOT, encoding: 'utf8' })
+  if (result.stdout) process.stdout.write(result.stdout)
+  if (result.stderr) process.stderr.write(result.stderr)
+  if (result.error) throw result.error
+  const output = `${result.stdout || ''}\n${result.stderr || ''}`
+  if (!instrumentationResultSucceeded(result.status, output)) {
+    throw new Error(`${label} failed: adb exit ${result.status ?? 'signal'}; instrumentation output lacked a passing summary or reported failures`)
+  }
 }
 
 function readJson(file) {
@@ -452,7 +470,7 @@ async function main() {
     installAvdApk(androidSerial, testApk, 'app.jeff.mobile.test')
     prepareAvd(androidSerial)
     try {
-      run('Run AVD instrumentation acceptance', ANDROID_ADB, ['-s', androidSerial, 'shell', 'am', 'instrument', '-w', '-e', 'class', `app.jeff.mobile.${suite.androidTestClass}`, 'app.jeff.mobile.test/androidx.test.runner.AndroidJUnitRunner'])
+      runInstrumentationAcceptance('Run AVD instrumentation acceptance', ['-s', androidSerial, 'shell', 'am', 'instrument', '-w', '-e', 'class', `app.jeff.mobile.${suite.androidTestClass}`, 'app.jeff.mobile.test/androidx.test.runner.AndroidJUnitRunner'])
     } catch (error) {
       captureAvdDiagnostics(androidSerial, runDir, 'emulator')
       throw error
@@ -512,7 +530,7 @@ async function main() {
     if (outcome.androidRetryRequired) {
       console.log('[deploy] Windows reports that the physical device disconnected mid-test; rerun the complete Android suite on Ubuntu AVD.')
       try {
-        run('Rerun Android instrumentation on Ubuntu AVD after physical disconnect', ANDROID_ADB, ['-s', androidSerial, 'shell', 'am', 'instrument', '-w', '-e', 'class', `app.jeff.mobile.${suite.androidTestClass}`, 'app.jeff.mobile.test/androidx.test.runner.AndroidJUnitRunner'])
+        runInstrumentationAcceptance('Rerun Android instrumentation on Ubuntu AVD after physical disconnect', ['-s', androidSerial, 'shell', 'am', 'instrument', '-w', '-e', 'class', `app.jeff.mobile.${suite.androidTestClass}`, 'app.jeff.mobile.test/androidx.test.runner.AndroidJUnitRunner'])
       } catch (error) {
         captureAvdDiagnostics(androidSerial, runDir, 'emulator-after-disconnect')
         throw error

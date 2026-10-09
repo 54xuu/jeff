@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import crypto from 'node:crypto'
-import { parseArgs, parseAdbDevices, chooseAndroidDevice, chooseWindowsAndroidPath, preferConfiguredUsb, verifyArtifactManifest, windowsRunnerDestination, windowsIncomingFileDestination, evidenceTransferVerified, expectedAndroidVersionCode, validateAndroidReleaseMetadata, windowsAdbScript } from './deploy-windows.mjs'
+import { parseArgs, parseAdbDevices, chooseAndroidDevice, chooseWindowsAndroidPath, preferConfiguredUsb, verifyArtifactManifest, windowsRunnerDestination, windowsIncomingFileDestination, evidenceTransferVerified, expectedAndroidVersionCode, validateAndroidReleaseMetadata, windowsAdbScript, instrumentationResultSucceeded } from './deploy-windows.mjs'
 
 test('deployment CLI accepts explicit target, Android fallback mode, and a named suite', () => {
   assert.deepEqual(
@@ -98,4 +98,12 @@ test('Windows cleanup is allowed only after a successful, matching evidence tran
   assert.equal(evidenceTransferVerified({ pullStatus: 1, remoteOutcome, downloadedOutcome }), false)
   assert.equal(evidenceTransferVerified({ pullStatus: 0, remoteOutcome, downloadedOutcome: { ...downloadedOutcome, runId: 'other' } }), false)
   assert.equal(evidenceTransferVerified({ pullStatus: 0, remoteOutcome, downloadedOutcome: { ...downloadedOutcome, ok: true } }), false)
+})
+
+test('AVD instrumentation requires a passing JUnit summary even when adb exits zero', () => {
+  assert.equal(instrumentationResultSucceeded(0, 'INSTRUMENTATION_STATUS_CODE: 0\nOK (3 tests)\n'), true)
+  assert.equal(instrumentationResultSucceeded(0, 'Tests run: 3, Failures: 1\nFAILURES!!!\n'), false)
+  assert.equal(instrumentationResultSucceeded(0, 'INSTRUMENTATION_FAILED: Process crashed.\n'), false)
+  assert.equal(instrumentationResultSucceeded(0, 'INSTRUMENTATION_STATUS_CODE: 0\n'), false)
+  assert.equal(instrumentationResultSucceeded(1, 'OK (3 tests)\n'), false)
 })
