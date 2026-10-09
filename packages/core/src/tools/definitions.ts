@@ -117,12 +117,13 @@ export function allToolDefs(): ToolDef[] {
       name: 'jeff_siyuan_create',
       description:
         '在思源创建新 Markdown 文档。只在用户明确要求写入/保存时调用；目标按用户明确指定位置→当前项目群绑定→Jeff 全局默认的顺序解析，仍不明确时询问用户。' +
-        '仅创建新文档，不覆盖同路径文档；路径可含子目录，内容使用 Markdown。每日/周期报告应优先追加到已有文档，不要反复创建同名文档。',
+        '仅当用户明确说出或确认目标位置时，才传 explicit_target=true 并传对应 ID；仅为查看选项而读取到的 ID 不代表用户已选择。未显式指定时，Jeff 忽略目标 ID 并使用项目群绑定位置或全局默认。仅创建新文档，不覆盖同路径文档；路径可含子目录，内容使用 Markdown。每日/周期报告应优先追加到已有文档，不要反复创建同名文档。',
       args: {
         title_path: { type: 'string', description: '文档标题或相对层级路径，例如「调研/方案评估」；不要以斜杠开头' },
         markdown: { type: 'string', description: '完整 Markdown 文档内容' },
-        notebook_id: { type: 'string', description: '用户明确指定或刚确认的目标笔记本 ID（可选）' },
-        parent_doc_id: { type: 'string', description: '用户明确指定或刚确认的父文档 ID（可选）' },
+        explicit_target: { type: 'boolean', description: '仅当用户明确说出或确认目标位置时传 true；否则省略，Jeff 使用项目群绑定或全局默认位置' },
+        notebook_id: { type: 'string', description: '仅 explicit_target=true 时使用：用户明确指定或刚确认的目标笔记本 ID' },
+        parent_doc_id: { type: 'string', description: '仅 explicit_target=true 时使用：用户明确指定或刚确认的父文档 ID' },
       },
     },
     {

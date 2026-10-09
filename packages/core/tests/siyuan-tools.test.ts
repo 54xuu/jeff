@@ -93,26 +93,35 @@ describe('Jeff 内置思源工具', () => {
     expect(search).toHaveBeenCalledWith('康立日报', {})
   })
 
-  it('写入位置按项目绑定、全局默认解析；显式位置优先，缺省时要求用户配置', async () => {
+  it('写入位置按项目绑定、全局默认解析；只有明确用户选择才能覆盖，缺省时要求用户配置', async () => {
     const project = projectRepo(db).create({ title: '当前项目', siyuan_notebook_id: NOTEBOOK, siyuan_parent_doc_id: PARENT })
     activeScope = { kind: 'group', projectId: project.id, agentId: 'agent-1' }
     await call('jeff_siyuan_create', { title_path: '会议纪要', markdown: '# 会议纪要' })
     expect(create).toHaveBeenCalledWith({ notebookId: NOTEBOOK, parentDocId: PARENT, path: '会议纪要', markdown: '# 会议纪要' })
     expect(changed).toHaveBeenCalledTimes(1)
+
+    // Listing notebooks can make a model pass an ID without the user choosing it.
+    // That must not silently discard the group's bound parent directory.
     create.mockClear()
     await call('jeff_siyuan_create', { title_path: '单独归档', markdown: '# 归档', notebook_id: NOTEBOOK })
-    expect(create).toHaveBeenCalledWith({ notebookId: NOTEBOOK, path: '单独归档', markdown: '# 归档' })
+    expect(create).toHaveBeenCalledWith({ notebookId: NOTEBOOK, parentDocId: PARENT, path: '单独归档', markdown: '# 归档' })
+
+    // A notebook-root override remains possible after the user explicitly chose it.
     create.mockClear()
-    await call('jeff_siyuan_create', { title_path: '用户指定父文档', markdown: '# 归档', parent_doc_id: DOC })
+    await call('jeff_siyuan_create', { title_path: '用户指定笔记本根目录', markdown: '# 归档', explicit_target: true, notebook_id: NOTEBOOK })
+    expect(create).toHaveBeenCalledWith({ notebookId: NOTEBOOK, path: '用户指定笔记本根目录', markdown: '# 归档' })
+
+    create.mockClear()
+    await call('jeff_siyuan_create', { title_path: '用户指定父文档', markdown: '# 归档', explicit_target: true, parent_doc_id: DOC })
     expect(create).toHaveBeenCalledWith({ notebookId: NOTEBOOK, parentDocId: DOC, path: '用户指定父文档', markdown: '# 归档' })
 
     projectRepo(db).update(project.id, { siyuan_notebook_id: '', siyuan_parent_doc_id: '' })
     defaultTarget = { notebookId: NOTEBOOK, parentDocId: PARENT }
     create.mockClear()
-    await call('jeff_siyuan_create', { title_path: '全局默认', markdown: '# 默认' })
+    await call('jeff_siyuan_create', { title_path: '全局默认', markdown: '# 默认', notebook_id: OTHER_NOTEBOOK })
     expect(create).toHaveBeenCalledWith({ notebookId: NOTEBOOK, parentDocId: PARENT, path: '全局默认', markdown: '# 默认' })
     defaultTarget = { notebookId: '', parentDocId: '' }
-    await expect(call('jeff_siyuan_create', { title_path: '未配置', markdown: '# 内容' })).rejects.toThrow(/没有明确的思源写入位置/)
+    await expect(call('jeff_siyuan_create', { title_path: '未配置', markdown: '# 内容', notebook_id: NOTEBOOK })).rejects.toThrow(/没有明确的思源写入位置/)
   })
 
   it('追加校验项目群目录，调用末尾追加接口，并要求真实会话身份', async () => {

@@ -76,6 +76,7 @@ describe('工具定义与实现的一致性', () => {
       expect(Object.values(def!.args).every((arg) => ['string', 'boolean', 'number', 'array'].includes(arg.type))).toBe(true)
     }
     expect(defs.find((item) => item.name === 'jeff_siyuan_search')?.args.scope?.enum).toEqual(['project', 'all'])
+    expect(defs.find((item) => item.name === 'jeff_siyuan_create')?.args.explicit_target?.type).toBe('boolean')
   })
 
   it('会改数据的工具都要声明 id/必填参数说明（防止「模型看不到字段」这类漂移）', () => {

@@ -175,9 +175,28 @@ test.describe('Jeff UI 封闭清单', () => {
       await page.getByTestId('settings-nav-engine').click()
       await expect(page.getByTestId('engine-settings')).toBeVisible()
       await expect(page.locator('.tag').filter({ hasText: /运行中|启动中|已停止|异常/ })).toBeVisible({ timeout: 45000 })
+      const engineRuntimeDetails = page.getByTestId('engine-runtime-diagnostics')
+      await expect(engineRuntimeDetails.locator('summary')).toContainText('查看运行环境与路径')
+      if (await page.getByRole('alert').count()) {
+        await expect(engineRuntimeDetails).toHaveAttribute('open', '')
+      } else {
+        await expect(engineRuntimeDetails).not.toHaveAttribute('open')
+        await engineRuntimeDetails.locator('summary').click()
+        await expect(engineRuntimeDetails).toHaveAttribute('open', '')
+        await expect(engineRuntimeDetails.locator('code').first()).toBeVisible()
+        await engineRuntimeDetails.locator('summary').click()
+        await expect(engineRuntimeDetails).not.toHaveAttribute('open')
+      }
 
       await page.getByTestId('settings-nav-memory').click()
       await expect(page.getByTestId('memory-settings')).toBeVisible()
+      const memoryFileLocation = page.getByTestId('memory-file-location')
+      await expect(memoryFileLocation).not.toHaveAttribute('open')
+      await expect(memoryFileLocation.locator('code')).not.toBeVisible()
+      await memoryFileLocation.locator('summary').click()
+      await expect(memoryFileLocation.locator('code')).toBeVisible()
+      await memoryFileLocation.locator('summary').click()
+      await expect(memoryFileLocation).not.toHaveAttribute('open')
 
       // ---- MCP 导入（确认后会重启引擎，给足时间）----
       // 凭据不进仓库：只从环境变量注入（E2E_MCP_MYSQL_JSON = 完整 mcpServers JSON）；未提供则跳过该段

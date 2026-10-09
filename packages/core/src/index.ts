@@ -628,7 +628,7 @@ export class JeffCore extends EventEmitter {
       id: 'siyuan-knowledge-policy', kind: 'unclassified-system', scope: projectId ? 'project' : 'agent', source: 'Jeff 内置思源知识库策略',
       readStatus: 'generated', included: true, content: [
         '思源知识库使用规则：当用户询问 Jeff/项目已有资料、历史决策、笔记内容，或明确要求搜索思源时，主动调用 jeff_siyuan_search，不要让用户先提醒。项目群先在当前项目群绑定目录搜索；结果不足或用户明确要求全库时再以 scope="all" 扩展到全库，跨笔记本查询也必须传 scope="all"。读取扩展结果时 jeff_siyuan_read 也传 scope="all"；未扩展时只读项目目录。私聊默认全库搜索。',
-        '引用知识库内容时标注文档标题与路径；候选歧义时先询问，不能猜文档 ID。只有用户明确要求保存/写入时才调用写工具；新建位置按用户明确指定→项目群绑定→全局默认→询问用户。项目群追加只能写入本群绑定目录；用户明确要求全库追加时传 scope="all"。只允许新建或追加，不覆盖、更新或删除；日报追加到已有目标文档末尾。',
+        '引用知识库内容时标注文档标题与路径；候选歧义时先询问，不能猜文档 ID。只有用户明确要求保存/写入时才调用写工具；新建位置按用户明确指定→项目群绑定→全局默认→询问用户。只有用户明确说出或确认了具体位置，jeff_siyuan_create 才传 explicit_target=true 和对应 ID；仅为了查看选项而调用 jeff_siyuan_list_notebooks 不代表用户已选择位置，未显式选择时省略目标 ID，由 Jeff 使用项目群绑定或全局默认。项目群追加只能写入本群绑定目录；用户明确要求全库追加时传 scope="all"。只允许新建或追加，不覆盖、更新或删除；日报追加到已有目标文档末尾。',
       ].join('\n'),
     }))
     if (projectId) blocks.push(...this.groupChat.buildBriefingBlocks(projectId, agentId))

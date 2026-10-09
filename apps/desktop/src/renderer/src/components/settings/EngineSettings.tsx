@@ -168,18 +168,24 @@ export default function EngineSettings(): React.JSX.Element {
         <div className="pv-detail" data-testid="engine-opencode-system">
           <h3>{selected.label} · {selected.available ? '已检测到' : '未就绪'}</h3>
           <p className="settings-tip">这是本机单独安装的 OpenCode。Jeff 为它建立隔离会话目录，并使用该系统账号已配置的模型凭据；群聊与私聊记录仍保存在 Jeff。</p>
-          <p className="provider-sub">CLI：{selected.path || '未找到'}</p>
-          {selected.sourcePath && <p className="provider-sub">系统配置来源：{selected.sourcePath}</p>}
-          {selected.version && <p className="provider-sub">版本：{selected.version}</p>}
           {selected.error && <p className="settings-error">{selected.error}</p>}
           <p className="settings-tip">登录、模型和思考选项来自系统 OpenCode；模型提供商编辑只出现在 OpenCode（Jeff）中。</p>
+          <details className="settings-diagnostic-path">
+            <summary>查看程序路径与版本</summary>
+            <div className="engine-diagnostic-values">
+              <p>CLI：<code>{selected.path || '未找到'}</code></p>
+              {selected.sourcePath && <p>系统配置来源：<code>{selected.sourcePath}</code></p>}
+              {selected.version && <p>版本：<code>{selected.version}</code></p>}
+            </div>
+          </details>
         </div>
       )}
       {selected && selectedEngine !== 'opencode' && selectedEngine !== 'opencode-system' && (
         <div className="pv-detail" key={selected.id} data-testid={`engine-${selected.id}`}>
           <h3>{selected.label} · {selected.available ? '已检测到' : '未就绪'}</h3>
-          <p className="settings-tip">{selected.version || ''} {selected.error || ''}</p>
           <p className="settings-tip">安装与登录在电脑上完成；检测只核对路径、版本和 CLI 协议。登录与模型可用性请在聊天中实际验证。</p>
+          {selected.error && <p className="settings-error">{selected.error}</p>}
+          {selected.version && <details className="settings-diagnostic-path"><summary>查看 CLI 版本</summary><code>{selected.version}</code></details>}
         </div>
       )}
       <details className="pv-detail" data-testid="engine-path-manager">
@@ -199,17 +205,22 @@ export default function EngineSettings(): React.JSX.Element {
         <div className="provider-row">
           <div className="provider-main">
             <div className="provider-name">
-              状态
+              桌面引擎
               <span className={`tag ${appInfo?.sidecarStatus === 'running' ? 'tag-green' : ''}`}>{STATUS_LABELS[appInfo?.sidecarStatus || 'stopped'] || appInfo?.sidecarStatus}</span>
-              {appInfo?.sidecarPort ? <span className="tag">端口 {appInfo.sidecarPort}</span> : null}
-              {appInfo?.opencodeVersion ? <span className="tag">opencode {appInfo.opencodeVersion}</span> : null}
             </div>
-            <div className="provider-sub">二进制：{appInfo?.opencodeBinary || '未找到'}</div>
-            {appInfo?.sidecarError && <div className="provider-sub" style={{ color: 'var(--danger)' }}>⚠️ {appInfo.sidecarError}</div>}
-            <div className="provider-sub">数据目录：{appInfo?.dataDir}</div>
+            {appInfo?.sidecarError && <div className="settings-error" role="alert">{appInfo.sidecarError}</div>}
           </div>
           <button className="text-btn" disabled={restarting} onClick={() => void restart()}>{restarting ? '重启中…' : '重启服务'}</button>
         </div>
+        <details className="settings-diagnostic-path engine-runtime-diagnostics" data-testid="engine-runtime-diagnostics" open={!!appInfo?.sidecarError}>
+          <summary>查看运行环境与路径</summary>
+          <div className="engine-diagnostic-grid">
+            {appInfo?.sidecarPort ? <p>本机服务端口：<code>{appInfo.sidecarPort}</code></p> : null}
+            {appInfo?.opencodeVersion ? <p>OpenCode 版本：<code>{appInfo.opencodeVersion}</code></p> : null}
+            <p>引擎程序：<code>{appInfo?.opencodeBinary || '未找到'}</code></p>
+            <p>数据目录：<code>{appInfo?.dataDir || '—'}</code></p>
+          </div>
+        </details>
       </div>}
       {selectedEngine === 'opencode' && <details className="pv-detail" style={{ marginTop: 8 }}>
         <summary>服务诊断与高级选项</summary>

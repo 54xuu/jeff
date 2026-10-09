@@ -1665,6 +1665,39 @@ body.composer-resizing * {
   margin-top: 2px;
 }
 
+.settings-diagnostic-path {
+  min-width: 0;
+  margin-top: 6px;
+  color: var(--text-2);
+  font-size: 12px;
+}
+.settings-diagnostic-path > summary {
+  width: fit-content;
+  cursor: pointer;
+}
+.settings-diagnostic-path code {
+  display: block;
+  max-width: 100%;
+  margin-top: 6px;
+  padding: 7px 9px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+  color: var(--text);
+  font-size: 11px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+.engine-diagnostic-values,
+.engine-diagnostic-grid { margin-top: 8px; }
+.engine-diagnostic-values p,
+.engine-diagnostic-grid p { margin: 5px 0; color: var(--text-2); font-size: 12px; }
+.engine-runtime-diagnostics { padding-top: 2px; }
+.engine-diagnostic-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 16px; }
+.memory-editor-head { flex-wrap: wrap; }
+.memory-editor-head .settings-diagnostic-path { margin: 0 0 0 auto; font-size: 11px; font-weight: 400; }
+.memory-rules-list .settings-diagnostic-path { margin-top: 3px; }
+
 .settings-actions {
   display: flex;
   flex-wrap: wrap;
@@ -2306,6 +2339,7 @@ body.composer-resizing * {
   .settings-pane { padding: 20px 16px 28px; }
   .settings-section-card { padding: 16px; }
   .siyuan-connection-grid, .siyuan-target-grid { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  .engine-diagnostic-grid { grid-template-columns: minmax(0, 1fr); }
 }
 
 @media (max-width: 560px) {

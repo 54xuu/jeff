@@ -121,7 +121,6 @@ export default function MemorySettings(): React.JSX.Element {
                     key={`${m.kind}:${m.id}`}
                     className={`memory-chip ${sel && sel.kind === m.kind && sel.id === m.id ? 'on' : ''}`}
                     onClick={() => void pick(m)}
-                    title={m.file}
                   >
                     {m.label}
                   </button>
@@ -140,7 +139,10 @@ export default function MemorySettings(): React.JSX.Element {
               <>
                 <div className="memory-editor-head">
                   <span>{sel.label} 的记忆 · {entries.length} 条</span>
-                  <span className="settings-tip">{sel.file}</span>
+                  <details className="settings-diagnostic-path" data-testid="memory-file-location">
+                    <summary>查看文件位置</summary>
+                    <code>{sel.file}</code>
+                  </details>
                 </div>
                 <div className="memory-budget">
                   <div className="memory-budget-bar">
@@ -227,7 +229,10 @@ export default function MemorySettings(): React.JSX.Element {
                 {m.label}
                 <span className={`tag ${m.exists ? 'tag-green' : ''}`}>{m.exists ? '已存在' : '未创建'}</span>
               </div>
-              <div className="provider-sub">{m.file}</div>
+              <details className="settings-diagnostic-path">
+                <summary>查看文件位置</summary>
+                <code>{m.file}</code>
+              </details>
             </div>
             <button
               className="text-btn"

@@ -78,12 +78,14 @@ export function registerSiYuanTools(bridge: ToolBridge, deps: SiYuanToolDeps): v
     return client.read(docId)
   })
 
-  const resolveTarget = async (scope: SessionScopeCtx, rawNotebookId = '', rawParentDocId = '') => {
+  const resolveTarget = async (scope: SessionScopeCtx, raw: Record<string, unknown>) => {
     const project = scope.kind === 'group' ? projectRepo(deps.db).get(scope.projectId) : undefined
     const global = deps.getDefaultTarget()
-    const hasExplicitTarget = !!rawNotebookId.trim() || !!rawParentDocId.trim()
-    let notebookId = rawNotebookId.trim()
-    let parentDocId = rawParentDocId.trim()
+    // Models may inspect notebook options while preparing a write. Those IDs are not
+    // user intent by themselves: only the explicit flag may override Jeff's target.
+    const hasExplicitTarget = raw.explicit_target === true
+    let notebookId = hasExplicitTarget && typeof raw.notebook_id === 'string' ? raw.notebook_id.trim() : ''
+    let parentDocId = hasExplicitTarget && typeof raw.parent_doc_id === 'string' ? raw.parent_doc_id.trim() : ''
     if (parentDocId && !notebookId) notebookId = (await client.documentMeta(parentDocId)).notebookId
     if (!hasExplicitTarget) {
       notebookId = project?.siyuan_notebook_id || global.notebookId || ''
@@ -102,7 +104,7 @@ export function registerSiYuanTools(bridge: ToolBridge, deps: SiYuanToolDeps): v
     const titlePath = typeof raw.title_path === 'string' ? raw.title_path.trim() : ''
     const markdown = typeof raw.markdown === 'string' ? raw.markdown : ''
     if (!titlePath || !markdown.trim()) throw new Error('title_path 与 markdown 必填')
-    const target = await resolveTarget(scope, typeof raw.notebook_id === 'string' ? raw.notebook_id : '', typeof raw.parent_doc_id === 'string' ? raw.parent_doc_id : '')
+    const target = await resolveTarget(scope, raw)
     const created = await client.create({ notebookId: target.notebookId, ...(target.parentDocId ? { parentDocId: target.parentDocId } : {}), path: titlePath, markdown })
     deps.onChanged()
     return { ...created, notebookId: target.notebookId, message: '思源文档已创建；原有文档未被覆盖。' }
