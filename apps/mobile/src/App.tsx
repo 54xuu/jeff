@@ -3,14 +3,13 @@ import EngineSelector from './EngineSelector'
 import { Capacitor } from '@capacitor/core'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
-  IPC, ENGINE_LABELS, XIAOJIE_ID, TOOL_ACTION_LABEL, extractThinkTags, mergeReasoning, sortedPinKeys, decodePluginUserMessage,
+  IPC, ENGINE_LABELS, XIAOJIE_ID, TOOL_ACTION_LABEL, extractThinkTags, mergeReasoning, sortedPinKeys, decodePluginUserMessage, isMarkdownPath,
 } from '@jeff/core'
 import type { AgentInfo, AppInfo, ChatMsg, FileNode, FsDirEntry, GroupMessage, ProjectInfo, ProjectMember, ContextPreviewInfo, PluginCommand, PluginInfo, TaskInfo, GroupThreadBrief, TaskRunInfo, BrowserHandoffInfo, SiYuanNotebook, SiYuanSearchResult } from '@jeff/core'
 import type { RemoteStreamFrame } from '@jeff/core/remote'
 import { consumeBack } from './backstack'
 import Mascot from './Mascot'
 import { Markdown } from './Markdown'
-import { isMarkdownPath, joinWorkspacePath, linkifyWorkspaceMarkdown } from './linkify'
 import { type PairProgress, Native, PhoneLink, mergeStream, shrinkImage } from './session'
 
 type Tab = 'messages' | 'contacts' | 'me'
@@ -363,14 +362,25 @@ function ReasoningView({ reasoning, live, elapsedMs }: { reasoning?: string | st
 
 type ToolItem = { tool: string; status?: string; output?: string; error?: string }
 
-function AssistantText(props: { text: string; reasoning?: string | string[]; tools?: ToolItem[]; live?: boolean; reasonMs?: number }): React.JSX.Element {
+function AssistantText(props: {
+  text: string
+  reasoning?: string | string[]
+  tools?: ToolItem[]
+  live?: boolean
+  reasonMs?: number
+  fileBases?: string[]
+  resolveFiles?: (inputs: string[], bases: string[]) => Promise<Record<string, string>>
+  onFileLink?: (abs: string) => void
+  onFileLongPress?: (abs: string) => void
+}): React.JSX.Element {
   const parsed = useMemo(() => extractThinkTags(props.text), [props.text])
   const reasoning = useMemo(() => mergeReasoning(props.reasoning, parsed.reasoning), [props.reasoning, parsed])
+  const fileProps = { fileBases: props.fileBases, resolveFiles: props.resolveFiles, onFileLink: props.onFileLink, onFileLongPress: props.onFileLongPress }
   return (
     <>
       {reasoning ? <ReasoningView reasoning={reasoning} live={props.live} elapsedMs={props.reasonMs} /> : null}
       {props.tools && props.tools.length > 0 ? <ToolsView tools={props.tools} /> : null}
-      {parsed.text ? <Markdown text={parsed.text} live={props.live} /> : props.live && !reasoning ? <p>…</p> : null}
+      {parsed.text ? <Markdown text={parsed.text} live={props.live} {...fileProps} /> : props.live && !reasoning ? <p>…</p> : null}
     </>
   )
 }
@@ -523,6 +533,8 @@ export function App() {
   const [taskReviewFeedback, setTaskReviewFeedback] = useState('')
   const [projectThreads, setProjectThreads] = useState<GroupThreadBrief[]>([])
   const dataDirRef = useRef('')
+  const [chatFileBases, setChatFileBases] = useState<string[]>([])
+  const [fileNotice, setFileNotice] = useState('')
   const [computers, setComputers] = useState(phone.desktops)
   const [activeId, setActiveId] = useState('')
   const [browserHandoff, setBrowserHandoff] = useState<BrowserHandoffInfo | null>(null)
@@ -1390,6 +1402,20 @@ export function App() {
   }, [screen, selectedProjectMember?.agent_id, selectedProjectMember?.execution_engine])
 
   useEffect(() => {
+    if (screen !== 'chat' || !target) return
+    let cancel = false
+    void (async () => {
+      const dataDir = await ensureDataDir()
+      const globalDir = dataDir ? `${dataDir}/workspace` : ''
+      const project = target.kind === 'group' ? projects.find((item) => item.id === target.id) : undefined
+      const session = (project?.workspace_dir || '').trim() || globalDir
+      const bases = [...new Set([session, globalDir].filter(Boolean))]
+      if (!cancel) setChatFileBases(bases)
+    })()
+    return () => { cancel = true }
+  }, [screen, target, projects])
+
+  useEffect(() => {
     if (screen !== 'project' || projectSection !== 'task' || !selectedProjectTask) return
     let active = true
     const loadRuns = async () => {
@@ -1554,15 +1580,37 @@ export function App() {
   async function openRemoteFile(path: string, name: string) {
     if (!isMarkdownPath(name)) {
       setFilesTip('该文件类型暂不支持手机预览，请在电脑上查看')
+      setFileNotice('请在电脑上查看这个文件')
       return
     }
     try {
-      setFileReturnScreen(screen === 'project' ? 'project' : screen === 'file' ? fileReturnScreen : 'files')
+      setFileReturnScreen(screen === 'project' ? 'project' : screen === 'chat' ? 'chat' : screen === 'file' ? fileReturnScreen : 'files')
       const r = await phone.invoke<{ content: string; truncated?: boolean }>(IPC.fsReadFile, { file: path })
       setFilePreview({ name, content: r.content, truncated: r.truncated })
       setScreen('file')
     } catch (err) {
       setFilesTip(`读取失败：${(err as Error).message}`)
+      setFileNotice(`读取失败：${(err as Error).message}`)
+    }
+  }
+
+  async function resolveDesktopFiles(inputs: string[], bases: string[]): Promise<Record<string, string>> {
+    const result = await phone.invoke<{ hits?: Array<{ input: string; abs: string }> }>(IPC.fsResolvePaths, { inputs, bases })
+    const hits: Record<string, string> = {}
+    for (const hit of result.hits || []) hits[hit.input] = hit.abs
+    return hits
+  }
+
+  function openChatFile(abs: string) {
+    void openRemoteFile(abs, abs.split(/[/\\]/).pop() || abs)
+  }
+
+  async function copyDesktopPath(abs: string) {
+    try {
+      await navigator.clipboard.writeText(abs)
+      setFileNotice('已复制电脑上的路径')
+    } catch {
+      setFileNotice('复制路径失败')
     }
   }
 
@@ -2159,7 +2207,7 @@ export function App() {
                       )}
                       {m.role === 'assistant' ? (
                         <div className="wechat-ai-body">
-                          <AssistantText text={m.text} reasoning={m.reasoning} tools={m.tools} />
+                          <AssistantText text={m.text} reasoning={m.reasoning} tools={m.tools} fileBases={chatFileBases} resolveFiles={resolveDesktopFiles} onFileLink={(abs) => void openChatFile(abs)} onFileLongPress={(abs) => void copyDesktopPath(abs)} />
                         </div>
                       ) : (
         <>
@@ -2230,6 +2278,7 @@ export function App() {
               回到底部
             </button>
           ) : null}
+          {fileNotice ? <p className="err" role="status" data-testid="file-notice">{fileNotice}</p> : null}
           {error ? <p className="err">{error}</p> : null}
           {plus ? (
             <div className="plus wechat-plus-sheet" data-testid="plus-panel">
@@ -2580,11 +2629,13 @@ export function App() {
           {filePreview.truncated ? <p className="wechat-file-tip">文件过大，仅显示开头部分</p> : null}
           <div className="wechat-file-body" data-testid="file-preview-body">
             <Markdown
-              text={linkifyWorkspaceMarkdown(filePreview.content)}
-              onFileLink={(rel) => {
-                if (!filesData) return
-                void openRemoteFile(joinWorkspacePath(filesData.root, rel), rel.split('/').pop() || rel)
+              text={filePreview.content}
+              fileBases={filesData ? [filesData.root] : chatFileBases}
+              resolveFiles={resolveDesktopFiles}
+              onFileLink={(abs) => {
+                void openRemoteFile(abs, abs.split(/[/\\]/).pop() || abs)
               }}
+              onFileLongPress={(abs) => void copyDesktopPath(abs)}
             />
           </div>
         </section>

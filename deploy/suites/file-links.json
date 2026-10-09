@@ -1,0 +1,10 @@
+{
+  "description": "在 Windows 安装版隔离数据目录写入真实文件和项目群消息，确认已存在文件变成可点击链接、缺失文件保持纯文本，并且点击只记录打开决定、不启动外部程序。",
+  "desktop": {
+    "visible": ["[data-testid=nav-rail]"],
+    "actions": [
+      { "type": "seed-file-link" }
+    ]
+  },
+  "androidTestClass": "MobileInstallSmokeTest"
+}

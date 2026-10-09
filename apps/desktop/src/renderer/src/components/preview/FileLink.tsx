@@ -1,24 +1,32 @@
 /**
- * 站内文件链接（蓝色）：消息正文（Markdown <a>）与工具输出（纯文本拆段）共用。
- * 点击 → previewStore.openRel：.md 进内置预览器，其它文件交系统默认程序。
+ * 已确认存在的文件链接。点击打开；右键可打开、在文件夹中显示或复制完整路径。
  */
+import { FILE_HREF_PREFIX } from '@jeff/core'
 import { usePreviewStore } from './previewStore'
 
-export default function FileLink(props: { rel: string; workspaceDir?: string; children?: React.ReactNode }): React.JSX.Element {
-  const openRel = usePreviewStore((s) => s.openRel)
-  const missing = !props.workspaceDir
+export default function FileLink(props: { abs: string; children?: React.ReactNode }): React.JSX.Element {
+  const openAbs = usePreviewStore((s) => s.openAbs)
+  const openFileMenu = usePreviewStore((s) => s.openFileMenu)
   return (
     <a
       className="md-file-link"
-      href={`#jeff-file:${encodeURIComponent(props.rel)}`}
-      title={missing ? '当前会话没有关联的工作空间' : `打开工作区文件：${props.rel}`}
+      data-testid="md-file-link"
+      href={`${FILE_HREF_PREFIX}${encodeURIComponent(props.abs)}`}
+      title={props.abs}
       onClick={(e) => {
         e.preventDefault()
         e.stopPropagation()
-        void openRel(props.rel, props.workspaceDir || '')
+        void openAbs(props.abs)
+      }}
+      onContextMenu={(e) => {
+        e.preventDefault()
+        e.stopPropagation()
+        const x = Math.min(e.clientX, window.innerWidth - 180)
+        const y = Math.min(e.clientY, window.innerHeight - 140)
+        openFileMenu({ x, y, abs: props.abs })
       }}
     >
-      {props.children || `📄 ${props.rel}`}
+      {props.children || props.abs}
     </a>
   )
 }

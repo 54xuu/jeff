@@ -51,6 +51,18 @@ export { buildPaths, ensureDirs, jeffRoot } from './paths.js'
 export { openDb } from './db/db.js'
 export { inferDefaultContextLimit } from './oc/configWriter.js'
 export { SiYuanClient, normalizeSiYuanBaseUrl, isSiYuanDocumentId } from './siyuan/client.js'
+export { isBlockedExecutable, openDecision, resolveFilePaths, type ResolvedFile } from './files/resolve.js'
+export {
+  FILE_HREF_PREFIX,
+  applyResolvedLinks,
+  extractFileCandidates,
+  isMarkdownPath,
+  joinWorkspacePath,
+  normalizeFileRef,
+  segmentResolvedText,
+  type FileCandidate,
+  type TextSegment,
+} from './files/linkify.js'
 export type { SiYuanStoredConfig, SiYuanNotebook, SiYuanSearchResult, SiYuanDocument } from './siyuan/client.js'
 
 const NUDGE_INTERVAL = 10 // 每 N 个用户触发一次后台记忆自省

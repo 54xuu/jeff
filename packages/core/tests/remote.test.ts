@@ -116,6 +116,7 @@ describe('远程白名单', () => {
     for (const channel of [IPC.tasksList, IPC.taskSave, IPC.taskDelete, IPC.taskStart, IPC.taskStop, IPC.taskRuns, IPC.taskReview]) {
       expect(REMOTE_POLICY[channel]).toEqual({ policy: 'allow' })
     }
+    expect(REMOTE_POLICY[IPC.fsResolvePaths]).toEqual({ policy: 'allow' })
     expect(REMOTE_POLICY[IPC.siyuanSearch]).toEqual({ policy: 'allow' })
     for (const channel of [IPC.siyuanNotebooks, IPC.siyuanDocuments, IPC.siyuanTargetGet, IPC.siyuanTargetSave]) expect(REMOTE_POLICY[channel]).toEqual({ policy: 'allow' })
     expect(REMOTE_POLICY[IPC.browserHandoffOpen]).toEqual({ policy: 'allow' })

@@ -157,6 +157,7 @@ export const IPC = {
   fsListFiles: 'fs:listFiles',
   fsReadFile: 'fs:readFile',
   fsOpenPath: 'fs:openPath',
+  fsResolvePaths: 'fs:resolvePaths',
   fsListDirs: 'fs:listDirs',
   fsMkdir: 'fs:mkdir',
   remoteStatus: 'remote:status',
@@ -805,6 +806,7 @@ export type InvokeMap = {
   [IPC.fsListFiles]: { dir: string }
   [IPC.fsReadFile]: { file: string }
   [IPC.fsOpenPath]: { target: string; reveal?: boolean }
+  [IPC.fsResolvePaths]: { inputs: string[]; bases?: string[] }
   [IPC.fsListDirs]: { dir?: string }
   [IPC.fsMkdir]: { dir: string }
   [IPC.remoteStatus]: void

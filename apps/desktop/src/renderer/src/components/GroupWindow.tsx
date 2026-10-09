@@ -17,6 +17,7 @@ import { UserTextWithChip } from './PluginChip'
 import { composerPlugin, canSendComposer, emptyComposer, outgoingText, type ComposerState } from './composerState'
 import { useComposerMemory } from './useComposerMemory'
 import { BackToBottom, FindBar, QuotePills, addQuote, useConversationFind, useTextQuote } from './ChatChrome'
+import { FileBaseContext } from './preview/useFileHits'
 import MessageRail, { toNavPreview, useMessageAnchors, type NavItem } from './MessageRail'
 
 /** 项目群聊天窗口（= 微信群） */
@@ -143,6 +144,7 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
   // 群消息里的相对路径链接以群工作空间为基准（未配置 = Jeff 默认工作区）
   const defaultWorkspace = appInfo ? `${appInfo.dataDir}/workspace` : ''
   const workspaceDir = (project.workspace_dir || '').trim() || defaultWorkspace
+  const fileBases = [...new Set([workspaceDir, defaultWorkspace].filter(Boolean))]
 
   const onDraftChange = (value: string, field: 'before' | 'after' = 'after') => {
     slash.detect(value, field)
@@ -233,6 +235,7 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
   }
 
   return (
+    <FileBaseContext.Provider value={fileBases}>
     <div className="chat-window group-window">
       <div className="chat-header">
         <Avatar emoji={project.icon} size={34} busy={busy || !!stream} />
@@ -468,6 +471,7 @@ export default function GroupWindow(props: { projectId: string }): React.JSX.Ele
         />
       )}
     </div>
+    </FileBaseContext.Provider>
   )
 }
 

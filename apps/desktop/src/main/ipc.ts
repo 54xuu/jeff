@@ -18,7 +18,7 @@ import type {
   SiYuanTarget,
 } from '@jeff/core'
 import {
-  IPC, XIAOJIE_ID, engineId, agentRepo, projectRepo, projectAgentRepo, taskRepo, taskCardMessage, snapshotInstructions, APP_VERSION,
+  IPC, XIAOJIE_ID, engineId, agentRepo, projectRepo, projectAgentRepo, taskRepo, taskCardMessage, snapshotInstructions, APP_VERSION, openDecision, resolveFilePaths,
   PrivateChatStoppedError, BrowserHandoffPausedError, resolveSendText, resolveScreenshotScale,
   type ThinkingTier, type ChatPluginInvoke, type RemoteStatus,
 } from '@jeff/core'
@@ -443,16 +443,26 @@ export function registerIpc(core: JeffCore): Record<string, Handler> {
       const { file } = p as { file: string }
       return readTextFile(file)
     },
-    [IPC.fsOpenPath]: async (p): Promise<{ ok: boolean }> => {
+    [IPC.fsOpenPath]: async (p): Promise<{ ok: boolean; blocked?: boolean }> => {
       const { target, reveal } = p as { target: string; reveal?: boolean }
       const { shell } = await import('electron')
-      if (reveal) {
+      const decision = openDecision(target, reveal)
+      if (process.env.JEFF_E2E === '1') {
+        fs.appendFileSync(path.join(core.paths.root, 'fs-open.log'), `${JSON.stringify({ target, decision })}\n`)
+        return { ok: true, blocked: decision === 'block-reveal' }
+      }
+      if (decision !== 'open') {
         shell.showItemInFolder(target)
-        return { ok: true }
+        return { ok: true, blocked: decision === 'block-reveal' }
       }
       const err = await shell.openPath(target)
       if (err) throw new Error(err)
       return { ok: true }
+    },
+    [IPC.fsResolvePaths]: async (p): Promise<{ hits: Array<{ input: string; abs: string; kind: 'file' | 'dir' }> }> => {
+      const { inputs, bases } = (p || {}) as { inputs?: string[]; bases?: string[] }
+      const hits = await resolveFilePaths({ inputs: inputs || [], bases: bases || [] })
+      return { hits }
     },
     [IPC.fsListDirs]: async (p) => {
       const { dir } = (p || {}) as { dir?: string }

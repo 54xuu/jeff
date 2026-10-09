@@ -2,6 +2,12 @@ const fs = require('node:fs')
 const path = require('node:path')
 const { chromium } = require('playwright')
 
+// node:sqlite prints an experimental warning on stderr. The Windows worker treats native stderr as a failed acceptance.
+process.on('warning', (warning) => {
+  if (warning.name === 'ExperimentalWarning') return
+  console.error(warning.stack || String(warning))
+})
+
 async function connectOverCDP(endpoint, timeoutMs = 60_000) {
   const deadline = Date.now() + timeoutMs
   let lastError
@@ -18,6 +24,7 @@ async function connectOverCDP(endpoint, timeoutMs = 60_000) {
 
 async function main() {
   const [endpoint, evidenceDir] = process.argv.slice(2)
+  fs.mkdirSync(evidenceDir, { recursive: true })
   const suitePath = process.env.JEFF_DEPLOY_SUITE_FILE
   const expectedVersion = process.env.JEFF_DEPLOY_EXPECTED_VERSION
   const suite = JSON.parse(fs.readFileSync(suitePath, 'utf8'))
@@ -76,6 +83,74 @@ async function main() {
           if (actual.record[key] !== value) throw new Error(`Task ${key} mismatch: actual=${actual.record[key]} expected=${value}`)
         }
         if (actual.runs.length !== 0) throw new Error(`Saving the task started execution unexpectedly: ${JSON.stringify(actual.runs)}`)
+      }
+      else if (action.type === 'seed-file-link') {
+        const home = process.env.JEFF_HOME
+        if (!home) throw new Error('JEFF_HOME is required to seed a chat file link')
+        const workspace = path.join(home, 'workspace')
+        const file = path.join(workspace, 'out', 'filelink-deploy.txt')
+        fs.mkdirSync(path.dirname(file), { recursive: true })
+        fs.writeFileSync(file, 'filelink')
+        const { DatabaseSync } = require('node:sqlite')
+        const now = Date.now()
+        const dbPath = path.join(home, 'jeff.db')
+        const statements = [
+          [`INSERT INTO project (id, title, description, system_prompt, icon, status, leader_agent_id, workspace_dir, siyuan_notebook_id, siyuan_parent_doc_id, created_at, updated_at, deleted_at)
+            VALUES (?, ?, '', '', '📁', 'in_progress', 'agt_xiaojie', ?, '', '', ?, ?, NULL)`,
+            ['prj_filelink', '文件链接', workspace, now, now]],
+          [`INSERT INTO kv (key, value, updated_at) VALUES (?, ?, ?)`,
+            ['group:thread:prj_filelink:thr_filelink', JSON.stringify({ id: 'thr_filelink', title: '文件链接', createdAt: now, updatedAt: now }), now]],
+          [`INSERT INTO kv (key, value, updated_at) VALUES (?, ?, ?)`,
+            ['group:activeThread:prj_filelink', 'thr_filelink', now]],
+          [`INSERT INTO chat_message (id, scope, sender_type, sender_id, content, meta, created_at) VALUES (?,?,?,?,?,?,?)`,
+            ['msg_filelink', 'group:prj_filelink:thr_filelink', 'agent', 'agt_xiaojie', `已生成 ${file}\n不存在 ghost.docx`, '{}', now]],
+        ]
+        let lastErr
+        for (let i = 0; i < 8 && statements.length; i++) {
+          const db = new DatabaseSync(dbPath)
+          try {
+            for (const [sql, params] of statements) db.prepare(sql).run(...params)
+            lastErr = undefined
+            break
+          } catch (err) {
+            lastErr = err
+            await new Promise((resolve) => setTimeout(resolve, 200))
+          } finally {
+            db.close()
+          }
+        }
+        if (lastErr) throw lastErr
+        await page.reload()
+        await page.waitForURL(/app\.asar/, { timeout: 60_000 })
+        await page.getByTestId('chat-group-文件链接').click()
+        const link = page.getByTestId('md-file-link').filter({ hasText: 'filelink-deploy.txt' })
+        await link.waitFor({ state: 'visible', timeout: 30_000 })
+        const title = await link.getAttribute('title')
+        if (title !== file) throw new Error(`File link title mismatch: actual=${title} expected=${file}`)
+        if (await page.locator('[data-testid="md-file-link"][title$="ghost.docx"]').count() !== 0) {
+          throw new Error('A missing file was turned into a link')
+        }
+        await link.click()
+        const log = path.join(home, 'fs-open.log')
+        const deadline = Date.now() + 15_000
+        let logged = ''
+        let opened = false
+        while (Date.now() < deadline) {
+          logged = fs.existsSync(log) ? fs.readFileSync(log, 'utf8') : ''
+          opened = logged.split(/\r?\n/).filter(Boolean).some((line) => {
+            try {
+              const row = JSON.parse(line)
+              return row.target === file && row.decision === 'open'
+            } catch {
+              return false
+            }
+          })
+          if (opened) break
+          await new Promise((resolve) => setTimeout(resolve, 200))
+        }
+        if (!opened) {
+          throw new Error(`Installed app did not record an open decision for ${file}. log=${JSON.stringify(logged).slice(0, 500)}`)
+        }
       }
       else if (action.type === 'expect-group-prompt-context') {
         const actual = await page.evaluate(async ({ projectTitle }) => {

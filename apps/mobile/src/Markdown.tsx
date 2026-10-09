@@ -2,7 +2,7 @@ import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from 'reac
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeHighlight from 'rehype-highlight'
-import { FILE_HREF_PREFIX } from './linkify'
+import { FILE_HREF_PREFIX, applyResolvedLinks, extractFileCandidates } from '@jeff/core'
 import { pushBack } from './backstack'
 
 /** 代码高亮（U-2）：与桌面端同款 rehype-highlight；仅非流式挂载（流式每 token 重高亮会卡） */
@@ -276,7 +276,14 @@ function MermaidBlock(props: { code: string }): React.JSX.Element {
  * react-markdown 默认不渲染裸 HTML。
  * onFileLink：传入时，#jeff-file: 站内文件链接（工作区相对路径）改为回调而不是外开浏览器。
  */
-function MarkdownInner(props: { text: string; live?: boolean; onFileLink?: (rel: string) => void }): React.JSX.Element {
+function MarkdownInner(props: {
+  text: string
+  live?: boolean
+  fileBases?: string[]
+  resolveFiles?: (inputs: string[], bases: string[]) => Promise<Record<string, string>>
+  onFileLink?: (abs: string) => void
+  onFileLongPress?: (abs: string) => void
+}): React.JSX.Element {
   // Highlight.js composes grammar regex sources dynamically. Babel cannot
   // transpile those generated Unicode expressions on WebView 60/61.
   const highlightPlugins = useMemo(() => supportsUnicodeHighlighting() ? REHYPE : undefined, [])
@@ -284,6 +291,39 @@ function MarkdownInner(props: { text: string; live?: boolean; onFileLink?: (rel:
   liveRef.current = props.live
   const fileLinkRef = useRef(props.onFileLink)
   fileLinkRef.current = props.onFileLink
+  const longPressRef = useRef(props.onFileLongPress)
+  longPressRef.current = props.onFileLongPress
+  const [hits, setHits] = useState<Record<string, string>>({})
+  const basesKey = (props.fileBases || []).join('\0')
+  const resolveRef = useRef(props.resolveFiles)
+  resolveRef.current = props.resolveFiles
+  const basesRef = useRef(props.fileBases)
+  basesRef.current = props.fileBases
+  useEffect(() => {
+    const resolve = resolveRef.current
+    const bases = basesRef.current || []
+    if (props.live || !resolve || bases.length === 0) {
+      setHits({})
+      return
+    }
+    const inputs = [...new Set(extractFileCandidates(props.text).map((item) => item.raw))]
+    if (inputs.length === 0) {
+      setHits({})
+      return
+    }
+    let cancel = false
+    void resolve(inputs, bases)
+      .then((next) => {
+        if (!cancel) setHits(next || {})
+      })
+      .catch(() => {
+        if (!cancel) setHits({})
+      })
+    return () => {
+      cancel = true
+    }
+  }, [props.text, props.live, basesKey])
+  const text = props.live ? props.text : applyResolvedLinks(props.text, hits)
   const components = useMemo<React.ComponentProps<typeof ReactMarkdown>['components']>(
     () => ({
       pre: ({ children }) => {
@@ -292,16 +332,31 @@ function MarkdownInner(props: { text: string; live?: boolean; onFileLink?: (rel:
         return <CodeBlock lang={block.lang} raw={block.raw}>{children}</CodeBlock>
       },
       a: ({ node: _node, href, children, ...aProps }) => {
-        if (href && href.startsWith(FILE_HREF_PREFIX) && fileLinkRef.current) {
-          const rel = decodeURIComponent(href.slice(FILE_HREF_PREFIX.length))
+        if (href && href.startsWith(FILE_HREF_PREFIX)) {
+          const abs = decodeURIComponent(href.slice(FILE_HREF_PREFIX.length))
           return (
             <a
               {...aProps}
               href={href}
               className="md-file-link"
+              data-testid="md-file-link"
+              title={abs}
               onClick={(e) => {
                 e.preventDefault()
-                fileLinkRef.current?.(rel)
+                e.stopPropagation()
+                fileLinkRef.current?.(abs)
+              }}
+              onContextMenu={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                longPressRef.current?.(abs)
+              }}
+              onTouchStart={(e) => {
+                const timer = window.setTimeout(() => longPressRef.current?.(abs), 450)
+                const clear = () => window.clearTimeout(timer)
+                e.currentTarget.addEventListener('touchend', clear, { once: true })
+                e.currentTarget.addEventListener('touchmove', clear, { once: true })
+                e.currentTarget.addEventListener('touchcancel', clear, { once: true })
               }}
             >
               {children}
@@ -316,7 +371,7 @@ function MarkdownInner(props: { text: string; live?: boolean; onFileLink?: (rel:
   return (
     <div className="md-body" data-testid="md-body">
       <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={props.live ? undefined : highlightPlugins} components={components}>
-        {props.text}
+        {text}
       </ReactMarkdown>
     </div>
   )

@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { extractThinkTags, mergeReasoning, isStuck, readScroll, writeScroll, IPC, TOOL_ACTION_LABEL } from '@jeff/core'
+import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { extractThinkTags, mergeReasoning, isStuck, readScroll, writeScroll, IPC, TOOL_ACTION_LABEL, segmentResolvedText } from '@jeff/core'
 import type { ChatImage } from '@jeff/core'
 import Avatar from './Avatar'
 import { Markdown } from './Markdown'
 import { CopyButton } from './ui/CopyButton'
-import { splitTextWithFileLinks } from './preview/linkify'
 import FileLink from './preview/FileLink'
+import { FileBaseContext, useFileHits } from './preview/useFileHits'
 import { fmtFullTime } from '../format'
 import { api } from '../api'
 
@@ -330,15 +330,18 @@ const TRUNCATE_LEN = 2000
 /** 工具输出预览：超长截断 + 展开全文；输出里的相对路径渲染为可点击链接 */
 function ToolOutput(props: { text: string; workspaceDir?: string }): React.JSX.Element {
   const [expanded, setExpanded] = useState(false)
+  const contextBases = useContext(FileBaseContext)
+  const bases = contextBases.length ? contextBases : props.workspaceDir ? [props.workspaceDir] : []
   const full = props.text
   const truncated = full.length > TRUNCATE_LEN
   const shown = expanded || !truncated ? full : `${full.slice(0, TRUNCATE_LEN)}…`
+  const hits = useFileHits(shown, bases, true)
   return (
     <>
       <pre className="tool-output">
-        {splitTextWithFileLinks(shown).map((seg, i) =>
-          seg.type === 'path' ? (
-            <FileLink key={i} rel={seg.value} workspaceDir={props.workspaceDir} />
+        {segmentResolvedText(shown, hits).map((seg, i) =>
+          seg.type === 'file' && seg.abs ? (
+            <FileLink key={i} abs={seg.abs}>{seg.value}</FileLink>
           ) : (
             <span key={i}>{seg.value}</span>
           ),

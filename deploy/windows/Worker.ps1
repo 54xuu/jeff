@@ -185,7 +185,7 @@ while ($true) {
           while (-not (Test-Path $activePort) -and (Get-Date) -lt $until) { Start-Sleep -Milliseconds 500 }
           if (-not (Test-Path $activePort)) { throw 'Installed Jeff did not expose its test endpoint.' }
           $port = (Get-Content $activePort -TotalCount 1).Trim()
-          & $node $runner "http://127.0.0.1:$port" $script:runEvidence
+          & $node --no-warnings $runner "http://127.0.0.1:$port" $script:runEvidence
           if ($LASTEXITCODE -ne 0) { throw 'Installed desktop UI acceptance failed.' }
         } finally {
           if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force }

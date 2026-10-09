@@ -155,6 +155,16 @@ test.describe('1.11 统一风格全屏回归', () => {
                       { name: '汇总.md', rel: '汇总.md', abs: p.dir + '/汇总.md', dir: false, ext: 'md', size: 2048, mtime: now },
                     ],
                   }
+                case 'fs:resolvePaths': {
+                  const base = String((p.bases && p.bases[0]) || '/home/x/ws').replace(/[\\/]+$/, '')
+                  const hits = (p.inputs || []).flatMap((input: string) => {
+                    if (input === '报告/巡检结论.md' || input.endsWith('/巡检结论.md')) {
+                      return [{ input, abs: `${base}/报告/巡检结论.md`, kind: 'file' }]
+                    }
+                    return []
+                  })
+                  return { hits }
+                }
                 case 'fs:readFile': {
                   const content = String(p.file).endsWith('汇总.md')
                     ? '# 汇总\n\n3 床今日**平稳**，未见新发异常。\n\n明细见 报告/巡检结论.md。'

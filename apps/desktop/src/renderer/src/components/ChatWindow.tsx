@@ -18,6 +18,7 @@ import { UserTextWithChip } from './PluginChip'
 import { composerPlugin, canSendComposer, emptyComposer, outgoingText, type ComposerState } from './composerState'
 import { useComposerMemory } from './useComposerMemory'
 import { BackToBottom, FindBar, QuotePills, SuggestionChips, addQuote, useConversationFind, useTextQuote } from './ChatChrome'
+import { FileBaseContext } from './preview/useFileHits'
 import MessageRail, { toNavPreview, useMessageAnchors, type NavItem } from './MessageRail'
 
 export default function ChatWindow(props: { agentId: string }): React.JSX.Element {
@@ -135,7 +136,9 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
     }
   }
 
+  const fileBases = workspaceDir ? [workspaceDir] : []
   return (
+    <FileBaseContext.Provider value={fileBases}>
     <div className="chat-window" data-testid="chat-window">
       <div className="chat-header">
         <Avatar emoji={agent.avatar} size={34} busy={busyNow} agentId={agent.id} mood={headerMood} />
@@ -359,6 +362,7 @@ export default function ChatWindow(props: { agentId: string }): React.JSX.Elemen
         />
       )}
     </div>
+    </FileBaseContext.Provider>
   )
 }
 

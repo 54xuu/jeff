@@ -19,6 +19,7 @@ import SettingsNav from './components/settings/SettingsNav'
 import SettingsContent from './components/settings/SettingsContent'
 import RemotePairDialog from './components/settings/RemotePairDialog'
 import MarkdownPreviewModal, { PreviewNotice } from './components/preview/MarkdownPreviewModal'
+import FileLinkMenu from './components/preview/FileLinkMenu'
 import CommandPalette from './components/CommandPalette'
 import type { SettingsSection } from './store'
 
@@ -176,6 +177,7 @@ export default function App(): React.JSX.Element {
       <BrowserPanel />
       {/* 全局公共 Markdown 预览器（任意处调用）+ 轻提示 */}
       <MarkdownPreviewModal />
+      <FileLinkMenu />
       <PreviewNotice />
       {/* 全局快速跳转指令盘（Ctrl/Cmd+K） */}
       <CommandPalette />

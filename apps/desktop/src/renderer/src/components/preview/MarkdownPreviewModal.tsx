@@ -63,7 +63,7 @@ export default function MarkdownPreviewModal(): React.JSX.Element | null {
           {file.loading ? (
             <p className="settings-tip">加载中…</p>
           ) : (
-            <Markdown text={file.content || '（空文件）'} workspaceDir={file.workspaceDir} />
+            <Markdown text={file.content || '（空文件）'} fileBases={[file.file.split(/[/\\]/).slice(0, -1).join('/'), file.workspaceDir].filter(Boolean)} />
           )}
         </div>
       </div>

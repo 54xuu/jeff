@@ -61,3 +61,14 @@ export {
   visualNotifyChannel,
   type VisualNotifyChannel,
 } from './notify/visual.js'
+export {
+  FILE_HREF_PREFIX,
+  applyResolvedLinks,
+  extractFileCandidates,
+  isMarkdownPath,
+  joinWorkspacePath,
+  normalizeFileRef,
+  segmentResolvedText,
+  type FileCandidate,
+  type TextSegment,
+} from './files/linkify.js'

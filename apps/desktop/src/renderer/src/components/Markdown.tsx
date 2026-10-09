@@ -1,11 +1,13 @@
-import { memo, useMemo, useRef } from 'react'
+import { memo, useContext, useMemo, useRef } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeHighlight from 'rehype-highlight'
+import { FILE_HREF_PREFIX, applyResolvedLinks } from '@jeff/core'
 import { CopyButton } from './ui/CopyButton'
-import { FILE_HREF_PREFIX, linkifyWorkspaceMarkdown, nodeText } from './preview/linkify'
+import { nodeText } from './preview/linkify'
 import MermaidBlock from './preview/MermaidBlock'
 import FileLink from './preview/FileLink'
+import { FileBaseContext, useFileHits } from './preview/useFileHits'
 
 /** 高亮插件列表：仅在非流式（输出已完成）时挂载 */
 type RehypePlugins = React.ComponentProps<typeof ReactMarkdown>['rehypePlugins']
@@ -13,18 +15,19 @@ const REHYPE: RehypePlugins = [[rehypeHighlight, { detect: true, ignoreMissing: 
 
 /**
  * 聊天消息的 Markdown 渲染：GFM（表格/删除线/任务列表）+ 代码高亮 + 代码块复制按钮
- * + mermaid 图表（渲染/放大/源码）+ 工作空间相对路径蓝色链接（点击调用预览器）。
+ * + mermaid 图表（渲染/放大/源码）+ 已确认存在的文件路径（点击打开，右键复制完整路径）。
  * react-markdown 默认不渲染裸 HTML，无 XSS 风险。
  */
-function MarkdownInner(props: { text: string; workspaceDir?: string; live?: boolean }): React.JSX.Element {
-  const text = props.workspaceDir ? linkifyWorkspaceMarkdown(props.text) : props.text
+function MarkdownInner(props: { text: string; workspaceDir?: string; fileBases?: string[]; live?: boolean }): React.JSX.Element {
+  const contextBases = useContext(FileBaseContext)
+  const bases = props.fileBases?.length ? props.fileBases : contextBases.length ? contextBases : props.workspaceDir ? [props.workspaceDir] : []
+  const hits = useFileHits(props.text, bases, !props.live)
+  const text = props.live ? props.text : applyResolvedLinks(props.text, hits)
   // components 映射必须是稳定引用：ReactMarkdown 把这里的函数当「组件类型」用，每次渲染新建内联函数
   // 会让元素类型变化 → pre 子树（含 MermaidBlock）整棵重挂载——组件内状态（灯箱开着、源码/图形切换）
   // 随之丢失，还会白跑一次 mermaid.render。用 ref 读最新值，映射本身只建一次。
   const liveRef = useRef<boolean | undefined>(props.live)
   liveRef.current = props.live
-  const wsRef = useRef<string | undefined>(props.workspaceDir)
-  wsRef.current = props.workspaceDir
   const components = useMemo<React.ComponentProps<typeof ReactMarkdown>['components']>(
     () => ({
       pre: (preProps) => {
@@ -37,12 +40,8 @@ function MarkdownInner(props: { text: string; workspaceDir?: string; live?: bool
       a: (aProps) => {
         const href = String(aProps.href || '')
         if (href.startsWith(FILE_HREF_PREFIX)) {
-          const rel = decodeURIComponent(href.slice(FILE_HREF_PREFIX.length))
-          return (
-            <FileLink rel={rel} workspaceDir={wsRef.current}>
-              {aProps.children}
-            </FileLink>
-          )
+          const abs = decodeURIComponent(href.slice(FILE_HREF_PREFIX.length))
+          return <FileLink abs={abs}>{aProps.children}</FileLink>
         }
         return <a {...aProps} target="_blank" rel="noreferrer" />
       },
