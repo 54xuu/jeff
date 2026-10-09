@@ -1,6 +1,6 @@
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import type { EngineId } from './contract.js'
-import { launch, JsonLines, stopProcess } from './process.js'
+import { launch, JsonLines, stopProcess, type OversizedLine } from './process.js'
 import { JsonStreamParser, ReplyCollector } from './stream.js'
 import { APP_VERSION } from '../version.js'
 
@@ -18,6 +18,7 @@ export interface ExecutionInput {
   signal: AbortSignal
   reply: ReplyCollector
   session: (id: string) => void
+  warn?: (message: string) => void
 }
 export interface ExecutionResult { nativeSessionId?: string; tokens?: { input: number; output: number } }
 
@@ -34,7 +35,7 @@ export class RpcProcess {
   onRequest: (method: string, params: any) => unknown = () => ({ decision: 'decline' })
   onError: (error: Error) => void = () => {}
   private closed = false
-  constructor(binary: string, args: string[], cwd: string, env: NodeJS.ProcessEnv) {
+  constructor(binary: string, args: string[], cwd: string, env: NodeJS.ProcessEnv, private warn?: (message: string) => void) {
     this.child = launch(binary, args, cwd, env)
     const fail = (error: Error) => {
       if (this.closed) return
@@ -52,7 +53,7 @@ export class RpcProcess {
         this.pending.delete(event.id); clearTimeout(waiter.timer)
         event.error ? waiter.reject(new Error(event.error.message || 'Codex RPC 失败')) : waiter.resolve(event.result)
       } else if (event.method) this.onNotification(event.method, event.params)
-    })
+    }, (line) => this.overflow(line))
     this.child.stdout.on('data', (chunk) => { try { parser.push(chunk) } catch (err) { fail(err as Error); void stopProcess(this.child) } })
     this.child.stderr.on('data', () => { /* Auth diagnostics must not leak into UI/logs. */ })
     this.child.stdin.on('error', fail)
@@ -71,10 +72,38 @@ export class RpcProcess {
     })
   }
   async close(): Promise<void> { this.child.stdin.end(); await stopProcess(this.child) }
+  private overflow(line: OversizedLine): 'skip' | 'throw' {
+    if (codexLineOverflow(line.preview) !== 'skip') return 'throw'
+    const method = line.preview.match(/"method"\s*:\s*"([^"]*)"/)?.[1] || 'unknown'
+    this.warn?.(`Codex 通知 ${method} 超过 16MB（${line.bytes} 字节），已跳过`)
+    return 'skip'
+  }
+}
+
+/** Notifications can be dropped; responses and terminal events must still fail the turn. */
+export function codexLineOverflow(preview: string): 'skip' | 'throw' {
+  const method = preview.match(/"method"\s*:\s*"([^"]*)"/)?.[1]
+  const hasId = /"id"\s*:/.test(preview)
+  if (!hasId && method && method !== 'turn/completed' && method !== 'error') return 'skip'
+  return 'throw'
+}
+
+function resumeRejectedExcludeTurns(message: string): boolean {
+  return /excludeTurns|unknown field|invalid params|invalid request|additional propert/i.test(message)
+}
+
+/** Full history makes resume responses grow without bound; older Codex builds reject the flag. */
+async function resumeCodexThread(rpc: RpcProcess, params: Record<string, unknown>): Promise<{ thread: { id: string } }> {
+  try {
+    return await rpc.request('thread/resume', { ...params, excludeTurns: true })
+  } catch (err) {
+    if (!resumeRejectedExcludeTurns((err as Error).message || '')) throw err
+    return await rpc.request('thread/resume', params)
+  }
 }
 
 export async function executeCodex(input: ExecutionInput): Promise<ExecutionResult> {
-  const rpc = new RpcProcess(input.binary, ['app-server', '--listen', 'stdio://'], input.cwd, input.env)
+  const rpc = new RpcProcess(input.binary, ['app-server', '--listen', 'stdio://'], input.cwd, input.env, input.warn)
   let native = input.nativeSessionId
   let turnId: string | undefined
   let tokens: ExecutionResult['tokens']
@@ -119,10 +148,11 @@ export async function executeCodex(input: ExecutionInput): Promise<ExecutionResu
     if (input.signal.aborted) throw stoppedError(input.signal)
     await rpc.request('initialize', { clientInfo: { name: 'jeff', title: 'Jeff', version: APP_VERSION } })
     rpc.notify('initialized')
-    const thread = await rpc.request(native ? 'thread/resume' : 'thread/start', {
+    const threadParams = {
       ...(native ? { threadId: native } : {}), cwd: input.cwd, model: input.model || undefined,
       approvalPolicy: 'never', sandbox: 'danger-full-access',
-    })
+    }
+    const thread = native ? await resumeCodexThread(rpc, threadParams) : await rpc.request('thread/start', threadParams)
     native = thread.thread.id
     input.session(native!)
     if (input.signal.aborted) throw stoppedError(input.signal)

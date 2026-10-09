@@ -91,21 +91,55 @@ export async function stopProcess(child: ChildProcessWithoutNullStreams): Promis
   if (timer) clearTimeout(timer)
 }
 
+const CLI_LINE_LIMIT = 16 * 1024 * 1024
+
+export interface OversizedLine { bytes: number; preview: string }
+
 /** UTF-8 and line boundaries may split anywhere, including between Chinese bytes. */
 export class JsonLines {
   private decoder = new StringDecoder('utf8')
   private buffer = ''
-  constructor(private receive: (value: Record<string, any>) => void) {}
+  /** A single line already exceeded the limit; drop bytes until its newline. */
+  private discarding = false
+  constructor(
+    private receive: (value: Record<string, any>) => void,
+    private onOversized?: (line: OversizedLine) => 'skip' | 'throw',
+  ) {}
   push(chunk: Buffer): void {
-    this.buffer += this.decoder.write(chunk)
+    const text = this.decoder.write(chunk)
+    if (this.discarding) {
+      const index = text.indexOf('\n')
+      if (index < 0) return
+      this.discarding = false
+      this.buffer = text.slice(index + 1)
+    } else this.buffer += text
     this.drain()
-    if (Buffer.byteLength(this.buffer) > 16 * 1024 * 1024) throw new Error('CLI 消息超过 16MB，已停止执行')
+    this.guard()
   }
   end(): void {
-    this.buffer += this.decoder.end()
+    const text = this.decoder.end()
+    if (this.discarding) {
+      this.discarding = false
+      const index = text.indexOf('\n')
+      this.buffer = index < 0 ? '' : text.slice(index + 1)
+    } else this.buffer += text
     this.drain()
+    this.guard()
     if (this.buffer.trim()) this.receive(JSON.parse(this.buffer))
     this.buffer = ''
+  }
+  private guard(): void {
+    const bytes = Buffer.byteLength(this.buffer)
+    if (bytes <= CLI_LINE_LIMIT) return
+    const preview = this.buffer.slice(0, 240)
+    if (this.onOversized?.({ bytes, preview }) === 'skip') {
+      this.discarding = true
+      this.buffer = ''
+      this.decoder = new StringDecoder('utf8')
+      return
+    }
+    const snippet = preview.replace(/\s+/g, ' ').slice(0, 180)
+    throw new Error(`CLI 消息超过 16MB（${bytes} 字节），已停止执行：${snippet}`)
   }
   private drain(): void {
     let index: number

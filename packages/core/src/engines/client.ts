@@ -40,7 +40,8 @@ export class EngineClient extends OcClient {
   private completions = new Map<string, Promise<void>>()
   constructor(port: number, private deps: {
     db: DB; root: string; workspace: string; bridge: ToolBridge; mcp: () => Record<string, McpServerCfg>; bundledOpenCode?: () => string | null; promptSnapshots?: PromptSnapshotStore
-  }, log?: DebugLogFn) { super(port, log) }
+  }, log?: DebugLogFn) { super(port, log); this.externalLog = log }
+  private externalLog?: DebugLogFn
   private kv() { return kvRepo(this.deps.db) }
   private binding(id: string): Binding | null { return this.kv().getJSON<Binding | null>(bindingKey(id), null) }
   override sessionCompatible(id: string, agentId: string): boolean {
@@ -232,7 +233,8 @@ export class EngineClient extends OcClient {
       if (currentEngine === binding.engine) { binding.model = runtimeModel; binding.thinking = thinking || ''; this.save(binding) }
       const options = { engine, binary: status.path, ...environment, text: input.text,
         nativeSessionId: binding.nativeSessionId, model: runtimeModel || undefined, thinking,
-        images: input.images, signal: controller.signal, reply, session: (nativeSessionId: string) => { binding.nativeSessionId = nativeSessionId; this.save(binding) } }
+        images: input.images, signal: controller.signal, reply, session: (nativeSessionId: string) => { binding.nativeSessionId = nativeSessionId; this.save(binding) },
+        warn: (message: string) => this.externalLog?.('cli-oversize', message) }
       const result = await (binding.engine === 'codex' ? executeCodex(options) : binding.engine === 'opencode-system' ? executeOpenCode(options) : executeJsonCli(options))
       info.time!.completed = Date.now(); info.tokens = result.tokens
       info.parts = reply.values(); binding.updated = Date.now(); binding.configVersion = agent.instructions_version; this.save(binding)

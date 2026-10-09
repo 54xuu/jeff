@@ -13,7 +13,7 @@ import { GroupChat } from '../src/orchestrator/group.js'
 import { PrivateChat } from '../src/chat/private.js'
 import { REMOTE_POLICY } from '../src/remote/whitelist.js'
 import { IPC } from '../src/ipc/contract.js'
-import { executeJsonCli, executeOpenCode, RpcProcess } from '../src/engines/backends.js'
+import { codexLineOverflow, executeCodex, executeJsonCli, executeOpenCode, RpcProcess } from '../src/engines/backends.js'
 import { prepareEnvironment, readSystemOpenCodeProfile, systemOpenCodeModelOptions, systemOpenCodePaths } from '../src/engines/environment.js'
 import { composePromptContext, makePromptBlock, PromptSnapshotStore } from '../src/prompt/context.js'
 
@@ -257,6 +257,87 @@ process.stdin.on('end', () => {
       const stat = `/proc/${pid}/stat`
       expect(!fs.existsSync(stat) || fs.readFileSync(stat, 'utf8').split(' ')[2] === 'Z').toBe(true)
     } finally { try { process.kill(pid, 'SIGKILL') } catch { /* Already stopped. */ } }
+  })
+  it('中文字节被拆开时仍拼回同一条 JSON', () => {
+    const seen: Array<Record<string, unknown>> = []
+    const lines = new JsonLines((event) => seen.push(event))
+    const bytes = Buffer.from('{"text":"你好"}\n{"text":"第二行"}\n')
+    lines.push(bytes.subarray(0, 10))
+    lines.push(bytes.subarray(10, 14))
+    lines.push(bytes.subarray(14))
+    expect(seen).toEqual([{ text: '你好' }, { text: '第二行' }])
+  })
+  it('单行超过 16MB 时报出大小和消息开头', () => {
+    const lines = new JsonLines(() => { throw new Error('不应解析超限行') })
+    lines.push(Buffer.from('{"id":7,"result":"'))
+    expect(() => lines.push(Buffer.alloc(16 * 1024 * 1024, 0x61))).toThrow(/CLI 消息超过 16MB（\d+ 字节），已停止执行：\{"id":7,"result":/)
+  })
+  it('通知类超限行可以跳过，后续完整行继续解析', () => {
+    const seen: Array<Record<string, unknown>> = []
+    const lines = new JsonLines((event) => seen.push(event), () => 'skip')
+    lines.push(Buffer.from('{"method":"item/completed","params":"'))
+    lines.push(Buffer.alloc(16 * 1024 * 1024, 0x61))
+    lines.push(Buffer.from('"}\n{"method":"turn/completed","params":{"turn":{"id":"t","status":"completed"}}}\n'))
+    expect(seen).toEqual([{ method: 'turn/completed', params: { turn: { id: 't', status: 'completed' } } }])
+  })
+  it('Codex 超限策略只跳过普通通知', () => {
+    expect(codexLineOverflow('{"method":"item/completed","params":{"output":"')).toBe('skip')
+    expect(codexLineOverflow('{"method":"turn/completed","params":{"turn":{"status":"completed"}}')).toBe('throw')
+    expect(codexLineOverflow('{"method":"error","params":{"message":"')).toBe('throw')
+    expect(codexLineOverflow('{"id":2,"result":{"thread":{"turns":[')).toBe('throw')
+  })
+  it('Codex resume 排除历史，旧版拒绝该字段时去掉后重试', async () => {
+    const binary = path.join(root, 'codex-fixture.cjs')
+    const resumeLog = path.join(root, 'resume.jsonl')
+    fs.writeFileSync(binary, `#!/usr/bin/env node
+const fs = require('node:fs')
+let buf = ''
+const send = (value) => process.stdout.write(JSON.stringify(value) + '\\n')
+const log = (params) => fs.appendFileSync(process.env.RESUME_LOG, JSON.stringify(params) + '\\n')
+process.stdin.on('data', (chunk) => {
+  buf += chunk
+  let index
+  while ((index = buf.indexOf('\\n')) >= 0) {
+    const line = buf.slice(0, index)
+    buf = buf.slice(index + 1)
+    if (!line.trim()) continue
+    const msg = JSON.parse(line)
+    if (msg.method === 'initialize') send({ id: msg.id, result: {} })
+    else if (msg.method === 'thread/resume') {
+      log(msg.params)
+      if (msg.params.excludeTurns && process.env.CODEX_FIXTURE === 'legacy') send({ id: msg.id, error: { message: 'unknown field \`excludeTurns\`' } })
+      else if (process.env.CODEX_FIXTURE === 'missing') send({ id: msg.id, error: { message: 'thread not found' } })
+      else send({ id: msg.id, result: { thread: { id: msg.params.threadId } } })
+    } else if (msg.method === 'turn/start') {
+      send({ id: msg.id, result: {} })
+      send({ method: 'turn/started', params: { threadId: 'thread-1', turn: { id: 'turn-1' } } })
+      send({ method: 'item/agentMessage/delta', params: { threadId: 'thread-1', itemId: 'm', delta: '已恢复' } })
+      send({ method: 'turn/completed', params: { threadId: 'thread-1', turn: { id: 'turn-1', status: 'completed' } } })
+    }
+  }
+})
+process.stdin.on('end', () => process.exit(0))
+`, { mode: 0o700 })
+    const input = {
+      engine: 'codex' as const, binary, cwd: root, env: { ...process.env, RESUME_LOG: resumeLog, CODEX_FIXTURE: 'modern' },
+      extraArgs: [], text: '继续', nativeSessionId: 'thread-1', signal: new AbortController().signal,
+      reply: new ReplyCollector(() => {}), session: () => {},
+    }
+    const modern = await executeCodex(input)
+    expect(modern.nativeSessionId).toBe('thread-1')
+    expect(JSON.parse(fs.readFileSync(resumeLog, 'utf8').trim())).toMatchObject({ threadId: 'thread-1', excludeTurns: true })
+    fs.writeFileSync(resumeLog, '')
+    input.env = { ...process.env, RESUME_LOG: resumeLog, CODEX_FIXTURE: 'legacy' }
+    input.reply = new ReplyCollector(() => {})
+    await executeCodex(input)
+    const legacy = fs.readFileSync(resumeLog, 'utf8').trim().split('\n').map((line) => JSON.parse(line))
+    expect(legacy).toHaveLength(2)
+    expect(legacy[0].excludeTurns).toBe(true)
+    expect(legacy[1].excludeTurns).toBeUndefined()
+    fs.writeFileSync(resumeLog, '')
+    input.env = { ...process.env, RESUME_LOG: resumeLog, CODEX_FIXTURE: 'missing' }
+    await expect(executeCodex(input)).rejects.toThrow('thread not found')
+    expect(fs.readFileSync(resumeLog, 'utf8').trim().split('\n')).toHaveLength(1)
   })
   it('RPC 启动退出时立即拒绝等待中的请求', async () => {
     const binary = path.join(root, 'dead-rpc')
