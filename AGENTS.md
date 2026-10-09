@@ -252,6 +252,24 @@ deb：`dpkg -l jeff-desktop` 版本正确 + `/opt/Jeff` 与 `linux-unpacked` 的
 | 文档提交号与 manifest 不一致；同版本重建后安装器 SHA-256 变化 | 构建输入冻结，构建过程中不改源码、不替换归档内文件、不让多个任务共用并覆盖 release/current/结果目录。manifest 记录实际构建提交、版本、每个产物大小和 SHA-256；重建后更新哈希，已变更产物须重新安装核对。引用历史验收必须确认产物哈希、测试范围及环境仍适用，注明原运行编号。 |
 | Android 主界面可见，真实回复却在旧 WebView 白屏 | 用同一签名 release APK 按 AVD → Windows USB/网络真机顺序验收；真实回复、加密绑定和文本落库单独验证。主界面 smoke 通过不能覆盖真实回复失败。 |
 
+### 文件链接验收补记（2026-10-09）
+
+这次右键菜单和双机验收里，下面几类失败会反复出现。下次先按这里处理，不要改断言凑绿，也不要按进程名结束 Jeff。
+
+| 现象 | 下次怎么做 |
+| --- | --- |
+| Windows 上文件名右键像没反应。菜单代码在，包里也能搜到「复制路径」 | 右键会在 `contextmenu` 之后再补一次 `pointerdown`。菜单若在 `useEffect` 里立刻监听 `pointerdown`，会在画出之前被关掉。跟会话列表一样：延迟到下一次 `click` 再关，并忽略菜单内部点击。样式上后写的 `.chat-row-menu { z-index: 40 }` 会盖掉单独的 `.file-link-menu`；要抬高层级就写 `.chat-row-menu.file-link-menu`。文件链接还要在主进程对含 `jeff-file:` 的 `context-menu` 调用 `preventDefault()`，否则系统菜单盖住渲染层菜单。 |
+| 封闭测试里右键了，主进程 `context-menu.log` 仍是空的；`xdotool` 点了但菜单没出现 | Playwright 的右键和 `webContents.sendInputEvent` 不会触发 Electron 主进程的 `context-menu`。不要用这份日志证明合成点击。在链接包围盒上发 `mouseDown`/`mouseUp`（`button: 'right'`），再断言渲染层菜单三项。`screen.dipToScreenRect` 在这段 Electron 求值上下文里不存在。xvfb 下的 `xdotool` 会点偏。 |
+| `fs-open.log` 里明明有路径，`includes(path)` 却失败 | 日志是 `JSON.stringify` 的一行。Windows 反斜杠会被转义。逐行 `JSON.parse`，比较 `target` 和 `decision`。 |
+| 部署结果只有 `(node:…) ExperimentalWarning: SQLite is an experimental feature` | Windows Node 24 的 `node:sqlite` 会把这条警告打到 stderr。`Worker.ps1` 的 `$ErrorActionPreference='Stop'` 会把它当成终止错误。运行器必须用 `node --no-warnings` 启动，不要拿掉这个参数。 |
+| `EncodedCommand` 报「命令行太长了」 | 长 PowerShell 写到文件，SFTP 到 `C:\Users\Public\` 再执行。不要把整段脚本塞进 base64 命令行。 |
+| 发了 `WM_CLOSE` 或 Ctrl+Q，Jeff 仍在；窗口标题是 `Jeff` 但只有约 396×106 | 那是通知气球，不是主窗口。气球的 `close` 调用了 `preventDefault()`，所以关不掉，`window-all-closed` 也不会发生。主窗口可以是空标题、大约 1152×664。SSH 里的 `EnumWindows` 看不到交互会话的窗口。要操作界面时，计划任务主体复制 `JeffDeployWorker` 的 Interactive 身份，不要用 SSH 的 `$env:USERNAME`。仍禁止按进程名结束。 |
+| 清单提交号是旧的 `HEAD`，包里却有后来改的菜单 | `deploy` 记录的是 `git rev-parse HEAD`，不含未提交文件。打包前先提交要交付的源码。工作区不干净时，不能把清单提交号当成包内容。源码注释会被打包器删掉；确认修复进包时，在 ASAR 里找能留下的字符串（例如 `setTimeout` 后的 `addEventListener("click"` 或 `file-link-copy`），不要用中文注释当证据。 |
+| `ui` 项目把 `live-file-links.spec.ts` 也跑进去了 | `playwright.config.ts` 的 `testMatch` 必须锚到文件名结尾。`ui` 只匹配 `ui.spec.ts`、`p0-ux.spec.ts`、`file-links.spec.ts`。未锚定的 `file-links` 会把 `live-file-links.spec.ts` 一起跑掉。 |
+| v18、快照「第 N 版」、布局宽度或浏览器分辨率偶发超时，下一轮又绿 | 先看是时间戳碰撞或环境抖动。断言保持原样再跑。不要放宽断言。 |
+| 磁盘上已有新 `.deb`，本机 `dpkg` 仍是旧版 | 产物存在不等于已安装。用解析后的 sudo 密码安装，再核对 `dpkg -l jeff-desktop` 和 `/opt/Jeff/resources/app.asar` 与 `linux-unpacked` 的 MD5。 |
+| AVD instrumentation 退出码 0，输出里却是 `RootViewWithoutFocusException` / `has-window-focus=false` | 这是模拟器焦点抖动，不是文件链接功能坏了。保留原始输出后重跑。以测试报告里的失败数为准，不以 adb 退出码为准。 |
+
 **安装与验收按阶段收集事实并闭环：** 本机归档/安装器校验 → 上传与远端 SHA-256 → 正常退出及本机数据快照 → NSIS 原范围/原目录安装 → 注册信息、EXE 版本、安装 ASAR/内置 OpenCode → 隔离实例实际窗口/页面及 sidecar → 本次具名功能测试及按需真实模型/手机链路 → 日常数据核对与本轮资源清理。失败时保留原始证据，定位并修复所属阶段，从受影响阶段重新验证；代码修复则按前文重跑相关回归和三平台正式构建。人工临时修复 ASAR 只能用于诊断/本机恢复，交付必须重新生成完整安装包；启用 Electron EXE 嵌入式 ASAR 校验时，由打包器同步生成匹配的 EXE 和归档。
 
 首次 GUI 验收同时检查首页、版本和本次功能入口；`smoke` 仅证明安装启动，不能代替本次具名功能测试。命令结束后核对日常数据库/配置与本机快照；关闭数据库时可比字节哈希，运行中有正常写入则使用 SQLite 只读完整性检查与预期记录核对，不能把正常写入误报成数据损坏。敏感备份留 Windows 本机，回传验收日志与非敏感证据。

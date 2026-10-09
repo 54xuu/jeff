@@ -92,7 +92,30 @@ test('聊天里的真实文件可点击打开，右键复制完整路径', async
     await expect(page.locator('[data-testid="md-file-link"][title$="ghost.docx"]')).toHaveCount(0)
 
     const notesLink = page.locator(`[data-testid="md-file-link"][title="${notes}"]`)
-    await notesLink.click({ button: 'right' })
+    const box = await notesLink.boundingBox()
+    if (!box) throw new Error('file link has no box')
+    // 用 Electron 自己的输入事件右键，才会走到主进程 context-menu（Playwright 的合成点击不会）。
+    await app.evaluate(({ BrowserWindow }, point) => {
+      const win = BrowserWindow.getAllWindows().find((item) => !item.isDestroyed())
+      if (!win) throw new Error('no window')
+      win.focus()
+      const input = { x: point.x, y: point.y, button: 'right' as const, clickCount: 1 }
+      win.webContents.sendInputEvent({ ...input, type: 'mouseDown' })
+      win.webContents.sendInputEvent({ ...input, type: 'mouseUp' })
+    }, { x: Math.round(box.x + box.width / 2), y: Math.round(box.y + box.height / 2) })
+    const menu = page.getByTestId('file-link-menu')
+    await expect(menu).toBeVisible()
+    await expect(page.getByTestId('file-link-open')).toHaveText('打开')
+    await expect(page.getByTestId('file-link-reveal')).toHaveText('在文件夹中显示')
+    await expect(page.getByTestId('file-link-copy')).toHaveText('复制路径')
+    // Windows 右键会在 contextmenu 之后再送一次 pointerdown。这次事件不能把菜单关掉。
+    await page.evaluate(() => {
+      document.dispatchEvent(new PointerEvent('pointerdown', { button: 2, bubbles: true, cancelable: true }))
+    })
+    await expect(menu).toBeVisible()
+    const menuShot = path.join(REPO_ROOT, '.tmp/file-links-evidence')
+    fs.mkdirSync(menuShot, { recursive: true })
+    await page.screenshot({ path: path.join(menuShot, 'menu.png') })
     await page.getByTestId('file-link-copy').click()
     await expect.poll(async () => app.evaluate(({ clipboard }) => clipboard.readText())).toBe(notes)
     await expect(page.getByTestId('preview-toast')).toContainText('已复制路径')

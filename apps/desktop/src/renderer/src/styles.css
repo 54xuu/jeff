@@ -5265,10 +5265,6 @@ body.pane-resizing {
   background: #3b82f6;
 }
 
-.file-link-menu {
-  z-index: 80;
-}
-
 .chat-row-menu {
   position: fixed;
   z-index: 40;
@@ -5294,6 +5290,10 @@ body.pane-resizing {
 
 .chat-row-menu button:hover {
   background: color-mix(in srgb, var(--text) 8%, transparent);
+}
+
+.chat-row-menu.file-link-menu {
+  z-index: 80;
 }
 
 .quote-pills {

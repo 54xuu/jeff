@@ -571,6 +571,15 @@ function createWindow(): void {
     void shell.openExternal(url)
     return { action: 'deny' }
   })
+  // 文件链接的右键菜单由渲染层绘制。Windows 上不拦掉这次默认菜单时，系统编辑菜单会盖住它。
+  win.webContents.on('context-menu', (event, params) => {
+    const link = `${params.linkURL || ''}`
+    const prevented = link.includes('jeff-file:')
+    if (prevented) event.preventDefault()
+    if (process.env.JEFF_E2E === '1' && core) {
+      fs.appendFileSync(path.join(core.paths.root, 'context-menu.log'), `${JSON.stringify({ linkURL: params.linkURL || '', prevented })}\n`)
+    }
+  })
   // 内置浏览器（persist:jeff-browser）是单页设计，不做多标签 UI：
   // 页面内 target="_blank" 链接 / window.open(url) 一律在当前 webview 原地跳转，
   // 而不是让 Chromium 默认拦截弹窗后静默无反应。

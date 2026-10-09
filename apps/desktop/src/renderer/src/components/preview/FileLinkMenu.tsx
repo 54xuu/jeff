@@ -13,7 +13,10 @@ export default function FileLinkMenu(): React.JSX.Element | null {
 
   useEffect(() => {
     if (!menu) return
-    const onPointer = (e: PointerEvent) => {
+    // 右键手势在 Windows 上会在 contextmenu 之后再补一次 pointerdown。
+    // 若立刻监听 pointerdown，菜单会在画出之前被这次事件关掉。
+    // 与会话列表右键菜单一样，只在后续左键 click 时关闭，并错过打开这一下。
+    const onClick = (e: MouseEvent) => {
       const target = e.target as HTMLElement | null
       if (target?.closest?.('[data-testid="file-link-menu"]')) return
       closeFileMenu()
@@ -24,10 +27,11 @@ export default function FileLinkMenu(): React.JSX.Element | null {
       e.preventDefault()
       closeFileMenu()
     }
-    document.addEventListener('pointerdown', onPointer, true)
+    const timer = window.setTimeout(() => window.addEventListener('click', onClick), 0)
     document.addEventListener('keydown', onKey, true)
     return () => {
-      document.removeEventListener('pointerdown', onPointer, true)
+      window.clearTimeout(timer)
+      window.removeEventListener('click', onClick)
       document.removeEventListener('keydown', onKey, true)
     }
   }, [menu, closeFileMenu])
